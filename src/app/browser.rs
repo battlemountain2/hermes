@@ -111,6 +111,14 @@ pub enum BrowserEvent {
         total: usize,
     },
     RestorationFinished,
+    TransferStarted {
+        total: usize,
+    },
+    TransferProgress {
+        completed: usize,
+        total: usize,
+    },
+    TransferFinished,
     OperationFailed {
         message: String,
     },
@@ -678,6 +686,9 @@ impl Browser {
             return;
         };
         let request_id = self.begin_operation();
+        self.emit(BrowserEvent::TransferStarted {
+            total: sources.len(),
+        });
         let load = provider.paste(
             PasteRequest {
                 id: request_id,
@@ -785,6 +796,7 @@ impl Browser {
                 OperationEvent::Renamed { request_id }
                 | OperationEvent::Created { request_id }
                 | OperationEvent::Pasted { request_id }
+                | OperationEvent::TransferProgress { request_id, .. }
                 | OperationEvent::DeleteProgress { request_id, .. }
                 | OperationEvent::RestoreProgress { request_id, .. }
                 | OperationEvent::Deleted { request_id, .. }
@@ -832,6 +844,16 @@ impl Browser {
                 }
                 return;
             }
+            if let OperationEvent::TransferProgress {
+                completed, total, ..
+            } = &event
+            {
+                browser.emit(BrowserEvent::TransferProgress {
+                    completed: *completed,
+                    total: *total,
+                });
+                return;
+            }
             browser.current_operation.set(None);
             if browser.deletion_operation.replace(false) {
                 browser.emit(BrowserEvent::DeletionFinished);
@@ -873,9 +895,10 @@ impl Browser {
                         browser.refresh_column(depth);
                     }
                 }
-                OperationEvent::Pasted { .. }
-                | OperationEvent::DeleteProgress { .. }
-                | OperationEvent::RestoreProgress { .. } => {}
+                OperationEvent::Pasted { .. } => browser.emit(BrowserEvent::TransferFinished),
+                OperationEvent::DeleteProgress { .. }
+                | OperationEvent::RestoreProgress { .. }
+                | OperationEvent::TransferProgress { .. } => {}
             }
         })
     }

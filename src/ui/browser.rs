@@ -2484,7 +2484,18 @@ impl ViewState {
                 self.update_delete_progress(completed, total);
             }
             BrowserEvent::RestorationFinished => self.dismiss_delete_progress(),
+            BrowserEvent::TransferStarted { total } => self.show_file_operation_progress(
+                total,
+                crate::assets::icons::COPY,
+                "Transferring items",
+                "Copying or moving files",
+            ),
+            BrowserEvent::TransferProgress { completed, total } => {
+                self.update_delete_progress(completed, total);
+            }
+            BrowserEvent::TransferFinished => self.dismiss_delete_progress(),
             BrowserEvent::OperationFailed { message } => {
+                self.dismiss_delete_progress();
                 show_error_dialog(&self.overlay, "Unable to complete operation", &message);
             }
             BrowserEvent::OperationCompletedWithErrors { message } => {

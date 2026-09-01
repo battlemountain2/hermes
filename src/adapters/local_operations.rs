@@ -249,7 +249,8 @@ impl OperationProvider for LocalOperationProvider {
     fn paste(&self, request: PasteRequest, emit: Rc<dyn Fn(OperationEvent)>) -> LoadHandle {
         let task = glib::MainContext::default().spawn_local(async move {
             let destination = gio_file(&request.destination);
-            for source in &request.sources {
+            let total = request.sources.len();
+            for (completed, source) in request.sources.iter().enumerate() {
                 let source = gio_file(source);
                 let Some(name) = source.basename() else {
                     emit(OperationEvent::Failed {
@@ -310,6 +311,11 @@ impl OperationProvider for LocalOperationProvider {
                     });
                     return;
                 }
+                emit(OperationEvent::TransferProgress {
+                    request_id: request.id,
+                    completed: completed + 1,
+                    total,
+                });
             }
             emit(OperationEvent::Pasted {
                 request_id: request.id,

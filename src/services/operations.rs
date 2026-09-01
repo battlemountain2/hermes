@@ -80,6 +80,11 @@ pub enum OperationEvent {
     Pasted {
         request_id: OperationRequestId,
     },
+    TransferProgress {
+        request_id: OperationRequestId,
+        completed: usize,
+        total: usize,
+    },
     DeleteProgress {
         request_id: OperationRequestId,
         completed: usize,
