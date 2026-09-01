@@ -265,13 +265,15 @@ fn folder_album_art(directory: &Path) -> Option<(std::path::PathBuf, ParseOperat
                 .unwrap_or_default()
                 .to_ascii_lowercase();
             let rank = match stem.as_str() {
-                "cover" => 0,
-                "folder" => 1,
-                "albumart" | "album-art" => 2,
-                "front" => 3,
-                _ => 10,
+                "cover" => Some(0),
+                "folder" => Some(1),
+                "albumart" | "album-art" => Some(2),
+                "front" => Some(3),
+                _ => None,
             };
-            images.push((rank, path));
+            if let Some(rank) = rank {
+                images.push((rank, path));
+            }
         }
     }
     images.sort_by_key(|(rank, _)| *rank);
