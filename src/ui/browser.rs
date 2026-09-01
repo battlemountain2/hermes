@@ -4,8 +4,9 @@ use std::{
     cell::{Cell, RefCell},
     future::Future,
     os::unix::fs::PermissionsExt,
-    path::Path,
+    path::{Path, PathBuf},
     pin::Pin,
+    process::Command,
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -16,8 +17,8 @@ use crate::{
     app::{Browser, BrowserEvent},
     model::{EntryKind, FileEntry, Location, SortDirection, SortKey},
     services::{
-        FileSource, FormatFamily, OperationProvider, classify_by_mime, classify_by_name,
-        validate_basename,
+        CustomAction, FileSource, FormatFamily, OperationProvider, classify_by_mime,
+        classify_by_name, load_custom_actions, validate_basename,
     },
 };
 
@@ -2565,6 +2566,16 @@ impl ViewState {
                 self.update_delete_progress(completed, total);
             }
             BrowserEvent::TransferFinished => self.dismiss_delete_progress(),
+            BrowserEvent::ArchiveStarted { title } => self.show_file_operation_progress(
+                1,
+                crate::assets::icons::FILE_ARCHIVE,
+                &title,
+                "Hermes is processing the selected items",
+            ),
+            BrowserEvent::ArchiveProgress { completed, total } => {
+                self.update_delete_progress(completed, total);
+            }
+            BrowserEvent::ArchiveFinished => self.dismiss_delete_progress(),
             BrowserEvent::OperationFailed { message } => {
                 self.dismiss_delete_progress();
                 show_error_dialog(&self.overlay, "Unable to complete operation", &message);
@@ -4024,6 +4035,9 @@ pub(super) fn install_item_context_menu(
     let open = item_context_option(crate::assets::icons::EXTERNAL_LINK, "Open", "↵");
     let open_with = item_context_option(crate::assets::icons::EXTERNAL_LINK, "Open With…", "");
     let preview = item_context_option(crate::assets::icons::EYE, "Quick preview", "Space");
+    let extract_here = item_context_option(crate::assets::icons::FILE_ARCHIVE, "Extract Here", "");
+    let extract_to = item_context_option(crate::assets::icons::FOLDER, "Extract To…", "");
+    let compress = item_context_option(crate::assets::icons::FILE_ARCHIVE, "Compress…", "");
     let restore = item_context_option(crate::assets::icons::FOLDER, "Restore", "");
     restore.set_visible(in_trash);
     let pin = item_context_option(crate::assets::icons::PIN, "Pin to sidebar", "P");
@@ -4044,6 +4058,9 @@ pub(super) fn install_item_context_menu(
     single.append(&open);
     single.append(&open_with);
     single.append(&preview);
+    single.append(&extract_here);
+    single.append(&extract_to);
+    single.append(&compress);
     single.append(&restore);
     single.append(&pin);
     single.append(&copy_path);
@@ -4062,6 +4079,8 @@ pub(super) fn install_item_context_menu(
     let restore_multiple = item_context_option(crate::assets::icons::FOLDER, "Restore items", "");
     restore_multiple.set_visible(in_trash);
     let copy_paths = item_context_option(crate::assets::icons::COPY, "Copy paths", "Y");
+    let compress_multiple =
+        item_context_option(crate::assets::icons::FILE_ARCHIVE, "Compress items…", "");
     let move_multiple = item_context_option(crate::assets::icons::FOLDER, "Move to…", "");
     let copy_multiple = item_context_option(crate::assets::icons::COPY, "Copy to…", "");
     let cut_multiple = item_context_option(crate::assets::icons::SCISSORS, "Cut", "Ctrl+X");
@@ -4070,6 +4089,7 @@ pub(super) fn install_item_context_menu(
     trash_multiple.add_css_class("danger");
     multiple.append(&restore_multiple);
     multiple.append(&copy_paths);
+    multiple.append(&compress_multiple);
     multiple.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     multiple.append(&move_multiple);
     multiple.append(&copy_multiple);
@@ -4078,6 +4098,28 @@ pub(super) fn install_item_context_menu(
     multiple.append(&trash_multiple);
     multiple.set_visible(false);
     content.append(&multiple);
+
+    let custom_separator = gtk::Separator::new(gtk::Orientation::Horizontal);
+    let custom = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let custom_buttons = match load_custom_actions() {
+        Ok(actions) => actions
+            .into_iter()
+            .map(|action| {
+                let button =
+                    item_context_option(crate::assets::icons::SETTINGS_2, &action.name, "");
+                custom.append(&button);
+                (action, button)
+            })
+            .collect::<Vec<_>>(),
+        Err(error) => {
+            tracing::warn!(%error, "unable to load custom actions");
+            Vec::new()
+        }
+    };
+    custom_separator.set_visible(!custom_buttons.is_empty());
+    custom.set_visible(!custom_buttons.is_empty());
+    content.append(&custom_separator);
+    content.append(&custom);
 
     let popover = gtk::Popover::builder()
         .child(&content)
@@ -4088,6 +4130,9 @@ pub(super) fn install_item_context_menu(
     popover.set_parent(widget);
 
     let target = Rc::new(RefCell::new(None::<(usize, FileEntry)>));
+    for (action, button) in &custom_buttons {
+        connect_custom_action(button, &popover, state, &target, widget, action.clone());
+    }
     let weak = Rc::downgrade(state);
     let open_target = target.clone();
     let open_popover = popover.downgrade();
@@ -4225,6 +4270,10 @@ pub(super) fn install_item_context_menu(
     connect_context_cut(&cut_multiple, &popover, state, &target);
     connect_context_trash(&move_to_trash, &popover, state, &target, in_trash);
     connect_context_trash(&trash_multiple, &popover, state, &target, in_trash);
+    connect_extract_here(&extract_here, &popover, state, &target);
+    connect_extract_to(&extract_to, &popover, state, &target, widget);
+    connect_compress(&compress, &popover, state, &target, widget);
+    connect_compress(&compress_multiple, &popover, state, &target, widget);
     let weak = Rc::downgrade(state);
     let properties_target = target.clone();
     let properties_popover = popover.downgrade();
@@ -4288,7 +4337,26 @@ pub(super) fn install_item_context_menu(
             .set_selection(depth, &selected_positions, Some(resolved_position));
         target.replace(Some((resolved_position, entry.clone())));
         let entries = state.browser.selected_entries();
+        let custom_paths = entries
+            .iter()
+            .filter_map(|entry| entry.location.native_path().map(Path::to_path_buf))
+            .collect::<Vec<_>>();
+        let mut custom_visible = false;
+        for (action, button) in &custom_buttons {
+            let visible = !in_trash
+                && custom_paths.len() == entries.len()
+                && action.applies_to(&custom_paths);
+            button.set_visible(visible);
+            custom_visible |= visible;
+        }
+        custom.set_visible(custom_visible);
+        custom_separator.set_visible(custom_visible);
         preview.set_visible(entry_supports_quick_preview(&entry));
+        let archive = is_archive_entry(&entry) && !in_trash;
+        extract_here.set_visible(archive);
+        extract_to.set_visible(archive);
+        compress.set_visible(!in_trash);
+        compress_multiple.set_visible(!in_trash);
         pin.set_visible(entry.is_directory() && !is_trash_location(&entry.location));
         if entries.len() > 1 {
             heading.set_text(&format!("{} items selected", entries.len()));
@@ -4468,6 +4536,332 @@ fn context_entries(
     } else {
         entries
     }
+}
+
+fn connect_custom_action(
+    button: &gtk::Button,
+    popover: &gtk::Popover,
+    state: &Rc<ViewState>,
+    target: &Rc<RefCell<Option<(usize, FileEntry)>>>,
+    parent: &gtk::Widget,
+    action: CustomAction,
+) {
+    let weak = Rc::downgrade(state);
+    let target = target.clone();
+    let popover = popover.downgrade();
+    let parent = parent.clone();
+    button.connect_clicked(move |_| {
+        if let Some(popover) = popover.upgrade() {
+            popover.popdown();
+        }
+        let Some(state) = weak.upgrade() else {
+            return;
+        };
+        let paths = context_entries(&state, &target)
+            .iter()
+            .filter_map(|entry| entry.location.native_path().map(Path::to_path_buf))
+            .collect::<Vec<_>>();
+        request_custom_action(&parent, action.clone(), paths);
+    });
+}
+
+#[expect(
+    deprecated,
+    reason = "GTK 4.10 dialog replacements are unavailable in the supported runtime"
+)]
+fn request_custom_action(parent: &gtk::Widget, action: CustomAction, paths: Vec<PathBuf>) {
+    if !action.confirm {
+        execute_custom_action(parent, action, paths);
+        return;
+    }
+    let Some(window) = parent.root().and_downcast::<gtk::Window>() else {
+        return;
+    };
+    let dialog = gtk::Dialog::builder()
+        .transient_for(&window)
+        .modal(true)
+        .title(format!("Run {}?", action.name))
+        .build();
+    dialog.add_css_class("drive-confirm-dialog");
+    let message = gtk::Label::new(Some(&format!(
+        "Run this action on {} selected {}?",
+        paths.len(),
+        if paths.len() == 1 { "item" } else { "items" }
+    )));
+    message.set_wrap(true);
+    message.set_xalign(0.0);
+    dialog.content_area().append(&message);
+    dialog.add_button("Cancel", gtk::ResponseType::Cancel);
+    let run = dialog.add_button("Run", gtk::ResponseType::Accept);
+    run.add_css_class("suggested-action");
+    let parent = parent.clone();
+    dialog.connect_response(move |dialog, response| {
+        dialog.close();
+        if response == gtk::ResponseType::Accept {
+            execute_custom_action(&parent, action.clone(), paths.clone());
+        }
+    });
+    dialog.present();
+}
+
+fn execute_custom_action(parent: &gtk::Widget, action: CustomAction, paths: Vec<PathBuf>) {
+    let title = action.name.clone();
+    let command = match action.command_for(&paths) {
+        Ok(command) => command,
+        Err(error) => {
+            show_error_dialog(parent, "Unable to run custom action", &error);
+            return;
+        }
+    };
+    let parent = parent.clone();
+    glib::MainContext::default().spawn_local(async move {
+        let result = gio::spawn_blocking(move || {
+            Command::new(&command.program)
+                .args(&command.arguments)
+                .status()
+                .map_err(|error| format!("Unable to start {}: {error}", command.program))
+                .and_then(|status| {
+                    if status.success() {
+                        Ok(())
+                    } else {
+                        Err(format!("The action exited with {status}"))
+                    }
+                })
+        })
+        .await;
+        let error = match result {
+            Ok(Ok(())) => None,
+            Ok(Err(error)) => Some(error),
+            Err(_) => Some("The custom action worker stopped unexpectedly".to_owned()),
+        };
+        if let Some(error) = error {
+            show_error_dialog(&parent, &format!("Unable to run {title}"), &error);
+        }
+    });
+}
+
+fn is_archive_entry(entry: &FileEntry) -> bool {
+    !entry.is_directory()
+        && classify_by_name(&entry.native_name) == FormatFamily::Archive
+        && entry.location.native_path().is_some()
+}
+
+fn archive_stem(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("Archive");
+    for suffix in [
+        ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst", ".tgz", ".tbz2", ".txz", ".zip", ".7z",
+        ".rar", ".tar",
+    ] {
+        if name.to_ascii_lowercase().ends_with(suffix) {
+            return name[..name.len().saturating_sub(suffix.len())].to_owned();
+        }
+    }
+    path.file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("Archive")
+        .to_owned()
+}
+
+fn unique_archive_destination(parent: &Path, stem: &str) -> PathBuf {
+    let candidate = parent.join(stem);
+    if !candidate.exists() {
+        return candidate;
+    }
+    for suffix in 2..10_000 {
+        let candidate = parent.join(format!("{stem} ({suffix})"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    parent.join(format!("{stem}-extracted"))
+}
+
+fn connect_extract_here(
+    button: &gtk::Button,
+    popover: &gtk::Popover,
+    state: &Rc<ViewState>,
+    target: &Rc<RefCell<Option<(usize, FileEntry)>>>,
+) {
+    let weak = Rc::downgrade(state);
+    let target = target.clone();
+    let popover = popover.downgrade();
+    button.connect_clicked(move |_| {
+        if let Some(popover) = popover.upgrade() {
+            popover.popdown();
+        }
+        let Some(state) = weak.upgrade() else {
+            return;
+        };
+        let Some((_, entry)) = target.borrow().clone() else {
+            return;
+        };
+        let Some(path) = entry.location.native_path() else {
+            return;
+        };
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        let destination = unique_archive_destination(parent, &archive_stem(path));
+        state
+            .browser
+            .extract_archive(entry.location, Location::local(destination));
+    });
+}
+
+#[expect(
+    deprecated,
+    reason = "GTK 4.10 file dialog replacement is unavailable in the supported runtime"
+)]
+fn connect_extract_to(
+    button: &gtk::Button,
+    popover: &gtk::Popover,
+    state: &Rc<ViewState>,
+    target: &Rc<RefCell<Option<(usize, FileEntry)>>>,
+    parent: &gtk::Widget,
+) {
+    let weak = Rc::downgrade(state);
+    let target = target.clone();
+    let popover = popover.downgrade();
+    let parent = parent.clone();
+    button.connect_clicked(move |_| {
+        if let Some(popover) = popover.upgrade() {
+            popover.popdown();
+        }
+        let Some(state) = weak.upgrade() else {
+            return;
+        };
+        let Some((_, entry)) = target.borrow().clone() else {
+            return;
+        };
+        let Some(archive_path) = entry.location.native_path() else {
+            return;
+        };
+        let Some(window) = parent.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let chooser = gtk::FileChooserNative::builder()
+            .title("Extract archive to")
+            .transient_for(&window)
+            .modal(true)
+            .action(gtk::FileChooserAction::SelectFolder)
+            .accept_label("Extract")
+            .cancel_label("Cancel")
+            .build();
+        let browser = state.browser.clone();
+        let archive = entry.location.clone();
+        let stem = archive_stem(archive_path);
+        chooser.connect_response(move |chooser, response| {
+            if response == gtk::ResponseType::Accept
+                && let Some(folder) = chooser.file().and_then(|file| file.path())
+            {
+                browser.extract_archive(
+                    archive.clone(),
+                    Location::local(unique_archive_destination(&folder, &stem)),
+                );
+            }
+            chooser.destroy();
+        });
+        chooser.show();
+    });
+}
+
+fn connect_compress(
+    button: &gtk::Button,
+    popover: &gtk::Popover,
+    state: &Rc<ViewState>,
+    target: &Rc<RefCell<Option<(usize, FileEntry)>>>,
+    parent: &gtk::Widget,
+) {
+    let weak = Rc::downgrade(state);
+    let target = target.clone();
+    let popover = popover.downgrade();
+    let parent = parent.clone();
+    button.connect_clicked(move |_| {
+        if let Some(popover) = popover.upgrade() {
+            popover.popdown();
+        }
+        let Some(state) = weak.upgrade() else {
+            return;
+        };
+        let entries = context_entries(&state, &target);
+        show_compress_dialog(&state, entries, &parent);
+    });
+}
+
+#[expect(
+    deprecated,
+    reason = "GTK 4.10 dialog replacements are unavailable in the supported runtime"
+)]
+fn show_compress_dialog(state: &Rc<ViewState>, entries: Vec<FileEntry>, parent: &gtk::Widget) {
+    let Some(window) = parent.root().and_downcast::<gtk::Window>() else {
+        return;
+    };
+    let Some(folder) = entries
+        .first()
+        .and_then(|entry| entry.location.native_path())
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+    else {
+        return;
+    };
+    let dialog = gtk::Dialog::builder()
+        .transient_for(&window)
+        .modal(true)
+        .title("Create Archive")
+        .build();
+    dialog.add_css_class("drive-confirm-dialog");
+    let name = gtk::Entry::builder()
+        .placeholder_text("Archive name")
+        .text(if entries.len() == 1 {
+            &entries[0].display_name
+        } else {
+            "Archive"
+        })
+        .hexpand(true)
+        .build();
+    let format = gtk::ComboBoxText::new();
+    format.append(Some("zip"), "ZIP archive (.zip)");
+    format.append(Some("tar-zst"), "Compressed TAR (.tar.zst)");
+    format.set_active_id(Some("zip"));
+    dialog.content_area().append(&name);
+    dialog.content_area().append(&format);
+    dialog.add_button("Cancel", gtk::ResponseType::Cancel);
+    let create = dialog.add_button("Create", gtk::ResponseType::Accept);
+    create.add_css_class("suggested-action");
+    let browser = state.browser.clone();
+    dialog.connect_response(move |dialog, response| {
+        if response == gtk::ResponseType::Accept {
+            let extension = if format.active_id().as_deref() == Some("tar-zst") {
+                ".tar.zst"
+            } else {
+                ".zip"
+            };
+            let mut archive_name = name.text().trim().to_owned();
+            for known in [".zip", ".tar.zst"] {
+                if archive_name.to_ascii_lowercase().ends_with(known) {
+                    archive_name.truncate(archive_name.len().saturating_sub(known.len()));
+                }
+            }
+            archive_name.push_str(extension);
+            if validate_basename(&archive_name).is_ok() {
+                browser.compress_archive(
+                    entries.iter().map(|entry| entry.location.clone()).collect(),
+                    Location::local(folder.join(archive_name)),
+                );
+                dialog.close();
+                return;
+            }
+            name.add_css_class("error");
+            name.set_tooltip_text(Some("Enter a valid archive name"));
+            name.grab_focus();
+            return;
+        }
+        dialog.close();
+    });
+    dialog.present();
 }
 
 fn connect_context_trash(

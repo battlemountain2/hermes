@@ -2,9 +2,12 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use gtk::{gdk, prelude::*};
+use gtk::{gdk, gio, prelude::*};
 
-use crate::assets::icons;
+use crate::{
+    assets::icons,
+    services::{actions_path, create_custom_actions_template},
+};
 
 use super::{
     blur::BlurBin,
@@ -71,6 +74,7 @@ pub fn build_layer(
         Some("general"),
     );
     stack.add_named(&keybindings_page(), Some("keybindings"));
+    stack.add_named(&actions_page(), Some("actions"));
     stack.add_named(&theme_page(themes), Some("theme"));
     stack.add_named(&about_page(), Some("about"));
     page.append(&stack);
@@ -79,6 +83,7 @@ pub fn build_layer(
     for (label, icon, name) in [
         ("General", icons::SLIDERS, "general"),
         ("Keybindings", icons::KEYBOARD, "keybindings"),
+        ("Custom actions", icons::SETTINGS_2, "actions"),
         ("Theme & appearance", icons::PALETTE, "theme"),
         ("About", icons::INFO, "about"),
     ] {
@@ -319,6 +324,76 @@ fn keybindings_page() -> gtk::Widget {
         .build();
     scroller.add_css_class("settings-keybindings-scroll");
     scroller.upcast()
+}
+
+fn actions_page() -> gtk::Widget {
+    let content = page_content();
+    append_heading(&content, "CONTEXT MENU ACTIONS");
+
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    row.add_css_class("settings-option");
+    let copy = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    copy.set_hexpand(true);
+    let title = gtk::Label::new(Some("Custom actions file"));
+    title.set_xalign(0.0);
+    title.add_css_class("settings-option-title");
+    let description = gtk::Label::new(Some(
+        "Add safe, argument-based commands to the file and folder context menu. Restart Hermes after editing the file.",
+    ));
+    description.set_xalign(0.0);
+    description.set_wrap(true);
+    description.add_css_class("settings-option-description");
+    let path = gtk::Label::new(Some(&actions_path().display().to_string()));
+    path.set_xalign(0.0);
+    path.set_selectable(true);
+    path.add_css_class("keybinding-keys");
+    copy.append(&title);
+    copy.append(&description);
+    copy.append(&path);
+    let open = gtk::Button::with_label(if actions_path().is_file() {
+        "Open file"
+    } else {
+        "Create file"
+    });
+    open.add_css_class("theme-editor-save");
+    open.set_valign(gtk::Align::Center);
+    row.append(&copy);
+    row.append(&open);
+    content.append(&row);
+
+    let help = gtk::Label::new(Some(
+        "Placeholders: {path} for the first item, {paths} for every selected item, {parent} for its folder, and {name} for its filename. Commands are never run through a shell.",
+    ));
+    help.set_xalign(0.0);
+    help.set_wrap(true);
+    help.add_css_class("settings-option-description");
+    content.append(&help);
+
+    let error = gtk::Label::new(None);
+    error.set_xalign(0.0);
+    error.set_wrap(true);
+    error.add_css_class("theme-editor-error");
+    error.set_visible(false);
+    content.append(&error);
+    open.connect_clicked(move |button| match create_custom_actions_template() {
+        Ok(path) => {
+            error.set_visible(false);
+            button.set_label("Open file");
+            let file = gio::File::for_path(path);
+            if let Err(launch_error) =
+                gio::AppInfo::launch_default_for_uri(&file.uri(), None::<&gio::AppLaunchContext>)
+            {
+                error.set_text(&format!("Unable to open the actions file: {launch_error}"));
+                error.set_visible(true);
+            }
+        }
+        Err(message) => {
+            error.set_text(&message);
+            error.set_visible(true);
+        }
+    });
+
+    content.upcast()
 }
 
 fn about_page() -> gtk::Widget {

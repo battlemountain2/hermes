@@ -67,8 +67,12 @@ fn quick_preview_is_offered_only_for_supported_files() {
         "notes.txt",
         crate::model::EntryKind::FileSymbolicLink,
     )));
-    assert!(!entry_supports_quick_preview(&entry(
+    assert!(entry_supports_quick_preview(&entry(
         "archive.zip",
+        crate::model::EntryKind::File,
+    )));
+    assert!(entry_supports_quick_preview(&entry(
+        "letter.docx",
         crate::model::EntryKind::File,
     )));
     assert!(!entry_supports_quick_preview(&entry(
@@ -77,7 +81,7 @@ fn quick_preview_is_offered_only_for_supported_files() {
     )));
 
     let supported = entry("photo.png", crate::model::EntryKind::File);
-    let unsupported = entry("archive.zip", crate::model::EntryKind::File);
+    let unsupported = entry("unknown.data", crate::model::EntryKind::File);
     let directory = entry("photos", crate::model::EntryKind::Directory);
     assert!(entry_responds_to_single_click(&supported, true));
     assert!(!entry_responds_to_single_click(&supported, false));

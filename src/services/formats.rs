@@ -16,6 +16,8 @@ pub enum PreviewHandler {
     Pdf,
     Audio,
     Video,
+    Archive,
+    Office,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -31,6 +33,7 @@ pub enum ThumbnailHandler {
 pub enum TextExtractor {
     PlainText,
     Pdf,
+    Office,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -59,6 +62,8 @@ pub enum FormatFamily {
     RawImage,
     /// PDF documents.
     Pdf,
+    /// OpenDocument and OOXML office documents.
+    OfficeDocument,
     /// Audio files (FLAC, MP3, OGG, …).
     Audio,
     /// Video files (MP4, MKV, WebM, MOV, …).
@@ -85,7 +90,9 @@ impl FormatFamily {
             Self::Pdf => Some(PreviewHandler::Pdf),
             Self::Audio => Some(PreviewHandler::Audio),
             Self::Video => Some(PreviewHandler::Video),
-            Self::DesktopEntry | Self::Archive | Self::Unknown => None,
+            Self::Archive => Some(PreviewHandler::Archive),
+            Self::OfficeDocument => Some(PreviewHandler::Office),
+            Self::DesktopEntry | Self::Unknown => None,
         }
     }
 
@@ -93,6 +100,7 @@ impl FormatFamily {
         match self {
             Self::PlainText | Self::Svg => Some(TextExtractor::PlainText),
             Self::Pdf => Some(TextExtractor::Pdf),
+            Self::OfficeDocument => Some(TextExtractor::Office),
             _ => None,
         }
     }
@@ -117,6 +125,7 @@ impl FormatFamily {
             Self::Heif => "HEIF Image",
             Self::RawImage => "Camera RAW",
             Self::Pdf => "PDF Document",
+            Self::OfficeDocument => "Office Document",
             Self::Audio => "Audio",
             Self::Video => "Video",
             Self::DesktopEntry => "Application",
@@ -147,6 +156,13 @@ pub fn classify_by_mime(content_type: &str) -> FormatFamily {
     // Exact matches first.
     if content_type == "application/pdf" {
         return FormatFamily::Pdf;
+    }
+    if matches!(
+        content_type,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            | "application/vnd.oasis.opendocument.text"
+    ) {
+        return FormatFamily::OfficeDocument;
     }
     if content_type == "image/svg+xml" {
         return FormatFamily::Svg;
@@ -243,6 +259,9 @@ pub fn classify_by_name(name: &OsStr) -> FormatFamily {
         // PDF
         "pdf" => FormatFamily::Pdf,
 
+        // Office documents with XML content stored in a ZIP container
+        "docx" | "odt" => FormatFamily::OfficeDocument,
+
         // Audio
         "flac" | "mp3" | "ogg" | "opus" | "m4a" | "aac" | "wav" | "wma" => FormatFamily::Audio,
 
@@ -255,7 +274,9 @@ pub fn classify_by_name(name: &OsStr) -> FormatFamily {
         "desktop" => FormatFamily::DesktopEntry,
 
         // Archives
-        "zip" | "tar" | "gz" | "bz2" | "xz" | "7z" | "rar" | "zst" => FormatFamily::Archive,
+        "zip" | "tar" | "gz" | "bz2" | "xz" | "7z" | "rar" | "zst" | "tgz" | "tbz2" | "txz" => {
+            FormatFamily::Archive
+        }
 
         _ => FormatFamily::Unknown,
     }

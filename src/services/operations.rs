@@ -70,6 +70,20 @@ pub struct RestoreRequest {
 }
 
 #[derive(Clone, Debug)]
+pub struct ExtractArchiveRequest {
+    pub id: OperationRequestId,
+    pub archive: Location,
+    pub destination: Location,
+}
+
+#[derive(Clone, Debug)]
+pub struct CompressArchiveRequest {
+    pub id: OperationRequestId,
+    pub sources: Vec<Location>,
+    pub output: Location,
+}
+
+#[derive(Clone, Debug)]
 pub enum OperationEvent {
     Renamed {
         request_id: OperationRequestId,
@@ -96,6 +110,15 @@ pub enum OperationEvent {
         completed: usize,
         total: usize,
         restored_location: Option<Location>,
+    },
+    ArchiveProgress {
+        request_id: OperationRequestId,
+        completed: usize,
+        total: usize,
+    },
+    ArchiveCompleted {
+        request_id: OperationRequestId,
+        refresh: Location,
     },
     Deleted {
         request_id: OperationRequestId,
@@ -136,4 +159,14 @@ pub trait OperationProvider {
     fn paste(&self, request: PasteRequest, emit: Rc<dyn Fn(OperationEvent)>) -> LoadHandle;
     fn delete(&self, request: DeleteRequest, emit: Rc<dyn Fn(OperationEvent)>) -> LoadHandle;
     fn restore(&self, request: RestoreRequest, emit: Rc<dyn Fn(OperationEvent)>) -> LoadHandle;
+    fn extract_archive(
+        &self,
+        request: ExtractArchiveRequest,
+        emit: Rc<dyn Fn(OperationEvent)>,
+    ) -> LoadHandle;
+    fn compress_archive(
+        &self,
+        request: CompressArchiveRequest,
+        emit: Rc<dyn Fn(OperationEvent)>,
+    ) -> LoadHandle;
 }

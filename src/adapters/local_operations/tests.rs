@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{error::Error, fs, time::SystemTime};
+use std::{error::Error, fs, sync::atomic::AtomicBool, time::SystemTime};
 
 use gtk::{gio, glib, prelude::*};
 
 use super::{
-    copy_recursively, deletion_error_summary, operation_error_summary, transfer_is_noop,
-    validated_child,
+    compress_archive, copy_recursively, deletion_error_summary, extract_archive,
+    operation_error_summary, transfer_is_noop, validated_child,
 };
 
 #[test]
@@ -93,6 +93,31 @@ fn recursive_copy_preserves_nested_directory_contents() -> Result<(), Box<dyn Er
     ));
     assert!(overwrite.is_ok());
     assert_eq!(fs::read(target.join("top.txt"))?, b"replacement");
+
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn archive_round_trip_preserves_selected_contents() -> Result<(), Box<dyn Error>> {
+    let unique = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("hermes-archive-test-{unique}"));
+    let source = root.join("source");
+    let archive = root.join("bundle.zip");
+    let extracted = root.join("extracted");
+    fs::create_dir_all(&source)?;
+    fs::write(source.join("note.txt"), b"hello from Hermes")?;
+    let cancelled = AtomicBool::new(false);
+
+    compress_archive(std::slice::from_ref(&source), &archive, &cancelled)?;
+    assert!(archive.is_file());
+    extract_archive(&archive, &extracted, &cancelled)?;
+    assert_eq!(
+        fs::read(extracted.join("source/note.txt"))?,
+        b"hello from Hermes"
+    );
 
     fs::remove_dir_all(root)?;
     Ok(())

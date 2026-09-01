@@ -29,6 +29,9 @@ pub(crate) enum ParseOperation {
     PreviewMedia,
     PreviewAudio,
     ExtractPdfText,
+    PreviewArchive,
+    PreviewOffice,
+    ExtractOfficeText,
 }
 
 impl ParseOperation {
@@ -45,6 +48,9 @@ impl ParseOperation {
             Self::PreviewMedia => "preview-media",
             Self::PreviewAudio => "preview-audio",
             Self::ExtractPdfText => "extract-pdf-text",
+            Self::PreviewArchive => "preview-archive",
+            Self::PreviewOffice => "preview-office",
+            Self::ExtractOfficeText => "extract-office-text",
         }
     }
 
@@ -53,7 +59,13 @@ impl ParseOperation {
             "result.webm"
         } else if self == Self::PreviewAudio {
             "result.ogg"
-        } else if self == Self::ExtractPdfText {
+        } else if matches!(
+            self,
+            Self::ExtractPdfText
+                | Self::PreviewArchive
+                | Self::PreviewOffice
+                | Self::ExtractOfficeText
+        ) {
             "result.txt"
         } else {
             "result.png"
@@ -136,7 +148,14 @@ pub(crate) fn parse(
     let result_path = output.path().join(operation.output_name());
     let metadata = fs::metadata(&result_path)
         .map_err(|_| "The preview renderer produced no output".to_owned())?;
-    let permits_empty_output = operation == ParseOperation::ExtractPdfText;
+    let text_output = matches!(
+        operation,
+        ParseOperation::ExtractPdfText
+            | ParseOperation::PreviewArchive
+            | ParseOperation::PreviewOffice
+            | ParseOperation::ExtractOfficeText
+    );
+    let permits_empty_output = text_output;
     if (!permits_empty_output && metadata.len() == 0) || metadata.len() > MAX_OUTPUT_BYTES {
         return Err("The preview renderer produced an invalid output size".to_owned());
     }
@@ -146,14 +165,15 @@ pub(crate) fn parse(
         ParseOperation::PreviewMedia
             | ParseOperation::PreviewAudio
             | ParseOperation::ExtractPdfText
+            | ParseOperation::PreviewArchive
+            | ParseOperation::PreviewOffice
+            | ParseOperation::ExtractOfficeText
     ) && !data.starts_with(b"\x89PNG\r\n\x1a\n")
     {
         return Err("The preview renderer produced invalid image data".to_owned());
     }
-    if operation == ParseOperation::ExtractPdfText
-        && (data.contains(&0) || std::str::from_utf8(&data).is_err())
-    {
-        return Err("The PDF text extractor produced invalid text".to_owned());
+    if text_output && (data.contains(&0) || std::str::from_utf8(&data).is_err()) {
+        return Err("The document text extractor produced invalid text".to_owned());
     }
     let (page, pages) = read_metadata(&output.path().join("result.meta"));
     Ok(ParseOutput { data, page, pages })

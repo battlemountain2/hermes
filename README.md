@@ -59,7 +59,7 @@ Strata is not yet available through Arch's package repositories. Download the ar
 Install the runtime libraries and optional video preview tools on Arch or Omarchy:
 
 ```bash
-sudo pacman -S --needed bubblewrap ffmpeg ffmpegthumbnailer fontconfig gst-plugins-good gtk4 gtksourceview5 poppler-glib
+sudo pacman -S --needed bubblewrap ffmpeg ffmpegthumbnailer fontconfig gst-plugins-good gtk4 gtksourceview5 libarchive poppler-glib
 ```
 
 Then verify, extract, and install the downloaded archive (replace the filename with the release you downloaded). The `gh attestation` check verifies the archive's signed GitHub Actions provenance:
@@ -208,7 +208,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test -q
 ```
 
-The last completed baseline is **173 passing tests** with strict Clippy clean. To run the current development build rather
+The last completed baseline is **182 passing tests** with strict Clippy clean. To run the current development build rather
 than an older desktop-installed copy:
 
 ```bash
@@ -233,12 +233,14 @@ The **Advanced Preview Registry** is complete in `src/services/formats.rs`. It c
 reports format family plus independent preview, thumbnail, and text-extractor capabilities. Local
 preview loading, quick-preview eligibility, thumbnails, preview labels/unavailable messages, and
 content-search eligibility now consume that registry. Sandbox operation selection remains outside
-the service layer. Opt-in content search supports PDF text through the existing Bubblewrap/Poppler
-sandbox. PDF work is cancellable and bounded to 32 documents per query, 32 MiB per input, and
-1 MiB of extracted text; the search UI reports extraction or limit notices without blocking GTK.
+the service layer. Opt-in content search supports PDF, DOCX, and ODT text through the Bubblewrap
+sandbox. Document work is cancellable and bounded to 32 documents per query, 32 MiB per input,
+and 1 MiB of extracted text; the search UI reports extraction or limit notices without blocking GTK.
 
-Next, extend the proven extractor boundary to office documents with the same cancellation and
-resource-limit guarantees, or move to archive/custom actions before returning for office support.
+Archive support includes sandboxed content listings, ZIP and compressed TAR creation, and safe
+extract-here/extract-to workflows with progress and cancellation. Configurable, argument-based
+context-menu actions live in `~/.config/hermes/actions.toml`; Hermes never passes them through a
+shell. See [`docs/custom-actions.md`](docs/custom-actions.md).
 
 Preserve these decisions while continuing:
 
@@ -252,8 +254,7 @@ Preserve these decisions while continuing:
 - preserve user changes in a dirty worktree and use `apply_patch` for source edits;
 - commit focused changes to `feat/ui-updates` (or branch as appropriate) and push to the private Hermes remote.
 
-After the preview registry: add archive/custom actions, remaining polish,
-then perform the coordinated Strata-to-Hermes application/package rename and release preparation.
+Next: perform the coordinated Strata-to-Hermes application/package rename and release preparation.
 
 ### Requirements
 
@@ -267,7 +268,7 @@ then perform the coordinated Strata-to-Hermes application/package rename and rel
 On Arch Linux:
 
 ```bash
-sudo pacman -S --needed base-devel rust bubblewrap fontconfig gtk4 gtksourceview5 poppler-glib
+sudo pacman -S --needed base-devel rust bubblewrap fontconfig gtk4 gtksourceview5 libarchive poppler-glib
 ```
 
 Run Strata:

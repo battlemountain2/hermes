@@ -68,6 +68,10 @@ impl PreviewProvider for LocalPreviewProvider {
                 },
                 Some(PreviewHandler::Audio | PreviewHandler::Video) => PreviewContent::Media,
                 Some(PreviewHandler::Image | PreviewHandler::Heif) => PreviewContent::Image,
+                Some(PreviewHandler::Archive | PreviewHandler::Office) => PreviewContent::Text {
+                    content: String::new(),
+                    truncated: false,
+                },
                 _ => PreviewContent::Unsupported,
             };
 
@@ -102,6 +106,17 @@ impl PreviewProvider for LocalPreviewProvider {
                         ) =>
                     {
                         PreviewContent::SandboxedMedia { data: output.data }
+                    }
+                    Ok(Ok(output))
+                        if matches!(
+                            operation,
+                            ParseOperation::PreviewArchive | ParseOperation::PreviewOffice
+                        ) =>
+                    {
+                        PreviewContent::Text {
+                            content: String::from_utf8_lossy(&output.data).into_owned(),
+                            truncated: output.data.len() >= request.text_byte_limit,
+                        }
                     }
                     Ok(Ok(output)) => PreviewContent::Rasterized { png: output.data },
                     Ok(Err(message)) => {
@@ -151,6 +166,8 @@ fn preview_operation(handler: PreviewHandler) -> Option<ParseOperation> {
         PreviewHandler::Pdf => Some(ParseOperation::PreviewPdf),
         PreviewHandler::Audio => Some(ParseOperation::PreviewAudio),
         PreviewHandler::Video => Some(ParseOperation::PreviewMedia),
+        PreviewHandler::Archive => Some(ParseOperation::PreviewArchive),
+        PreviewHandler::Office => Some(ParseOperation::PreviewOffice),
     }
 }
 

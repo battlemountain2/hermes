@@ -23,6 +23,7 @@ impl TextExtractionProvider for LocalTextExtractionProvider {
     ) -> Result<String, String> {
         let operation = match extractor {
             TextExtractor::Pdf => ParseOperation::ExtractPdfText,
+            TextExtractor::Office => ParseOperation::ExtractOfficeText,
             TextExtractor::PlainText => {
                 return Err("Direct text extraction does not require the sandbox".to_owned());
             }
@@ -34,8 +35,8 @@ impl TextExtractionProvider for LocalTextExtractionProvider {
             limit,
             &Cancellation::from_shared(cancelled),
         )
-        .map_err(|message| format!("Some PDF contents could not be searched: {message}"))?;
+        .map_err(|message| format!("Some document contents could not be searched: {message}"))?;
         String::from_utf8(output.data)
-            .map_err(|_| "The PDF text extractor returned invalid UTF-8".to_owned())
+            .map_err(|_| "The document text extractor returned invalid UTF-8".to_owned())
     }
 }

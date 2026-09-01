@@ -149,6 +149,22 @@ fn classifies_pdf_by_extension() {
 }
 
 #[test]
+fn classifies_office_documents() {
+    assert_eq!(
+        classify_by_name(OsStr::new("letter.docx")),
+        FormatFamily::OfficeDocument
+    );
+    assert_eq!(
+        classify_by_name(OsStr::new("notes.ODT")),
+        FormatFamily::OfficeDocument
+    );
+    assert_eq!(
+        classify_by_mime("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        FormatFamily::OfficeDocument
+    );
+}
+
+#[test]
 fn unknown_for_unrecognized_or_missing_extension() {
     assert_eq!(
         classify_by_name(OsStr::new("no-extension")),
@@ -240,12 +256,13 @@ fn quick_preview_supported_for_previewable_families() {
     assert!(FormatFamily::Pdf.supports_quick_preview());
     assert!(FormatFamily::Audio.supports_quick_preview());
     assert!(FormatFamily::Video.supports_quick_preview());
+    assert!(FormatFamily::Archive.supports_quick_preview());
+    assert!(FormatFamily::OfficeDocument.supports_quick_preview());
 }
 
 #[test]
 fn quick_preview_not_supported_for_non_previewable_families() {
     assert!(!FormatFamily::DesktopEntry.supports_quick_preview());
-    assert!(!FormatFamily::Archive.supports_quick_preview());
     assert!(!FormatFamily::Unknown.supports_quick_preview());
 }
 
@@ -258,6 +275,10 @@ fn searchable_text_for_text_families() {
     assert_eq!(
         FormatFamily::Svg.text_extractor(),
         Some(TextExtractor::PlainText)
+    );
+    assert_eq!(
+        FormatFamily::OfficeDocument.text_extractor(),
+        Some(TextExtractor::Office)
     );
 }
 
@@ -299,6 +320,10 @@ fn provides_display_labels_for_all_families() {
     assert_eq!(FormatFamily::Heif.display_label(), "HEIF Image");
     assert_eq!(FormatFamily::RawImage.display_label(), "Camera RAW");
     assert_eq!(FormatFamily::Pdf.display_label(), "PDF Document");
+    assert_eq!(
+        FormatFamily::OfficeDocument.display_label(),
+        "Office Document"
+    );
     assert_eq!(FormatFamily::Audio.display_label(), "Audio");
     assert_eq!(FormatFamily::Video.display_label(), "Video");
     assert_eq!(FormatFamily::DesktopEntry.display_label(), "Application");
@@ -339,6 +364,14 @@ fn preview_handlers_match_format_capabilities() {
     assert_eq!(
         FormatFamily::PlainText.preview_handler(),
         Some(PreviewHandler::Text)
+    );
+    assert_eq!(
+        FormatFamily::Archive.preview_handler(),
+        Some(PreviewHandler::Archive)
+    );
+    assert_eq!(
+        FormatFamily::OfficeDocument.preview_handler(),
+        Some(PreviewHandler::Office)
     );
     assert_eq!(FormatFamily::Unknown.preview_handler(), None);
 }

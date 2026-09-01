@@ -76,3 +76,26 @@ fn pdf_text_extraction_uses_a_text_output_inside_the_sandbox() {
     );
     assert!(arguments.iter().any(|argument| argument == "1048576"));
 }
+
+#[test]
+fn archive_and_office_operations_use_bounded_text_outputs() {
+    for (operation, argument) in [
+        (ParseOperation::PreviewArchive, "preview-archive"),
+        (ParseOperation::PreviewOffice, "preview-office"),
+        (ParseOperation::ExtractOfficeText, "extract-office-text"),
+    ] {
+        let command = sandbox_command(
+            Path::new("/tmp/strata"),
+            Path::new("/home/alice/Documents/input.bin"),
+            Path::new("/tmp/private-output"),
+            operation,
+            1_048_576,
+        );
+        let arguments = command
+            .get_args()
+            .map(|value| value.to_string_lossy())
+            .collect::<Vec<_>>();
+        assert!(arguments.iter().any(|value| value == argument));
+        assert!(arguments.iter().any(|value| value == "/output/result.txt"));
+    }
+}

@@ -15,6 +15,8 @@ use crate::services::TextExtractor;
 
 struct FixtureTextExtraction;
 
+struct FixtureOfficeTextExtraction;
+
 impl TextExtractionProvider for FixtureTextExtraction {
     fn extract_text(
         &self,
@@ -25,6 +27,19 @@ impl TextExtractionProvider for FixtureTextExtraction {
     ) -> Result<String, String> {
         assert_eq!(extractor, TextExtractor::Pdf);
         Ok("A phrase extracted safely from a PDF"[..byte_limit.min(36)].to_owned())
+    }
+}
+
+impl TextExtractionProvider for FixtureOfficeTextExtraction {
+    fn extract_text(
+        &self,
+        _path: &Path,
+        extractor: TextExtractor,
+        byte_limit: usize,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<String, String> {
+        assert_eq!(extractor, TextExtractor::Office);
+        Ok("Office text extracted safely"[..byte_limit.min(28)].to_owned())
     }
 }
 
@@ -235,5 +250,35 @@ fn background_index_searches_pdf_text_through_the_provider() {
     assert!(
         found,
         "the worker should search PDF text through its provider"
+    );
+}
+
+#[test]
+fn background_index_searches_office_text_through_the_provider() {
+    let unique = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("the system clock should be after the Unix epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("hermes-office-index-{unique}"));
+    fs::create_dir_all(&root).expect("the office search fixture should be created");
+    fs::write(root.join("letter.docx"), b"not parsed outside the provider")
+        .expect("the office fixture should be written");
+
+    let (search, events) = index_tree(root.clone(), Arc::new(FixtureOfficeTextExtraction));
+    search.query("content:\"office text\"");
+    let found = (0..30).any(|_| {
+        events.recv_timeout(Duration::from_millis(100)).is_ok_and(
+            |SearchEvent::Results { query, items, .. }| {
+                query == "content:\"office text\""
+                    && items.iter().any(|item| item.name == "letter.docx")
+            },
+        )
+    });
+
+    drop(search);
+    fs::remove_dir_all(root).expect("the office search fixture should be removed");
+    assert!(
+        found,
+        "the worker should search office text through its provider"
     );
 }

@@ -19,13 +19,13 @@ use super::{TextExtractor, capabilities_by_name};
 const RESULT_LIMIT: usize = 100;
 const PUBLISH_INTERVAL: Duration = Duration::from_millis(50);
 const MAX_CONTENT_FILE_SIZE: u64 = 1024 * 1024;
-const MAX_PDF_FILE_SIZE: u64 = 32 * 1024 * 1024;
-const MAX_PDF_EXTRACTIONS_PER_QUERY: usize = 32;
+const MAX_DOCUMENT_FILE_SIZE: u64 = 32 * 1024 * 1024;
+const MAX_DOCUMENT_EXTRACTIONS_PER_QUERY: usize = 32;
 
 struct ContentSearchContext<'a> {
     text_extraction: &'a dyn TextExtractionProvider,
     cancelled: &'a Arc<AtomicBool>,
-    pdf_extractions_remaining: &'a mut usize,
+    document_extractions_remaining: &'a mut usize,
     notice: &'a mut Option<String>,
 }
 
@@ -120,7 +120,7 @@ pub fn index_tree(
             let mut index = Vec::new();
             let mut query = String::new();
             let mut matches = Vec::<(i64, SearchItem)>::new();
-            let mut pdf_extractions_remaining = MAX_PDF_EXTRACTIONS_PER_QUERY;
+            let mut document_extractions_remaining = MAX_DOCUMENT_EXTRACTIONS_PER_QUERY;
             let mut notice = None;
             let mut last_publish = Instant::now();
             let walker = ignore::WalkBuilder::new(&root)
@@ -140,7 +140,7 @@ pub fn index_tree(
                 let mut content_search = ContentSearchContext {
                     text_extraction: text_extraction.as_ref(),
                     cancelled: &worker_cancelled,
-                    pdf_extractions_remaining: &mut pdf_extractions_remaining,
+                    document_extractions_remaining: &mut document_extractions_remaining,
                     notice: &mut notice,
                 };
                 apply_pending_queries(
@@ -202,12 +202,12 @@ pub fn index_tree(
                             .map(|SearchCommand::Query(query)| query)
                             .last()
                             .unwrap_or(next);
-                        pdf_extractions_remaining = MAX_PDF_EXTRACTIONS_PER_QUERY;
+                        document_extractions_remaining = MAX_DOCUMENT_EXTRACTIONS_PER_QUERY;
                         notice = None;
                         let mut content_search = ContentSearchContext {
                             text_extraction: text_extraction.as_ref(),
                             cancelled: &worker_cancelled,
-                            pdf_extractions_remaining: &mut pdf_extractions_remaining,
+                            document_extractions_remaining: &mut document_extractions_remaining,
                             notice: &mut notice,
                         };
                         matches = score_index(&index, &query, &mut content_search);
@@ -244,7 +244,7 @@ fn apply_pending_queries(
         return;
     };
     *query = next;
-    *content_search.pdf_extractions_remaining = MAX_PDF_EXTRACTIONS_PER_QUERY;
+    *content_search.document_extractions_remaining = MAX_DOCUMENT_EXTRACTIONS_PER_QUERY;
     *content_search.notice = None;
     *matches = score_index(index, query, content_search);
     publish(
@@ -307,13 +307,13 @@ fn publish(
 /// boundaries. Exact substrings rank ahead of looser fuzzy matches.
 #[cfg(test)]
 pub fn fuzzy_score(item: &SearchItem, query: &str, _root: &std::path::Path) -> Option<i64> {
-    let mut pdf_extractions_remaining = 0;
+    let mut document_extractions_remaining = 0;
     let mut notice = None;
     let cancelled = Arc::new(AtomicBool::new(false));
     let mut content_search = ContentSearchContext {
         text_extraction: &UnavailableTextExtraction,
         cancelled: &cancelled,
-        pdf_extractions_remaining: &mut pdf_extractions_remaining,
+        document_extractions_remaining: &mut document_extractions_remaining,
         notice: &mut notice,
     };
     score_item(
@@ -498,19 +498,19 @@ fn search_file_content(
     let extractor = capabilities_by_name(item.path.as_os_str()).text_extractor?;
     let content = match extractor {
         TextExtractor::PlainText => read_plain_text(&item.path, metadata.len())?,
-        TextExtractor::Pdf => {
-            if metadata.len() > MAX_PDF_FILE_SIZE {
+        TextExtractor::Pdf | TextExtractor::Office => {
+            if metadata.len() > MAX_DOCUMENT_FILE_SIZE {
                 return None;
             }
-            if *content_search.pdf_extractions_remaining == 0 {
+            if *content_search.document_extractions_remaining == 0 {
                 content_search.notice.get_or_insert_with(|| {
                     format!(
-                        "PDF content search is limited to {MAX_PDF_EXTRACTIONS_PER_QUERY} documents per query"
+                        "Document content search is limited to {MAX_DOCUMENT_EXTRACTIONS_PER_QUERY} files per query"
                     )
                 });
                 return None;
             }
-            *content_search.pdf_extractions_remaining -= 1;
+            *content_search.document_extractions_remaining -= 1;
             match content_search.text_extraction.extract_text(
                 &item.path,
                 extractor,
@@ -557,7 +557,7 @@ impl TextExtractionProvider for UnavailableTextExtraction {
         _byte_limit: usize,
         _cancelled: Arc<AtomicBool>,
     ) -> Result<String, String> {
-        Err("PDF text extraction is unavailable".to_owned())
+        Err("Document text extraction is unavailable".to_owned())
     }
 }
 
