@@ -3751,7 +3751,7 @@ pub(super) fn install_folder_context_menu(
     let weak = Rc::downgrade(state);
     let file_folder = location.clone();
     let file_popover = popover.downgrade();
-    let file_parent = parent.root().and_downcast::<gtk::Window>();
+    let file_parent_widget = parent.clone();
     new_file.connect_clicked(move |_| {
         if let Some(popover) = file_popover.upgrade() {
             popover.popdown();
@@ -3759,7 +3759,7 @@ pub(super) fn install_folder_context_menu(
         let Some(state) = weak.upgrade() else {
             return;
         };
-        let Some(window) = file_parent.clone() else {
+        let Some(window) = file_parent_widget.root().and_downcast::<gtk::Window>() else {
             return;
         };
         let dialog = gtk::Dialog::builder()
