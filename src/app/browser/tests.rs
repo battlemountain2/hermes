@@ -693,6 +693,43 @@ fn preview_and_open_are_distinct_file_actions() {
 }
 
 #[test]
+fn reveal_selects_a_file_after_its_parent_finishes_loading() {
+    let browser = Browser::new(Rc::new(FilePreviewSource));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let observed = events.clone();
+    browser.observe(move |event| observed.borrow_mut().push(event));
+
+    browser.reveal(Location::local("/fixture/example.conf"));
+
+    assert_eq!(browser.active_location(), Some(Location::local("/fixture")));
+    assert_eq!(
+        browser.focused_entry().map(|entry| entry.location),
+        Some(Location::local("/fixture/example.conf"))
+    );
+    assert!(events.borrow().iter().any(|event| matches!(
+        event,
+        BrowserEvent::SelectionSetChanged {
+            depth: 0,
+            focused: 0,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn reveal_selects_an_item_when_its_parent_is_already_open() {
+    let browser = Browser::new(Rc::new(FilePreviewSource));
+    browser.navigate(Location::local("/fixture"));
+
+    browser.reveal(Location::local("/fixture/example.conf"));
+
+    assert_eq!(
+        browser.focused_entry().map(|entry| entry.location),
+        Some(Location::local("/fixture/example.conf"))
+    );
+}
+
+#[test]
 fn keyboard_selection_and_activation_descend_without_the_ui() {
     let browser = Browser::new(Rc::new(FakeFileSource));
     let events = Rc::new(RefCell::new(Vec::new()));

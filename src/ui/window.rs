@@ -304,9 +304,7 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
             search_controller.navigate(location);
             return;
         }
-        if let Some(parent) = item.path.parent() {
-            search_controller.navigate(Location::local(parent));
-        }
+        search_controller.reveal(location.clone());
         if search_preferences.search_open_files_directly() {
             search_controller.open_location(location);
         } else {

@@ -84,6 +84,24 @@ impl NavigationState {
         self.restore(NavigationPath::from_locations(vec![location]), [request_id]);
     }
 
+    pub fn set_selection_target(&mut self, depth: usize, location: Location) -> bool {
+        let Some(column) = self.columns.get_mut(depth) else {
+            return false;
+        };
+        column.selection_target = Some(location);
+        true
+    }
+
+    pub fn select_location(&mut self, depth: usize, location: &Location) -> Option<usize> {
+        let position = self
+            .columns
+            .get(depth)?
+            .entries
+            .iter()
+            .position(|entry| &entry.location == location)?;
+        self.select(depth, position).then_some(position)
+    }
+
     pub fn descend(
         &mut self,
         parent_depth: usize,

@@ -93,7 +93,7 @@ impl SearchDialog {
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 18);
         footer.add_css_class("search-footer");
         let navigation = gtk::Label::new(Some("↑↓  navigate"));
-        let open = gtk::Label::new(Some("↵  open"));
+        let open = gtk::Label::new(Some("↵  open / reveal"));
         navigation.add_css_class("search-hint");
         open.add_css_class("search-hint");
         footer.append(&navigation);

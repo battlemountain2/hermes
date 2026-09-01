@@ -246,6 +246,53 @@ impl Browser {
         self.start_load(0, location, request_id);
     }
 
+    /// Opens an item's parent directory and selects the item once its directory batch arrives.
+    pub fn reveal(self: &Rc<Self>, location: Location) {
+        let Some(parent) = location.parent() else {
+            self.navigate(location);
+            return;
+        };
+        if self.active_location().as_ref() == Some(&parent) {
+            let selected = self.active_depth().and_then(|depth| {
+                self.state
+                    .borrow_mut()
+                    .select_location(depth, &location)
+                    .map(|position| (depth, position))
+            });
+            if let Some((depth, position)) = selected {
+                self.emit(BrowserEvent::FocusChanged {
+                    depth,
+                    position: Some(position),
+                });
+            }
+            return;
+        }
+
+        self.close_peek();
+        self.loads.borrow_mut().clear();
+        self.monitors.borrow_mut().clear();
+        let request_id = self.new_request_id();
+        let selection_set = {
+            let mut state = self.state.borrow_mut();
+            state.navigate(parent.clone(), request_id);
+            state.set_selection_target(0, location)
+        };
+        debug_assert!(
+            selection_set,
+            "a newly navigated column should accept a target"
+        );
+        self.emit(BrowserEvent::Reset);
+        self.emit(BrowserEvent::ColumnAdded {
+            depth: 0,
+            location: parent.clone(),
+        });
+        self.emit(BrowserEvent::FocusChanged {
+            depth: 0,
+            position: None,
+        });
+        self.start_load(0, parent, request_id);
+    }
+
     pub fn descend(self: &Rc<Self>, parent_depth: usize, location: Location) {
         if self.is_open_child(parent_depth, &location) {
             return;
