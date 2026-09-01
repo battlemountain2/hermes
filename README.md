@@ -196,11 +196,11 @@ The architectural boundaries and performance workflow are documented in [`docs/a
 
 This checkout is the standalone, private **Hermes** project derived from Strata. The repository is
 `battlemountain2/hermes`, and active development currently happens on
-`feat/navigation-trails`. The Rust package, executable, application ID, resource paths, cache paths,
+`feat/ui-updates`. The Rust package, executable, application ID, resource paths, cache paths,
 and some user-facing strings intentionally still use `strata`; perform that rename later as one
 coordinated release task rather than changing identifiers piecemeal.
 
-Current verified handoff point: commit `d3567b3` (`feat: add selectable Maple Mono font`). The
+Current verified handoff point: commit `618091d` (`feat(preview): auto-fit image preview on initial load`). The
 working tree was clean when this section was written. The standard verification baseline is:
 
 ```bash
@@ -225,9 +225,10 @@ operations and Open With, clipboard status/details, folder-state and album-art t
 structured and mouse-configurable search filters, opt-in bounded content search, broader text
 previews, and selectable Maple Mono/JetBrains Mono fonts. Search content reads run off the GTK
 thread, skip symlinks and binary-looking files, and cap direct text reads at 1 MiB.
+We also recently added an optional folder tree panel (configurable in Settings), image preview click-and-drag panning, and image auto-fit zoom scaling. The buggy list-row info buttons were completely removed to simplify the UI.
 
 The active phase is **Advanced Preview Registry**. Start by centralizing format capability
-classification; no implementation for this phase was left partially applied. Classification is
+classification; no implementation for this phase was left partially applied (though some foundational work may exist in `src/services/formats.rs`). Classification is
 currently duplicated across:
 
 - `src/services/preview.rs`: `content_family()` and `has_plain_text_extension()`;
@@ -253,9 +254,9 @@ Preserve these decisions while continuing:
 - do not add dual-pane mode, an embedded terminal, or remote providers yet;
 - the optional folder-tree panel belongs in Settings, not permanently in the main layout;
 - preserve user changes in a dirty worktree and use `apply_patch` for source edits;
-- commit focused changes to `feat/navigation-trails` and push to the private Hermes remote.
+- commit focused changes to `feat/ui-updates` (or branch as appropriate) and push to the private Hermes remote.
 
-After the preview registry: add archive/custom actions, the optional folder tree, remaining polish,
+After the preview registry: add archive/custom actions, remaining polish,
 then perform the coordinated Strata-to-Hermes application/package rename and release preparation.
 
 ### Requirements
