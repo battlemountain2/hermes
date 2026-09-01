@@ -3,9 +3,11 @@
 mod blur;
 mod browser;
 mod browser_modes;
+pub mod folder_tree;
 mod motion;
-mod preview;
-mod search;
+pub mod preview;
+pub mod recent_folders;
+pub mod search;
 mod settings;
 mod theme;
 mod thumbnail;

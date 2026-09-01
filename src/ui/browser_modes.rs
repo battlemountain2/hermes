@@ -1082,8 +1082,12 @@ fn build_grid_pane(
             depth,
             Some((source_for_setup.clone(), filtered_for_setup.clone())),
         );
-        item.set_child(Some(&card));
-        register_bound_mode_item(&bound_items_for_setup, item, &card);
+
+        let overlay = gtk::Overlay::new();
+        overlay.set_child(Some(&card));
+
+        item.set_child(Some(&overlay));
+        register_bound_mode_item(&bound_items_for_setup, item, &overlay);
     });
     let browser_for_bind = Rc::downgrade(&browser);
     let source_for_bind = model.clone();
@@ -1094,7 +1098,10 @@ fn build_grid_pane(
         let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
             return;
         };
-        let Some(card) = item.child().and_downcast::<gtk::Box>() else {
+        let Some(overlay) = item.child().and_downcast::<gtk::Overlay>() else {
+            return;
+        };
+        let Some(card) = overlay.child().and_downcast::<gtk::Box>() else {
             return;
         };
         let Some(centered) = card.first_child().and_downcast::<gtk::CenterBox>() else {
@@ -1117,7 +1124,7 @@ fn build_grid_pane(
         let entry = browser_for_bind.upgrade().and_then(|browser| {
             source_position.and_then(|position| browser.entry_at(depth, position))
         });
-        if let Some(entry) = entry {
+        if let Some(entry) = &entry {
             label.set_visible(true);
             field.set_visible(false);
             set_mode_cut_style(&card, cuts_for_bind.borrow().contains(&entry.location));
@@ -1125,8 +1132,8 @@ fn build_grid_pane(
             label.set_tooltip_text(Some(&entry.display_name));
             super::thumbnail::set_thumbnail_or_icon(
                 &icon,
-                &entry,
-                super::browser::entry_icon(&entry),
+                entry,
+                super::browser::entry_icon(entry),
                 26,
                 thumbnail_size_for_bind.get(),
             );

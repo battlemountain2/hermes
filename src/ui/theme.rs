@@ -77,6 +77,12 @@ struct Preferences {
     search_open_files_directly: bool,
     #[serde(default)]
     show_recent_files: bool,
+    #[serde(default = "default_enabled")]
+    show_recent_folders: bool,
+    #[serde(default)]
+    show_folder_tree: bool,
+    #[serde(default = "default_recent_folders_limit")]
+    recent_folders_limit: u32,
     #[serde(default = "default_browser_mode")]
     browser_mode: String,
     #[serde(default = "default_browser_density")]
@@ -93,6 +99,9 @@ impl Default for Preferences {
             single_click_previews: true,
             search_open_files_directly: false,
             show_recent_files: false,
+            show_recent_folders: true,
+            show_folder_tree: false,
+            recent_folders_limit: default_recent_folders_limit(),
             browser_mode: default_browser_mode(),
             browser_density: default_browser_density(),
             interface_font: default_interface_font(),
@@ -102,6 +111,10 @@ impl Default for Preferences {
 
 fn default_enabled() -> bool {
     true
+}
+
+fn default_recent_folders_limit() -> u32 {
+    4
 }
 
 fn default_browser_mode() -> String {
@@ -207,6 +220,33 @@ impl ThemeManager {
 
     pub fn set_show_recent_files(&self, enabled: bool) {
         self.preferences.borrow_mut().show_recent_files = enabled;
+        self.save_preferences();
+    }
+
+    pub fn show_recent_folders(&self) -> bool {
+        self.preferences.borrow().show_recent_folders
+    }
+
+    pub fn set_show_recent_folders(&self, show: bool) {
+        self.preferences.borrow_mut().show_recent_folders = show;
+        self.save_preferences();
+    }
+
+    pub fn show_folder_tree(&self) -> bool {
+        self.preferences.borrow().show_folder_tree
+    }
+
+    pub fn set_show_folder_tree(&self, show: bool) {
+        self.preferences.borrow_mut().show_folder_tree = show;
+        self.save_preferences();
+    }
+
+    pub fn recent_folders_limit(&self) -> u32 {
+        self.preferences.borrow().recent_folders_limit
+    }
+
+    pub fn set_recent_folders_limit(&self, limit: u32) {
+        self.preferences.borrow_mut().recent_folders_limit = limit;
         self.save_preferences();
     }
 

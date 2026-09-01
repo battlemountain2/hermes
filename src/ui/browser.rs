@@ -14,9 +14,9 @@ use gtk::{gio, glib, prelude::*};
 
 use crate::{
     app::{Browser, BrowserEvent},
-    model::{EntryKind, FileEntry, Location, SortDirection, SortKey},
+    model::{EntryKind, FileEntry, Location, MetadataValue, SortDirection, SortKey},
     services::{
-        FileSource, OperationProvider, PreviewContent, content_family, has_plain_text_extension,
+        FileSource, FormatFamily, OperationProvider, classify_by_mime, classify_by_name,
         validate_basename,
     },
 };
@@ -426,6 +426,10 @@ impl BrowserView {
         self.state
             .browser
             .navigate(Location::local(path.as_ref().to_path_buf()));
+    }
+
+    pub fn navigate_location(&self, location: Location) {
+        self.state.browser.navigate(location);
     }
 
     pub fn browser(&self) -> Rc<Browser> {
@@ -2816,6 +2820,7 @@ impl ViewState {
             let size = gtk::Label::new(None);
             size.add_css_class("file-size");
             size.set_xalign(1.0);
+            
             let chevron = crate::assets::primary_icon(crate::assets::icons::CHEVRON_RIGHT, 15);
             chevron.add_css_class("file-chevron");
             row.append(&icon);
@@ -2942,7 +2947,7 @@ impl ViewState {
 
             let selection_click = gtk::GestureClick::new();
             selection_click.set_button(1);
-            selection_click.set_propagation_phase(gtk::PropagationPhase::Capture);
+            selection_click.set_propagation_phase(gtk::PropagationPhase::Bubble);
             let clicked_item = item.clone();
             let selection_for_click = selection_for_rows.clone();
             let selection_anchor_for_click = mouse_selection_anchor.clone();
@@ -3044,7 +3049,10 @@ impl ViewState {
             let Some(size) = spacer.next_sibling().and_downcast::<gtk::Label>() else {
                 return;
             };
-            let Some(chevron) = size.next_sibling().and_downcast::<gtk::Image>() else {
+            let Some(info_button) = size.next_sibling().and_downcast::<gtk::MenuButton>() else {
+                return;
+            };
+            let Some(chevron) = info_button.next_sibling().and_downcast::<gtk::Image>() else {
                 return;
             };
             label.set_label(model_display_name(&value.string()));
@@ -3080,7 +3088,7 @@ impl ViewState {
                 icon.set_opacity(0.72);
                 chevron.set_visible(false);
             }
-            let size_text = entry
+            let size_text = entry.as_ref()
                 .filter(|entry| !entry.is_directory())
                 .and_then(|entry| match entry.size {
                     crate::model::MetadataValue::Known(bytes) => Some(format_file_size(bytes)),
@@ -4310,6 +4318,68 @@ fn entry_responds_to_single_click(entry: &FileEntry, previews_enabled: bool) -> 
     entry.is_directory() || (previews_enabled && entry_supports_quick_preview(entry))
 }
 
+pub(super) fn build_info_popover_content(entry: &FileEntry) -> gtk::Box {
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    box_.add_css_class("info-popover");
+
+    let add_row = |label: &str, value: &str| {
+        let title = gtk::Label::builder()
+            .label(label)
+            .halign(gtk::Align::Start)
+            .css_classes(["info-popover-label"])
+            .build();
+        let content = gtk::Label::builder()
+            .label(value)
+            .halign(gtk::Align::Start)
+            .css_classes(["info-popover-value"])
+            .selectable(true)
+            .wrap(true)
+            .max_width_chars(40)
+            .build();
+        let row = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        row.append(&title);
+        row.append(&content);
+        box_.append(&row);
+    };
+
+    add_row("Name", &entry.display_name);
+
+    if !entry.is_directory() {
+        if let MetadataValue::Known(bytes) = entry.size {
+            add_row("Size", &format_file_size(bytes));
+        }
+    }
+
+    if let MetadataValue::Known(seconds) = entry.modified_unix_seconds {
+        if let Ok(date) = glib::DateTime::from_unix_local(seconds) {
+            if let Ok(formatted) = date.format("%Y-%m-%d %H:%M") {
+                add_row("Modified", &formatted.to_string());
+            }
+        }
+    }
+
+    if !entry.is_directory() {
+        let (content_type, _) = gio::content_type_guess(Some(Path::new(&entry.native_name)), None::<&[u8]>);
+        let mut family = classify_by_mime(&content_type);
+        if family == FormatFamily::Unknown {
+            if gio::content_type_is_a(&content_type, "text/plain") {
+                family = FormatFamily::PlainText;
+            } else {
+                family = classify_by_name(&entry.native_name);
+            }
+        }
+        let type_desc = gio::content_type_get_description(&content_type);
+        add_row("Type", &type_desc);
+        add_row("Format", family.display_label());
+    }
+
+    if let Some(parent) = entry.location.parent() {
+        add_row("Location", &parent.display_path());
+    }
+
+    box_
+}
+
 pub(super) fn entry_supports_quick_preview(entry: &FileEntry) -> bool {
     if !matches!(entry.kind, EntryKind::File | EntryKind::FileSymbolicLink) {
         return false;
@@ -4317,9 +4387,15 @@ pub(super) fn entry_supports_quick_preview(entry: &FileEntry) -> bool {
 
     let (content_type, _) =
         gio::content_type_guess(Some(Path::new(&entry.native_name)), None::<&[u8]>);
-    !matches!(content_family(&content_type), PreviewContent::Unsupported)
-        || gio::content_type_is_a(&content_type, "text/plain")
-        || has_plain_text_extension(&entry.native_name)
+    let mut family = classify_by_mime(&content_type);
+    if family == FormatFamily::Unknown {
+        if gio::content_type_is_a(&content_type, "text/plain") {
+            family = FormatFamily::PlainText;
+        } else {
+            family = classify_by_name(&entry.native_name);
+        }
+    }
+    family.supports_quick_preview()
 }
 
 struct TrashSummary {

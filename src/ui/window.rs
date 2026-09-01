@@ -11,7 +11,7 @@ use std::{
 use gtk::{gio, glib, prelude::*};
 
 use crate::{
-    adapters::{LocalFileSource, LocalOperationProvider, LocalPreviewProvider, LocalTrailStore},
+    adapters::{RoutedFileSource, LocalOperationProvider, LocalPreviewProvider, LocalTrailStore},
     app::{Browser, BrowserEvent, Trails},
     model::{
         EntryKind, FileEntry, Location, MetadataValue, Trail, TrailBrowserDensity,
@@ -33,7 +33,6 @@ use super::{
 const SIDEBAR_WIDTH: i32 = 208;
 const MIN_SIDEBAR_WIDTH: i32 = 176;
 const SIDEBAR_TRANSITION: Duration = Duration::from_millis(300);
-type RecentHandler = Rc<dyn Fn(&str)>;
 
 pub fn present(application: &gtk::Application) {
     present_location(application, None);
@@ -79,7 +78,7 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         .default_height(760)
         .build();
 
-    let browser = BrowserView::new(Rc::new(LocalFileSource), PeekBehavior::default());
+    let browser = BrowserView::new(Rc::new(RoutedFileSource::new()), PeekBehavior::default());
     let initial_view = trails.active_view().unwrap_or_default();
     browser.set_view_mode(browser_mode(initial_view.browser_mode));
     browser.set_density(browser_density(initial_view.density));
@@ -241,7 +240,20 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     }));
     sidebar.widget.set_size_request(MIN_SIDEBAR_WIDTH, -1);
     content.set_start_child(Some(&sidebar.widget));
-    content.set_end_child(Some(&browser.widget()));
+
+    let tree_paned = gtk::Paned::new(gtk::Orientation::Horizontal);
+    tree_paned.set_wide_handle(false);
+    tree_paned.set_shrink_start_child(false);
+    tree_paned.set_resize_start_child(false);
+    tree_paned.set_position(220);
+    
+    let folder_tree = super::folder_tree::build_folder_tree(browser.clone());
+    folder_tree.set_visible(theme_manager.show_folder_tree());
+    
+    tree_paned.set_start_child(Some(&folder_tree));
+    tree_paned.set_end_child(Some(&browser.widget()));
+    
+    content.set_end_child(Some(&tree_paned));
     let animation_generation = Rc::new(Cell::new(0));
     let sidebar_animating = Rc::new(Cell::new(false));
     let constrained_content = content.clone();
@@ -326,17 +338,6 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     });
     let search_dialog = SearchDialog::new(activate_search_result, dismiss_search);
     window_overlay.add_overlay(&search_dialog.widget());
-    let recent_search = search_dialog.clone();
-    let recent_search_button = search_button.clone();
-    let recent_search_root = blurred_root.clone();
-    sidebar
-        .state
-        .recent_handler
-        .replace(Some(Rc::new(move |query| {
-            recent_search_button.add_css_class("active");
-            recent_search_root.set_blurred(true);
-            recent_search.show_query(home_directory(), query);
-        })));
     let shown_search = search_dialog.clone();
     let search_browser = controller.clone();
     let search_blurred_root = blurred_root.clone();
@@ -375,9 +376,14 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     application.set_accels_for_action("win.search", &["<Control>k"]);
 
     let weak_sidebar = Rc::downgrade(&sidebar.state);
+    let weak_folder_tree = folder_tree.downgrade();
+    let theme_for_refresh = theme_manager.clone();
     let refresh_sidebar: Rc<dyn Fn()> = Rc::new(move || {
         if let Some(sidebar) = weak_sidebar.upgrade() {
             sidebar.rebuild();
+        }
+        if let Some(folder_tree) = weak_folder_tree.upgrade() {
+            folder_tree.set_visible(theme_for_refresh.show_folder_tree());
         }
     });
     let settings_layer = super::settings::build_layer(
@@ -977,7 +983,7 @@ struct SidebarState {
     pinned_places: RefCell<Vec<(Location, String)>>,
     place_rows: RefCell<Vec<(Location, gtk::Button)>>,
     theme_manager: Rc<ThemeManager>,
-    recent_handler: Rc<RefCell<Option<RecentHandler>>>,
+    recent_folders: Rc<RefCell<crate::ui::recent_folders::RecentFolders>>,
 }
 
 struct SidebarView {
@@ -1017,6 +1023,17 @@ impl SidebarState {
                     {
                         self.append_reorderable_place(id, icon, name, Location::local(path));
                     }
+                }
+            }
+        }
+
+        if self.theme_manager.show_recent_folders() {
+            let folders: Vec<_> = self.recent_folders.borrow().iter().cloned().collect();
+            if !folders.is_empty() {
+                self.append_separator();
+                self.append_heading("RECENT FOLDERS");
+                for location in folders {
+                    self.append_recent_folder_place(&location);
                 }
             }
         }
@@ -1256,14 +1273,13 @@ impl SidebarState {
     fn append_recent_place(&self, name: &str, query: &'static str) {
         let row = sidebar_button(crate::assets::icons::DOCUMENTS, name);
         row.set_tooltip_text(Some(&format!("Files {query}")));
-        let handler = self.recent_handler.clone();
         let sidebar = self.widget.clone();
         let selected_row = row.clone();
+        let view = self.view.clone();
         row.connect_clicked(move |_| {
             select_sidebar_row(&sidebar, &selected_row);
-            if let Some(handler) = handler.borrow().as_ref() {
-                handler(query);
-            }
+            let uri = format!("search://{query}");
+            view.navigate_location(Location::uri(&uri));
         });
         self.widget.append(&row);
     }
@@ -1528,6 +1544,90 @@ impl SidebarState {
         row.add_controller(context);
     }
 
+    fn append_recent_folder_place(self: &Rc<Self>, location: &Location) {
+        let name = location.display_name();
+        let row = self.append_place(crate::assets::icons::FOLDER, &name, location.clone());
+        let menu = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        menu.add_css_class("folder-context-menu");
+        
+        let pin = sidebar_context_option(crate::assets::icons::PIN, "Pin to sidebar", false);
+        let remove = sidebar_context_option(crate::assets::icons::X, "Remove from recent", false);
+        let clear = sidebar_context_option(crate::assets::icons::TRASH, "Clear all recent", true);
+        clear.add_css_class("danger");
+        let properties = sidebar_context_option(crate::assets::icons::INFO, "Properties", false);
+        
+        menu.append(&pin);
+        menu.append(&remove);
+        menu.append(&clear);
+        menu.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        menu.append(&properties);
+        
+        let popover = gtk::Popover::builder()
+            .child(&menu)
+            .autohide(true)
+            .has_arrow(false)
+            .build();
+        popover.add_css_class("folder-context-popover");
+        popover.set_parent(&row);
+        
+        let weak_state = Rc::downgrade(self);
+        let recent_location = location.clone();
+        let pin_name = name.clone();
+        let pin_popover = popover.downgrade();
+        pin.connect_clicked(move |_| {
+            if let Some(popover) = pin_popover.upgrade() { popover.popdown(); }
+            if let Some(state) = weak_state.upgrade() {
+                state.pin_location(recent_location.clone(), pin_name.clone());
+            }
+        });
+        
+        let weak_state = Rc::downgrade(self);
+        let remove_location = location.clone();
+        let remove_popover = popover.downgrade();
+        remove.connect_clicked(move |_| {
+            if let Some(popover) = remove_popover.upgrade() { popover.popdown(); }
+            if let Some(state) = weak_state.upgrade() {
+                state.recent_folders.borrow_mut().remove(&remove_location);
+                state.rebuild();
+            }
+        });
+        
+        let weak_state = Rc::downgrade(self);
+        let clear_popover = popover.downgrade();
+        clear.connect_clicked(move |_| {
+            if let Some(popover) = clear_popover.upgrade() { popover.popdown(); }
+            if let Some(state) = weak_state.upgrade() {
+                state.recent_folders.borrow_mut().clear();
+                state.rebuild();
+            }
+        });
+        
+        let properties_view = self.view.clone();
+        let properties_location = location.clone();
+        let properties_popover = popover.downgrade();
+        properties.connect_clicked(move |_| {
+            if let Some(popover) = properties_popover.upgrade() { popover.popdown(); }
+            properties_view.show_location_properties(&properties_location);
+        });
+
+        let context = gtk::GestureClick::new();
+        context.set_button(gtk::gdk::ffi::GDK_BUTTON_SECONDARY as u32);
+        let weak_popover = popover.downgrade();
+        context.connect_pressed(move |gesture, _, x, y| {
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            if let Some(popover) = weak_popover.upgrade() {
+                popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+                    x.round() as i32,
+                    y.round() as i32,
+                    1,
+                    1,
+                )));
+                popover.popup();
+            }
+        });
+        row.add_controller(context);
+    }
+
     fn append_place(&self, icon: &str, name: &str, location: Location) -> gtk::Button {
         let row = sidebar_button(icon, name);
         row.set_tooltip_text(Some(&location.display_path()));
@@ -1692,6 +1792,7 @@ fn build_sidebar(view: BrowserView, theme_manager: Rc<ThemeManager>) -> SidebarV
         .build();
     scroller.add_css_class("sidebar-scroll");
     let volume_monitor = gio::VolumeMonitor::get();
+    let recent_folders = Rc::new(RefCell::new(crate::ui::recent_folders::RecentFolders::load()));
     let state = Rc::new(SidebarState {
         widget,
         browser: view.browser(),
@@ -1701,13 +1802,27 @@ fn build_sidebar(view: BrowserView, theme_manager: Rc<ThemeManager>) -> SidebarV
         pinned_places: RefCell::new(load_pinned_places()),
         place_rows: RefCell::new(Vec::new()),
         theme_manager,
-        recent_handler: Rc::new(RefCell::new(None)),
+        recent_folders,
     });
 
     let weak = Rc::downgrade(&state);
-    state.browser.observe(move |_| {
+    state.browser.observe(move |event| {
         if let Some(state) = weak.upgrade() {
-            state.sync_active_place();
+            match event {
+                BrowserEvent::ColumnAdded { .. } | BrowserEvent::ColumnsTruncated { .. } => {
+                    if state.theme_manager.show_recent_folders() {
+                        if let Some(active_location) = state.browser.active_location() {
+                            let limit = state.theme_manager.recent_folders_limit() as usize;
+                            state.recent_folders.borrow_mut().record(&active_location, limit);
+                            state.rebuild();
+                        }
+                    }
+                    state.sync_active_place();
+                }
+                _ => {
+                    state.sync_active_place();
+                }
+            }
         }
     });
 

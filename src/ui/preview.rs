@@ -13,8 +13,8 @@ use sourceview5::prelude::*;
 use crate::{
     model::{FileEntry, MetadataValue},
     services::{
-        LoadHandle, Preview, PreviewContent, PreviewEvent, PreviewProvider, PreviewRequest,
-        PreviewRequestId,
+        FormatFamily, LoadHandle, Preview, PreviewContent, PreviewEvent, PreviewProvider,
+        PreviewRequest, PreviewRequestId, classify_by_mime, classify_by_name,
     },
 };
 
@@ -418,13 +418,74 @@ impl PreviewState {
                 let bytes = glib::Bytes::from_owned(png);
                 match gtk::gdk::Texture::from_bytes(&bytes) {
                     Ok(texture) => {
+                        let width = texture.width() as f64;
+                        let height = texture.height() as f64;
+                        
                         let picture = gtk::Picture::for_paintable(&texture);
                         picture.add_css_class("preview-image");
                         picture.set_can_shrink(true);
-                        picture.set_content_fit(gtk::ContentFit::Contain);
+                        picture.set_content_fit(gtk::ContentFit::Fill);
                         picture.set_hexpand(true);
                         picture.set_vexpand(true);
-                        self.content.append(&picture);
+                        picture.set_halign(gtk::Align::Center);
+                        picture.set_valign(gtk::Align::Center);
+                        
+                        let scroll = gtk::ScrolledWindow::builder()
+                            .child(&picture)
+                            .hscrollbar_policy(gtk::PolicyType::Automatic)
+                            .vscrollbar_policy(gtk::PolicyType::Automatic)
+                            .hexpand(true)
+                            .vexpand(true)
+                            .build();
+                        
+                        let zoom_level = Rc::new(Cell::new(1.0f64));
+                        let controller = gtk::EventControllerScroll::new(
+                            gtk::EventControllerScrollFlags::VERTICAL,
+                        );
+                        
+                        let picture_ref = picture.clone();
+                        controller.connect_scroll(move |_, _dx, dy| {
+                            let current = zoom_level.get();
+                            // dy is usually around 1.0 for a standard wheel click, but can be tiny for smooth scroll
+                            // Use an exponential curve so smooth scrolling feels natural
+                            let factor = 1.15f64.powf(-dy);
+                            let new_zoom = (current * factor).clamp(0.1, 10.0);
+                            
+                            zoom_level.set(new_zoom);
+                            
+                            picture_ref.set_size_request(
+                                (width * new_zoom) as i32,
+                                (height * new_zoom) as i32,
+                            );
+                            picture_ref.set_can_shrink(false);
+                            
+                            gtk::glib::Propagation::Stop
+                        });
+                        
+                        scroll.add_controller(controller);
+                        
+                        let drag = gtk::GestureDrag::new();
+                        drag.set_button(1);
+                        let scroll_for_drag1 = scroll.clone();
+                        let start_x = Rc::new(Cell::new(0.0));
+                        let start_y = Rc::new(Cell::new(0.0));
+                        let start_x_clone = start_x.clone();
+                        let start_y_clone = start_y.clone();
+                        drag.connect_drag_begin(move |_, _, _| {
+                            let hadj = scroll_for_drag1.hadjustment();
+                            start_x_clone.set(hadj.value());
+                            let vadj = scroll_for_drag1.vadjustment();
+                            start_y_clone.set(vadj.value());
+                        });
+                        let scroll_for_drag2 = scroll.clone();
+                        drag.connect_drag_update(move |_, dx, dy| {
+                            let hadj = scroll_for_drag2.hadjustment();
+                            hadj.set_value(start_x.get() - dx);
+                            let vadj = scroll_for_drag2.vadjustment();
+                            vadj.set_value(start_y.get() - dy);
+                        });
+                        scroll.add_controller(drag);
+                        self.content.append(&scroll);
                     }
                     Err(error) => self.show_message("Preview unavailable", &error.to_string()),
                 }
@@ -452,19 +513,31 @@ impl PreviewState {
                 self.content.append(&notice);
             }
             PreviewContent::Image | PreviewContent::Media => {
-                self.show_message(
-                    "Preview unavailable",
-                    "The sandboxed renderer returned no preview",
-                );
+                let mut family = classify_by_mime(&preview.content_type);
+                if family == FormatFamily::Unknown {
+                    family = classify_by_name(&preview.entry.native_name);
+                }
+                let hint = match family {
+                    FormatFamily::Pdf => "PDF rendering requires Poppler to be installed",
+                    FormatFamily::Video => "Video preview requires FFmpeg",
+                    FormatFamily::Audio => "Audio preview requires FFmpeg",
+                    _ => "The image could not be rendered by the sandboxed converter",
+                };
+                self.show_message("Preview unavailable", hint);
             }
             PreviewContent::Pdf { png, page, pages } => {
                 self.render_pdf_viewer(preview.entry, png, page, pages);
             }
             PreviewContent::Unsupported => {
-                self.show_message(
-                    "No visual preview",
-                    "Metadata is available for this file type.",
-                );
+                let mut family = classify_by_mime(&preview.content_type);
+                if family == FormatFamily::Unknown {
+                    if gio::content_type_is_a(&preview.content_type, "text/plain") {
+                        family = FormatFamily::PlainText;
+                    } else {
+                        family = classify_by_name(&preview.entry.native_name);
+                    }
+                }
+                self.show_message("No visual preview", family.unavailable_reason());
             }
         }
     }

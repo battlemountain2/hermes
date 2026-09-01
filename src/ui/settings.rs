@@ -207,11 +207,58 @@ fn general_page(
         recent_enabled,
     );
     let manager_for_recent = manager.clone();
+    let refresh_sidebar_recent = refresh_sidebar.clone();
     recent_files.connect_active_notify(move |toggle| {
         manager_for_recent.set_show_recent_files(toggle.is_active());
-        refresh_sidebar();
+        refresh_sidebar_recent();
     });
     preferences.append(&recent_row);
+
+    let recent_folders_enabled = manager.show_recent_folders();
+    let (recent_folders_row, recent_folders) = settings_option(
+        "Recent folders in sidebar",
+        "Show recently visited locations in the sidebar for quick navigation.",
+        recent_folders_enabled,
+    );
+    let manager_for_recent_folders = manager.clone();
+    let refresh_sidebar_recent_folders = refresh_sidebar.clone();
+    recent_folders.connect_active_notify(move |toggle| {
+        manager_for_recent_folders.set_show_recent_folders(toggle.is_active());
+        refresh_sidebar_recent_folders();
+    });
+    preferences.append(&recent_folders_row);
+
+    let recent_folders_limit = manager.recent_folders_limit();
+    let (recent_folders_limit_row, recent_folders_limit_spin) = settings_spin(
+        "Recent folders limit",
+        "Maximum number of recent folders to display in the sidebar (1-12).",
+        recent_folders_limit as f64,
+        1.0,
+        12.0,
+        1.0,
+    );
+    let manager_for_recent_limit = manager.clone();
+    let refresh_sidebar_recent_limit = refresh_sidebar.clone();
+    recent_folders_limit_spin.connect_value_changed(move |spin| {
+        manager_for_recent_limit.set_recent_folders_limit(spin.value() as u32);
+        refresh_sidebar_recent_limit();
+    });
+    preferences.append(&recent_folders_limit_row);
+
+    append_heading(&preferences, "LAYOUT");
+    let folder_tree_enabled = manager.show_folder_tree();
+    let (folder_tree_row, folder_tree) = settings_option(
+        "Show folder tree panel",
+        "Display a classic folder tree hierarchy next to the browser.",
+        folder_tree_enabled,
+    );
+    let manager_for_tree = manager.clone();
+    let refresh_sidebar_tree = refresh_sidebar.clone();
+    folder_tree.connect_active_notify(move |toggle| {
+        manager_for_tree.set_show_folder_tree(toggle.is_active());
+        refresh_sidebar_tree();
+    });
+    preferences.append(&folder_tree_row);
 
     append_heading(&preferences, "MOTION");
     let (motion_row, reduce_motion) = settings_option(
@@ -804,6 +851,37 @@ fn settings_choice(
     row.append(&copy);
     row.append(&choice);
     (row, choice)
+}
+
+fn settings_spin(
+    title: &str,
+    description: &str,
+    value: f64,
+    min: f64,
+    max: f64,
+    step: f64,
+) -> (gtk::Box, gtk::SpinButton) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    row.add_css_class("settings-option");
+    let copy = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    copy.set_hexpand(true);
+    copy.set_valign(gtk::Align::Center);
+    let title = gtk::Label::new(Some(title));
+    title.set_xalign(0.0);
+    title.add_css_class("settings-option-title");
+    let description = gtk::Label::new(Some(description));
+    description.set_xalign(0.0);
+    description.set_wrap(true);
+    description.add_css_class("settings-option-description");
+    copy.append(&title);
+    copy.append(&description);
+    let spin = gtk::SpinButton::with_range(min, max, step);
+    spin.set_value(value);
+    spin.set_valign(gtk::Align::Center);
+    spin.add_css_class("settings-spin");
+    row.append(&copy);
+    row.append(&spin);
+    (row, spin)
 }
 
 fn append_heading(container: &gtk::Box, text: &str) {

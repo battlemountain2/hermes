@@ -12,6 +12,7 @@ use gtk::{gdk, gio, glib, prelude::*};
 use crate::{
     model::{FileEntry, MetadataValue},
     sandbox::{Cancellation, ParseOperation},
+    services::thumbnail_operation_for_name,
 };
 
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
@@ -75,11 +76,7 @@ impl ThumbnailCache {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ThumbnailKind {
     FolderAlbum,
-    Image,
-    Heif,
-    RawImage,
-    Pdf,
-    Media,
+    Sandboxed(ParseOperation),
 }
 
 pub(super) fn set_thumbnail_or_icon(
@@ -107,7 +104,11 @@ pub(super) fn set_thumbnail_or_icon(
         }
         return;
     }
-    let Some(kind) = thumbnail_kind(&path) else {
+    let kind = if entry.is_directory() {
+        ThumbnailKind::FolderAlbum
+    } else if let Some(operation) = thumbnail_operation_for_name(path.as_os_str()) {
+        ThumbnailKind::Sandboxed(operation)
+    } else {
         return;
     };
     let thumbnail_size = thumbnail_size.clamp(16, 256);
@@ -232,47 +233,20 @@ fn set_fallback_icon(image: &gtk::Image, icon: &str, size: i32) -> (usize, u64, 
     (image_id, request, cancellation)
 }
 
-fn thumbnail_kind(path: &Path) -> Option<ThumbnailKind> {
-    if path.is_dir() {
-        return Some(ThumbnailKind::FolderAlbum);
-    }
-    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
-    match extension.as_str() {
-        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tif" | "tiff" => {
-            Some(ThumbnailKind::Image)
-        }
-        "heic" | "heif" => Some(ThumbnailKind::Heif),
-        "3fr" | "arw" | "cr2" | "cr3" | "dcr" | "dng" | "erf" | "kdc" | "mef" | "mos" | "mrw"
-        | "nef" | "nrw" | "orf" | "pef" | "raf" | "raw" | "rw2" | "rwl" | "sr2" | "srf" | "srw"
-        | "x3f" => Some(ThumbnailKind::RawImage),
-        "pdf" => Some(ThumbnailKind::Pdf),
-        "flac" => Some(ThumbnailKind::Media),
-        "mp4" | "mkv" | "webm" | "mov" | "avi" | "m4v" | "mpeg" | "mpg" | "ogv" => {
-            Some(ThumbnailKind::Media)
-        }
-        _ => None,
-    }
-}
-
 fn render_thumbnail(
     path: &Path,
     kind: ThumbnailKind,
     size: i32,
     cancellation: &Cancellation,
 ) -> Result<Vec<u8>, String> {
-    if kind == ThumbnailKind::FolderAlbum {
+    if let ThumbnailKind::FolderAlbum = kind {
         let (art, operation) =
             folder_album_art(path).ok_or_else(|| "No folder artwork was found".to_owned())?;
         return crate::sandbox::parse(&art, operation, size.clamp(16, 256), cancellation)
             .map(|output| output.data);
     }
-    let operation = match kind {
-        ThumbnailKind::FolderAlbum => unreachable!(),
-        ThumbnailKind::Image => ParseOperation::ThumbnailImage,
-        ThumbnailKind::Heif => ParseOperation::ThumbnailHeif,
-        ThumbnailKind::RawImage => ParseOperation::ThumbnailRaw,
-        ThumbnailKind::Pdf => ParseOperation::ThumbnailPdf,
-        ThumbnailKind::Media => ParseOperation::ThumbnailVideo,
+    let ThumbnailKind::Sandboxed(operation) = kind else {
+        unreachable!();
     };
     crate::sandbox::parse(path, operation, size.clamp(16, 256), cancellation)
         .map(|output| output.data)
