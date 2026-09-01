@@ -187,7 +187,7 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     let search_button = gtk::Button::builder()
         .tooltip_text("Search (Ctrl+K)")
         .build();
-    let search_icon = crate::assets::text_icon(crate::assets::icons::SEARCH, 20);
+    let search_icon = crate::assets::text_icon(crate::assets::icons::SEARCH, 16);
     search_icon.set_halign(gtk::Align::End);
     search_icon.set_hexpand(true);
     search_button.set_child(Some(&search_icon));
@@ -670,7 +670,7 @@ fn install_keyboard_navigation(
         if key == gtk::gdk::Key::Delete && !view.filter_has_focus() && view.confirm_delete(shift) {
             return glib::Propagation::Stop;
         }
-        if key == gtk::gdk::Key::space && !alt && !control {
+        if key == gtk::gdk::Key::space && !alt && !control && !view.filter_has_focus() {
             preview.toggle(browser.focused_entry());
             return glib::Propagation::Stop;
         }

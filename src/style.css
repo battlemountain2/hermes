@@ -403,23 +403,36 @@ headerbar menubutton.header-action > button:focus-visible image {
 .search-bar {
   border-bottom: 1px solid alpha(@theme_border, 0.55);
   min-height: 58px;
-  padding: 0 18px;
+  padding: 0 16px;
 }
 
-.search-field,
+.search-field {
+  background: @theme_bg;
+  border: 1px solid alpha(@theme_border, 0.7);
+  border-radius: 5px;
+  box-shadow: none;
+  caret-color: @theme_accent;
+  color: @theme_text;
+  min-height: 30px;
+  outline: none;
+  padding: 0 10px;
+}
+
 .search-field:focus,
 .search-field:focus-visible {
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  color: @theme_text;
-  font-size: 1.08em;
-  outline: none;
-  padding: 0;
+  background: @theme_bg;
+  border-color: @theme_accent;
+  box-shadow: 0 0 0 1px alpha(@theme_accent, 0.38);
 }
 
 .search-field placeholder {
   color: @theme_dim_text;
+  opacity: 1;
+}
+
+.search-field selection {
+  background: @theme_accent;
+  color: @theme_bg;
 }
 
 .search-status {

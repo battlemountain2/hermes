@@ -57,7 +57,7 @@ impl SearchDialog {
         search_bar.add_css_class("search-bar");
         search_bar.append(&crate::assets::primary_icon(
             crate::assets::icons::SEARCH,
-            20,
+            16,
         ));
         let field = gtk::Entry::builder()
             .placeholder_text("Search files and folders…")
