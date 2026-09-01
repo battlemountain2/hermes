@@ -439,6 +439,29 @@ impl PreviewState {
                             .build();
                         
                         let zoom_level = Rc::new(Cell::new(1.0f64));
+                        let initial_fit_done = Rc::new(Cell::new(false));
+                        
+                        let vadj = scroll.vadjustment();
+                        let hadj = scroll.hadjustment();
+                        let pic = picture.clone();
+                        let zl = zoom_level.clone();
+                        let fit_done = initial_fit_done.clone();
+                        
+                        hadj.connect_notify_local(Some("page-size"), move |hadj, _| {
+                            if !fit_done.get() {
+                                let view_w = hadj.page_size();
+                                let view_h = vadj.page_size();
+                                if view_w > 0.0 && view_h > 0.0 {
+                                    fit_done.set(true);
+                                    let scale_w = view_w / width;
+                                    let scale_h = view_h / height;
+                                    let fit_scale = scale_w.min(scale_h).min(1.0); // Don't scale up past 100%
+                                    zl.set(fit_scale);
+                                    pic.set_size_request((width * fit_scale) as i32, (height * fit_scale) as i32);
+                                }
+                            }
+                        });
+                        
                         let controller = gtk::EventControllerScroll::new(
                             gtk::EventControllerScrollFlags::VERTICAL,
                         );

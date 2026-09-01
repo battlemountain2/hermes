@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{ffi::OsStr, path::Path, rc::Rc};
+use std::rc::Rc;
 
 use gtk::{gio, glib, prelude::*};
 
@@ -8,8 +8,8 @@ use crate::{
     model::Location,
     sandbox::{Cancellation, ParseOperation},
     services::{
-        LoadHandle, Preview, PreviewContent, PreviewEvent, PreviewProvider, PreviewRequest,
-        content_family, has_plain_text_extension,
+        FormatFamily, LoadHandle, Preview, PreviewContent, PreviewEvent, PreviewProvider,
+        PreviewRequest, classify_by_mime, classify_by_name,
     },
 };
 
@@ -46,32 +46,33 @@ impl PreviewProvider for LocalPreviewProvider {
                 .content_type()
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "application/octet-stream".to_owned());
-            let mut content = content_family(&content_type);
-            if matches!(content, PreviewContent::Unsupported)
-                && (gio::content_type_is_a(&content_type, "text/plain")
-                    || has_plain_text_extension(&entry.native_name))
-            {
-                content = PreviewContent::Text {
-                    content: String::new(),
-                    truncated: false,
-                };
+            let mut family = classify_by_mime(&content_type);
+            if family == FormatFamily::Unknown {
+                if gio::content_type_is_a(&content_type, "text/plain") {
+                    family = FormatFamily::PlainText;
+                } else {
+                    family = classify_by_name(&entry.native_name);
+                }
             }
 
-            let operation = match content {
-                PreviewContent::Pdf { .. } => Some(ParseOperation::PreviewPdf),
-                PreviewContent::Image if is_heif_name(&entry.native_name) => {
-                    Some(ParseOperation::PreviewHeif)
-                }
-                PreviewContent::Image => Some(ParseOperation::PreviewImage),
-                PreviewContent::Media if content_type.starts_with("audio/") => {
-                    Some(ParseOperation::PreviewAudio)
-                }
-                PreviewContent::Media => Some(ParseOperation::PreviewMedia),
-                PreviewContent::Text { .. }
-                | PreviewContent::Rasterized { .. }
-                | PreviewContent::SandboxedMedia { .. }
-                | PreviewContent::Unsupported => None,
+            let mut content = match family {
+                FormatFamily::PlainText => PreviewContent::Text {
+                    content: String::new(),
+                    truncated: false,
+                },
+                FormatFamily::Pdf => PreviewContent::Pdf {
+                    png: Vec::new(),
+                    page: 0,
+                    pages: 0,
+                },
+                f if f.preview_operation().is_some() => match f {
+                    FormatFamily::Audio | FormatFamily::Video => PreviewContent::Media,
+                    _ => PreviewContent::Image,
+                },
+                _ => PreviewContent::Unsupported,
             };
+
+            let operation = family.preview_operation();
             if let Some(operation) = operation {
                 let Some(path) = entry.location.native_path().map(ToOwned::to_owned) else {
                     emit(PreviewEvent::Failed {
@@ -141,15 +142,6 @@ impl PreviewProvider for LocalPreviewProvider {
             task.abort();
         })
     }
-}
-
-fn is_heif_name(name: &OsStr) -> bool {
-    Path::new(name)
-        .extension()
-        .and_then(OsStr::to_str)
-        .is_some_and(|extension| {
-            extension.eq_ignore_ascii_case("heic") || extension.eq_ignore_ascii_case("heif")
-        })
 }
 
 fn file_for_location(location: &Location) -> gio::File {

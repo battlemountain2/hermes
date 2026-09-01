@@ -14,7 +14,7 @@ use std::{
 
 use gio::glib;
 
-use super::has_plain_text_extension;
+use super::classify_by_name;
 
 const RESULT_LIMIT: usize = 100;
 const PUBLISH_INTERVAL: Duration = Duration::from_millis(50);
@@ -417,7 +417,10 @@ fn query_tokens(query: &str) -> Vec<String> {
 }
 
 fn search_file_content(item: &SearchItem, needle: &str) -> Option<i64> {
-    if item.is_directory || needle.is_empty() || !has_plain_text_extension(item.path.as_os_str()) {
+    if item.is_directory
+        || needle.is_empty()
+        || !classify_by_name(item.path.as_os_str()).is_searchable_text()
+    {
         return None;
     }
     let metadata = item.path.symlink_metadata().ok()?;

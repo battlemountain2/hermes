@@ -2016,6 +2016,45 @@ menubutton.column-header-action > button:focus-visible image {
   opacity: 1;
 }
 
+/* File info indicator — hidden by default, visible on hover */
+.file-info-button,
+.grid-info-button {
+  padding: 0 2px;
+  min-height: 18px;
+  min-width: 18px;
+  border-radius: 4px;
+  transition: opacity 150ms ease;
+}
+
+.grid-info-button {
+  margin: 4px;
+}
+
+.file-list row:hover .file-info-button,
+.grid-card:hover .grid-info-button {
+  opacity: 0.7;
+}
+
+.file-info-button:hover,
+.grid-info-button:hover {
+  opacity: 1;
+  background: alpha(@theme_text, 0.08);
+}
+
+/* Info popover styling */
+.info-popover {
+  padding: 10px 14px;
+}
+
+.info-popover-label {
+  font-size: 0.85em;
+  color: @theme_dim_text;
+}
+
+.info-popover-value {
+  font-size: 0.92em;
+}
+
 .file-list row:selected .file-size,
 .file-list .file-row.active-path .file-size {
   color: @theme_dim_text;

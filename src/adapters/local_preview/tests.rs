@@ -2,13 +2,22 @@
 
 use std::fs;
 
-use super::is_heif_name;
+use crate::services::{FormatFamily, classify_by_name};
 
 #[test]
 fn recognizes_heif_names_without_invoking_the_system_image_loader() {
-    assert!(is_heif_name(std::ffi::OsStr::new("photo.HEIC")));
-    assert!(is_heif_name(std::ffi::OsStr::new("photo.heif")));
-    assert!(!is_heif_name(std::ffi::OsStr::new("photo.jpeg")));
+    assert_eq!(
+        classify_by_name(std::ffi::OsStr::new("photo.HEIC")),
+        FormatFamily::Heif
+    );
+    assert_eq!(
+        classify_by_name(std::ffi::OsStr::new("photo.heif")),
+        FormatFamily::Heif
+    );
+    assert_ne!(
+        classify_by_name(std::ffi::OsStr::new("photo.jpeg")),
+        FormatFamily::Heif
+    );
 }
 
 #[test]
