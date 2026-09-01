@@ -75,6 +75,8 @@ struct Preferences {
     single_click_previews: bool,
     #[serde(default)]
     search_open_files_directly: bool,
+    #[serde(default)]
+    show_recent_files: bool,
     #[serde(default = "default_browser_mode")]
     browser_mode: String,
     #[serde(default = "default_browser_density")]
@@ -88,6 +90,7 @@ impl Default for Preferences {
             theme: "azure-glow".to_owned(),
             single_click_previews: true,
             search_open_files_directly: false,
+            show_recent_files: false,
             browser_mode: default_browser_mode(),
             browser_density: default_browser_density(),
         }
@@ -188,6 +191,15 @@ impl ThemeManager {
 
     pub fn set_search_open_files_directly(&self, enabled: bool) {
         self.preferences.borrow_mut().search_open_files_directly = enabled;
+        self.save_preferences();
+    }
+
+    pub fn show_recent_files(&self) -> bool {
+        self.preferences.borrow().show_recent_files
+    }
+
+    pub fn set_show_recent_files(&self, enabled: bool) {
+        self.preferences.borrow_mut().show_recent_files = enabled;
         self.save_preferences();
     }
 

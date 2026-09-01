@@ -26,12 +26,14 @@ use super::{
     motion::{animations_enabled, emphasized_deceleration},
     preview::PreviewDrawer,
     search::SearchDialog,
+    theme::ThemeManager,
     trails::TabBar,
 };
 
 const SIDEBAR_WIDTH: i32 = 208;
 const MIN_SIDEBAR_WIDTH: i32 = 176;
 const SIDEBAR_TRANSITION: Duration = Duration::from_millis(300);
+type RecentHandler = Rc<dyn Fn(&str)>;
 
 pub fn present(application: &gtk::Application) {
     present_location(application, None);
@@ -230,7 +232,7 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     content.set_resize_start_child(false);
     content.set_position(SIDEBAR_WIDTH);
     content.set_vexpand(true);
-    let sidebar = build_sidebar(browser.clone());
+    let sidebar = build_sidebar(browser.clone(), theme_manager.clone());
     let weak_sidebar = Rc::downgrade(&sidebar.state);
     browser.set_pin_handler(Rc::new(move |location, name| {
         if let Some(sidebar) = weak_sidebar.upgrade() {
@@ -326,6 +328,17 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     });
     let search_dialog = SearchDialog::new(activate_search_result, dismiss_search);
     window_overlay.add_overlay(&search_dialog.widget());
+    let recent_search = search_dialog.clone();
+    let recent_search_button = search_button.clone();
+    let recent_search_root = blurred_root.clone();
+    sidebar
+        .state
+        .recent_handler
+        .replace(Some(Rc::new(move |query| {
+            recent_search_button.add_css_class("active");
+            recent_search_root.set_blurred(true);
+            recent_search.show_query(home_directory(), query);
+        })));
     let shown_search = search_dialog.clone();
     let search_browser = controller.clone();
     let search_blurred_root = blurred_root.clone();
@@ -363,8 +376,19 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     window.add_action(&search_action);
     application.set_accels_for_action("win.search", &["<Control>k"]);
 
-    let settings_layer =
-        super::settings::build_layer(&browser, &settings, &blurred_root, theme_manager);
+    let weak_sidebar = Rc::downgrade(&sidebar.state);
+    let refresh_sidebar: Rc<dyn Fn()> = Rc::new(move || {
+        if let Some(sidebar) = weak_sidebar.upgrade() {
+            sidebar.rebuild();
+        }
+    });
+    let settings_layer = super::settings::build_layer(
+        &browser,
+        &settings,
+        &blurred_root,
+        theme_manager,
+        refresh_sidebar,
+    );
     window_overlay.add_overlay(&settings_layer);
     let shown_settings = settings_layer.clone();
     let settings_button = settings.clone();
@@ -954,6 +978,8 @@ struct SidebarState {
     place_order: RefCell<Vec<&'static str>>,
     pinned_places: RefCell<Vec<(Location, String)>>,
     place_rows: RefCell<Vec<(Location, gtk::Button)>>,
+    theme_manager: Rc<ThemeManager>,
+    recent_handler: Rc<RefCell<Option<RecentHandler>>>,
 }
 
 struct SidebarView {
@@ -995,6 +1021,13 @@ impl SidebarState {
                     }
                 }
             }
+        }
+
+        if self.theme_manager.show_recent_files() {
+            self.append_separator();
+            self.append_heading("RECENT");
+            self.append_recent_place("Today", "modified:today");
+            self.append_recent_place("Yesterday", "modified:yesterday");
         }
 
         self.append_separator();
@@ -1219,6 +1252,21 @@ impl SidebarState {
         });
 
         self.install_reorder_controllers(&row, id);
+        self.widget.append(&row);
+    }
+
+    fn append_recent_place(&self, name: &str, query: &'static str) {
+        let row = sidebar_button(crate::assets::icons::DOCUMENTS, name);
+        row.set_tooltip_text(Some(&format!("Files {query}")));
+        let handler = self.recent_handler.clone();
+        let sidebar = self.widget.clone();
+        let selected_row = row.clone();
+        row.connect_clicked(move |_| {
+            select_sidebar_row(&sidebar, &selected_row);
+            if let Some(handler) = handler.borrow().as_ref() {
+                handler(query);
+            }
+        });
         self.widget.append(&row);
     }
 
@@ -1635,7 +1683,7 @@ fn navigate_to_gio_file(browser: &Rc<Browser>, file: &gio::File) {
     browser.navigate(location);
 }
 
-fn build_sidebar(view: BrowserView) -> SidebarView {
+fn build_sidebar(view: BrowserView, theme_manager: Rc<ThemeManager>) -> SidebarView {
     let widget = gtk::Box::new(gtk::Orientation::Vertical, 2);
     widget.add_css_class("sidebar");
     let scroller = gtk::ScrolledWindow::builder()
@@ -1654,6 +1702,8 @@ fn build_sidebar(view: BrowserView) -> SidebarView {
         place_order: RefCell::new(load_place_order()),
         pinned_places: RefCell::new(load_pinned_places()),
         place_rows: RefCell::new(Vec::new()),
+        theme_manager,
+        recent_handler: Rc::new(RefCell::new(None)),
     });
 
     let weak = Rc::downgrade(&state);

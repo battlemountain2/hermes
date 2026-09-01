@@ -173,6 +173,10 @@ impl SearchDialog {
     }
 
     pub fn show(&self, root: PathBuf) {
+        self.show_query(root, "");
+    }
+
+    pub fn show_query(&self, root: PathBuf, query: &str) {
         self.state.generation.set(self.state.generation.get() + 1);
         let generation = self.state.generation.get();
         self.state.search.borrow_mut().take();
@@ -186,6 +190,8 @@ impl SearchDialog {
 
         let (handle, receiver) = index_tree(root);
         self.state.search.replace(Some(handle));
+        self.state.field.set_text(query);
+        self.state.field.set_position(-1);
         let weak = Rc::downgrade(&self.state);
         let _poll = glib::timeout_add_local(Duration::from_millis(16), move || {
             let Some(state) = weak.upgrade() else {

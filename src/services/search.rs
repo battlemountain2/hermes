@@ -10,6 +10,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use gio::glib;
+
 const RESULT_LIMIT: usize = 100;
 const PUBLISH_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -18,6 +20,7 @@ pub struct SearchItem {
     pub path: PathBuf,
     pub name: String,
     pub is_directory: bool,
+    pub modified_unix_seconds: Option<i64>,
     search_name: String,
     search_path: String,
 }
@@ -91,6 +94,12 @@ pub fn index_tree(root: PathBuf) -> (SearchHandle, Receiver<SearchEvent>) {
                     true,
                 );
                 let is_directory = entry.file_type().is_some_and(|kind| kind.is_dir());
+                let modified_unix_seconds = entry
+                    .metadata()
+                    .ok()
+                    .and_then(|metadata| metadata.modified().ok())
+                    .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+                    .and_then(|duration| i64::try_from(duration.as_secs()).ok());
                 let path = entry.into_path();
                 let name = path
                     .file_name()
@@ -106,6 +115,7 @@ pub fn index_tree(root: PathBuf) -> (SearchHandle, Receiver<SearchEvent>) {
                     search_name: name.to_lowercase(),
                     name,
                     is_directory,
+                    modified_unix_seconds,
                     path,
                     search_path,
                 };
@@ -214,6 +224,10 @@ fn fuzzy_score_normalized(item: &SearchItem, query: &str) -> Option<i64> {
     if query.is_empty() {
         return None;
     }
+    if let Some((start, end)) = recent_bounds(query) {
+        let modified = item.modified_unix_seconds?;
+        return (!item.is_directory && modified >= start && modified < end).then_some(modified);
+    }
     let mut score = if let Some(position) = item.search_name.find(query) {
         10_000 - position as i64 * 12 - item.search_name.len() as i64
     } else if let Some(position) = item.search_path.find(query) {
@@ -228,6 +242,21 @@ fn fuzzy_score_normalized(item: &SearchItem, query: &str) -> Option<i64> {
         score += 20;
     }
     Some(score)
+}
+
+fn recent_bounds(query: &str) -> Option<(i64, i64)> {
+    if !matches!(query, "modified:today" | "modified:yesterday") {
+        return None;
+    }
+    let now = glib::DateTime::now_local().ok()?;
+    let today =
+        glib::DateTime::from_local(now.year(), now.month(), now.day_of_month(), 0, 0, 0.0).ok()?;
+    let today_start = today.to_unix();
+    if query == "modified:today" {
+        Some((today_start, today.add_days(1).ok()?.to_unix()))
+    } else {
+        Some((today.add_days(-1).ok()?.to_unix(), today_start))
+    }
 }
 
 fn fuzzy_subsequence_score(haystack: &str, needle: &str) -> Option<i64> {

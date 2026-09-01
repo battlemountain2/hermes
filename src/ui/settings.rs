@@ -20,6 +20,7 @@ pub fn build_layer(
     settings_button: &gtk::Button,
     root: &BlurBin,
     themes: Rc<ThemeManager>,
+    refresh_sidebar: Rc<dyn Fn()>,
 ) -> gtk::Box {
     let layer = gtk::Box::new(gtk::Orientation::Vertical, 0);
     layer.add_css_class("settings-backdrop");
@@ -65,7 +66,10 @@ pub fn build_layer(
         .hexpand(true)
         .vexpand(true)
         .build();
-    stack.add_named(&general_page(browser, themes.clone()), Some("general"));
+    stack.add_named(
+        &general_page(browser, themes.clone(), refresh_sidebar),
+        Some("general"),
+    );
     stack.add_named(&keybindings_page(), Some("keybindings"));
     stack.add_named(&theme_page(themes), Some("theme"));
     stack.add_named(&about_page(), Some("about"));
@@ -133,7 +137,11 @@ fn hide(layer: &gtk::Box, button: &gtk::Button, root: &BlurBin) {
     button.remove_css_class("active");
 }
 
-fn general_page(browser: &BrowserView, manager: Rc<ThemeManager>) -> gtk::Widget {
+fn general_page(
+    browser: &BrowserView,
+    manager: Rc<ThemeManager>,
+    refresh_sidebar: Rc<dyn Fn()>,
+) -> gtk::Widget {
     let preferences = page_content();
     append_heading(&preferences, "BROWSING");
     let (peeking_row, peeking) = settings_option(
@@ -169,10 +177,24 @@ fn general_page(browser: &BrowserView, manager: Rc<ThemeManager>) -> gtk::Widget
         "Launch files from search instead of opening Strata's quick preview.",
         direct_open_enabled,
     );
+    let manager_for_search = manager.clone();
     search_open_files.connect_active_notify(move |toggle| {
-        manager.set_search_open_files_directly(toggle.is_active());
+        manager_for_search.set_search_open_files_directly(toggle.is_active());
     });
     preferences.append(&search_open_row);
+
+    let recent_enabled = manager.show_recent_files();
+    let (recent_row, recent_files) = settings_option(
+        "Recent files in sidebar",
+        "Show optional Today and Yesterday views backed by the local search index.",
+        recent_enabled,
+    );
+    let manager_for_recent = manager.clone();
+    recent_files.connect_active_notify(move |toggle| {
+        manager_for_recent.set_show_recent_files(toggle.is_active());
+        refresh_sidebar();
+    });
+    preferences.append(&recent_row);
 
     append_heading(&preferences, "MOTION");
     let (motion_row, reduce_motion) = settings_option(

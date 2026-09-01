@@ -250,16 +250,21 @@ headerbar menubutton.header-action > button:focus-visible image {
 }
 
 .location-entry,
-.location-entry:focus {
+.location-entry:focus,
+.search-field {
   background: @theme_bg;
   border: 1px solid alpha(@theme_border, 0.7);
+  border-radius: 5px;
   box-shadow: none;
   caret-color: @theme_accent;
   color: @theme_text;
   min-height: 22px;
+  padding: 0 8px;
 }
 
-.location-entry:focus {
+.location-entry:focus,
+.search-field:focus,
+.search-field:focus-visible {
   border-color: @theme_accent;
   box-shadow: 0 0 0 1px alpha(@theme_accent, 0.38);
 }
@@ -407,22 +412,7 @@ headerbar menubutton.header-action > button:focus-visible image {
 }
 
 .search-field {
-  background: @theme_bg;
-  border: 1px solid alpha(@theme_border, 0.7);
-  border-radius: 5px;
-  box-shadow: none;
-  caret-color: @theme_accent;
-  color: @theme_text;
-  min-height: 30px;
   outline: none;
-  padding: 0 10px;
-}
-
-.search-field:focus,
-.search-field:focus-visible {
-  background: @theme_bg;
-  border-color: @theme_accent;
-  box-shadow: 0 0 0 1px alpha(@theme_accent, 0.38);
 }
 
 .search-field placeholder {

@@ -6,7 +6,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use super::{SearchEvent, SearchItem, fuzzy_score, index_tree};
+use super::{SearchEvent, SearchItem, fuzzy_score, index_tree, recent_bounds};
 
 fn item(path: &str) -> SearchItem {
     let name = Path::new(path)
@@ -20,6 +20,7 @@ fn item(path: &str) -> SearchItem {
         search_path: path.to_lowercase(),
         name,
         is_directory: false,
+        modified_unix_seconds: None,
     }
 }
 
@@ -41,6 +42,17 @@ fn searches_relative_path_fragments_and_rejects_non_matches() {
     let candidate = item("/home/me/themes/azure/colors.toml");
     assert!(fuzzy_score(&candidate, "themes/azure", Path::new("/home/me")).is_some());
     assert!(fuzzy_score(&candidate, "definitely-missing", Path::new("/home/me")).is_none());
+}
+
+#[test]
+fn recent_queries_use_non_overlapping_local_day_ranges() {
+    let (today_start, today_end) = recent_bounds("modified:today").expect("today should parse");
+    let (yesterday_start, yesterday_end) =
+        recent_bounds("modified:yesterday").expect("yesterday should parse");
+    assert_eq!(yesterday_end, today_start);
+    assert!(yesterday_start < yesterday_end);
+    assert!(today_start < today_end);
+    assert!(recent_bounds("today").is_none());
 }
 
 #[test]
