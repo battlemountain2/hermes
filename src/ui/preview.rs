@@ -457,7 +457,7 @@ impl PreviewState {
                                 (width * new_zoom) as i32,
                                 (height * new_zoom) as i32,
                             );
-                            picture_ref.set_can_shrink(false);
+                            picture_ref.set_can_shrink(true);
                             
                             gtk::glib::Propagation::Stop
                         });
