@@ -425,6 +425,91 @@ headerbar menubutton.header-action > button:focus-visible image {
   color: @theme_bg;
 }
 
+.search-filter-button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  box-shadow: none;
+  color: @theme_dim_text;
+  min-height: 28px;
+  min-width: 32px;
+  padding: 0;
+}
+
+.search-filter-button:hover,
+.search-filter-button.active {
+  background: alpha(@theme_muted, 0.58);
+  border-color: alpha(@theme_border, 0.72);
+  color: @theme_text;
+}
+
+.search-filter-button.active {
+  color: @theme_accent;
+}
+
+.search-filter-popover > contents {
+  background: @theme_surface;
+  border: 1px solid alpha(@theme_border, 0.78);
+  border-radius: 7px;
+  box-shadow: 0 12px 34px alpha(@theme_bg, 0.72);
+  padding: 0;
+}
+
+.search-filter-panel {
+  min-width: 390px;
+  padding: 16px;
+}
+
+.search-filter-title {
+  color: @theme_dim_text;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  margin-bottom: 2px;
+}
+
+.search-filter-label {
+  color: @theme_dim_text;
+  font-size: 12px;
+}
+
+.search-filter-entry,
+.search-filter-entry:focus,
+.search-filter-entry:focus-visible,
+.search-filter-panel dropdown > button {
+  background: @theme_bg;
+  border: 1px solid alpha(@theme_border, 0.7);
+  border-radius: 5px;
+  box-shadow: none;
+  color: @theme_text;
+  min-height: 28px;
+}
+
+.search-filter-entry:focus,
+.search-filter-entry:focus-visible {
+  border-color: @theme_accent;
+  box-shadow: 0 0 0 1px alpha(@theme_accent, 0.32);
+}
+
+.search-filter-clear,
+.search-filter-apply {
+  border-radius: 5px;
+  min-height: 30px;
+  padding: 0 12px;
+}
+
+.search-filter-clear {
+  background: transparent;
+  border: 1px solid alpha(@theme_border, 0.7);
+  color: @theme_text;
+}
+
+.search-filter-apply {
+  background: @theme_accent;
+  border: 1px solid @theme_accent;
+  color: @theme_bg;
+}
+
 .search-status {
   color: @theme_dim_text;
   padding: 28px 24px;

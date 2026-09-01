@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::{
-    path::{Path, PathBuf},
+    fs::File,
+    io::{Read, Take},
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -12,8 +14,11 @@ use std::{
 
 use gio::glib;
 
+use super::has_plain_text_extension;
+
 const RESULT_LIMIT: usize = 100;
 const PUBLISH_INTERVAL: Duration = Duration::from_millis(50);
+const MAX_CONTENT_FILE_SIZE: u64 = 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SearchItem {
@@ -23,6 +28,29 @@ pub struct SearchItem {
     pub modified_unix_seconds: Option<i64>,
     search_name: String,
     search_path: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SearchFilterValues {
+    pub directory: Option<bool>,
+    pub extension: Option<String>,
+    pub within: Option<String>,
+    pub modified: Option<String>,
+    pub content: Option<String>,
+}
+
+pub fn search_filter_values(query: &str) -> (String, SearchFilterValues) {
+    let parsed = ParsedSearchQuery::parse(&query.trim().to_lowercase());
+    (
+        parsed.terms,
+        SearchFilterValues {
+            directory: parsed.directory,
+            extension: parsed.extension,
+            within: parsed.within,
+            modified: parsed.modified_name,
+            content: parsed.content,
+        },
+    )
 }
 
 pub enum SearchEvent {
@@ -88,10 +116,10 @@ pub fn index_tree(root: PathBuf) -> (SearchHandle, Receiver<SearchEvent>) {
                     &command_receiver,
                     &event_sender,
                     &index,
-                    &root,
                     &mut query,
                     &mut matches,
                     true,
+                    &worker_cancelled,
                 );
                 let is_directory = entry.file_type().is_some_and(|kind| kind.is_dir());
                 let modified_unix_seconds = entry
@@ -119,7 +147,7 @@ pub fn index_tree(root: PathBuf) -> (SearchHandle, Receiver<SearchEvent>) {
                     path,
                     search_path,
                 };
-                if let Some(score) = fuzzy_score(&item, &query, &root) {
+                if let Some(score) = score_item(&item, &ParsedSearchQuery::parse(&query)) {
                     insert_match(&mut matches, score, item.clone());
                 }
                 index.push(item);
@@ -139,7 +167,7 @@ pub fn index_tree(root: PathBuf) -> (SearchHandle, Receiver<SearchEvent>) {
                             .map(|SearchCommand::Query(query)| query)
                             .last()
                             .unwrap_or(next);
-                        matches = score_index(&index, &query, &root);
+                        matches = score_index(&index, &query, &worker_cancelled);
                         publish(&event_sender, &query, &matches, false);
                     }
                     Err(RecvTimeoutError::Timeout) => {}
@@ -160,10 +188,10 @@ fn apply_pending_queries(
     receiver: &Receiver<SearchCommand>,
     sender: &Sender<SearchEvent>,
     index: &[SearchItem],
-    root: &Path,
     query: &mut String,
     matches: &mut Vec<(i64, SearchItem)>,
     indexing: bool,
+    cancelled: &AtomicBool,
 ) {
     let Some(next) = receiver
         .try_iter()
@@ -173,15 +201,23 @@ fn apply_pending_queries(
         return;
     };
     *query = next;
-    *matches = score_index(index, query, root);
+    *matches = score_index(index, query, cancelled);
     publish(sender, query, matches, indexing);
 }
 
-fn score_index(index: &[SearchItem], query: &str, _root: &Path) -> Vec<(i64, SearchItem)> {
+fn score_index(
+    index: &[SearchItem],
+    query: &str,
+    cancelled: &AtomicBool,
+) -> Vec<(i64, SearchItem)> {
     let mut matches = Vec::with_capacity(RESULT_LIMIT);
     let normalized_query = query.trim().to_lowercase();
+    let parsed = ParsedSearchQuery::parse(&normalized_query);
     for item in index {
-        if let Some(score) = fuzzy_score_normalized(item, &normalized_query) {
+        if cancelled.load(Ordering::Relaxed) {
+            break;
+        }
+        if let Some(score) = score_item(item, &parsed) {
             insert_match(&mut matches, score, item.clone());
         }
     }
@@ -216,21 +252,24 @@ fn publish(
 
 /// Scores ordered character matches, strongly preferring names, contiguous runs and word/path
 /// boundaries. Exact substrings rank ahead of looser fuzzy matches.
-pub fn fuzzy_score(item: &SearchItem, query: &str, _root: &Path) -> Option<i64> {
-    fuzzy_score_normalized(item, &query.trim().to_lowercase())
+#[cfg(test)]
+pub fn fuzzy_score(item: &SearchItem, query: &str, _root: &std::path::Path) -> Option<i64> {
+    score_item(
+        item,
+        &ParsedSearchQuery::parse(&query.trim().to_lowercase()),
+    )
 }
 
-fn fuzzy_score_normalized(item: &SearchItem, query: &str) -> Option<i64> {
+fn score_item(item: &SearchItem, query: &ParsedSearchQuery) -> Option<i64> {
     if query.is_empty() {
         return None;
     }
-    let parsed = ParsedSearchQuery::parse(query);
-    if let Some(directory) = parsed.directory
+    if let Some(directory) = query.directory
         && item.is_directory != directory
     {
         return None;
     }
-    if let Some(extension) = parsed.extension.as_deref()
+    if let Some(extension) = query.extension.as_deref()
         && (item.is_directory
             || item
                 .path
@@ -239,24 +278,29 @@ fn fuzzy_score_normalized(item: &SearchItem, query: &str) -> Option<i64> {
     {
         return None;
     }
-    if let Some(within) = parsed.within.as_deref()
+    if let Some(within) = query.within.as_deref()
         && !item.search_path.contains(within)
     {
         return None;
     }
-    if let Some((start, end)) = parsed.modified {
+    if let Some((start, end)) = query.modified {
         let modified = item.modified_unix_seconds?;
         if modified < start || modified >= end {
             return None;
         }
-        if parsed.terms.is_empty() {
+        if query.terms.is_empty() && query.content.is_none() {
             return (!item.is_directory).then_some(modified);
         }
     }
-    if parsed.terms.is_empty() {
-        return Some(if item.is_directory { 20 } else { 0 });
+    let content_score = if let Some(needle) = query.content.as_deref() {
+        Some(search_file_content(item, needle)?)
+    } else {
+        None
+    };
+    if query.terms.is_empty() {
+        return content_score.or(Some(if item.is_directory { 20 } else { 0 }));
     }
-    let query = parsed.terms.as_str();
+    let query = query.terms.as_str();
     let mut score = if let Some(position) = item.search_name.find(query) {
         10_000 - position as i64 * 12 - item.search_name.len() as i64
     } else if let Some(position) = item.search_path.find(query) {
@@ -270,7 +314,7 @@ fn fuzzy_score_normalized(item: &SearchItem, query: &str) -> Option<i64> {
     if item.is_directory {
         score += 20;
     }
-    Some(score)
+    Some(score + content_score.unwrap_or_default())
 }
 
 #[derive(Default)]
@@ -280,13 +324,15 @@ struct ParsedSearchQuery {
     extension: Option<String>,
     within: Option<String>,
     modified: Option<(i64, i64)>,
+    modified_name: Option<String>,
+    content: Option<String>,
 }
 
 impl ParsedSearchQuery {
     fn parse(query: &str) -> Self {
         let mut parsed = Self::default();
         let mut terms = Vec::new();
-        for token in query.split_whitespace() {
+        for token in query_tokens(query) {
             if let Some(value) = token.strip_prefix("type:") {
                 match value {
                     "file" => parsed.directory = Some(false),
@@ -307,10 +353,18 @@ impl ParsedSearchQuery {
                     parsed.within = Some(value.to_owned());
                 }
             } else if token.starts_with("modified:") {
-                if let Some(bounds) = recent_bounds(token) {
+                if let Some(bounds) = recent_bounds(&token) {
                     parsed.modified = Some(bounds);
+                    parsed.modified_name = token.strip_prefix("modified:").map(str::to_owned);
                 } else {
                     terms.push(token);
+                }
+            } else if let Some(value) = token.strip_prefix("content:") {
+                if value.is_empty() {
+                    terms.push(token);
+                } else {
+                    parsed.content = Some(value.to_owned());
+                    parsed.directory = Some(false);
                 }
             } else {
                 terms.push(token);
@@ -319,6 +373,68 @@ impl ParsedSearchQuery {
         parsed.terms = terms.join(" ");
         parsed
     }
+
+    fn is_empty(&self) -> bool {
+        self.terms.is_empty()
+            && self.directory.is_none()
+            && self.extension.is_none()
+            && self.within.is_none()
+            && self.modified.is_none()
+            && self.content.is_none()
+    }
+}
+
+fn query_tokens(query: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut token = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for character in query.chars() {
+        if escaped {
+            token.push(character);
+            escaped = false;
+        } else if character == '\\' {
+            escaped = true;
+        } else if quote == Some(character) {
+            quote = None;
+        } else if quote.is_none() && matches!(character, '\'' | '"') {
+            quote = Some(character);
+        } else if quote.is_none() && character.is_whitespace() {
+            if !token.is_empty() {
+                tokens.push(std::mem::take(&mut token));
+            }
+        } else {
+            token.push(character);
+        }
+    }
+    if escaped {
+        token.push('\\');
+    }
+    if !token.is_empty() {
+        tokens.push(token);
+    }
+    tokens
+}
+
+fn search_file_content(item: &SearchItem, needle: &str) -> Option<i64> {
+    if item.is_directory || needle.is_empty() || !has_plain_text_extension(item.path.as_os_str()) {
+        return None;
+    }
+    let metadata = item.path.symlink_metadata().ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_CONTENT_FILE_SIZE {
+        return None;
+    }
+    let file = File::open(&item.path).ok()?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    let mut limited: Take<File> = file.take(MAX_CONTENT_FILE_SIZE + 1);
+    limited.read_to_end(&mut bytes).ok()?;
+    if bytes.len() as u64 > MAX_CONTENT_FILE_SIZE || bytes.contains(&0) {
+        return None;
+    }
+    let content = String::from_utf8_lossy(&bytes).to_lowercase();
+    content
+        .find(needle)
+        .map(|position| 8_000i64.saturating_sub(i64::try_from(position).unwrap_or(i64::MAX)))
 }
 
 fn recent_bounds(query: &str) -> Option<(i64, i64)> {

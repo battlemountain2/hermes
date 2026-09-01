@@ -6,7 +6,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use super::{SearchEvent, SearchItem, fuzzy_score, index_tree, recent_bounds};
+use super::{
+    SearchEvent, SearchItem, fuzzy_score, index_tree, recent_bounds, search_filter_values,
+};
 
 fn item(path: &str) -> SearchItem {
     let name = Path::new(path)
@@ -73,6 +75,93 @@ fn structured_filters_combine_with_fuzzy_name_terms() {
     let candidate = item("/home/me/themes/azure/colors.toml");
     assert!(fuzzy_score(&candidate, "colors ext:toml", Path::new("/home/me")).is_some());
     assert!(fuzzy_score(&candidate, "missing ext:toml", Path::new("/home/me")).is_none());
+}
+
+#[test]
+fn content_filter_matches_case_insensitive_quoted_phrases() {
+    let unique = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("the system clock should be after the Unix epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("hermes-content-{unique}.md"));
+    fs::write(&path, "A Hidden Phrase lives inside this document.")
+        .expect("the content fixture should be written");
+    let candidate = item(&path.to_string_lossy());
+
+    assert!(
+        fuzzy_score(
+            &candidate,
+            "content:\"hidden phrase\"",
+            path.parent().expect("the fixture should have a parent")
+        )
+        .is_some()
+    );
+    assert!(
+        fuzzy_score(
+            &candidate,
+            "content:\"missing phrase\"",
+            path.parent().expect("the fixture should have a parent")
+        )
+        .is_none()
+    );
+    fs::remove_file(path).expect("the content fixture should be removed");
+}
+
+#[test]
+fn content_filter_skips_binary_looking_files() {
+    let unique = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("the system clock should be after the Unix epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("hermes-binary-{unique}.txt"));
+    fs::write(&path, b"needle\0binary").expect("the binary fixture should be written");
+    let candidate = item(&path.to_string_lossy());
+
+    assert!(fuzzy_score(&candidate, "content:needle", Path::new("/tmp")).is_none());
+    fs::remove_file(path).expect("the binary fixture should be removed");
+}
+
+#[test]
+fn filter_values_round_trip_quoted_content_and_locations() {
+    let (terms, filters) = search_filter_values(
+        "report type:file ext:md in:\"Work Notes\" modified:yesterday content:\"action item\"",
+    );
+    assert_eq!(terms, "report");
+    assert_eq!(filters.directory, Some(false));
+    assert_eq!(filters.extension.as_deref(), Some("md"));
+    assert_eq!(filters.within.as_deref(), Some("work notes"));
+    assert_eq!(filters.modified.as_deref(), Some("yesterday"));
+    assert_eq!(filters.content.as_deref(), Some("action item"));
+}
+
+#[test]
+fn background_index_can_search_inside_text_files() {
+    let unique = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("the system clock should be after the Unix epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("hermes-content-index-{unique}"));
+    fs::create_dir_all(&root).expect("the content index fixture should be created");
+    fs::write(root.join("ordinary.md"), "the uniquely searchable phrase")
+        .expect("the content fixture should be written");
+
+    let (search, events) = index_tree(root.clone());
+    search.query("content:\"uniquely searchable\"");
+    let found = (0..30).any(|_| {
+        events.recv_timeout(Duration::from_millis(100)).is_ok_and(
+            |SearchEvent::Results { query, items, .. }| {
+                query == "content:\"uniquely searchable\""
+                    && items.iter().any(|item| item.name == "ordinary.md")
+            },
+        )
+    });
+
+    drop(search);
+    fs::remove_dir_all(root).expect("the content index fixture should be removed");
+    assert!(
+        found,
+        "the worker should publish a file whose content matches"
+    );
 }
 
 #[test]

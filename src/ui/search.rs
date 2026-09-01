@@ -10,10 +10,12 @@ use std::{
 
 use gtk::{gdk, glib, prelude::*};
 
-use crate::services::{SearchEvent, SearchHandle, SearchItem, index_tree};
+use crate::services::{
+    SearchEvent, SearchFilterValues, SearchHandle, SearchItem, index_tree, search_filter_values,
+};
 
 const MAX_RESULT_UPDATES_PER_FRAME: usize = 8;
-const SEARCH_HELP: &str = "Type to search the whole tree\nFilters: type:file · type:folder · ext:pdf · in:Documents · modified:today";
+const SEARCH_HELP: &str = "Type to search the whole tree\nFilters: content:\"phrase\" · type:file · ext:pdf · in:Documents · modified:today";
 
 #[derive(Clone)]
 pub struct SearchDialog {
@@ -32,6 +34,20 @@ struct SearchState {
     generation: Cell<u64>,
     activate: Rc<dyn Fn(SearchItem)>,
     dismiss: Rc<dyn Fn()>,
+    filters: SearchFilterPanel,
+}
+
+#[derive(Clone)]
+struct SearchFilterPanel {
+    button: gtk::Button,
+    popover: gtk::Popover,
+    file_type: gtk::DropDown,
+    modified: gtk::DropDown,
+    extension: gtk::Entry,
+    within: gtk::Entry,
+    content: gtk::Entry,
+    apply: gtk::Button,
+    clear: gtk::Button,
 }
 
 impl SearchDialog {
@@ -66,6 +82,8 @@ impl SearchDialog {
             .build();
         field.add_css_class("search-field");
         search_bar.append(&field);
+        let filters = SearchFilterPanel::new();
+        search_bar.append(&filters.button);
         panel.append(&search_bar);
 
         let status = gtk::Label::new(Some(SEARCH_HELP));
@@ -120,6 +138,36 @@ impl SearchDialog {
             generation: Cell::new(0),
             activate,
             dismiss,
+            filters,
+        });
+
+        let shown_filters = Rc::downgrade(&state);
+        state.filters.button.connect_clicked(move |_| {
+            if let Some(state) = shown_filters.upgrade() {
+                state.filters.show(&state.field.text());
+            }
+        });
+        let applied_filters = Rc::downgrade(&state);
+        state.filters.apply.connect_clicked(move |_| {
+            if let Some(state) = applied_filters.upgrade() {
+                let query = state.filters.query(&state.field.text());
+                state.field.set_text(&query);
+                state.field.set_position(-1);
+                state.filters.popover.popdown();
+                state.field.grab_focus();
+            }
+        });
+        let cleared_filters = Rc::downgrade(&state);
+        state.filters.clear.connect_clicked(move |_| {
+            if let Some(state) = cleared_filters.upgrade() {
+                let (terms, _) = search_filter_values(&state.field.text());
+                state.filters.set_values(&SearchFilterValues::default());
+                state.filters.update_active(false);
+                state.field.set_text(&terms);
+                state.field.set_position(-1);
+                state.filters.popover.popdown();
+                state.field.grab_focus();
+            }
         });
 
         let changed = Rc::downgrade(&state);
@@ -142,7 +190,18 @@ impl SearchDialog {
                 return glib::Propagation::Proceed;
             };
             if key == gdk::Key::Escape {
+                if state.filters.popover.is_visible() {
+                    state.filters.popover.popdown();
+                    state.field.grab_focus();
+                    return glib::Propagation::Stop;
+                }
                 hide(&state);
+                return glib::Propagation::Stop;
+            }
+            if modifiers.contains(gdk::ModifierType::CONTROL_MASK)
+                && matches!(key, gdk::Key::f | gdk::Key::F)
+            {
+                state.filters.show(&state.field.text());
                 return glib::Propagation::Stop;
             }
             if modifiers.intersects(
@@ -229,6 +288,156 @@ impl SearchDialog {
     pub fn is_visible(&self) -> bool {
         self.state.layer.is_visible()
     }
+}
+
+impl SearchFilterPanel {
+    fn new() -> Self {
+        let button = gtk::Button::builder()
+            .tooltip_text("Search filters (Ctrl+F)")
+            .build();
+        button.set_child(Some(&crate::assets::primary_icon(
+            crate::assets::icons::FUNNEL,
+            16,
+        )));
+        button.add_css_class("search-filter-button");
+
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        content.add_css_class("search-filter-panel");
+        let title = gtk::Label::new(Some("SEARCH FILTERS"));
+        title.add_css_class("search-filter-title");
+        title.set_xalign(0.0);
+        content.append(&title);
+
+        let file_type = gtk::DropDown::from_strings(&["Any type", "Files", "Folders"]);
+        append_filter_control(&content, "Type", &file_type);
+        let modified = gtk::DropDown::from_strings(&["Any time", "Today", "Yesterday"]);
+        append_filter_control(&content, "Modified", &modified);
+        let extension = filter_entry("pdf");
+        append_filter_control(&content, "Extension", &extension);
+        let within = filter_entry("Documents or Projects/hermes");
+        append_filter_control(&content, "Within folder", &within);
+        let content_query = filter_entry("Words or an exact phrase");
+        append_filter_control(&content, "File contains", &content_query);
+
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        actions.set_halign(gtk::Align::End);
+        let clear = gtk::Button::with_label("Clear");
+        clear.add_css_class("search-filter-clear");
+        let apply = gtk::Button::with_label("Apply filters");
+        apply.add_css_class("search-filter-apply");
+        actions.append(&clear);
+        actions.append(&apply);
+        content.append(&actions);
+
+        let popover = gtk::Popover::builder()
+            .child(&content)
+            .autohide(true)
+            .has_arrow(false)
+            .build();
+        popover.add_css_class("search-filter-popover");
+        popover.set_parent(&button);
+
+        Self {
+            button,
+            popover,
+            file_type,
+            modified,
+            extension,
+            within,
+            content: content_query,
+            apply,
+            clear,
+        }
+    }
+
+    fn show(&self, query: &str) {
+        let (_, values) = search_filter_values(query);
+        self.set_values(&values);
+        self.popover.popup();
+        self.file_type.grab_focus();
+    }
+
+    fn set_values(&self, values: &SearchFilterValues) {
+        self.file_type.set_selected(match values.directory {
+            Some(false) => 1,
+            Some(true) => 2,
+            None => 0,
+        });
+        self.modified
+            .set_selected(match values.modified.as_deref() {
+                Some("today") => 1,
+                Some("yesterday") => 2,
+                _ => 0,
+            });
+        self.extension
+            .set_text(values.extension.as_deref().unwrap_or_default());
+        self.within
+            .set_text(values.within.as_deref().unwrap_or_default());
+        self.content
+            .set_text(values.content.as_deref().unwrap_or_default());
+        self.update_active(values != &SearchFilterValues::default());
+    }
+
+    fn query(&self, current: &str) -> String {
+        let (terms, _) = search_filter_values(current);
+        let mut parts = Vec::new();
+        if !terms.is_empty() {
+            parts.push(terms);
+        }
+        match self.file_type.selected() {
+            1 => parts.push("type:file".to_owned()),
+            2 => parts.push("type:folder".to_owned()),
+            _ => {}
+        }
+        push_filter(&mut parts, "ext", &self.extension.text());
+        push_filter(&mut parts, "in", &self.within.text());
+        match self.modified.selected() {
+            1 => parts.push("modified:today".to_owned()),
+            2 => parts.push("modified:yesterday".to_owned()),
+            _ => {}
+        }
+        push_filter(&mut parts, "content", &self.content.text());
+        let active = parts.iter().any(|part| part.contains(':'));
+        self.update_active(active);
+        parts.join(" ")
+    }
+
+    fn update_active(&self, active: bool) {
+        if active {
+            self.button.add_css_class("active");
+        } else {
+            self.button.remove_css_class("active");
+        }
+    }
+}
+
+fn filter_entry(placeholder: &str) -> gtk::Entry {
+    let entry = gtk::Entry::builder()
+        .placeholder_text(placeholder)
+        .hexpand(true)
+        .build();
+    entry.add_css_class("search-filter-entry");
+    entry
+}
+
+fn append_filter_control(container: &gtk::Box, label: &str, control: &impl IsA<gtk::Widget>) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let label = gtk::Label::new(Some(label));
+    label.add_css_class("search-filter-label");
+    label.set_xalign(0.0);
+    label.set_width_chars(13);
+    row.append(&label);
+    row.append(control);
+    container.append(&row);
+}
+
+fn push_filter(parts: &mut Vec<String>, name: &str, value: &str) {
+    let value = value.trim();
+    if value.is_empty() {
+        return;
+    }
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    parts.push(format!("{name}:\"{escaped}\""));
 }
 
 fn begin_query(state: &Rc<SearchState>, query: &str) {

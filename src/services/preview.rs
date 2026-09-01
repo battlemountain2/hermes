@@ -51,10 +51,72 @@ pub trait PreviewProvider {
 }
 
 pub(crate) fn has_plain_text_extension(name: &OsStr) -> bool {
-    Path::new(name)
-        .extension()
+    let path = Path::new(name);
+    if path
+        .file_name()
         .and_then(OsStr::to_str)
-        .is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "conf" | "ini"))
+        .is_some_and(|name| {
+            matches!(
+                name.to_ascii_lowercase().as_str(),
+                "dockerfile" | "gemfile" | "makefile" | "meson.build"
+            )
+        })
+    {
+        return true;
+    }
+    path.extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "bash"
+                    | "c"
+                    | "cc"
+                    | "conf"
+                    | "cpp"
+                    | "cs"
+                    | "css"
+                    | "csv"
+                    | "desktop"
+                    | "fish"
+                    | "go"
+                    | "h"
+                    | "hpp"
+                    | "htm"
+                    | "html"
+                    | "ini"
+                    | "java"
+                    | "js"
+                    | "json"
+                    | "jsonl"
+                    | "jsx"
+                    | "kt"
+                    | "kts"
+                    | "less"
+                    | "log"
+                    | "lua"
+                    | "md"
+                    | "markdown"
+                    | "py"
+                    | "rb"
+                    | "rs"
+                    | "rst"
+                    | "scss"
+                    | "service"
+                    | "sh"
+                    | "sql"
+                    | "svg"
+                    | "toml"
+                    | "ts"
+                    | "tsv"
+                    | "tsx"
+                    | "txt"
+                    | "xml"
+                    | "yaml"
+                    | "yml"
+                    | "zsh"
+            )
+        })
 }
 
 pub(crate) fn content_family(content_type: &str) -> PreviewContent {

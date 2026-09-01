@@ -10,6 +10,9 @@ fn recognizes_configuration_files_as_plain_text() {
     assert!(has_plain_text_extension(std::ffi::OsStr::new(
         "SETTINGS.INI"
     )));
+    assert!(has_plain_text_extension(std::ffi::OsStr::new("main.rs")));
+    assert!(has_plain_text_extension(std::ffi::OsStr::new("README.md")));
+    assert!(has_plain_text_extension(std::ffi::OsStr::new("Dockerfile")));
     assert!(!has_plain_text_extension(std::ffi::OsStr::new(
         "archive.zip"
     )));
