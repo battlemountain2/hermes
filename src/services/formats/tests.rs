@@ -266,7 +266,7 @@ fn not_searchable_text_for_binary_families() {
     assert_eq!(FormatFamily::Image.text_extractor(), None);
     assert_eq!(FormatFamily::Heif.text_extractor(), None);
     assert_eq!(FormatFamily::Video.text_extractor(), None);
-    assert_eq!(FormatFamily::Pdf.text_extractor(), None);
+    assert_eq!(FormatFamily::Pdf.text_extractor(), Some(TextExtractor::Pdf));
     assert_eq!(FormatFamily::Unknown.text_extractor(), None);
 }
 
@@ -395,7 +395,7 @@ fn registry_reports_independent_capabilities() {
     assert_eq!(pdf.family, FormatFamily::Pdf);
     assert_eq!(pdf.preview, Some(PreviewHandler::Pdf));
     assert_eq!(pdf.thumbnail, Some(ThumbnailHandler::Pdf));
-    assert_eq!(pdf.text_extractor, None);
+    assert_eq!(pdf.text_extractor, Some(TextExtractor::Pdf));
 }
 
 #[test]

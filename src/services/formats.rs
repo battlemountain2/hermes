@@ -30,6 +30,7 @@ pub enum ThumbnailHandler {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum TextExtractor {
     PlainText,
+    Pdf,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -89,7 +90,11 @@ impl FormatFamily {
     }
 
     pub fn text_extractor(self) -> Option<TextExtractor> {
-        matches!(self, Self::PlainText | Self::Svg).then_some(TextExtractor::PlainText)
+        match self {
+            Self::PlainText | Self::Svg => Some(TextExtractor::PlainText),
+            Self::Pdf => Some(TextExtractor::Pdf),
+            _ => None,
+        }
     }
 
     /// Human-readable reason shown when visual preview is unavailable for

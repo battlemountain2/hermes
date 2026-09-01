@@ -3,12 +3,30 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::{Arc, atomic::AtomicBool},
     time::{Duration, SystemTime},
 };
 
 use super::{
-    SearchEvent, SearchItem, fuzzy_score, index_tree, recent_bounds, search_filter_values,
+    SearchEvent, SearchItem, TextExtractionProvider, UnavailableTextExtraction, fuzzy_score,
+    index_tree, recent_bounds, search_filter_values,
 };
+use crate::services::TextExtractor;
+
+struct FixtureTextExtraction;
+
+impl TextExtractionProvider for FixtureTextExtraction {
+    fn extract_text(
+        &self,
+        _path: &Path,
+        extractor: TextExtractor,
+        byte_limit: usize,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<String, String> {
+        assert_eq!(extractor, TextExtractor::Pdf);
+        Ok("A phrase extracted safely from a PDF"[..byte_limit.min(36)].to_owned())
+    }
+}
 
 fn item(path: &str) -> SearchItem {
     let name = Path::new(path)
@@ -145,7 +163,7 @@ fn background_index_can_search_inside_text_files() {
     fs::write(root.join("ordinary.md"), "the uniquely searchable phrase")
         .expect("the content fixture should be written");
 
-    let (search, events) = index_tree(root.clone());
+    let (search, events) = index_tree(root.clone(), Arc::new(UnavailableTextExtraction));
     search.query("content:\"uniquely searchable\"");
     let found = (0..30).any(|_| {
         events.recv_timeout(Duration::from_millis(100)).is_ok_and(
@@ -175,7 +193,7 @@ fn background_index_returns_results_for_queries_received_while_walking() {
     fs::write(root.join("nested/needle.txt"), b"result")
         .expect("the search fixture file should be written");
 
-    let (search, events) = index_tree(root.clone());
+    let (search, events) = index_tree(root.clone(), Arc::new(UnavailableTextExtraction));
     search.query("needle");
     let found = (0..20).any(|_| {
         events.recv_timeout(Duration::from_millis(100)).is_ok_and(
@@ -188,4 +206,34 @@ fn background_index_returns_results_for_queries_received_while_walking() {
     drop(search);
     fs::remove_dir_all(root).expect("the search fixture should be removed");
     assert!(found, "the worker should publish the matching indexed file");
+}
+
+#[test]
+fn background_index_searches_pdf_text_through_the_provider() {
+    let unique = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("the system clock should be after the Unix epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("hermes-pdf-index-{unique}"));
+    fs::create_dir_all(&root).expect("the PDF search fixture should be created");
+    fs::write(root.join("manual.pdf"), b"not parsed outside the provider")
+        .expect("the PDF fixture should be written");
+
+    let (search, events) = index_tree(root.clone(), Arc::new(FixtureTextExtraction));
+    search.query("content:\"extracted safely\"");
+    let found = (0..30).any(|_| {
+        events.recv_timeout(Duration::from_millis(100)).is_ok_and(
+            |SearchEvent::Results { query, items, .. }| {
+                query == "content:\"extracted safely\""
+                    && items.iter().any(|item| item.name == "manual.pdf")
+            },
+        )
+    });
+
+    drop(search);
+    fs::remove_dir_all(root).expect("the PDF search fixture should be removed");
+    assert!(
+        found,
+        "the worker should search PDF text through its provider"
+    );
 }

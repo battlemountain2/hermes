@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{cell::Cell, rc::Rc, time::Duration};
+use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
 
 use gtk::glib;
 
 use crate::{
+    adapters::LocalTextExtractionProvider,
     model::{EntryKind, FileEntry, Location, MetadataValue},
     services::{
         DirectoryEvent, DirectoryRequest, FileSource, LoadHandle, LocationValidationError,
@@ -35,7 +36,7 @@ impl FileSource for SearchFileSource {
         let query = search_query(uri).to_owned();
 
         let root = gtk::glib::home_dir();
-        let (handle, receiver) = index_tree(root);
+        let (handle, receiver) = index_tree(root, Arc::new(LocalTextExtractionProvider));
         handle.query(&query);
 
         let active = Rc::new(Cell::new(true));
@@ -51,6 +52,7 @@ impl FileSource for SearchFileSource {
                 query: event_query,
                 items,
                 indexing: false,
+                ..
             }) = latest
             else {
                 return glib::ControlFlow::Continue;

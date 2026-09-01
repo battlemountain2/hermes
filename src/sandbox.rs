@@ -28,6 +28,7 @@ pub(crate) enum ParseOperation {
     PreviewPdf,
     PreviewMedia,
     PreviewAudio,
+    ExtractPdfText,
 }
 
 impl ParseOperation {
@@ -43,6 +44,7 @@ impl ParseOperation {
             Self::PreviewPdf => "preview-pdf",
             Self::PreviewMedia => "preview-media",
             Self::PreviewAudio => "preview-audio",
+            Self::ExtractPdfText => "extract-pdf-text",
         }
     }
 
@@ -51,6 +53,8 @@ impl ParseOperation {
             "result.webm"
         } else if self == Self::PreviewAudio {
             "result.ogg"
+        } else if self == Self::ExtractPdfText {
+            "result.txt"
         } else {
             "result.png"
         }
@@ -61,6 +65,10 @@ impl ParseOperation {
 pub(crate) struct Cancellation(Arc<AtomicBool>);
 
 impl Cancellation {
+    pub(crate) fn from_shared(cancelled: Arc<AtomicBool>) -> Self {
+        Self(cancelled)
+    }
+
     pub(crate) fn cancel(&self) {
         self.0.store(true, Ordering::Release);
     }
@@ -128,16 +136,24 @@ pub(crate) fn parse(
     let result_path = output.path().join(operation.output_name());
     let metadata = fs::metadata(&result_path)
         .map_err(|_| "The preview renderer produced no output".to_owned())?;
-    if metadata.len() == 0 || metadata.len() > MAX_OUTPUT_BYTES {
+    let permits_empty_output = operation == ParseOperation::ExtractPdfText;
+    if (!permits_empty_output && metadata.len() == 0) || metadata.len() > MAX_OUTPUT_BYTES {
         return Err("The preview renderer produced an invalid output size".to_owned());
     }
     let data = fs::read(result_path).map_err(|error| error.to_string())?;
     if !matches!(
         operation,
-        ParseOperation::PreviewMedia | ParseOperation::PreviewAudio
+        ParseOperation::PreviewMedia
+            | ParseOperation::PreviewAudio
+            | ParseOperation::ExtractPdfText
     ) && !data.starts_with(b"\x89PNG\r\n\x1a\n")
     {
         return Err("The preview renderer produced invalid image data".to_owned());
+    }
+    if operation == ParseOperation::ExtractPdfText
+        && (data.contains(&0) || std::str::from_utf8(&data).is_err())
+    {
+        return Err("The PDF text extractor produced invalid text".to_owned());
     }
     let (page, pages) = read_metadata(&output.path().join("result.meta"));
     Ok(ParseOutput { data, page, pages })

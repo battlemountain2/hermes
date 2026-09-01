@@ -4,12 +4,13 @@ use std::{
     cell::{Cell, RefCell},
     path::{Path, PathBuf},
     rc::Rc,
-    sync::mpsc::TryRecvError,
+    sync::{Arc, mpsc::TryRecvError},
     time::Duration,
 };
 
 use gtk::{gdk, glib, prelude::*};
 
+use crate::adapters::LocalTextExtractionProvider;
 use crate::services::{
     SearchEvent, SearchFilterValues, SearchHandle, SearchItem, index_tree, search_filter_values,
 };
@@ -28,6 +29,7 @@ struct SearchState {
     list: gtk::ListBox,
     results: gtk::Stack,
     status: gtk::Label,
+    notice: gtk::Label,
     root: RefCell<PathBuf>,
     visible_results: RefCell<Vec<SearchItem>>,
     search: RefCell<Option<SearchHandle>>,
@@ -87,6 +89,13 @@ impl SearchDialog {
         search_bar.append(&filters.button);
         panel.append(&search_bar);
 
+        let notice = gtk::Label::new(None);
+        notice.add_css_class("search-status");
+        notice.set_wrap(true);
+        notice.set_xalign(0.0);
+        notice.set_visible(false);
+        panel.append(&notice);
+
         let status = gtk::Label::new(Some(SEARCH_HELP));
         status.add_css_class("search-status");
         status.set_wrap(true);
@@ -136,6 +145,7 @@ impl SearchDialog {
             list,
             results,
             status,
+            notice,
             root: RefCell::new(PathBuf::new()),
             visible_results: RefCell::new(Vec::new()),
             search: RefCell::new(None),
@@ -252,7 +262,7 @@ impl SearchDialog {
         self.state.layer.set_visible(true);
         self.state.field.grab_focus();
 
-        let (handle, receiver) = index_tree(root);
+        let (handle, receiver) = index_tree(root, Arc::new(LocalTextExtractionProvider));
         self.state.search.replace(Some(handle));
         self.state.field.set_text(query);
         self.state.field.set_position(-1);
@@ -276,10 +286,11 @@ impl SearchDialog {
                 query,
                 items,
                 indexing,
+                notice,
             }) = latest
                 && query == state.field.text().trim()
             {
-                render_results(&state, items, indexing);
+                render_results(&state, items, indexing, notice.as_deref());
             }
             glib::ControlFlow::Continue
         });
@@ -332,7 +343,7 @@ impl SearchFilterPanel {
         let content_query = filter_entry("Words or an exact phrase");
         content_query.set_sensitive(false);
         let content_note = gtk::Label::new(Some(
-            "Text, code, scripts, data, and configuration files up to 1 MiB",
+            "Text, code, data, and sandboxed PDF text; bounded to protect system performance",
         ));
         content_note.add_css_class("search-content-note");
         content_note.set_xalign(0.0);
@@ -479,6 +490,7 @@ fn begin_query(state: &Rc<SearchState>, query: &str) {
         state.list.remove(&child);
     }
     state.visible_results.borrow_mut().clear();
+    state.notice.set_visible(false);
     state.results.set_visible_child_name("status");
     if query.trim().is_empty() {
         state.status.set_text(SEARCH_HELP);
@@ -490,7 +502,14 @@ fn begin_query(state: &Rc<SearchState>, query: &str) {
     }
 }
 
-fn render_results(state: &Rc<SearchState>, results: Vec<SearchItem>, indexing: bool) {
+fn render_results(
+    state: &Rc<SearchState>,
+    results: Vec<SearchItem>,
+    indexing: bool,
+    notice: Option<&str>,
+) {
+    state.notice.set_text(notice.unwrap_or_default());
+    state.notice.set_visible(notice.is_some());
     while let Some(child) = state.list.first_child() {
         state.list.remove(&child);
     }
@@ -506,11 +525,11 @@ fn render_results(state: &Rc<SearchState>, results: Vec<SearchItem>, indexing: b
     if let Some(first) = state.list.row_at_index(0) {
         state.list.select_row(Some(&first));
     } else {
-        state.status.set_text(if indexing {
+        state.status.set_text(notice.unwrap_or(if indexing {
             "Searching…"
         } else {
             "No matching files or folders"
-        });
+        }));
     }
 }
 

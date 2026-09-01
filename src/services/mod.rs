@@ -25,6 +25,7 @@ pub use preview::{
     Preview, PreviewContent, PreviewEvent, PreviewProvider, PreviewRequest, PreviewRequestId,
 };
 pub(crate) use search::{
-    SearchEvent, SearchFilterValues, SearchHandle, SearchItem, index_tree, search_filter_values,
+    SearchEvent, SearchFilterValues, SearchHandle, SearchItem, TextExtractionProvider, index_tree,
+    search_filter_values,
 };
 pub use trails::{StoredTrails, TRAIL_SCHEMA_VERSION, TrailStore};

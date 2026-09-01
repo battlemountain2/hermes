@@ -48,3 +48,31 @@ fn cancelled_requests_fail_without_starting_a_renderer() {
 
     assert_eq!(error, "Preview cancelled");
 }
+
+#[test]
+fn pdf_text_extraction_uses_a_text_output_inside_the_sandbox() {
+    let operation = ParseOperation::ExtractPdfText;
+    let command = sandbox_command(
+        Path::new("/tmp/strata"),
+        Path::new("/home/alice/Documents/manual.pdf"),
+        Path::new("/tmp/private-output"),
+        operation,
+        1_048_576,
+    );
+    let arguments: Vec<_> = command
+        .get_args()
+        .map(|argument| argument.to_string_lossy().into_owned())
+        .collect();
+
+    assert!(
+        arguments
+            .iter()
+            .any(|argument| argument == "extract-pdf-text")
+    );
+    assert!(
+        arguments
+            .iter()
+            .any(|argument| argument == "/output/result.txt")
+    );
+    assert!(arguments.iter().any(|argument| argument == "1048576"));
+}

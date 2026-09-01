@@ -208,7 +208,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test -q
 ```
 
-The last completed baseline is **170 passing tests** with strict Clippy clean. To run the current development build rather
+The last completed baseline is **173 passing tests** with strict Clippy clean. To run the current development build rather
 than an older desktop-installed copy:
 
 ```bash
@@ -229,15 +229,16 @@ click-and-drag panning, and image auto-fit zoom scaling. The buggy list-row info
 removed to simplify the UI. Today/Yesterday sidebar searches now use a cancellable routed search
 source and publish an exact final result set after background indexing.
 
-The **Advanced Preview Registry** foundation is complete in `src/services/formats.rs`. It centrally
+The **Advanced Preview Registry** is complete in `src/services/formats.rs`. It centrally
 reports format family plus independent preview, thumbnail, and text-extractor capabilities. Local
 preview loading, quick-preview eligibility, thumbnails, preview labels/unavailable messages, and
 content-search eligibility now consume that registry. Sandbox operation selection remains outside
-the service layer.
+the service layer. Opt-in content search supports PDF text through the existing Bubblewrap/Poppler
+sandbox. PDF work is cancellable and bounded to 32 documents per query, 32 MiB per input, and
+1 MiB of extracted text; the search UI reports extraction or limit notices without blocking GTK.
 
-Continue this phase with sandboxed PDF text extraction for opt-in content search. Keep extraction
-cancellable and bounded, report a clear capability/tool message when PDF extraction is unavailable,
-and add focused tests. Office-document extraction can follow once the extractor boundary is proven.
+Next, extend the proven extractor boundary to office documents with the same cancellation and
+resource-limit guarantees, or move to archive/custom actions before returning for office support.
 
 Preserve these decisions while continuing:
 

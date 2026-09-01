@@ -3,6 +3,7 @@
 mod local_files;
 mod local_operations;
 mod local_preview;
+mod local_text_extraction;
 mod local_trails;
 
 mod search_source;
@@ -10,6 +11,7 @@ mod search_source;
 pub use local_files::LocalFileSource;
 pub use local_operations::LocalOperationProvider;
 pub use local_preview::LocalPreviewProvider;
+pub use local_text_extraction::LocalTextExtractionProvider;
 pub use local_trails::LocalTrailStore;
 pub use search_source::SearchFileSource;
 

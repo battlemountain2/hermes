@@ -15,6 +15,12 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         .parse::<i32>()
         .map_err(|_| "Invalid preview helper size or page".to_owned())?;
 
+    if operation == "extract-pdf-text" {
+        let text = extract_pdf_text(input, value.max(1) as usize)?;
+        fs::write(output, text).map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
     let (png, metadata) = match operation.as_str() {
         "thumbnail-image" => (render_image(input, value.clamp(16, 256))?, None),
         "thumbnail-heif" => (render_imagemagick(input, value.clamp(16, 256))?, None),
@@ -145,6 +151,35 @@ fn render_pdf_page(path: &Path, requested_page: i32) -> Result<(Vec<u8>, i32, i3
         .ok_or_else(|| "Unable to load that PDF page".to_owned())?;
     let png = render_pdf_surface(&page, 1400.0, 1800.0, 2_500_000.0)?;
     Ok((png, page_index, pages))
+}
+
+fn extract_pdf_text(path: &Path, byte_limit: usize) -> Result<Vec<u8>, String> {
+    let uri = gio::File::for_path(path).uri();
+    let document = poppler::Document::from_file(&uri, None).map_err(|error| error.to_string())?;
+    let mut output = String::new();
+    for page_index in 0..document.n_pages() {
+        let Some(page) = document.page(page_index) else {
+            continue;
+        };
+        let Some(text) = page.text() else {
+            continue;
+        };
+        if !output.is_empty() {
+            output.push('\n');
+        }
+        output.push_str(&text);
+        if output.len() >= byte_limit {
+            break;
+        }
+    }
+    if output.len() > byte_limit {
+        let mut end = byte_limit;
+        while !output.is_char_boundary(end) {
+            end = end.saturating_sub(1);
+        }
+        output.truncate(end);
+    }
+    Ok(output.into_bytes())
 }
 
 fn render_pdf_surface(
