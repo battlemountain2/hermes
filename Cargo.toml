@@ -2,10 +2,10 @@
 name = "strata"
 version = "0.2.0"
 edition = "2024"
-description = "A fast, keyboard-first file manager for Linux"
-authors = ["LGSE Ltd."]
+description = "A fast, polished, personal file manager for Linux"
+authors = ["battlemountain2"]
 license = "GPL-3.0-or-later"
-repository = "https://github.com/LGSE/strata"
+repository = "https://github.com/battlemountain2/hermes"
 keywords = ["file-manager", "gtk4", "linux", "wayland"]
 categories = ["filesystem", "gui"]
 

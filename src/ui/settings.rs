@@ -174,7 +174,7 @@ fn general_page(
     let direct_open_enabled = manager.search_open_files_directly();
     let (search_open_row, search_open_files) = settings_option(
         "Open search results directly",
-        "Launch files from search instead of opening Strata's quick preview.",
+        "Launch files from search instead of opening Hermes' quick preview.",
         direct_open_enabled,
     );
     let manager_for_search = manager.clone();
@@ -265,7 +265,7 @@ fn about_page() -> gtk::Widget {
     identity.add_css_class("about-identity");
     identity.set_halign(gtk::Align::Center);
 
-    let name = gtk::Label::new(Some("Strata"));
+    let name = gtk::Label::new(Some("Hermes"));
     name.add_css_class("about-name");
     let description = gtk::Label::new(Some(crate::build_info::DESCRIPTION));
     description.add_css_class("about-description");
@@ -282,27 +282,45 @@ fn about_page() -> gtk::Widget {
     append_about_detail(&build, "Commit", crate::build_info::COMMIT, true);
     content.append(&build);
 
-    append_heading(&content, "PROJECT");
+    append_heading(&content, "HERMES PROJECT");
     let project = gtk::Box::new(gtk::Orientation::Vertical, 0);
     project.add_css_class("about-details");
-    append_about_detail(&project, "Author", crate::build_info::AUTHOR, false);
+    append_about_detail(&project, "Hermes author", crate::build_info::AUTHOR, false);
+    project.append(&repository_button(
+        crate::build_info::REPOSITORY,
+        "Hermes repository",
+        "Open the Hermes repository",
+    ));
+    content.append(&project);
 
+    append_heading(&content, "ORIGINAL PROJECT");
+    let original = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    original.add_css_class("about-details");
+    append_about_detail(&original, "Original author", "LGSE Ltd.", false);
+    original.append(&repository_button(
+        "https://github.com/LGSE/strata",
+        "Original Strata repository",
+        "Open the original Strata repository",
+    ));
+    content.append(&original);
+
+    content.upcast()
+}
+
+fn repository_button(uri: &str, label: &str, tooltip: &str) -> gtk::LinkButton {
     let repository = gtk::LinkButton::builder()
-        .uri(crate::build_info::REPOSITORY)
-        .tooltip_text("Open the Strata repository")
+        .uri(uri)
+        .tooltip_text(tooltip)
         .build();
     repository.add_css_class("about-repository");
     let repository_content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let repository_label = gtk::Label::new(Some("GitHub repository"));
+    let repository_label = gtk::Label::new(Some(label));
     repository_label.set_xalign(0.0);
     repository_label.set_hexpand(true);
     repository_content.append(&repository_label);
     repository_content.append(&crate::assets::primary_icon(icons::EXTERNAL_LINK, 16));
     repository.set_child(Some(&repository_content));
-    project.append(&repository);
-    content.append(&project);
-
-    content.upcast()
+    repository
 }
 
 fn append_about_detail(container: &gtk::Box, label: &str, value: &str, monospace: bool) {

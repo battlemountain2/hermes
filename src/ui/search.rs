@@ -13,6 +13,7 @@ use gtk::{gdk, glib, prelude::*};
 use crate::services::{SearchEvent, SearchHandle, SearchItem, index_tree};
 
 const MAX_RESULT_UPDATES_PER_FRAME: usize = 8;
+const SEARCH_HELP: &str = "Type to search the whole tree\nFilters: type:file · type:folder · ext:pdf · in:Documents · modified:today";
 
 #[derive(Clone)]
 pub struct SearchDialog {
@@ -67,7 +68,7 @@ impl SearchDialog {
         search_bar.append(&field);
         panel.append(&search_bar);
 
-        let status = gtk::Label::new(Some("Type to search the whole tree"));
+        let status = gtk::Label::new(Some(SEARCH_HELP));
         status.add_css_class("search-status");
         status.set_wrap(true);
 
@@ -184,7 +185,7 @@ impl SearchDialog {
         self.state.visible_results.borrow_mut().clear();
         self.state.field.set_text("");
         self.state.status.set_visible(true);
-        self.state.status.set_text("Type to search the whole tree");
+        self.state.status.set_text(SEARCH_HELP);
         self.state.layer.set_visible(true);
         self.state.field.grab_focus();
 
@@ -237,9 +238,7 @@ fn begin_query(state: &Rc<SearchState>, query: &str) {
     state.visible_results.borrow_mut().clear();
     state.results.set_visible_child_name("status");
     if query.trim().is_empty() {
-        state.status.set_text(
-            "Type to search the whole tree\nFuzzy matching · try a name or path fragment",
-        );
+        state.status.set_text(SEARCH_HELP);
     } else {
         state.status.set_text("Searching…");
     }

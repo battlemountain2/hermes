@@ -56,6 +56,26 @@ fn recent_queries_use_non_overlapping_local_day_ranges() {
 }
 
 #[test]
+fn structured_filters_can_match_without_a_name_term() {
+    let mut candidate = item("/home/me/src/search.rs");
+    candidate.modified_unix_seconds = Some(
+        recent_bounds("modified:today")
+            .expect("today should parse")
+            .0,
+    );
+    assert!(fuzzy_score(&candidate, "type:file ext:rs in:src", Path::new("/home/me")).is_some());
+    assert!(fuzzy_score(&candidate, "type:folder", Path::new("/home/me")).is_none());
+    assert!(fuzzy_score(&candidate, "ext:png", Path::new("/home/me")).is_none());
+}
+
+#[test]
+fn structured_filters_combine_with_fuzzy_name_terms() {
+    let candidate = item("/home/me/themes/azure/colors.toml");
+    assert!(fuzzy_score(&candidate, "colors ext:toml", Path::new("/home/me")).is_some());
+    assert!(fuzzy_score(&candidate, "missing ext:toml", Path::new("/home/me")).is_none());
+}
+
+#[test]
 fn background_index_returns_results_for_queries_received_while_walking() {
     let unique = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)

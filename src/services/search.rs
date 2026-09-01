@@ -224,10 +224,39 @@ fn fuzzy_score_normalized(item: &SearchItem, query: &str) -> Option<i64> {
     if query.is_empty() {
         return None;
     }
-    if let Some((start, end)) = recent_bounds(query) {
-        let modified = item.modified_unix_seconds?;
-        return (!item.is_directory && modified >= start && modified < end).then_some(modified);
+    let parsed = ParsedSearchQuery::parse(query);
+    if let Some(directory) = parsed.directory
+        && item.is_directory != directory
+    {
+        return None;
     }
+    if let Some(extension) = parsed.extension.as_deref()
+        && (item.is_directory
+            || item
+                .path
+                .extension()
+                .is_none_or(|candidate| candidate.to_string_lossy().to_lowercase() != extension))
+    {
+        return None;
+    }
+    if let Some(within) = parsed.within.as_deref()
+        && !item.search_path.contains(within)
+    {
+        return None;
+    }
+    if let Some((start, end)) = parsed.modified {
+        let modified = item.modified_unix_seconds?;
+        if modified < start || modified >= end {
+            return None;
+        }
+        if parsed.terms.is_empty() {
+            return (!item.is_directory).then_some(modified);
+        }
+    }
+    if parsed.terms.is_empty() {
+        return Some(if item.is_directory { 20 } else { 0 });
+    }
+    let query = parsed.terms.as_str();
     let mut score = if let Some(position) = item.search_name.find(query) {
         10_000 - position as i64 * 12 - item.search_name.len() as i64
     } else if let Some(position) = item.search_path.find(query) {
@@ -242,6 +271,54 @@ fn fuzzy_score_normalized(item: &SearchItem, query: &str) -> Option<i64> {
         score += 20;
     }
     Some(score)
+}
+
+#[derive(Default)]
+struct ParsedSearchQuery {
+    terms: String,
+    directory: Option<bool>,
+    extension: Option<String>,
+    within: Option<String>,
+    modified: Option<(i64, i64)>,
+}
+
+impl ParsedSearchQuery {
+    fn parse(query: &str) -> Self {
+        let mut parsed = Self::default();
+        let mut terms = Vec::new();
+        for token in query.split_whitespace() {
+            if let Some(value) = token.strip_prefix("type:") {
+                match value {
+                    "file" => parsed.directory = Some(false),
+                    "folder" | "directory" => parsed.directory = Some(true),
+                    _ => terms.push(token),
+                }
+            } else if let Some(value) = token.strip_prefix("ext:") {
+                let extension = value.trim_start_matches('.');
+                if extension.is_empty() {
+                    terms.push(token);
+                } else {
+                    parsed.extension = Some(extension.to_owned());
+                }
+            } else if let Some(value) = token.strip_prefix("in:") {
+                if value.is_empty() {
+                    terms.push(token);
+                } else {
+                    parsed.within = Some(value.to_owned());
+                }
+            } else if token.starts_with("modified:") {
+                if let Some(bounds) = recent_bounds(token) {
+                    parsed.modified = Some(bounds);
+                } else {
+                    terms.push(token);
+                }
+            } else {
+                terms.push(token);
+            }
+        }
+        parsed.terms = terms.join(" ");
+        parsed
+    }
 }
 
 fn recent_bounds(query: &str) -> Option<(i64, i64)> {
