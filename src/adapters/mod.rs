@@ -27,7 +27,7 @@ pub struct RoutedFileSource {
 impl RoutedFileSource {
     pub fn new() -> Self {
         Self {
-            local: LocalFileSource::default(),
+            local: LocalFileSource,
             search: SearchFileSource::new(),
         }
     }
@@ -35,7 +35,10 @@ impl RoutedFileSource {
 
 impl FileSource for RoutedFileSource {
     fn validate_location(&self, location: &Location) -> Result<(), LocationValidationError> {
-        if location.uri_value().is_some_and(|u| u.starts_with("search://")) {
+        if location
+            .uri_value()
+            .is_some_and(|u| u.starts_with("search://"))
+        {
             self.search.validate_location(location)
         } else {
             self.local.validate_location(location)
@@ -43,7 +46,11 @@ impl FileSource for RoutedFileSource {
     }
 
     fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
-        if request.location.uri_value().is_some_and(|u| u.starts_with("search://")) {
+        if request
+            .location
+            .uri_value()
+            .is_some_and(|u| u.starts_with("search://"))
+        {
             self.search.enumerate(request, emit)
         } else {
             self.local.enumerate(request, emit)

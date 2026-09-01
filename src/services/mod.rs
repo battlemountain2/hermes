@@ -11,8 +11,11 @@ pub use file_source::{
     DirectoryChange, DirectoryEvent, DirectoryRequest, FileSource, LoadHandle,
     LocationValidationError, RequestId,
 };
+#[cfg(test)]
+pub(crate) use formats::thumbnail_handler_for_name;
 pub(crate) use formats::{
-    FormatFamily, classify_by_mime, classify_by_name, thumbnail_operation_for_name,
+    FormatCapabilities, FormatFamily, PreviewHandler, TextExtractor, ThumbnailHandler,
+    capabilities_by_name, classify_by_mime, classify_by_name,
 };
 pub use operations::{
     CreateDirectoryRequest, CreateFileRequest, DeleteRequest, OperationEvent, OperationProvider,

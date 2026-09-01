@@ -14,7 +14,7 @@ use std::{
 
 use gio::glib;
 
-use super::classify_by_name;
+use super::{TextExtractor, capabilities_by_name};
 
 const RESULT_LIMIT: usize = 100;
 const PUBLISH_INTERVAL: Duration = Duration::from_millis(50);
@@ -419,7 +419,8 @@ fn query_tokens(query: &str) -> Vec<String> {
 fn search_file_content(item: &SearchItem, needle: &str) -> Option<i64> {
     if item.is_directory
         || needle.is_empty()
-        || !classify_by_name(item.path.as_os_str()).is_searchable_text()
+        || capabilities_by_name(item.path.as_os_str()).text_extractor
+            != Some(TextExtractor::PlainText)
     {
         return None;
     }

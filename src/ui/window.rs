@@ -11,7 +11,7 @@ use std::{
 use gtk::{gio, glib, prelude::*};
 
 use crate::{
-    adapters::{RoutedFileSource, LocalOperationProvider, LocalPreviewProvider, LocalTrailStore},
+    adapters::{LocalOperationProvider, LocalPreviewProvider, LocalTrailStore, RoutedFileSource},
     app::{Browser, BrowserEvent, Trails},
     model::{
         EntryKind, FileEntry, Location, MetadataValue, Trail, TrailBrowserDensity,
@@ -246,13 +246,13 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     tree_paned.set_shrink_start_child(false);
     tree_paned.set_resize_start_child(false);
     tree_paned.set_position(220);
-    
+
     let folder_tree = super::folder_tree::build_folder_tree(browser.clone());
     folder_tree.set_visible(theme_manager.show_folder_tree());
-    
+
     tree_paned.set_start_child(Some(&folder_tree));
     tree_paned.set_end_child(Some(&browser.widget()));
-    
+
     content.set_end_child(Some(&tree_paned));
     let animation_generation = Rc::new(Cell::new(0));
     let sidebar_animating = Rc::new(Cell::new(false));
@@ -1549,19 +1549,19 @@ impl SidebarState {
         let row = self.append_place(crate::assets::icons::FOLDER, &name, location.clone());
         let menu = gtk::Box::new(gtk::Orientation::Vertical, 0);
         menu.add_css_class("folder-context-menu");
-        
+
         let pin = sidebar_context_option(crate::assets::icons::PIN, "Pin to sidebar", false);
         let remove = sidebar_context_option(crate::assets::icons::X, "Remove from recent", false);
         let clear = sidebar_context_option(crate::assets::icons::TRASH, "Clear all recent", true);
         clear.add_css_class("danger");
         let properties = sidebar_context_option(crate::assets::icons::INFO, "Properties", false);
-        
+
         menu.append(&pin);
         menu.append(&remove);
         menu.append(&clear);
         menu.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         menu.append(&properties);
-        
+
         let popover = gtk::Popover::builder()
             .child(&menu)
             .autohide(true)
@@ -1569,44 +1569,52 @@ impl SidebarState {
             .build();
         popover.add_css_class("folder-context-popover");
         popover.set_parent(&row);
-        
+
         let weak_state = Rc::downgrade(self);
         let recent_location = location.clone();
         let pin_name = name.clone();
         let pin_popover = popover.downgrade();
         pin.connect_clicked(move |_| {
-            if let Some(popover) = pin_popover.upgrade() { popover.popdown(); }
+            if let Some(popover) = pin_popover.upgrade() {
+                popover.popdown();
+            }
             if let Some(state) = weak_state.upgrade() {
                 state.pin_location(recent_location.clone(), pin_name.clone());
             }
         });
-        
+
         let weak_state = Rc::downgrade(self);
         let remove_location = location.clone();
         let remove_popover = popover.downgrade();
         remove.connect_clicked(move |_| {
-            if let Some(popover) = remove_popover.upgrade() { popover.popdown(); }
+            if let Some(popover) = remove_popover.upgrade() {
+                popover.popdown();
+            }
             if let Some(state) = weak_state.upgrade() {
                 state.recent_folders.borrow_mut().remove(&remove_location);
                 state.rebuild();
             }
         });
-        
+
         let weak_state = Rc::downgrade(self);
         let clear_popover = popover.downgrade();
         clear.connect_clicked(move |_| {
-            if let Some(popover) = clear_popover.upgrade() { popover.popdown(); }
+            if let Some(popover) = clear_popover.upgrade() {
+                popover.popdown();
+            }
             if let Some(state) = weak_state.upgrade() {
                 state.recent_folders.borrow_mut().clear();
                 state.rebuild();
             }
         });
-        
+
         let properties_view = self.view.clone();
         let properties_location = location.clone();
         let properties_popover = popover.downgrade();
         properties.connect_clicked(move |_| {
-            if let Some(popover) = properties_popover.upgrade() { popover.popdown(); }
+            if let Some(popover) = properties_popover.upgrade() {
+                popover.popdown();
+            }
             properties_view.show_location_properties(&properties_location);
         });
 
@@ -1792,7 +1800,9 @@ fn build_sidebar(view: BrowserView, theme_manager: Rc<ThemeManager>) -> SidebarV
         .build();
     scroller.add_css_class("sidebar-scroll");
     let volume_monitor = gio::VolumeMonitor::get();
-    let recent_folders = Rc::new(RefCell::new(crate::ui::recent_folders::RecentFolders::load()));
+    let recent_folders = Rc::new(RefCell::new(
+        crate::ui::recent_folders::RecentFolders::load(),
+    ));
     let state = Rc::new(SidebarState {
         widget,
         browser: view.browser(),
@@ -1810,12 +1820,15 @@ fn build_sidebar(view: BrowserView, theme_manager: Rc<ThemeManager>) -> SidebarV
         if let Some(state) = weak.upgrade() {
             match event {
                 BrowserEvent::ColumnAdded { .. } | BrowserEvent::ColumnsTruncated { .. } => {
-                    if state.theme_manager.show_recent_folders() {
-                        if let Some(active_location) = state.browser.active_location() {
-                            let limit = state.theme_manager.recent_folders_limit() as usize;
-                            state.recent_folders.borrow_mut().record(&active_location, limit);
-                            state.rebuild();
-                        }
+                    if state.theme_manager.show_recent_folders()
+                        && let Some(active_location) = state.browser.active_location()
+                    {
+                        let limit = state.theme_manager.recent_folders_limit() as usize;
+                        state
+                            .recent_folders
+                            .borrow_mut()
+                            .record(&active_location, limit);
+                        state.rebuild();
                     }
                     state.sync_active_place();
                 }

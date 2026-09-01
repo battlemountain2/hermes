@@ -371,7 +371,15 @@ impl PreviewState {
     }
 
     fn render(self: &Rc<Self>, preview: Preview) {
-        self.content_type.set_text(&preview.content_type);
+        let mut family = classify_by_mime(&preview.content_type);
+        if family == FormatFamily::Unknown {
+            if gio::content_type_is_a(&preview.content_type, "text/plain") {
+                family = FormatFamily::PlainText;
+            } else {
+                family = classify_by_name(&preview.entry.native_name);
+            }
+        }
+        self.content_type.set_text(family.display_label());
         self.clear_content();
         let is_audio = preview.content_type.starts_with("audio/");
         match preview.content {
@@ -420,7 +428,7 @@ impl PreviewState {
                     Ok(texture) => {
                         let width = texture.width() as f64;
                         let height = texture.height() as f64;
-                        
+
                         let picture = gtk::Picture::for_paintable(&texture);
                         picture.add_css_class("preview-image");
                         picture.set_can_shrink(true);
@@ -429,7 +437,7 @@ impl PreviewState {
                         picture.set_vexpand(true);
                         picture.set_halign(gtk::Align::Center);
                         picture.set_valign(gtk::Align::Center);
-                        
+
                         let scroll = gtk::ScrolledWindow::builder()
                             .child(&picture)
                             .hscrollbar_policy(gtk::PolicyType::Automatic)
@@ -437,16 +445,16 @@ impl PreviewState {
                             .hexpand(true)
                             .vexpand(true)
                             .build();
-                        
+
                         let zoom_level = Rc::new(Cell::new(1.0f64));
                         let initial_fit_done = Rc::new(Cell::new(false));
-                        
+
                         let vadj = scroll.vadjustment();
                         let hadj = scroll.hadjustment();
                         let pic = picture.clone();
                         let zl = zoom_level.clone();
                         let fit_done = initial_fit_done.clone();
-                        
+
                         hadj.connect_notify_local(Some("page-size"), move |hadj, _| {
                             if !fit_done.get() {
                                 let view_w = hadj.page_size();
@@ -457,15 +465,18 @@ impl PreviewState {
                                     let scale_h = view_h / height;
                                     let fit_scale = scale_w.min(scale_h).min(1.0); // Don't scale up past 100%
                                     zl.set(fit_scale);
-                                    pic.set_size_request((width * fit_scale) as i32, (height * fit_scale) as i32);
+                                    pic.set_size_request(
+                                        (width * fit_scale) as i32,
+                                        (height * fit_scale) as i32,
+                                    );
                                 }
                             }
                         });
-                        
+
                         let controller = gtk::EventControllerScroll::new(
                             gtk::EventControllerScrollFlags::VERTICAL,
                         );
-                        
+
                         let picture_ref = picture.clone();
                         controller.connect_scroll(move |_, _dx, dy| {
                             let current = zoom_level.get();
@@ -473,20 +484,20 @@ impl PreviewState {
                             // Use an exponential curve so smooth scrolling feels natural
                             let factor = 1.15f64.powf(-dy);
                             let new_zoom = (current * factor).clamp(0.1, 10.0);
-                            
+
                             zoom_level.set(new_zoom);
-                            
+
                             picture_ref.set_size_request(
                                 (width * new_zoom) as i32,
                                 (height * new_zoom) as i32,
                             );
                             picture_ref.set_can_shrink(true);
-                            
+
                             gtk::glib::Propagation::Stop
                         });
-                        
+
                         scroll.add_controller(controller);
-                        
+
                         let drag = gtk::GestureDrag::new();
                         drag.set_button(1);
                         let scroll_for_drag1 = scroll.clone();
@@ -536,10 +547,6 @@ impl PreviewState {
                 self.content.append(&notice);
             }
             PreviewContent::Image | PreviewContent::Media => {
-                let mut family = classify_by_mime(&preview.content_type);
-                if family == FormatFamily::Unknown {
-                    family = classify_by_name(&preview.entry.native_name);
-                }
                 let hint = match family {
                     FormatFamily::Pdf => "PDF rendering requires Poppler to be installed",
                     FormatFamily::Video => "Video preview requires FFmpeg",
@@ -552,14 +559,6 @@ impl PreviewState {
                 self.render_pdf_viewer(preview.entry, png, page, pages);
             }
             PreviewContent::Unsupported => {
-                let mut family = classify_by_mime(&preview.content_type);
-                if family == FormatFamily::Unknown {
-                    if gio::content_type_is_a(&preview.content_type, "text/plain") {
-                        family = FormatFamily::PlainText;
-                    } else {
-                        family = classify_by_name(&preview.entry.native_name);
-                    }
-                }
                 self.show_message("No visual preview", family.unavailable_reason());
             }
         }

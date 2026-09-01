@@ -200,8 +200,7 @@ This checkout is the standalone, private **Hermes** project derived from Strata.
 and some user-facing strings intentionally still use `strata`; perform that rename later as one
 coordinated release task rather than changing identifiers piecemeal.
 
-Current verified handoff point: commit `618091d` (`feat(preview): auto-fit image preview on initial load`). The
-working tree was clean when this section was written. The standard verification baseline is:
+The current `feat/ui-updates` checkpoint is verified with:
 
 ```bash
 cargo fmt --all
@@ -209,7 +208,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test -q
 ```
 
-The last completed baseline is **147 passing tests**. To run the current development build rather
+The last completed baseline is **170 passing tests** with strict Clippy clean. To run the current development build rather
 than an older desktop-installed copy:
 
 ```bash
@@ -225,24 +224,20 @@ operations and Open With, clipboard status/details, folder-state and album-art t
 structured and mouse-configurable search filters, opt-in bounded content search, broader text
 previews, and selectable Maple Mono/JetBrains Mono fonts. Search content reads run off the GTK
 thread, skip symlinks and binary-looking files, and cap direct text reads at 1 MiB.
-We also recently added an optional folder tree panel (configurable in Settings), image preview click-and-drag panning, and image auto-fit zoom scaling. The buggy list-row info buttons were completely removed to simplify the UI.
+We also recently added an optional folder tree panel (configurable in Settings), image preview
+click-and-drag panning, and image auto-fit zoom scaling. The buggy list-row info buttons were
+removed to simplify the UI. Today/Yesterday sidebar searches now use a cancellable routed search
+source and publish an exact final result set after background indexing.
 
-The active phase is **Advanced Preview Registry**. Start by centralizing format capability
-classification; no implementation for this phase was left partially applied (though some foundational work may exist in `src/services/formats.rs`). Classification is
-currently duplicated across:
+The **Advanced Preview Registry** foundation is complete in `src/services/formats.rs`. It centrally
+reports format family plus independent preview, thumbnail, and text-extractor capabilities. Local
+preview loading, quick-preview eligibility, thumbnails, preview labels/unavailable messages, and
+content-search eligibility now consume that registry. Sandbox operation selection remains outside
+the service layer.
 
-- `src/services/preview.rs`: `content_family()` and `has_plain_text_extension()`;
-- `src/adapters/local_preview.rs`: MIME-to-preview and sandbox-operation selection;
-- `src/ui/thumbnail.rs`: `thumbnail_kind()` extension table;
-- `src/ui/browser.rs`: `entry_supports_quick_preview()`;
-- `src/services/search.rs`: direct searchable-text eligibility.
-
-Create a service-layer registry (for example `src/services/formats.rs`) that reports independent
-capabilities for format family, quick-preview handler, thumbnail handler, and searchable-text
-extractor. Migrate the consumers above without changing established behavior, add focused registry
-tests, and keep strict Clippy clean. Then continue with capability-aware unavailable/error messages
-and sandboxed PDF text extraction for opt-in content search. Office-document extraction can follow
-once the extractor boundary is proven.
+Continue this phase with sandboxed PDF text extraction for opt-in content search. Keep extraction
+cancellable and bounded, report a clear capability/tool message when PDF extraction is unavailable,
+and add focused tests. Office-document extraction can follow once the extractor boundary is proven.
 
 Preserve these decisions while continuing:
 

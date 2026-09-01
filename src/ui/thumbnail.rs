@@ -12,7 +12,7 @@ use gtk::{gdk, gio, glib, prelude::*};
 use crate::{
     model::{FileEntry, MetadataValue},
     sandbox::{Cancellation, ParseOperation},
-    services::thumbnail_operation_for_name,
+    services::{FormatCapabilities, ThumbnailHandler, capabilities_by_name},
 };
 
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
@@ -106,8 +106,12 @@ pub(super) fn set_thumbnail_or_icon(
     }
     let kind = if entry.is_directory() {
         ThumbnailKind::FolderAlbum
-    } else if let Some(operation) = thumbnail_operation_for_name(path.as_os_str()) {
-        ThumbnailKind::Sandboxed(operation)
+    } else if let FormatCapabilities {
+        thumbnail: Some(handler),
+        ..
+    } = capabilities_by_name(path.as_os_str())
+    {
+        ThumbnailKind::Sandboxed(thumbnail_operation(handler))
     } else {
         return;
     };
@@ -152,6 +156,16 @@ pub(super) fn set_thumbnail_or_icon(
         };
         apply_thumbnail(&image, &bytes, thumbnail_size);
     });
+}
+
+fn thumbnail_operation(handler: ThumbnailHandler) -> ParseOperation {
+    match handler {
+        ThumbnailHandler::Image => ParseOperation::ThumbnailImage,
+        ThumbnailHandler::Heif => ParseOperation::ThumbnailHeif,
+        ThumbnailHandler::RawImage => ParseOperation::ThumbnailRaw,
+        ThumbnailHandler::Pdf => ParseOperation::ThumbnailPdf,
+        ThumbnailHandler::Media => ParseOperation::ThumbnailVideo,
+    }
 }
 
 fn mark_nonempty_folder(image: &gtk::Image, image_id: usize, request: u64, path: PathBuf) {

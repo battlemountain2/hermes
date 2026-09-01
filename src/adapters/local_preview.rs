@@ -8,8 +8,8 @@ use crate::{
     model::Location,
     sandbox::{Cancellation, ParseOperation},
     services::{
-        FormatFamily, LoadHandle, Preview, PreviewContent, PreviewEvent, PreviewProvider,
-        PreviewRequest, classify_by_mime, classify_by_name,
+        FormatFamily, LoadHandle, Preview, PreviewContent, PreviewEvent, PreviewHandler,
+        PreviewProvider, PreviewRequest, classify_by_mime, classify_by_name,
     },
 };
 
@@ -55,24 +55,23 @@ impl PreviewProvider for LocalPreviewProvider {
                 }
             }
 
-            let mut content = match family {
-                FormatFamily::PlainText => PreviewContent::Text {
+            let handler = family.preview_handler();
+            let mut content = match handler {
+                Some(PreviewHandler::Text) => PreviewContent::Text {
                     content: String::new(),
                     truncated: false,
                 },
-                FormatFamily::Pdf => PreviewContent::Pdf {
+                Some(PreviewHandler::Pdf) => PreviewContent::Pdf {
                     png: Vec::new(),
                     page: 0,
                     pages: 0,
                 },
-                f if f.preview_operation().is_some() => match f {
-                    FormatFamily::Audio | FormatFamily::Video => PreviewContent::Media,
-                    _ => PreviewContent::Image,
-                },
+                Some(PreviewHandler::Audio | PreviewHandler::Video) => PreviewContent::Media,
+                Some(PreviewHandler::Image | PreviewHandler::Heif) => PreviewContent::Image,
                 _ => PreviewContent::Unsupported,
             };
 
-            let operation = family.preview_operation();
+            let operation = handler.and_then(preview_operation);
             if let Some(operation) = operation {
                 let Some(path) = entry.location.native_path().map(ToOwned::to_owned) else {
                     emit(PreviewEvent::Failed {
@@ -141,6 +140,17 @@ impl PreviewProvider for LocalPreviewProvider {
             cancellation.cancel();
             task.abort();
         })
+    }
+}
+
+fn preview_operation(handler: PreviewHandler) -> Option<ParseOperation> {
+    match handler {
+        PreviewHandler::Text => None,
+        PreviewHandler::Image => Some(ParseOperation::PreviewImage),
+        PreviewHandler::Heif => Some(ParseOperation::PreviewHeif),
+        PreviewHandler::Pdf => Some(ParseOperation::PreviewPdf),
+        PreviewHandler::Audio => Some(ParseOperation::PreviewAudio),
+        PreviewHandler::Video => Some(ParseOperation::PreviewMedia),
     }
 }
 
