@@ -1581,6 +1581,17 @@ menubutton.column-header-action > button:focus-visible image {
   min-width: 360px;
 }
 
+.hermes-app-chooser {
+  background: @theme_surface;
+  color: @theme_text;
+  min-width: 620px;
+  min-height: 480px;
+}
+
+.hermes-app-chooser button {
+  border-radius: 6px;
+}
+
 .drive-confirm-content {
   padding: 18px 20px 10px;
 }
