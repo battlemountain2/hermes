@@ -3774,15 +3774,35 @@ pub(super) fn install_folder_context_menu(
             .build();
         entry.add_css_class("inline-rename");
         dialog.content_area().append(&entry);
+        let kind = gtk::ComboBoxText::new();
+        kind.append(Some("blank"), "Blank file");
+        kind.append(Some("text"), "Text file (.txt)");
+        kind.append(Some("markdown"), "Markdown (.md)");
+        kind.append(Some("json"), "JSON (.json)");
+        kind.set_active_id(Some("blank"));
+        dialog.content_area().append(&kind);
         dialog.add_button("Cancel", gtk::ResponseType::Cancel);
         let create = dialog.add_button("Create", gtk::ResponseType::Accept);
         create.add_css_class("suggested-action");
         let browser = state.browser.clone();
         let dialog_entry = entry.clone();
         let dialog_folder = file_folder.clone();
+        let dialog_kind = kind.clone();
         dialog.connect_response(move |dialog, response| {
             if response == gtk::ResponseType::Accept {
-                browser.create_file(dialog_folder.clone(), dialog_entry.text().to_string());
+                let mut name = dialog_entry.text().to_string();
+                if !name.contains('.') {
+                    let suffix = match dialog_kind.active_id().as_deref() {
+                        Some("text") => Some(".txt"),
+                        Some("markdown") => Some(".md"),
+                        Some("json") => Some(".json"),
+                        _ => None,
+                    };
+                    if let Some(suffix) = suffix {
+                        name.push_str(suffix);
+                    }
+                }
+                browser.create_file(dialog_folder.clone(), name);
             }
             dialog.close();
         });
