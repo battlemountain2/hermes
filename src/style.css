@@ -63,6 +63,17 @@ headerbar menubutton.header-action > button:checked {
   padding: 0;
 }
 
+headerbar button.search-action {
+  min-width: 112px;
+  padding-left: 70px;
+}
+
+headerbar button.search-action:hover,
+headerbar button.search-action:active,
+headerbar button.search-action.active {
+  background: transparent;
+}
+
 headerbar image {
   -gtk-icon-size: 20px;
 }

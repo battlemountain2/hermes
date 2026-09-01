@@ -187,11 +187,12 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     let search_button = gtk::Button::builder()
         .tooltip_text("Search (Ctrl+K)")
         .build();
-    search_button.set_child(Some(&crate::assets::text_icon(
-        crate::assets::icons::SEARCH,
-        20,
-    )));
+    let search_icon = crate::assets::text_icon(crate::assets::icons::SEARCH, 20);
+    search_icon.set_halign(gtk::Align::End);
+    search_icon.set_hexpand(true);
+    search_button.set_child(Some(&search_icon));
     search_button.add_css_class("header-action");
+    search_button.add_css_class("search-action");
     let appearance = build_appearance_menu(
         &browser,
         &controller,
