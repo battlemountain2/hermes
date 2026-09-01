@@ -3800,7 +3800,11 @@ pub(super) fn install_folder_context_menu(
         let folder = folder.clone();
         glib::idle_add_local_once(move || {
             if let Some(state) = weak.upgrade() {
-                state.begin_new_folder(depth, folder);
+                if state.mode_views.borrow().mode() == BrowserMode::Columns {
+                    state.begin_new_folder(depth, folder);
+                } else {
+                    state.mode_views.borrow().begin_new_folder(depth);
+                }
             }
         });
     });
