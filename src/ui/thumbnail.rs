@@ -94,6 +94,9 @@ pub(super) fn set_thumbnail_or_icon(
     let Some(path) = entry.location.native_path().map(Path::to_path_buf) else {
         return;
     };
+    if entry.is_directory() {
+        mark_nonempty_folder(image, image_id, request, path.clone());
+    }
     if path.extension().and_then(std::ffi::OsStr::to_str) == Some("desktop") {
         if let Some(app) = gio::DesktopAppInfo::from_filename(&path)
             && let Some(icon) = app.icon()
@@ -147,6 +150,38 @@ pub(super) fn set_thumbnail_or_icon(
             return;
         };
         apply_thumbnail(&image, &bytes, thumbnail_size);
+    });
+}
+
+fn mark_nonempty_folder(image: &gtk::Image, image_id: usize, request: u64, path: PathBuf) {
+    let weak_image = glib::WeakRef::new();
+    weak_image.set(Some(image));
+    glib::MainContext::default().spawn_local(async move {
+        let Ok(nonempty) = gio::spawn_blocking(move || {
+            std::fs::read_dir(path)
+                .ok()
+                .and_then(|mut entries| entries.next())
+                .is_some()
+        })
+        .await
+        else {
+            return;
+        };
+        if !nonempty {
+            return;
+        }
+        let is_current = ACTIVE_REQUESTS.with(|requests| {
+            requests
+                .borrow()
+                .get(&image_id)
+                .is_some_and(|active| active.id == request)
+        });
+        if is_current
+            && let Some(image) = weak_image.upgrade()
+            && crate::assets::has_primary_icon(&image)
+        {
+            crate::assets::set_primary_icon(&image, crate::assets::icons::FOLDER_FILLED);
+        }
     });
 }
 

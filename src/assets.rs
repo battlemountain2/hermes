@@ -31,6 +31,7 @@ pub mod icons {
     pub const FILE_ARCHIVE: &str = "strata-file-archive";
     pub const FILE_CODE: &str = "strata-file-code";
     pub const FOLDER: &str = "strata-folder";
+    pub const FOLDER_FILLED: &str = "strata-folder-filled";
     pub const HARD_DRIVE: &str = "strata-hard-drive";
     pub const INFO: &str = "strata-info";
     pub const FUNNEL: &str = "strata-funnel";
@@ -140,6 +141,15 @@ pub fn remove_primary_icon(image: &gtk::Image) {
             .borrow_mut()
             .retain(|icon| icon.image.upgrade().as_ref() != Some(image));
     });
+}
+
+pub fn has_primary_icon(image: &gtk::Image) -> bool {
+    PRIMARY_ICONS.with(|icons| {
+        icons
+            .borrow()
+            .iter()
+            .any(|icon| icon.image.upgrade().as_ref() == Some(image))
+    })
 }
 
 pub fn text_icon(name: &str, pixel_size: i32) -> gtk::Image {
