@@ -350,6 +350,22 @@ headerbar menubutton.header-action > button:focus-visible image {
   background: alpha(@theme_bg, 0.58);
 }
 
+.clipboard-indicator {
+  background: @theme_surface;
+  border: 1px solid alpha(@theme_accent, 0.42);
+  border-radius: 7px;
+  box-shadow: 0 8px 24px alpha(@theme_bg, 0.72);
+  color: @theme_text;
+  font-weight: 600;
+  min-height: 30px;
+  padding: 4px 10px;
+}
+
+.clipboard-indicator:hover {
+  background: alpha(@theme_highlight, 0.92);
+  border-color: alpha(@theme_accent, 0.72);
+}
+
 .search-dialog {
   background: @theme_surface;
   border: 1px solid @theme_accent;

@@ -205,6 +205,7 @@ pub(super) struct ViewState {
     columns: RefCell<Vec<ColumnView>>,
     hovered_column: Cell<Option<usize>>,
     cut_locations: RefCell<Vec<Location>>,
+    clipboard_indicator: gtk::Button,
     horizontal_scroll_generation: Rc<Cell<u64>>,
     peek: RefCell<Option<PeekView>>,
     pending_peek: RefCell<Option<glib::SourceId>>,
@@ -300,6 +301,15 @@ impl BrowserView {
         let browser = Browser::new(source);
         let mode_views = ModeViews::new(&scroller, browser.clone());
         overlay.set_child(Some(&mode_views.widget()));
+        let clipboard_indicator = gtk::Button::new();
+        clipboard_indicator.add_css_class("clipboard-indicator");
+        clipboard_indicator.set_halign(gtk::Align::Start);
+        clipboard_indicator.set_valign(gtk::Align::End);
+        clipboard_indicator.set_margin_start(12);
+        clipboard_indicator.set_margin_bottom(12);
+        clipboard_indicator.set_can_focus(false);
+        clipboard_indicator.set_visible(false);
+        overlay.add_overlay(&clipboard_indicator);
         let state = Rc::new(ViewState {
             overlay,
             location_stack,
@@ -312,6 +322,7 @@ impl BrowserView {
             columns: RefCell::new(Vec::new()),
             hovered_column: Cell::new(None),
             cut_locations: RefCell::new(Vec::new()),
+            clipboard_indicator,
             horizontal_scroll_generation: Rc::new(Cell::new(0)),
             peek: RefCell::new(None),
             pending_peek: RefCell::new(None),
@@ -948,6 +959,7 @@ impl ViewState {
     fn copy_entries(&self, entries: &[FileEntry]) {
         if set_files_clipboard(entries) {
             self.clear_cut();
+            self.show_clipboard_indicator(entries, false);
         }
     }
 
@@ -956,7 +968,24 @@ impl ViewState {
             self.cut_locations
                 .replace(entries.iter().map(|entry| entry.location.clone()).collect());
             self.refresh_cut_rows();
+            self.show_clipboard_indicator(entries, true);
         }
+    }
+
+    fn show_clipboard_indicator(&self, entries: &[FileEntry], cut: bool) {
+        let action = if cut { "Cut" } else { "Copied" };
+        let label = match entries {
+            [entry] => format!("{action} {}", entry.display_name),
+            _ => format!("{action} {} items", entries.len()),
+        };
+        self.clipboard_indicator.set_label(&label);
+        let details = entries
+            .iter()
+            .map(|entry| entry.display_name.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.clipboard_indicator.set_tooltip_text(Some(&details));
+        self.clipboard_indicator.set_visible(true);
     }
 
     fn clear_cut(&self) {
@@ -978,6 +1007,7 @@ impl ViewState {
                     .clipboard()
                     .set_content(None::<&gtk::gdk::ContentProvider>);
             }
+            self.clipboard_indicator.set_visible(false);
         } else {
             let _set = set_location_files_clipboard(&remaining);
         }
