@@ -206,6 +206,8 @@ pub(super) struct ViewState {
     hovered_column: Cell<Option<usize>>,
     cut_locations: RefCell<Vec<Location>>,
     clipboard_indicator: gtk::Button,
+    clipboard_popover: gtk::Popover,
+    clipboard_list: gtk::Box,
     horizontal_scroll_generation: Rc<Cell<u64>>,
     peek: RefCell<Option<PeekView>>,
     pending_peek: RefCell<Option<glib::SourceId>>,
@@ -310,6 +312,26 @@ impl BrowserView {
         clipboard_indicator.set_can_focus(false);
         clipboard_indicator.set_visible(false);
         overlay.add_overlay(&clipboard_indicator);
+        let clipboard_list = gtk::Box::new(gtk::Orientation::Vertical, 3);
+        clipboard_list.add_css_class("clipboard-list");
+        let clipboard_scroll = gtk::ScrolledWindow::builder()
+            .child(&clipboard_list)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vscrollbar_policy(gtk::PolicyType::Automatic)
+            .max_content_height(280)
+            .propagate_natural_height(true)
+            .build();
+        let clipboard_popover = gtk::Popover::builder()
+            .child(&clipboard_scroll)
+            .autohide(true)
+            .has_arrow(false)
+            .build();
+        clipboard_popover.add_css_class("clipboard-popover");
+        clipboard_popover.set_parent(&clipboard_indicator);
+        let clipboard_hover = gtk::EventControllerMotion::new();
+        let shown_clipboard = clipboard_popover.clone();
+        clipboard_hover.connect_enter(move |_, _, _| shown_clipboard.popup());
+        clipboard_indicator.add_controller(clipboard_hover);
         let state = Rc::new(ViewState {
             overlay,
             location_stack,
@@ -323,6 +345,8 @@ impl BrowserView {
             hovered_column: Cell::new(None),
             cut_locations: RefCell::new(Vec::new()),
             clipboard_indicator,
+            clipboard_popover,
+            clipboard_list,
             horizontal_scroll_generation: Rc::new(Cell::new(0)),
             peek: RefCell::new(None),
             pending_peek: RefCell::new(None),
@@ -979,6 +1003,17 @@ impl ViewState {
             _ => format!("{action} {} items", entries.len()),
         };
         self.clipboard_indicator.set_label(&label);
+        while let Some(child) = self.clipboard_list.first_child() {
+            self.clipboard_list.remove(&child);
+        }
+        for entry in entries {
+            let item = gtk::Label::new(Some(&entry.display_name));
+            item.add_css_class("clipboard-list-item");
+            item.set_xalign(0.0);
+            item.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+            item.set_tooltip_text(Some(&entry.location.display_path()));
+            self.clipboard_list.append(&item);
+        }
         let details = entries
             .iter()
             .map(|entry| entry.display_name.as_str())
@@ -1008,6 +1043,7 @@ impl ViewState {
                     .set_content(None::<&gtk::gdk::ContentProvider>);
             }
             self.clipboard_indicator.set_visible(false);
+            self.clipboard_popover.popdown();
         } else {
             let _set = set_location_files_clipboard(&remaining);
         }
@@ -5115,6 +5151,7 @@ fn icon_for_name(name: &str) -> &'static str {
         .map(|(_, extension)| extension.to_ascii_lowercase());
     match extension.as_deref() {
         Some("sh" | "bash" | "zsh" | "fish") => crate::assets::icons::TERMINAL,
+        Some("desktop") => crate::assets::icons::EXTERNAL_LINK,
         Some(
             "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "avif" | "heic" | "heif"
             | "tif" | "tiff" | "3fr" | "arw" | "cr2" | "cr3" | "dcr" | "dng" | "erf" | "kdc"

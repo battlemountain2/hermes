@@ -366,6 +366,20 @@ headerbar menubutton.header-action > button:focus-visible image {
   border-color: alpha(@theme_accent, 0.72);
 }
 
+.clipboard-popover contents {
+  background: @theme_surface;
+  border: 1px solid alpha(@theme_accent, 0.42);
+  border-radius: 7px;
+  box-shadow: 0 12px 30px alpha(@theme_bg, 0.76);
+  min-width: 260px;
+  padding: 8px;
+}
+
+.clipboard-list-item {
+  color: @theme_text;
+  padding: 4px 7px;
+}
+
 .search-dialog {
   background: @theme_surface;
   border: 1px solid @theme_accent;

@@ -74,6 +74,7 @@ impl ThumbnailCache {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ThumbnailKind {
+    FolderAlbum,
     Image,
     Heif,
     RawImage,
@@ -93,6 +94,16 @@ pub(super) fn set_thumbnail_or_icon(
     let Some(path) = entry.location.native_path().map(Path::to_path_buf) else {
         return;
     };
+    if path.extension().and_then(std::ffi::OsStr::to_str) == Some("desktop") {
+        if let Some(app) = gio::DesktopAppInfo::from_filename(&path)
+            && let Some(icon) = app.icon()
+        {
+            crate::assets::remove_primary_icon(image);
+            image.set_from_gicon(&icon);
+            image.set_pixel_size(thumbnail_size.clamp(16, 256));
+        }
+        return;
+    }
     let Some(kind) = thumbnail_kind(&path) else {
         return;
     };
@@ -187,6 +198,9 @@ fn set_fallback_icon(image: &gtk::Image, icon: &str, size: i32) -> (usize, u64, 
 }
 
 fn thumbnail_kind(path: &Path) -> Option<ThumbnailKind> {
+    if path.is_dir() {
+        return Some(ThumbnailKind::FolderAlbum);
+    }
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     match extension.as_str() {
         "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tif" | "tiff" => {
@@ -211,7 +225,14 @@ fn render_thumbnail(
     size: i32,
     cancellation: &Cancellation,
 ) -> Result<Vec<u8>, String> {
+    if kind == ThumbnailKind::FolderAlbum {
+        let (art, operation) =
+            folder_album_art(path).ok_or_else(|| "No folder artwork was found".to_owned())?;
+        return crate::sandbox::parse(&art, operation, size.clamp(16, 256), cancellation)
+            .map(|output| output.data);
+    }
     let operation = match kind {
+        ThumbnailKind::FolderAlbum => unreachable!(),
         ThumbnailKind::Image => ParseOperation::ThumbnailImage,
         ThumbnailKind::Heif => ParseOperation::ThumbnailHeif,
         ThumbnailKind::RawImage => ParseOperation::ThumbnailRaw,
@@ -220,6 +241,45 @@ fn render_thumbnail(
     };
     crate::sandbox::parse(path, operation, size.clamp(16, 256), cancellation)
         .map(|output| output.data)
+}
+
+fn folder_album_art(directory: &Path) -> Option<(std::path::PathBuf, ParseOperation)> {
+    let mut embedded = None;
+    let mut images = Vec::new();
+    for entry in std::fs::read_dir(directory).ok()?.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let extension = path
+            .extension()
+            .and_then(std::ffi::OsStr::to_str)
+            .map(str::to_ascii_lowercase);
+        if extension.as_deref() == Some("flac") && embedded.is_none() {
+            embedded = Some((path.clone(), ParseOperation::ThumbnailVideo));
+        }
+        if matches!(extension.as_deref(), Some("jpg" | "jpeg" | "png" | "webp")) {
+            let stem = path
+                .file_stem()
+                .and_then(std::ffi::OsStr::to_str)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let rank = match stem.as_str() {
+                "cover" => 0,
+                "folder" => 1,
+                "albumart" | "album-art" => 2,
+                "front" => 3,
+                _ => 10,
+            };
+            images.push((rank, path));
+        }
+    }
+    images.sort_by_key(|(rank, _)| *rank);
+    images
+        .into_iter()
+        .next()
+        .map(|(_, path)| (path, ParseOperation::ThumbnailImage))
+        .or(embedded)
 }
 
 #[cfg(test)]
