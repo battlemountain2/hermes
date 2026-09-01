@@ -868,8 +868,12 @@ impl Browser {
                     browser.emit(BrowserEvent::OperationCompletedWithErrors { message });
                 }
                 OperationEvent::Renamed { .. } => browser.emit(BrowserEvent::RenameCompleted),
-                OperationEvent::Created { .. }
-                | OperationEvent::Pasted { .. }
+                OperationEvent::Created { .. } => {
+                    if let Some(depth) = browser.active_depth() {
+                        browser.refresh_column(depth);
+                    }
+                }
+                OperationEvent::Pasted { .. }
                 | OperationEvent::DeleteProgress { .. }
                 | OperationEvent::RestoreProgress { .. } => {}
             }
