@@ -10,8 +10,8 @@ use gtk::{gio, glib, prelude::*};
 use crate::{
     model::Location,
     services::{
-        CreateDirectoryRequest, DeleteRequest, LoadHandle, OperationEvent, OperationProvider,
-        PasteRequest, RenameRequest, RestoreRequest, validate_basename,
+        CreateDirectoryRequest, CreateFileRequest, DeleteRequest, LoadHandle, OperationEvent,
+        OperationProvider, PasteRequest, RenameRequest, RestoreRequest, validate_basename,
     },
 };
 
@@ -202,6 +202,41 @@ impl OperationProvider for LocalOperationProvider {
                 Ok(()) => emit(OperationEvent::Created {
                     request_id: request.id,
                 }),
+                Err(error) => emit(OperationEvent::Failed {
+                    request_id: request.id,
+                    message: error.to_string(),
+                }),
+            }
+        });
+        LoadHandle::new(move || task.abort())
+    }
+
+    fn create_file(
+        &self,
+        request: CreateFileRequest,
+        emit: Rc<dyn Fn(OperationEvent)>,
+    ) -> LoadHandle {
+        let task = glib::MainContext::default().spawn_local(async move {
+            let file = match validated_child(&gio_file(&request.parent), &request.name) {
+                Ok(file) => file,
+                Err(message) => {
+                    emit(OperationEvent::Failed {
+                        request_id: request.id,
+                        message: message.to_owned(),
+                    });
+                    return;
+                }
+            };
+            match file
+                .create_future(gio::FileCreateFlags::NONE, glib::Priority::DEFAULT)
+                .await
+            {
+                Ok(stream) => {
+                    drop(stream);
+                    emit(OperationEvent::Created {
+                        request_id: request.id,
+                    });
+                }
                 Err(error) => emit(OperationEvent::Failed {
                     request_id: request.id,
                     message: error.to_string(),

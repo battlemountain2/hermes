@@ -3706,6 +3706,10 @@ fn filtered_position_for_source(column: &ColumnView, source_position: usize) -> 
     })
 }
 
+#[expect(
+    deprecated,
+    reason = "GTK 4.10 dialog replacement is unavailable in the supported runtime"
+)]
 pub(super) fn install_folder_context_menu(
     state: &Rc<ViewState>,
     parent: &gtk::Widget,
@@ -3724,10 +3728,12 @@ pub(super) fn install_folder_context_menu(
     popover.add_css_class("folder-context-popover");
 
     let new_folder = context_menu_option("New Folder", Some("Ctrl+Shift+N"));
+    let new_file = context_menu_option("New File…", None);
     let paste = context_menu_option("Paste", Some("Ctrl+V"));
     let select_all = context_menu_option("Select All", Some("Ctrl+A"));
     let properties = context_menu_option("Properties", None);
     content.append(&new_folder);
+    content.append(&new_file);
     content.append(&paste);
     content.append(&select_all);
     content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
@@ -3741,6 +3747,47 @@ pub(super) fn install_folder_context_menu(
         if let Some(popover) = new_folder_popover.upgrade() {
             popover.popdown();
         }
+    });
+    let weak = Rc::downgrade(state);
+    let file_folder = location.clone();
+    let file_popover = popover.downgrade();
+    let file_parent = parent.root().and_downcast::<gtk::Window>();
+    new_file.connect_clicked(move |_| {
+        if let Some(popover) = file_popover.upgrade() {
+            popover.popdown();
+        }
+        let Some(state) = weak.upgrade() else {
+            return;
+        };
+        let Some(window) = file_parent.clone() else {
+            return;
+        };
+        let dialog = gtk::Dialog::builder()
+            .transient_for(&window)
+            .modal(true)
+            .title("New File")
+            .build();
+        dialog.add_css_class("drive-confirm-dialog");
+        let entry = gtk::Entry::builder()
+            .placeholder_text("File name")
+            .hexpand(true)
+            .build();
+        entry.add_css_class("inline-rename");
+        dialog.content_area().append(&entry);
+        dialog.add_button("Cancel", gtk::ResponseType::Cancel);
+        let create = dialog.add_button("Create", gtk::ResponseType::Accept);
+        create.add_css_class("suggested-action");
+        let browser = state.browser.clone();
+        let dialog_entry = entry.clone();
+        let dialog_folder = file_folder.clone();
+        dialog.connect_response(move |dialog, response| {
+            if response == gtk::ResponseType::Accept {
+                browser.create_file(dialog_folder.clone(), dialog_entry.text().to_string());
+            }
+            dialog.close();
+        });
+        dialog.present();
+        entry.grab_focus();
     });
     let weak = Rc::downgrade(state);
     let folder = location.clone();
