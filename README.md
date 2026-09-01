@@ -192,6 +192,72 @@ The architectural boundaries and performance workflow are documented in [`docs/a
 
 ## Development
 
+### AI development handoff
+
+This checkout is the standalone, private **Hermes** project derived from Strata. The repository is
+`battlemountain2/hermes`, and active development currently happens on
+`feat/navigation-trails`. The Rust package, executable, application ID, resource paths, cache paths,
+and some user-facing strings intentionally still use `strata`; perform that rename later as one
+coordinated release task rather than changing identifiers piecemeal.
+
+Current verified handoff point: commit `d3567b3` (`feat: add selectable Maple Mono font`). The
+working tree was clean when this section was written. The standard verification baseline is:
+
+```bash
+cargo fmt --all
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test -q
+```
+
+The last completed baseline is **147 passing tests**. To run the current development build rather
+than an older desktop-installed copy:
+
+```bash
+cd ~/Projects/hermes
+cargo build
+./target/debug/strata
+```
+
+Major completed Hermes work includes persistent tabs with a new-tab button, back/forward mouse
+buttons, drive mounting and styled eject confirmation, movable Trash/sidebar places, everyday file
+operations and Open With, clipboard status/details, folder-state and album-art thumbnails, trusted
+`.desktop` icons, optional Today/Yesterday views, recursive fuzzy search, reveal-in-context,
+structured and mouse-configurable search filters, opt-in bounded content search, broader text
+previews, and selectable Maple Mono/JetBrains Mono fonts. Search content reads run off the GTK
+thread, skip symlinks and binary-looking files, and cap direct text reads at 1 MiB.
+
+The active phase is **Advanced Preview Registry**. Start by centralizing format capability
+classification; no implementation for this phase was left partially applied. Classification is
+currently duplicated across:
+
+- `src/services/preview.rs`: `content_family()` and `has_plain_text_extension()`;
+- `src/adapters/local_preview.rs`: MIME-to-preview and sandbox-operation selection;
+- `src/ui/thumbnail.rs`: `thumbnail_kind()` extension table;
+- `src/ui/browser.rs`: `entry_supports_quick_preview()`;
+- `src/services/search.rs`: direct searchable-text eligibility.
+
+Create a service-layer registry (for example `src/services/formats.rs`) that reports independent
+capabilities for format family, quick-preview handler, thumbnail handler, and searchable-text
+extractor. Migrate the consumers above without changing established behavior, add focused registry
+tests, and keep strict Clippy clean. Then continue with capability-aware unavailable/error messages
+and sandboxed PDF text extraction for opt-in content search. Office-document extraction can follow
+once the extractor boundary is proven.
+
+Preserve these decisions while continuing:
+
+- untrusted image, media, and PDF parsing remains sandboxed through Bubblewrap;
+- ImageMagick remains the first JPEG/image renderer while the glycin shared-memory crash workaround
+  is needed;
+- content search remains opt-in, cancellable, bounded, and off the GTK thread;
+- missing optional host tools degrade to icons or explicit unavailable states;
+- do not add dual-pane mode, an embedded terminal, or remote providers yet;
+- the optional folder-tree panel belongs in Settings, not permanently in the main layout;
+- preserve user changes in a dirty worktree and use `apply_patch` for source edits;
+- commit focused changes to `feat/navigation-trails` and push to the private Hermes remote.
+
+After the preview registry: add archive/custom actions, the optional folder tree, remaining polish,
+then perform the coordinated Strata-to-Hermes application/package rename and release preparation.
+
 ### Requirements
 
 - The latest stable Rust release
@@ -242,7 +308,9 @@ The final publishing job uses the protected `release` GitHub environment and is 
 
 ## Bundled assets
 
-Strata includes a curated Lucide icon subset and the regular JetBrains Mono variable font. See [third-party notices](THIRD_PARTY_LICENSES.md) for versions, modifications, and complete attribution.
+Strata/Hermes includes a curated Lucide icon subset plus the regular JetBrains Mono and Maple Mono
+Normal variable fonts. The interface font is selectable in Settings. See the bundled license files
+and [third-party notices](THIRD_PARTY_LICENSES.md) for attribution.
 
 ## Status
 
