@@ -4021,7 +4021,7 @@ pub(super) fn install_item_context_menu(
     });
     let open_with_target = target.clone();
     let open_with_popover = popover.downgrade();
-    let chooser_parent = widget.root().and_downcast::<gtk::Window>();
+    let chooser_parent_widget = widget.clone();
     open_with.connect_clicked(move |_| {
         if let Some(popover) = open_with_popover.upgrade() {
             popover.popdown();
@@ -4034,7 +4034,7 @@ pub(super) fn install_item_context_menu(
         };
         let file = gio::File::for_path(path);
         let content_type = gio::content_type_guess(Some(path), None::<&[u8]>).0;
-        let Some(window) = chooser_parent.clone() else {
+        let Some(window) = chooser_parent_widget.root().and_downcast::<gtk::Window>() else {
             return;
         };
         let dialog = gtk::AppChooserDialog::new(Some(&window), gtk::DialogFlags::MODAL, &file);
