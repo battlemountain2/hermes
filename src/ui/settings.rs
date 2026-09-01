@@ -143,6 +143,23 @@ fn general_page(
     refresh_sidebar: Rc<dyn Fn()>,
 ) -> gtk::Widget {
     let preferences = page_content();
+    append_heading(&preferences, "INTERFACE");
+    let (font_row, interface_font) = settings_choice(
+        "Interface font",
+        "Choose the font used throughout Hermes and text previews.",
+        &["Maple Mono", "JetBrains Mono"],
+        u32::from(manager.interface_font() == "jetbrains"),
+    );
+    let manager_for_font = manager.clone();
+    interface_font.connect_selected_notify(move |font| {
+        manager_for_font.set_interface_font(if font.selected() == 1 {
+            "jetbrains"
+        } else {
+            "maple"
+        });
+    });
+    preferences.append(&font_row);
+
     append_heading(&preferences, "BROWSING");
     let (peeking_row, peeking) = settings_option(
         "Folder peeking",
@@ -758,6 +775,35 @@ fn settings_option(title: &str, description: &str, active: bool) -> (gtk::Box, g
     row.append(&copy);
     row.append(&toggle);
     (row, toggle)
+}
+
+fn settings_choice(
+    title: &str,
+    description: &str,
+    choices: &[&str],
+    selected: u32,
+) -> (gtk::Box, gtk::DropDown) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    row.add_css_class("settings-option");
+    let copy = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    copy.set_hexpand(true);
+    copy.set_valign(gtk::Align::Center);
+    let title = gtk::Label::new(Some(title));
+    title.set_xalign(0.0);
+    title.add_css_class("settings-option-title");
+    let description = gtk::Label::new(Some(description));
+    description.set_xalign(0.0);
+    description.set_wrap(true);
+    description.add_css_class("settings-option-description");
+    copy.append(&title);
+    copy.append(&description);
+    let choice = gtk::DropDown::from_strings(choices);
+    choice.set_selected(selected);
+    choice.set_valign(gtk::Align::Center);
+    choice.add_css_class("settings-choice");
+    row.append(&copy);
+    row.append(&choice);
+    (row, choice)
 }
 
 fn append_heading(container: &gtk::Box, text: &str) {

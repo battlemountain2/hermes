@@ -60,9 +60,10 @@ pub mod icons {
     pub const X: &str = "strata-x";
 }
 
-const FONT_VERSION: &str = "2.304";
+const FONT_VERSION: &str = "jetbrains-2.304-maple-7.9";
 const ICON_TEXTURE_CACHE_LIMIT: usize = 256;
 const JETBRAINS_MONO: &[u8] = include_bytes!("../data/fonts/JetBrainsMono[wght].ttf");
+const MAPLE_MONO: &[u8] = include_bytes!("../data/fonts/MapleMonoNormal[wght].ttf");
 
 struct PrimaryIcon {
     image: glib::WeakRef<gtk::Image>,
@@ -88,9 +89,11 @@ pub fn prepare() -> Result<(), Box<dyn std::error::Error>> {
         .join(FONT_VERSION);
     fs::create_dir_all(&font_directory)?;
 
-    let regular = font_directory.join("JetBrainsMono.ttf");
-    write_if_changed(&regular, JETBRAINS_MONO)?;
-    register_application_fonts([regular])?;
+    let jetbrains = font_directory.join("JetBrainsMono.ttf");
+    let maple = font_directory.join("MapleMonoNormal.ttf");
+    write_if_changed(&jetbrains, JETBRAINS_MONO)?;
+    write_if_changed(&maple, MAPLE_MONO)?;
+    register_application_fonts([jetbrains, maple])?;
 
     Ok(())
 }

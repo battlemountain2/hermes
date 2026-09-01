@@ -81,6 +81,8 @@ struct Preferences {
     browser_mode: String,
     #[serde(default = "default_browser_density")]
     browser_density: String,
+    #[serde(default = "default_interface_font")]
+    interface_font: String,
 }
 
 impl Default for Preferences {
@@ -93,6 +95,7 @@ impl Default for Preferences {
             show_recent_files: false,
             browser_mode: default_browser_mode(),
             browser_density: default_browser_density(),
+            interface_font: default_interface_font(),
         }
     }
 }
@@ -107,6 +110,10 @@ fn default_browser_mode() -> String {
 
 fn default_browser_density() -> String {
     "compact".to_owned()
+}
+
+fn default_interface_font() -> String {
+    "maple".to_owned()
 }
 
 pub struct ThemeManager {
@@ -200,6 +207,25 @@ impl ThemeManager {
 
     pub fn set_show_recent_files(&self, enabled: bool) {
         self.preferences.borrow_mut().show_recent_files = enabled;
+        self.save_preferences();
+    }
+
+    pub fn interface_font(&self) -> &str {
+        if self.preferences.borrow().interface_font == "jetbrains" {
+            "jetbrains"
+        } else {
+            "maple"
+        }
+    }
+
+    pub fn set_interface_font(&self, font: &str) {
+        let font = if font == "jetbrains" {
+            "jetbrains"
+        } else {
+            "maple"
+        };
+        self.preferences.borrow_mut().interface_font = font.to_owned();
+        self.apply_selected();
         self.save_preferences();
     }
 
@@ -355,7 +381,8 @@ impl ThemeManager {
     }
 
     fn apply_tokens(&self, tokens: &ThemeTokens) {
-        self.provider.load_from_string(&tokens_css(tokens));
+        self.provider
+            .load_from_string(&tokens_css(tokens, self.interface_font()));
         crate::assets::set_primary_icon_color(&tokens.accent);
         crate::assets::set_text_icon_color(&tokens.text);
         crate::assets::set_danger_icon_color(&tokens.danger);
@@ -638,9 +665,14 @@ fn source_style_scheme_xml(tokens: &ThemeTokens) -> String {
     )
 }
 
-fn tokens_css(tokens: &ThemeTokens) -> String {
+fn tokens_css(tokens: &ThemeTokens, interface_font: &str) -> String {
+    let font_family = if interface_font == "jetbrains" {
+        r#""JetBrains Mono", "JetBrainsMono Nerd Font", monospace"#
+    } else {
+        r#""Maple Mono Normal", "JetBrains Mono", monospace"#
+    };
     format!(
-        "@define-color theme_bg {};\n@define-color theme_surface {};\n@define-color theme_text {};\n@define-color theme_accent {};\n@define-color theme_danger {};\n@define-color theme_muted {};\n@define-color theme_highlight {};\n@define-color theme_border {};\n@define-color theme_dim_text {};\n",
+        "@define-color theme_bg {};\n@define-color theme_surface {};\n@define-color theme_text {};\n@define-color theme_accent {};\n@define-color theme_danger {};\n@define-color theme_muted {};\n@define-color theme_highlight {};\n@define-color theme_border {};\n@define-color theme_dim_text {};\nwindow, .preview-text, .preview-text text, .monospace, .search-filter-shortcut, .grid-thumbnail-value {{ font-family: {}; }}\n",
         tokens.background,
         tokens.surface,
         tokens.text,
@@ -650,6 +682,7 @@ fn tokens_css(tokens: &ThemeTokens) -> String {
         tokens.highlight,
         tokens.border,
         tokens.dim_text,
+        font_family,
     )
 }
 
