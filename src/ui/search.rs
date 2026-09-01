@@ -45,6 +45,7 @@ struct SearchFilterPanel {
     modified: gtk::DropDown,
     extension: gtk::Entry,
     within: gtk::Entry,
+    content_enabled: gtk::CheckButton,
     content: gtk::Entry,
     apply: gtk::Button,
     clear: gtk::Button,
@@ -113,10 +114,13 @@ impl SearchDialog {
         footer.add_css_class("search-footer");
         let navigation = gtk::Label::new(Some("↑↓  navigate"));
         let open = gtk::Label::new(Some("↵  open / reveal"));
+        let filter_hint = gtk::Label::new(Some("Ctrl+F  filters"));
         navigation.add_css_class("search-hint");
         open.add_css_class("search-hint");
+        filter_hint.add_css_class("search-hint");
         footer.append(&navigation);
         footer.append(&open);
+        footer.append(&filter_hint);
         panel.append(&footer);
         let top_spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
         top_spacer.set_vexpand(true);
@@ -303,10 +307,16 @@ impl SearchFilterPanel {
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
         content.add_css_class("search-filter-panel");
+        let title_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let title = gtk::Label::new(Some("SEARCH FILTERS"));
         title.add_css_class("search-filter-title");
         title.set_xalign(0.0);
-        content.append(&title);
+        title.set_hexpand(true);
+        let shortcut = gtk::Label::new(Some("Ctrl+F"));
+        shortcut.add_css_class("search-filter-shortcut");
+        title_row.append(&title);
+        title_row.append(&shortcut);
+        content.append(&title_row);
 
         let file_type = gtk::DropDown::from_strings(&["Any type", "Files", "Folders"]);
         append_filter_control(&content, "Type", &file_type);
@@ -316,8 +326,28 @@ impl SearchFilterPanel {
         append_filter_control(&content, "Extension", &extension);
         let within = filter_entry("Documents or Projects/hermes");
         append_filter_control(&content, "Within folder", &within);
+        let content_options = gtk::Box::new(gtk::Orientation::Vertical, 5);
+        let content_enabled = gtk::CheckButton::with_label("Search for any text inside files");
+        content_enabled.add_css_class("search-content-toggle");
         let content_query = filter_entry("Words or an exact phrase");
-        append_filter_control(&content, "File contains", &content_query);
+        content_query.set_sensitive(false);
+        let content_note = gtk::Label::new(Some(
+            "Text, code, scripts, data, and configuration files up to 1 MiB",
+        ));
+        content_note.add_css_class("search-content-note");
+        content_note.set_xalign(0.0);
+        content_note.set_wrap(true);
+        content_options.append(&content_enabled);
+        content_options.append(&content_query);
+        content_options.append(&content_note);
+        append_filter_control(&content, "Contents", &content_options);
+        let enabled_content = content_query.clone();
+        content_enabled.connect_toggled(move |toggle| {
+            enabled_content.set_sensitive(toggle.is_active());
+            if toggle.is_active() {
+                enabled_content.grab_focus();
+            }
+        });
 
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         actions.set_halign(gtk::Align::End);
@@ -344,6 +374,7 @@ impl SearchFilterPanel {
             modified,
             extension,
             within,
+            content_enabled,
             content: content_query,
             apply,
             clear,
@@ -375,6 +406,7 @@ impl SearchFilterPanel {
             .set_text(values.within.as_deref().unwrap_or_default());
         self.content
             .set_text(values.content.as_deref().unwrap_or_default());
+        self.content_enabled.set_active(values.content.is_some());
         self.update_active(values != &SearchFilterValues::default());
     }
 
@@ -396,7 +428,9 @@ impl SearchFilterPanel {
             2 => parts.push("modified:yesterday".to_owned()),
             _ => {}
         }
-        push_filter(&mut parts, "content", &self.content.text());
+        if self.content_enabled.is_active() {
+            push_filter(&mut parts, "content", &self.content.text());
+        }
         let active = parts.iter().any(|part| part.contains(':'));
         self.update_active(active);
         parts.join(" ")

@@ -468,9 +468,29 @@ headerbar menubutton.header-action > button:focus-visible image {
   margin-bottom: 2px;
 }
 
+.search-filter-shortcut {
+  background: alpha(@theme_muted, 0.62);
+  border: 1px solid alpha(@theme_border, 0.68);
+  border-radius: 4px;
+  color: @theme_text;
+  font-family: monospace;
+  font-size: 10px;
+  padding: 2px 6px;
+}
+
 .search-filter-label {
   color: @theme_dim_text;
   font-size: 12px;
+}
+
+.search-content-toggle {
+  color: @theme_text;
+  font-size: 12px;
+}
+
+.search-content-note {
+  color: @theme_dim_text;
+  font-size: 10px;
 }
 
 .search-filter-entry,
