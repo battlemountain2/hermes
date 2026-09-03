@@ -94,14 +94,24 @@ dependencies.
 
 **Exit:** Release checklist passes on Omarchy and representative non-Omarchy Linux environments.
 
+## Milestone 6 — Post v1 (Polish & Power Features)
+
+**Goal:** Close the functional gap with modern desktop managers (macOS Finder, Nautilus) and refine aesthetics.
+
+- Add fluid micro-animations for transitions (Grid to List) and previews
+- Investigate dynamic backgrounds and UI vibrancy/blur effects
+- Rendered Markdown previews and rich media metadata extraction (duration, codec, dimensions)
+- Directory summaries (item count, total size) and interactive disk space utilization bars
+- Checksum calculation integration for properties
+- Advanced permission management UI for local files
+- Nautilus-style type-ahead interactive filtering in views
+
 ## Later exploration
 
-- Remote locations
-- Archive browsing
-- Independent panes
+- Remote locations and cloud providers
+- Archive browsing natively as folders
+- Independent dual-panes
 - Saved workspaces
-- Batch rename
 - Global indexed search
 - Out-of-process or sandboxed extensions
 - Optional developer integrations such as Git status
-- Undo/Redo operation history with toolbar buttons and keyboard shortcuts where reversal can be guaranteed
