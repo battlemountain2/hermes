@@ -75,10 +75,20 @@ struct Preferences {
     single_click_previews: bool,
     #[serde(default)]
     search_open_files_directly: bool,
+    #[serde(default)]
+    show_recent_files: bool,
+    #[serde(default = "default_enabled")]
+    show_recent_folders: bool,
+    #[serde(default)]
+    show_folder_tree: bool,
+    #[serde(default = "default_recent_folders_limit")]
+    recent_folders_limit: u32,
     #[serde(default = "default_browser_mode")]
     browser_mode: String,
     #[serde(default = "default_browser_density")]
     browser_density: String,
+    #[serde(default = "default_interface_font")]
+    interface_font: String,
 }
 
 impl Default for Preferences {
@@ -88,8 +98,13 @@ impl Default for Preferences {
             theme: "azure-glow".to_owned(),
             single_click_previews: true,
             search_open_files_directly: false,
+            show_recent_files: false,
+            show_recent_folders: true,
+            show_folder_tree: false,
+            recent_folders_limit: default_recent_folders_limit(),
             browser_mode: default_browser_mode(),
             browser_density: default_browser_density(),
+            interface_font: default_interface_font(),
         }
     }
 }
@@ -98,12 +113,20 @@ fn default_enabled() -> bool {
     true
 }
 
+fn default_recent_folders_limit() -> u32 {
+    4
+}
+
 fn default_browser_mode() -> String {
     "columns".to_owned()
 }
 
 fn default_browser_density() -> String {
     "compact".to_owned()
+}
+
+fn default_interface_font() -> String {
+    "maple".to_owned()
 }
 
 pub struct ThemeManager {
@@ -188,6 +211,61 @@ impl ThemeManager {
 
     pub fn set_search_open_files_directly(&self, enabled: bool) {
         self.preferences.borrow_mut().search_open_files_directly = enabled;
+        self.save_preferences();
+    }
+
+    pub fn show_recent_files(&self) -> bool {
+        self.preferences.borrow().show_recent_files
+    }
+
+    pub fn set_show_recent_files(&self, enabled: bool) {
+        self.preferences.borrow_mut().show_recent_files = enabled;
+        self.save_preferences();
+    }
+
+    pub fn show_recent_folders(&self) -> bool {
+        self.preferences.borrow().show_recent_folders
+    }
+
+    pub fn set_show_recent_folders(&self, show: bool) {
+        self.preferences.borrow_mut().show_recent_folders = show;
+        self.save_preferences();
+    }
+
+    pub fn show_folder_tree(&self) -> bool {
+        self.preferences.borrow().show_folder_tree
+    }
+
+    pub fn set_show_folder_tree(&self, show: bool) {
+        self.preferences.borrow_mut().show_folder_tree = show;
+        self.save_preferences();
+    }
+
+    pub fn recent_folders_limit(&self) -> u32 {
+        self.preferences.borrow().recent_folders_limit
+    }
+
+    pub fn set_recent_folders_limit(&self, limit: u32) {
+        self.preferences.borrow_mut().recent_folders_limit = limit;
+        self.save_preferences();
+    }
+
+    pub fn interface_font(&self) -> &str {
+        if self.preferences.borrow().interface_font == "jetbrains" {
+            "jetbrains"
+        } else {
+            "maple"
+        }
+    }
+
+    pub fn set_interface_font(&self, font: &str) {
+        let font = if font == "jetbrains" {
+            "jetbrains"
+        } else {
+            "maple"
+        };
+        self.preferences.borrow_mut().interface_font = font.to_owned();
+        self.apply_selected();
         self.save_preferences();
     }
 
@@ -343,7 +421,8 @@ impl ThemeManager {
     }
 
     fn apply_tokens(&self, tokens: &ThemeTokens) {
-        self.provider.load_from_string(&tokens_css(tokens));
+        self.provider
+            .load_from_string(&tokens_css(tokens, self.interface_font()));
         crate::assets::set_primary_icon_color(&tokens.accent);
         crate::assets::set_text_icon_color(&tokens.text);
         crate::assets::set_danger_icon_color(&tokens.danger);
@@ -626,9 +705,14 @@ fn source_style_scheme_xml(tokens: &ThemeTokens) -> String {
     )
 }
 
-fn tokens_css(tokens: &ThemeTokens) -> String {
+fn tokens_css(tokens: &ThemeTokens, interface_font: &str) -> String {
+    let font_family = if interface_font == "jetbrains" {
+        r#""JetBrains Mono", "JetBrainsMono Nerd Font", monospace"#
+    } else {
+        r#""Maple Mono Normal", "JetBrains Mono", monospace"#
+    };
     format!(
-        "@define-color theme_bg {};\n@define-color theme_surface {};\n@define-color theme_text {};\n@define-color theme_accent {};\n@define-color theme_danger {};\n@define-color theme_muted {};\n@define-color theme_highlight {};\n@define-color theme_border {};\n@define-color theme_dim_text {};\n",
+        "@define-color theme_bg {};\n@define-color theme_surface {};\n@define-color theme_text {};\n@define-color theme_accent {};\n@define-color theme_danger {};\n@define-color theme_muted {};\n@define-color theme_highlight {};\n@define-color theme_border {};\n@define-color theme_dim_text {};\nwindow, .preview-text, .preview-text text, .monospace, .search-filter-shortcut, .grid-thumbnail-value {{ font-family: {}; }}\n",
         tokens.background,
         tokens.surface,
         tokens.text,
@@ -638,6 +722,7 @@ fn tokens_css(tokens: &ThemeTokens) -> String {
         tokens.highlight,
         tokens.border,
         tokens.dim_text,
+        font_family,
     )
 }
 

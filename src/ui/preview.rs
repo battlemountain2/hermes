@@ -13,8 +13,8 @@ use sourceview5::prelude::*;
 use crate::{
     model::{FileEntry, MetadataValue},
     services::{
-        LoadHandle, Preview, PreviewContent, PreviewEvent, PreviewProvider, PreviewRequest,
-        PreviewRequestId,
+        FormatFamily, LoadHandle, Preview, PreviewContent, PreviewEvent, PreviewProvider,
+        PreviewRequest, PreviewRequestId, classify_by_mime, classify_by_name,
     },
 };
 
@@ -371,8 +371,17 @@ impl PreviewState {
     }
 
     fn render(self: &Rc<Self>, preview: Preview) {
-        self.content_type.set_text(&preview.content_type);
+        let mut family = classify_by_mime(&preview.content_type);
+        if family == FormatFamily::Unknown {
+            if gio::content_type_is_a(&preview.content_type, "text/plain") {
+                family = FormatFamily::PlainText;
+            } else {
+                family = classify_by_name(&preview.entry.native_name);
+            }
+        }
+        self.content_type.set_text(family.display_label());
         self.clear_content();
+        let is_audio = preview.content_type.starts_with("audio/");
         match preview.content {
             PreviewContent::Text { content, truncated } => {
                 let buffer = sourceview5::Buffer::new(None);
@@ -417,13 +426,113 @@ impl PreviewState {
                 let bytes = glib::Bytes::from_owned(png);
                 match gtk::gdk::Texture::from_bytes(&bytes) {
                     Ok(texture) => {
+                        let width = texture.width() as f64;
+                        let height = texture.height() as f64;
+
                         let picture = gtk::Picture::for_paintable(&texture);
                         picture.add_css_class("preview-image");
                         picture.set_can_shrink(true);
-                        picture.set_content_fit(gtk::ContentFit::Contain);
+                        picture.set_content_fit(gtk::ContentFit::Fill);
                         picture.set_hexpand(true);
                         picture.set_vexpand(true);
-                        self.content.append(&picture);
+                        picture.set_halign(gtk::Align::Center);
+                        picture.set_valign(gtk::Align::Center);
+
+                        let scroll = gtk::ScrolledWindow::builder()
+                            .child(&picture)
+                            .hscrollbar_policy(gtk::PolicyType::Automatic)
+                            .vscrollbar_policy(gtk::PolicyType::Automatic)
+                            .hexpand(true)
+                            .vexpand(true)
+                            .build();
+
+                        let zoom_level = Rc::new(Cell::new(1.0f64));
+                        let initial_fit_done = Rc::new(Cell::new(false));
+
+                        let vadj = scroll.vadjustment();
+                        let hadj = scroll.hadjustment();
+                        let pic = picture.clone();
+                        let zl = zoom_level.clone();
+                        let fit_done = initial_fit_done.clone();
+
+                        hadj.connect_notify_local(Some("page-size"), move |hadj, _| {
+                            if !fit_done.get() {
+                                let view_w = hadj.page_size();
+                                let view_h = vadj.page_size();
+                                if view_w > 0.0 && view_h > 0.0 {
+                                    fit_done.set(true);
+                                    let scale_w = view_w / width;
+                                    let scale_h = view_h / height;
+                                    let fit_scale = scale_w.min(scale_h).min(1.0); // Don't scale up past 100%
+                                    zl.set(fit_scale);
+                                    pic.set_size_request(
+                                        (width * fit_scale) as i32,
+                                        (height * fit_scale) as i32,
+                                    );
+                                }
+                            }
+                        });
+
+                        let pointer_pos = Rc::new(Cell::new((0.0, 0.0)));
+                        let motion = gtk::EventControllerMotion::new();
+                        let pointer_pos_clone = pointer_pos.clone();
+                        motion.connect_motion(move |_, x, y| {
+                            pointer_pos_clone.set((x, y));
+                        });
+                        scroll.add_controller(motion);
+
+                        let controller = gtk::EventControllerScroll::new(
+                            gtk::EventControllerScrollFlags::VERTICAL,
+                        );
+
+                        let picture_ref = picture.clone();
+                        let scroll_for_zoom = scroll.clone();
+                        controller.connect_scroll(move |_, _dx, dy| {
+                            let current = zoom_level.get();
+                            // dy is usually around 1.0 for a standard wheel click, but can be tiny for smooth scroll
+                            // Use an exponential curve so smooth scrolling feels natural
+                            let factor = 1.15f64.powf(-dy);
+                            let new_zoom = (current * factor).clamp(0.1, 10.0);
+                            let actual_factor = new_zoom / current;
+
+                            zoom_level.set(new_zoom);
+
+                            picture_ref.set_size_request(
+                                (width * new_zoom) as i32,
+                                (height * new_zoom) as i32,
+                            );
+                            picture_ref.set_can_shrink(true);
+
+                            let (px, py) = pointer_pos.get();
+                            preserve_view_pointer(&scroll_for_zoom, actual_factor, px, py);
+
+                            gtk::glib::Propagation::Stop
+                        });
+
+                        scroll.add_controller(controller);
+
+                        let drag = gtk::GestureDrag::new();
+                        drag.set_button(1);
+                        let scroll_for_drag1 = scroll.clone();
+                        let start_x = Rc::new(Cell::new(0.0));
+                        let start_y = Rc::new(Cell::new(0.0));
+                        let start_x_clone = start_x.clone();
+                        let start_y_clone = start_y.clone();
+                        drag.connect_drag_begin(move |_, _, _| {
+                            let hadj = scroll_for_drag1.hadjustment();
+                            start_x_clone.set(hadj.value());
+                            let vadj = scroll_for_drag1.vadjustment();
+                            start_y_clone.set(vadj.value());
+                        });
+                        let scroll_for_drag2 = scroll.clone();
+                        drag.connect_drag_update(move |_, dx, dy| {
+                            let hadj = scroll_for_drag2.hadjustment();
+                            hadj.set_value(start_x.get() - dx);
+                            let vadj = scroll_for_drag2.vadjustment();
+                            vadj.set_value(start_y.get() - dy);
+                        });
+                        scroll.add_controller(drag);
+                        self.content.append(&scroll);
                     }
                     Err(error) => self.show_message("Preview unavailable", &error.to_string()),
                 }
@@ -440,9 +549,10 @@ impl PreviewState {
                 video.set_vexpand(true);
                 self.media.replace(Some(video.clone()));
                 self.content.append(&video);
-                let notice = gtk::Label::new(Some(
-                    "Preview limited to the first 30 seconds. Open the file to play the full video.",
-                ));
+                let media_kind = if is_audio { "audio" } else { "video" };
+                let notice = gtk::Label::new(Some(&format!(
+                    "Preview limited to the first 30 seconds. Open the file to play the full {media_kind}."
+                )));
                 notice.add_css_class("preview-note");
                 notice.set_justify(gtk::Justification::Center);
                 notice.set_wrap(true);
@@ -450,19 +560,28 @@ impl PreviewState {
                 self.content.append(&notice);
             }
             PreviewContent::Image | PreviewContent::Media => {
-                self.show_message(
-                    "Preview unavailable",
-                    "The sandboxed renderer returned no preview",
-                );
+                let hint = match family {
+                    FormatFamily::Pdf => "PDF rendering requires Poppler to be installed",
+                    FormatFamily::Video => "Video preview requires FFmpeg",
+                    FormatFamily::Audio => "Audio preview requires FFmpeg",
+                    _ => "The image could not be rendered by the sandboxed converter",
+                };
+                self.show_message("Preview unavailable", hint);
             }
             PreviewContent::Pdf { png, page, pages } => {
                 self.render_pdf_viewer(preview.entry, png, page, pages);
             }
+            PreviewContent::Code { language, .. } => {
+                self.show_message("Code Preview", &format!("SourceView5 placeholder for {}", language));
+            }
+            PreviewContent::Markdown { .. } => {
+                self.show_message("Markdown Render", "Rich markdown viewer placeholder");
+            }
+            PreviewContent::Model3D { format, .. } => {
+                self.show_message("3D Model Viewer", &format!("Canvas placeholder for {}", format));
+            }
             PreviewContent::Unsupported => {
-                self.show_message(
-                    "No visual preview",
-                    "Metadata is available for this file type.",
-                );
+                self.show_message("No visual preview", family.unavailable_reason());
             }
         }
     }
@@ -842,6 +961,27 @@ fn resize_pdf_page(overlay: &gtk::Overlay, picture: &gtk::Picture, target_width:
         let ratio = f64::from(texture_width) / f64::from(texture_height);
         overlay.set_size_request(width, (f64::from(width) / ratio).round() as i32);
     }
+}
+
+fn preserve_view_pointer(scroll: &gtk::ScrolledWindow, factor: f64, pointer_x: f64, pointer_y: f64) {
+    let horizontal = scroll.hadjustment();
+    let vertical = scroll.vadjustment();
+    let old_x = horizontal.value() + pointer_x;
+    let old_y = vertical.value() + pointer_y;
+    glib::idle_add_local_once(glib::clone!(
+        #[weak]
+        scroll,
+        move || {
+            set_adjustment_value(
+                &scroll.hadjustment(),
+                old_x * factor - pointer_x,
+            );
+            set_adjustment_value(
+                &scroll.vadjustment(),
+                old_y * factor - pointer_y,
+            );
+        }
+    ));
 }
 
 fn preserve_pdf_view_center(scroll: &gtk::ScrolledWindow, factor: f64) {

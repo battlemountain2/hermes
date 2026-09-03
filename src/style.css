@@ -63,6 +63,17 @@ headerbar menubutton.header-action > button:checked {
   padding: 0;
 }
 
+headerbar button.search-action {
+  min-width: 112px;
+  padding-left: 70px;
+}
+
+headerbar button.search-action:hover,
+headerbar button.search-action:active,
+headerbar button.search-action.active {
+  background: transparent;
+}
+
 headerbar image {
   -gtk-icon-size: 20px;
 }
@@ -99,11 +110,104 @@ headerbar menubutton.header-action > button:focus-visible image {
   opacity: 1;
 }
 
+.tab-strip {
+  min-height: 37px;
+  background: @theme_surface;
+  border-bottom: 1px solid alpha(@theme_border, 0.7);
+}
+
+.tab-strip-content {
+  padding: 4px 7px 0;
+}
+
+.tab-strip-new {
+  min-width: 30px;
+  min-height: 30px;
+  margin: 0 0 0 3px;
+  padding: 0;
+  border-radius: 0;
+  color: @theme_dim_text;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.tab-strip-new:hover {
+  color: @theme_accent;
+  background: alpha(@theme_muted, 0.7);
+}
+
+.file-tab {
+  min-width: 128px;
+  min-height: 31px;
+  padding: 0 3px 0 5px;
+  border-radius: 0;
+  color: @theme_dim_text;
+  background: alpha(@theme_muted, 0.3);
+  border: 1px solid transparent;
+  border-bottom: 0;
+}
+
+.file-tab:hover {
+  color: @theme_text;
+  background: alpha(@theme_muted, 0.62);
+}
+
+.file-tab.active {
+  color: @theme_text;
+  background: @theme_bg;
+  border-color: alpha(@theme_border, 0.85);
+  box-shadow: inset 0 2px @theme_accent;
+}
+
+.file-tab-select,
+.file-tab-pin,
+.file-tab-close {
+  color: inherit;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.file-tab-select {
+  min-width: 92px;
+  padding: 0 7px;
+}
+
+.file-tab-pin,
+.file-tab-close {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border-radius: 5px;
+}
+
+.file-tab-close:hover {
+  color: @theme_accent;
+  background: alpha(@theme_muted, 0.8);
+}
+
+.file-tab-pin:hover,
+.file-tab-pin.active {
+  color: @theme_accent;
+}
+
+.file-tab-rename {
+  min-height: 24px;
+  margin: 2px;
+  padding: 0 6px;
+  color: @theme_text;
+  caret-color: @theme_accent;
+  background: @theme_bg;
+  border: 1px solid @theme_accent;
+  border-radius: 5px;
+}
+
 .appearance-popover contents {
   background: @theme_surface;
   border: 1px solid alpha(@theme_accent, 0.22);
   border-radius: 7px;
-  box-shadow: 0 8px 28px alpha(#000000, 0.45);
+  box-shadow: 0 8px 28px alpha(black, 0.45);
   padding: 0;
 }
 
@@ -146,16 +250,21 @@ headerbar menubutton.header-action > button:focus-visible image {
 }
 
 .location-entry,
-.location-entry:focus {
+.location-entry:focus,
+.search-field {
   background: @theme_bg;
   border: 1px solid alpha(@theme_border, 0.7);
+  border-radius: 5px;
   box-shadow: none;
   caret-color: @theme_accent;
   color: @theme_text;
   min-height: 22px;
+  padding: 0 8px;
 }
 
-.location-entry:focus {
+.location-entry:focus,
+.search-field:focus,
+.search-field:focus-visible {
   border-color: @theme_accent;
   box-shadow: 0 0 0 1px alpha(@theme_accent, 0.38);
 }
@@ -257,6 +366,36 @@ headerbar menubutton.header-action > button:focus-visible image {
   background: alpha(@theme_bg, 0.58);
 }
 
+.clipboard-indicator {
+  background: @theme_surface;
+  border: 1px solid alpha(@theme_accent, 0.42);
+  border-radius: 7px;
+  box-shadow: 0 8px 24px alpha(@theme_bg, 0.72);
+  color: @theme_text;
+  font-weight: 600;
+  min-height: 30px;
+  padding: 4px 10px;
+}
+
+.clipboard-indicator:hover {
+  background: alpha(@theme_highlight, 0.92);
+  border-color: alpha(@theme_accent, 0.72);
+}
+
+.clipboard-popover contents {
+  background: @theme_surface;
+  border: 1px solid alpha(@theme_accent, 0.42);
+  border-radius: 7px;
+  box-shadow: 0 12px 30px alpha(@theme_bg, 0.76);
+  min-width: 260px;
+  padding: 8px;
+}
+
+.clipboard-list-item {
+  color: @theme_text;
+  padding: 4px 7px;
+}
+
 .search-dialog {
   background: @theme_surface;
   border: 1px solid @theme_accent;
@@ -269,23 +408,130 @@ headerbar menubutton.header-action > button:focus-visible image {
 .search-bar {
   border-bottom: 1px solid alpha(@theme_border, 0.55);
   min-height: 58px;
-  padding: 0 18px;
+  padding: 0 16px;
 }
 
-.search-field,
-.search-field:focus,
-.search-field:focus-visible {
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  color: @theme_text;
-  font-size: 1.08em;
+.search-field {
   outline: none;
-  padding: 0;
 }
 
 .search-field placeholder {
   color: @theme_dim_text;
+  opacity: 1;
+}
+
+.search-field selection {
+  background: @theme_accent;
+  color: @theme_bg;
+}
+
+.search-filter-button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  box-shadow: none;
+  color: @theme_dim_text;
+  min-height: 28px;
+  min-width: 32px;
+  padding: 0;
+}
+
+.search-filter-button:hover,
+.search-filter-button.active {
+  background: alpha(@theme_muted, 0.58);
+  border-color: alpha(@theme_border, 0.72);
+  color: @theme_text;
+}
+
+.search-filter-button.active {
+  color: @theme_accent;
+}
+
+.search-filter-popover > contents {
+  background: @theme_surface;
+  border: 1px solid alpha(@theme_border, 0.78);
+  border-radius: 7px;
+  box-shadow: 0 12px 34px alpha(@theme_bg, 0.72);
+  padding: 0;
+}
+
+.search-filter-panel {
+  min-width: 390px;
+  padding: 16px;
+}
+
+.search-filter-title {
+  color: @theme_dim_text;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  margin-bottom: 2px;
+}
+
+.search-filter-shortcut {
+  background: alpha(@theme_muted, 0.62);
+  border: 1px solid alpha(@theme_border, 0.68);
+  border-radius: 4px;
+  color: @theme_text;
+  font-family: "JetBrains Mono", "JetBrainsMono Nerd Font", monospace;
+  font-size: 10px;
+  padding: 2px 6px;
+}
+
+.monospace {
+  font-family: "JetBrains Mono", "JetBrainsMono Nerd Font", monospace;
+}
+
+.search-filter-label {
+  color: @theme_dim_text;
+  font-size: 12px;
+}
+
+.search-content-toggle {
+  color: @theme_text;
+  font-size: 12px;
+}
+
+.search-content-note {
+  color: @theme_dim_text;
+  font-size: 10px;
+}
+
+.search-filter-entry,
+.search-filter-entry:focus,
+.search-filter-entry:focus-visible,
+.search-filter-panel dropdown > button {
+  background: @theme_bg;
+  border: 1px solid alpha(@theme_border, 0.7);
+  border-radius: 5px;
+  box-shadow: none;
+  color: @theme_text;
+  min-height: 28px;
+}
+
+.search-filter-entry:focus,
+.search-filter-entry:focus-visible {
+  border-color: @theme_accent;
+  box-shadow: 0 0 0 1px alpha(@theme_accent, 0.32);
+}
+
+.search-filter-clear,
+.search-filter-apply {
+  border-radius: 5px;
+  min-height: 30px;
+  padding: 0 12px;
+}
+
+.search-filter-clear {
+  background: transparent;
+  border: 1px solid alpha(@theme_border, 0.7);
+  color: @theme_text;
+}
+
+.search-filter-apply {
+  background: @theme_accent;
+  border: 1px solid @theme_accent;
+  color: @theme_bg;
 }
 
 .search-status {
@@ -549,7 +795,7 @@ headerbar menubutton.header-action > button:focus-visible image {
   background: @theme_surface;
   border: 1px solid alpha(@theme_accent, 0.22);
   border-radius: 7px;
-  box-shadow: 0 18px 54px alpha(#000000, 0.6);
+  box-shadow: 0 18px 54px alpha(black, 0.6);
 }
 
 .settings-navigation {
@@ -631,6 +877,16 @@ headerbar menubutton.header-action > button:focus-visible image {
 .settings-option-description {
   color: @theme_dim_text;
   font-size: 0.88em;
+}
+
+.settings-choice > button {
+  background: @theme_surface;
+  border: 1px solid alpha(@theme_border, 0.68);
+  border-radius: 5px;
+  box-shadow: none;
+  color: @theme_text;
+  min-height: 30px;
+  min-width: 150px;
 }
 
 .about-page {
@@ -724,7 +980,7 @@ switch slider,
 switch:checked slider {
   background: @theme_text;
   border: none;
-  box-shadow: 0 1px 3px alpha(#000000, 0.4);
+  box-shadow: 0 1px 3px alpha(black, 0.4);
   min-height: 18px;
   min-width: 18px;
 }
@@ -956,7 +1212,7 @@ paned > separator {
   background: @theme_surface;
   border: 1px solid alpha(@theme_accent, 0.34);
   border-radius: 6px;
-  box-shadow: 0 12px 32px alpha(#000000, 0.42);
+  box-shadow: 0 12px 32px alpha(black, 0.42);
   color: @theme_text;
   padding: 0;
 }
@@ -1051,7 +1307,7 @@ menubutton.column-header-action > button:focus-visible image {
   background: @theme_surface;
   border: 1px solid alpha(@theme_accent, 0.22);
   border-radius: 7px;
-  box-shadow: 0 8px 28px alpha(#000000, 0.45);
+  box-shadow: 0 8px 28px alpha(black, 0.45);
   padding: 0;
 }
 
@@ -1479,6 +1735,35 @@ menubutton.column-header-action > button:focus-visible image {
   padding: 0;
 }
 
+.drive-confirm-dialog {
+  background: @theme_surface;
+  border: 1px solid alpha(@theme_accent, 0.42);
+  border-radius: 8px;
+  box-shadow: 0 18px 54px alpha(@theme_bg, 0.78);
+  color: @theme_text;
+  min-width: 360px;
+}
+
+.hermes-app-chooser {
+  background: @theme_surface;
+  color: @theme_text;
+  min-width: 620px;
+  min-height: 480px;
+}
+
+.hermes-app-chooser button {
+  border-radius: 6px;
+}
+
+.drive-confirm-content {
+  padding: 18px 20px 10px;
+}
+
+.drive-confirm-dialog action-area {
+  border-top: 1px solid alpha(@theme_border, 0.3);
+  padding: 10px 14px;
+}
+
 .folder-context-menu {
   min-width: 230px;
   padding: 7px;
@@ -1729,6 +2014,45 @@ menubutton.column-header-action > button:focus-visible image {
 
 .file-list row:hover .file-size {
   opacity: 1;
+}
+
+/* File info indicator — hidden by default, visible on hover */
+.file-info-button,
+.grid-info-button {
+  padding: 0 2px;
+  min-height: 18px;
+  min-width: 18px;
+  border-radius: 4px;
+  transition: opacity 150ms ease;
+}
+
+.grid-info-button {
+  margin: 4px;
+}
+
+.file-list row:hover .file-info-button,
+.grid-card:hover .grid-info-button {
+  opacity: 0.7;
+}
+
+.file-info-button:hover,
+.grid-info-button:hover {
+  opacity: 1;
+  background: alpha(@theme_text, 0.08);
+}
+
+/* Info popover styling */
+.info-popover {
+  padding: 10px 14px;
+}
+
+.info-popover-label {
+  font-size: 0.85em;
+  color: @theme_dim_text;
+}
+
+.info-popover-value {
+  font-size: 0.92em;
 }
 
 .file-list row:selected .file-size,

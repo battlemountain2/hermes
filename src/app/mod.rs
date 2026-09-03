@@ -3,5 +3,7 @@
 mod browser;
 mod navigation;
 mod peek;
+mod trails;
 
 pub use browser::{Browser, BrowserColumnSnapshot, BrowserEvent};
+pub use trails::Trails;

@@ -8,8 +8,8 @@ use crate::{
     model::Location,
     sandbox::{Cancellation, ParseOperation},
     services::{
-        LoadHandle, Preview, PreviewContent, PreviewEvent, PreviewProvider, PreviewRequest,
-        content_family, has_plain_text_extension,
+        FormatFamily, LoadHandle, Preview, PreviewContent, PreviewEvent, PreviewHandler,
+        PreviewProvider, PreviewRequest, classify_by_mime, classify_by_name,
     },
 };
 
@@ -46,26 +46,36 @@ impl PreviewProvider for LocalPreviewProvider {
                 .content_type()
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "application/octet-stream".to_owned());
-            let mut content = content_family(&content_type);
-            if matches!(content, PreviewContent::Unsupported)
-                && (gio::content_type_is_a(&content_type, "text/plain")
-                    || has_plain_text_extension(&entry.native_name))
-            {
-                content = PreviewContent::Text {
-                    content: String::new(),
-                    truncated: false,
-                };
+            let mut family = classify_by_mime(&content_type);
+            if family == FormatFamily::Unknown {
+                if gio::content_type_is_a(&content_type, "text/plain") {
+                    family = FormatFamily::PlainText;
+                } else {
+                    family = classify_by_name(&entry.native_name);
+                }
             }
 
-            let operation = match content {
-                PreviewContent::Pdf { .. } => Some(ParseOperation::PreviewPdf),
-                PreviewContent::Image => Some(ParseOperation::PreviewImage),
-                PreviewContent::Media => Some(ParseOperation::PreviewMedia),
-                PreviewContent::Text { .. }
-                | PreviewContent::Rasterized { .. }
-                | PreviewContent::SandboxedMedia { .. }
-                | PreviewContent::Unsupported => None,
+            let handler = family.preview_handler();
+            let mut content = match handler {
+                Some(PreviewHandler::Text) => PreviewContent::Text {
+                    content: String::new(),
+                    truncated: false,
+                },
+                Some(PreviewHandler::Pdf) => PreviewContent::Pdf {
+                    png: Vec::new(),
+                    page: 0,
+                    pages: 0,
+                },
+                Some(PreviewHandler::Audio | PreviewHandler::Video) => PreviewContent::Media,
+                Some(PreviewHandler::Image | PreviewHandler::Heif) => PreviewContent::Image,
+                Some(PreviewHandler::Archive | PreviewHandler::Office) => PreviewContent::Text {
+                    content: String::new(),
+                    truncated: false,
+                },
+                _ => PreviewContent::Unsupported,
             };
+
+            let operation = handler.and_then(preview_operation);
             if let Some(operation) = operation {
                 let Some(path) = entry.location.native_path().map(ToOwned::to_owned) else {
                     emit(PreviewEvent::Failed {
@@ -89,8 +99,24 @@ impl PreviewProvider for LocalPreviewProvider {
                             pages: output.pages,
                         }
                     }
-                    Ok(Ok(output)) if operation == ParseOperation::PreviewMedia => {
+                    Ok(Ok(output))
+                        if matches!(
+                            operation,
+                            ParseOperation::PreviewMedia | ParseOperation::PreviewAudio
+                        ) =>
+                    {
                         PreviewContent::SandboxedMedia { data: output.data }
+                    }
+                    Ok(Ok(output))
+                        if matches!(
+                            operation,
+                            ParseOperation::PreviewArchive | ParseOperation::PreviewOffice
+                        ) =>
+                    {
+                        PreviewContent::Text {
+                            content: String::from_utf8_lossy(&output.data).into_owned(),
+                            truncated: output.data.len() >= request.text_byte_limit,
+                        }
                     }
                     Ok(Ok(output)) => PreviewContent::Rasterized { png: output.data },
                     Ok(Err(message)) => {
@@ -103,6 +129,18 @@ impl PreviewProvider for LocalPreviewProvider {
                     }
                     Err(_) => return,
                 };
+            } else if entry.kind == crate::model::EntryKind::Directory {
+                if let Some(path) = entry.location.native_path().map(ToOwned::to_owned) {
+                    let cancellation = cancellation_for_task.clone();
+                    if let Ok(Some(output)) = gio::spawn_blocking(move || {
+                        crate::ui::thumbnail::folder_album_art(&path)
+                            .and_then(|(art, op)| crate::sandbox::parse(&art, op, 800, &cancellation).ok())
+                    })
+                    .await
+                    {
+                        content = PreviewContent::Rasterized { png: output.data };
+                    }
+                }
             } else if matches!(content, PreviewContent::Text { .. }) {
                 content = match read_text(&file, request.text_byte_limit).await {
                     Ok((content, truncated)) => PreviewContent::Text { content, truncated },
@@ -129,6 +167,19 @@ impl PreviewProvider for LocalPreviewProvider {
             cancellation.cancel();
             task.abort();
         })
+    }
+}
+
+fn preview_operation(handler: PreviewHandler) -> Option<ParseOperation> {
+    match handler {
+        PreviewHandler::Text => None,
+        PreviewHandler::Image => Some(ParseOperation::PreviewImage),
+        PreviewHandler::Heif => Some(ParseOperation::PreviewHeif),
+        PreviewHandler::Pdf => Some(ParseOperation::PreviewPdf),
+        PreviewHandler::Audio => Some(ParseOperation::PreviewAudio),
+        PreviewHandler::Video => Some(ParseOperation::PreviewMedia),
+        PreviewHandler::Archive => Some(ParseOperation::PreviewArchive),
+        PreviewHandler::Office => Some(ParseOperation::PreviewOffice),
     }
 }
 

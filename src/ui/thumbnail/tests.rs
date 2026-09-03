@@ -1,40 +1,58 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use gtk::glib;
 
-use super::{MAX_CACHE_ENTRIES, ThumbnailCache, ThumbnailKey, ThumbnailKind, thumbnail_kind};
+use crate::sandbox::ParseOperation;
+use crate::services::thumbnail_handler_for_name;
+
+use super::{MAX_CACHE_ENTRIES, ThumbnailCache, ThumbnailKey, thumbnail_operation};
 
 #[test]
 fn recognizes_mainstream_image_and_video_formats() {
     assert_eq!(
-        thumbnail_kind(Path::new("photo.JPEG")),
-        Some(ThumbnailKind::Image)
+        thumbnail_handler_for_name(std::ffi::OsStr::new("photo.JPEG")).map(thumbnail_operation),
+        Some(ParseOperation::ThumbnailImage)
     );
     assert_eq!(
-        thumbnail_kind(Path::new("animation.webp")),
-        Some(ThumbnailKind::Image)
+        thumbnail_handler_for_name(std::ffi::OsStr::new("animation.webp")).map(thumbnail_operation),
+        Some(ParseOperation::ThumbnailImage)
     );
     assert_eq!(
-        thumbnail_kind(Path::new("capture.CR3")),
-        Some(ThumbnailKind::RawImage)
+        thumbnail_handler_for_name(std::ffi::OsStr::new("iphone-photo.HEIC"))
+            .map(thumbnail_operation),
+        Some(ParseOperation::ThumbnailHeif)
     );
     assert_eq!(
-        thumbnail_kind(Path::new("photo.nef")),
-        Some(ThumbnailKind::RawImage)
+        thumbnail_handler_for_name(std::ffi::OsStr::new("camera-photo.heif"))
+            .map(thumbnail_operation),
+        Some(ParseOperation::ThumbnailHeif)
     );
     assert_eq!(
-        thumbnail_kind(Path::new("document.PDF")),
-        Some(ThumbnailKind::Pdf)
+        thumbnail_handler_for_name(std::ffi::OsStr::new("capture.CR3")).map(thumbnail_operation),
+        Some(ParseOperation::ThumbnailRaw)
     );
     assert_eq!(
-        thumbnail_kind(Path::new("clip.mkv")),
-        Some(ThumbnailKind::Video)
+        thumbnail_handler_for_name(std::ffi::OsStr::new("photo.nef")).map(thumbnail_operation),
+        Some(ParseOperation::ThumbnailRaw)
     );
     assert_eq!(
-        thumbnail_kind(Path::new("clip.ogv")),
-        Some(ThumbnailKind::Video)
+        thumbnail_handler_for_name(std::ffi::OsStr::new("document.PDF")).map(thumbnail_operation),
+        Some(ParseOperation::ThumbnailPdf)
+    );
+    assert_eq!(
+        thumbnail_handler_for_name(std::ffi::OsStr::new("clip.mkv")).map(thumbnail_operation),
+        Some(ParseOperation::ThumbnailVideo)
+    );
+    assert_eq!(
+        thumbnail_handler_for_name(std::ffi::OsStr::new("clip.ogv")).map(thumbnail_operation),
+        Some(ParseOperation::ThumbnailVideo)
+    );
+    assert_eq!(
+        thumbnail_handler_for_name(std::ffi::OsStr::new("album-track.FLAC"))
+            .map(thumbnail_operation),
+        Some(ParseOperation::ThumbnailVideo)
     );
 }
 
@@ -65,6 +83,12 @@ fn thumbnail_cache_evicts_the_least_recent_entry() {
 
 #[test]
 fn rejects_files_without_a_thumbnail_provider() {
-    assert_eq!(thumbnail_kind(Path::new("README.md")), None);
-    assert_eq!(thumbnail_kind(Path::new("no-extension")), None);
+    assert_eq!(
+        thumbnail_handler_for_name(std::ffi::OsStr::new("README.md")),
+        None
+    );
+    assert_eq!(
+        thumbnail_handler_for_name(std::ffi::OsStr::new("no-extension")),
+        None
+    );
 }

@@ -2,9 +2,12 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use gtk::{gdk, prelude::*};
+use gtk::{gdk, gio, prelude::*};
 
-use crate::assets::icons;
+use crate::{
+    assets::icons,
+    services::{actions_path, create_custom_actions_template},
+};
 
 use super::{
     blur::BlurBin,
@@ -20,6 +23,7 @@ pub fn build_layer(
     settings_button: &gtk::Button,
     root: &BlurBin,
     themes: Rc<ThemeManager>,
+    refresh_sidebar: Rc<dyn Fn()>,
 ) -> gtk::Box {
     let layer = gtk::Box::new(gtk::Orientation::Vertical, 0);
     layer.add_css_class("settings-backdrop");
@@ -65,8 +69,12 @@ pub fn build_layer(
         .hexpand(true)
         .vexpand(true)
         .build();
-    stack.add_named(&general_page(browser, themes.clone()), Some("general"));
+    stack.add_named(
+        &general_page(browser, themes.clone(), refresh_sidebar),
+        Some("general"),
+    );
     stack.add_named(&keybindings_page(), Some("keybindings"));
+    stack.add_named(&actions_page(), Some("actions"));
     stack.add_named(&theme_page(themes), Some("theme"));
     stack.add_named(&about_page(), Some("about"));
     page.append(&stack);
@@ -75,6 +83,7 @@ pub fn build_layer(
     for (label, icon, name) in [
         ("General", icons::SLIDERS, "general"),
         ("Keybindings", icons::KEYBOARD, "keybindings"),
+        ("Custom actions", icons::SETTINGS_2, "actions"),
         ("Theme & appearance", icons::PALETTE, "theme"),
         ("About", icons::INFO, "about"),
     ] {
@@ -133,8 +142,29 @@ fn hide(layer: &gtk::Box, button: &gtk::Button, root: &BlurBin) {
     button.remove_css_class("active");
 }
 
-fn general_page(browser: &BrowserView, manager: Rc<ThemeManager>) -> gtk::Widget {
+fn general_page(
+    browser: &BrowserView,
+    manager: Rc<ThemeManager>,
+    refresh_sidebar: Rc<dyn Fn()>,
+) -> gtk::Widget {
     let preferences = page_content();
+    append_heading(&preferences, "INTERFACE");
+    let (font_row, interface_font) = settings_choice(
+        "Interface font",
+        "Choose the font used throughout Hermes and text previews.",
+        &["Maple Mono", "JetBrains Mono"],
+        u32::from(manager.interface_font() == "jetbrains"),
+    );
+    let manager_for_font = manager.clone();
+    interface_font.connect_selected_notify(move |font| {
+        manager_for_font.set_interface_font(if font.selected() == 1 {
+            "jetbrains"
+        } else {
+            "maple"
+        });
+    });
+    preferences.append(&font_row);
+
     append_heading(&preferences, "BROWSING");
     let (peeking_row, peeking) = settings_option(
         "Folder peeking",
@@ -166,13 +196,74 @@ fn general_page(browser: &BrowserView, manager: Rc<ThemeManager>) -> gtk::Widget
     let direct_open_enabled = manager.search_open_files_directly();
     let (search_open_row, search_open_files) = settings_option(
         "Open search results directly",
-        "Launch files from search instead of opening Strata's quick preview.",
+        "Launch files from search instead of opening Hermes' quick preview.",
         direct_open_enabled,
     );
+    let manager_for_search = manager.clone();
     search_open_files.connect_active_notify(move |toggle| {
-        manager.set_search_open_files_directly(toggle.is_active());
+        manager_for_search.set_search_open_files_directly(toggle.is_active());
     });
     preferences.append(&search_open_row);
+
+    let recent_enabled = manager.show_recent_files();
+    let (recent_row, recent_files) = settings_option(
+        "Recent files in sidebar",
+        "Show optional Today and Yesterday views backed by the local search index.",
+        recent_enabled,
+    );
+    let manager_for_recent = manager.clone();
+    let refresh_sidebar_recent = refresh_sidebar.clone();
+    recent_files.connect_active_notify(move |toggle| {
+        manager_for_recent.set_show_recent_files(toggle.is_active());
+        refresh_sidebar_recent();
+    });
+    preferences.append(&recent_row);
+
+    let recent_folders_enabled = manager.show_recent_folders();
+    let (recent_folders_row, recent_folders) = settings_option(
+        "Recent folders in sidebar",
+        "Show recently visited locations in the sidebar for quick navigation.",
+        recent_folders_enabled,
+    );
+    let manager_for_recent_folders = manager.clone();
+    let refresh_sidebar_recent_folders = refresh_sidebar.clone();
+    recent_folders.connect_active_notify(move |toggle| {
+        manager_for_recent_folders.set_show_recent_folders(toggle.is_active());
+        refresh_sidebar_recent_folders();
+    });
+    preferences.append(&recent_folders_row);
+
+    let recent_folders_limit = manager.recent_folders_limit();
+    let (recent_folders_limit_row, recent_folders_limit_spin) = settings_spin(
+        "Recent folders limit",
+        "Maximum number of recent folders to display in the sidebar (1-12).",
+        recent_folders_limit as f64,
+        1.0,
+        12.0,
+        1.0,
+    );
+    let manager_for_recent_limit = manager.clone();
+    let refresh_sidebar_recent_limit = refresh_sidebar.clone();
+    recent_folders_limit_spin.connect_value_changed(move |spin| {
+        manager_for_recent_limit.set_recent_folders_limit(spin.value() as u32);
+        refresh_sidebar_recent_limit();
+    });
+    preferences.append(&recent_folders_limit_row);
+
+    append_heading(&preferences, "LAYOUT");
+    let folder_tree_enabled = manager.show_folder_tree();
+    let (folder_tree_row, folder_tree) = settings_option(
+        "Show folder tree panel",
+        "Display a classic folder tree hierarchy next to the browser.",
+        folder_tree_enabled,
+    );
+    let manager_for_tree = manager.clone();
+    let refresh_sidebar_tree = refresh_sidebar.clone();
+    folder_tree.connect_active_notify(move |toggle| {
+        manager_for_tree.set_show_folder_tree(toggle.is_active());
+        refresh_sidebar_tree();
+    });
+    preferences.append(&folder_tree_row);
 
     append_heading(&preferences, "MOTION");
     let (motion_row, reduce_motion) = settings_option(
@@ -214,6 +305,16 @@ fn keybindings_page() -> gtk::Widget {
         append_keybinding(&content, label, keys);
     }
 
+    append_heading(&content, "TABS");
+    for (label, keys) in [
+        ("New tab", "Ctrl + T"),
+        ("Close tab", "Ctrl + W"),
+        ("Next tab", "Ctrl + Tab"),
+        ("Previous tab", "Ctrl + Shift + Tab"),
+    ] {
+        append_keybinding(&content, label, keys);
+    }
+
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vscrollbar_policy(gtk::PolicyType::Automatic)
@@ -225,6 +326,76 @@ fn keybindings_page() -> gtk::Widget {
     scroller.upcast()
 }
 
+fn actions_page() -> gtk::Widget {
+    let content = page_content();
+    append_heading(&content, "CONTEXT MENU ACTIONS");
+
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    row.add_css_class("settings-option");
+    let copy = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    copy.set_hexpand(true);
+    let title = gtk::Label::new(Some("Custom actions file"));
+    title.set_xalign(0.0);
+    title.add_css_class("settings-option-title");
+    let description = gtk::Label::new(Some(
+        "Add safe, argument-based commands to the file and folder context menu. Restart Hermes after editing the file.",
+    ));
+    description.set_xalign(0.0);
+    description.set_wrap(true);
+    description.add_css_class("settings-option-description");
+    let path = gtk::Label::new(Some(&actions_path().display().to_string()));
+    path.set_xalign(0.0);
+    path.set_selectable(true);
+    path.add_css_class("keybinding-keys");
+    copy.append(&title);
+    copy.append(&description);
+    copy.append(&path);
+    let open = gtk::Button::with_label(if actions_path().is_file() {
+        "Open file"
+    } else {
+        "Create file"
+    });
+    open.add_css_class("theme-editor-save");
+    open.set_valign(gtk::Align::Center);
+    row.append(&copy);
+    row.append(&open);
+    content.append(&row);
+
+    let help = gtk::Label::new(Some(
+        "Placeholders: {path} for the first item, {paths} for every selected item, {parent} for its folder, and {name} for its filename. Commands are never run through a shell.",
+    ));
+    help.set_xalign(0.0);
+    help.set_wrap(true);
+    help.add_css_class("settings-option-description");
+    content.append(&help);
+
+    let error = gtk::Label::new(None);
+    error.set_xalign(0.0);
+    error.set_wrap(true);
+    error.add_css_class("theme-editor-error");
+    error.set_visible(false);
+    content.append(&error);
+    open.connect_clicked(move |button| match create_custom_actions_template() {
+        Ok(path) => {
+            error.set_visible(false);
+            button.set_label("Open file");
+            let file = gio::File::for_path(path);
+            if let Err(launch_error) =
+                gio::AppInfo::launch_default_for_uri(&file.uri(), None::<&gio::AppLaunchContext>)
+            {
+                error.set_text(&format!("Unable to open the actions file: {launch_error}"));
+                error.set_visible(true);
+            }
+        }
+        Err(message) => {
+            error.set_text(&message);
+            error.set_visible(true);
+        }
+    });
+
+    content.upcast()
+}
+
 fn about_page() -> gtk::Widget {
     let content = page_content();
     content.add_css_class("about-page");
@@ -233,7 +404,7 @@ fn about_page() -> gtk::Widget {
     identity.add_css_class("about-identity");
     identity.set_halign(gtk::Align::Center);
 
-    let name = gtk::Label::new(Some("Strata"));
+    let name = gtk::Label::new(Some("Hermes"));
     name.add_css_class("about-name");
     let description = gtk::Label::new(Some(crate::build_info::DESCRIPTION));
     description.add_css_class("about-description");
@@ -250,27 +421,45 @@ fn about_page() -> gtk::Widget {
     append_about_detail(&build, "Commit", crate::build_info::COMMIT, true);
     content.append(&build);
 
-    append_heading(&content, "PROJECT");
+    append_heading(&content, "HERMES PROJECT");
     let project = gtk::Box::new(gtk::Orientation::Vertical, 0);
     project.add_css_class("about-details");
-    append_about_detail(&project, "Author", crate::build_info::AUTHOR, false);
+    append_about_detail(&project, "Hermes author", crate::build_info::AUTHOR, false);
+    project.append(&repository_button(
+        crate::build_info::REPOSITORY,
+        "Hermes repository",
+        "Open the Hermes repository",
+    ));
+    content.append(&project);
 
+    append_heading(&content, "ORIGINAL PROJECT");
+    let original = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    original.add_css_class("about-details");
+    append_about_detail(&original, "Original author", "LGSE Ltd.", false);
+    original.append(&repository_button(
+        "https://github.com/LGSE/strata",
+        "Original Strata repository",
+        "Open the original Strata repository",
+    ));
+    content.append(&original);
+
+    content.upcast()
+}
+
+fn repository_button(uri: &str, label: &str, tooltip: &str) -> gtk::LinkButton {
     let repository = gtk::LinkButton::builder()
-        .uri(crate::build_info::REPOSITORY)
-        .tooltip_text("Open the Strata repository")
+        .uri(uri)
+        .tooltip_text(tooltip)
         .build();
     repository.add_css_class("about-repository");
     let repository_content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let repository_label = gtk::Label::new(Some("GitHub repository"));
+    let repository_label = gtk::Label::new(Some(label));
     repository_label.set_xalign(0.0);
     repository_label.set_hexpand(true);
     repository_content.append(&repository_label);
     repository_content.append(&crate::assets::primary_icon(icons::EXTERNAL_LINK, 16));
     repository.set_child(Some(&repository_content));
-    project.append(&repository);
-    content.append(&project);
-
-    content.upcast()
+    repository
 }
 
 fn append_about_detail(container: &gtk::Box, label: &str, value: &str, monospace: bool) {
@@ -708,6 +897,66 @@ fn settings_option(title: &str, description: &str, active: bool) -> (gtk::Box, g
     row.append(&copy);
     row.append(&toggle);
     (row, toggle)
+}
+
+fn settings_choice(
+    title: &str,
+    description: &str,
+    choices: &[&str],
+    selected: u32,
+) -> (gtk::Box, gtk::DropDown) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    row.add_css_class("settings-option");
+    let copy = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    copy.set_hexpand(true);
+    copy.set_valign(gtk::Align::Center);
+    let title = gtk::Label::new(Some(title));
+    title.set_xalign(0.0);
+    title.add_css_class("settings-option-title");
+    let description = gtk::Label::new(Some(description));
+    description.set_xalign(0.0);
+    description.set_wrap(true);
+    description.add_css_class("settings-option-description");
+    copy.append(&title);
+    copy.append(&description);
+    let choice = gtk::DropDown::from_strings(choices);
+    choice.set_selected(selected);
+    choice.set_valign(gtk::Align::Center);
+    choice.add_css_class("settings-choice");
+    row.append(&copy);
+    row.append(&choice);
+    (row, choice)
+}
+
+fn settings_spin(
+    title: &str,
+    description: &str,
+    value: f64,
+    min: f64,
+    max: f64,
+    step: f64,
+) -> (gtk::Box, gtk::SpinButton) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    row.add_css_class("settings-option");
+    let copy = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    copy.set_hexpand(true);
+    copy.set_valign(gtk::Align::Center);
+    let title = gtk::Label::new(Some(title));
+    title.set_xalign(0.0);
+    title.add_css_class("settings-option-title");
+    let description = gtk::Label::new(Some(description));
+    description.set_xalign(0.0);
+    description.set_wrap(true);
+    description.add_css_class("settings-option-description");
+    copy.append(&title);
+    copy.append(&description);
+    let spin = gtk::SpinButton::with_range(min, max, step);
+    spin.set_value(value);
+    spin.set_valign(gtk::Align::Center);
+    spin.add_css_class("settings-spin");
+    row.append(&copy);
+    row.append(&spin);
+    (row, spin)
 }
 
 fn append_heading(container: &gtk::Box, text: &str) {

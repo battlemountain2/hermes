@@ -177,6 +177,15 @@ A later operation-history milestone should add Undo and Redo where outcomes can 
 - When operation history is implemented, Undo uses `Ctrl+Z`; Redo supports both `Ctrl+Shift+Z` and `Ctrl+Y`.
 - The application exposes a discoverable shortcut reference.
 
+### 7.11 Tabs
+
+- Multiple browsing contexts appear as a compact tab strip only when more than one tab exists.
+- Each tab preserves its Miller-column location and view context independently.
+- `Ctrl+T` creates a tab at the current location and `Ctrl+W` closes the active tab.
+- `Ctrl+Tab` and `Ctrl+Shift+Tab` cycle tabs; middle-click closes a tab.
+- Tabs can be renamed and pinned without adding permanent chrome to a single-tab window.
+- The last tab cannot be closed, and the open tab set can be restored on relaunch.
+
 ### 7.9 Themes and typography
 
 - Strata automatically follows the active Omarchy theme when available.

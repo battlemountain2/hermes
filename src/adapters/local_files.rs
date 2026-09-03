@@ -56,8 +56,7 @@ fn entry_from_info(location: Location, info: gio::FileInfo) -> FileEntry {
         (gio::FileType::SymbolicLink, _) => EntryKind::SymbolicLink,
         _ => EntryKind::Other,
     };
-    FileEntry {
-        location,
+    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location,
         native_name,
         display_name: info.display_name().to_string(),
         kind,
@@ -75,35 +74,13 @@ fn entry_from_info(location: Location, info: gio::FileInfo) -> FileEntry {
             .modification_date_time()
             .map(|modified| MetadataValue::Known(modified.to_unix()))
             .unwrap_or(MetadataValue::Unavailable),
-    }
+    }))
 }
 
 impl FileSource for LocalFileSource {
     fn validate_location(&self, location: &Location) -> Result<(), LocationValidationError> {
-        if let Some(path) = location.native_path() {
-            let metadata = std::fs::metadata(path).map_err(map_validation_error)?;
-            if !metadata.is_dir() {
-                return Err(LocationValidationError::NotDirectory);
-            }
-            return std::fs::read_dir(path)
-                .map(|_| ())
-                .map_err(map_validation_error);
-        }
-
-        let file = gio::File::for_uri(
-            location
-                .uri_value()
-                .ok_or_else(|| LocationValidationError::Unavailable("invalid URI".into()))?,
-        );
-        let info = file
-            .query_info(
-                "standard::type",
-                gio::FileQueryInfoFlags::NONE,
-                None::<&gio::Cancellable>,
-            )
-            .map_err(|error| LocationValidationError::Unavailable(error.to_string()))?;
-        if info.file_type() != gio::FileType::Directory {
-            return Err(LocationValidationError::NotDirectory);
+        if location.uri_value().is_none() && location.native_path().is_none() {
+            return Err(LocationValidationError::Unavailable("invalid URI".into()));
         }
         Ok(())
     }

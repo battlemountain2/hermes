@@ -20,16 +20,20 @@ fn inline_rename_selects_the_stem_but_keeps_the_extension() {
 
 #[test]
 fn delete_confirmation_labels_distinguish_files_and_folders() {
-    let file = FileEntry {
-        location: Location::local("/fixture/file.txt"),
+    let file = crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: Location::local("/fixture/file.txt"),
         native_name: "file.txt".into(),
         display_name: "file.txt".into(),
         kind: crate::model::EntryKind::File,
         size: crate::model::MetadataValue::Known(10),
         modified_unix_seconds: crate::model::MetadataValue::Unknown,
-    };
-    let mut folder = file.clone();
-    folder.kind = crate::model::EntryKind::Directory;
+    }));
+    let folder = crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: Location::local("/fixture/folder"),
+        native_name: "folder".into(),
+        display_name: "folder".into(),
+        kind: crate::model::EntryKind::Directory,
+        size: crate::model::MetadataValue::Known(10),
+        modified_unix_seconds: crate::model::MetadataValue::Unknown,
+    }));
 
     assert_eq!(item_count_label(1), "1 item");
     assert_eq!(item_count_label(2), "2 items");
@@ -50,14 +54,13 @@ fn only_the_trash_root_uses_the_aggregate_properties_size() {
 
 #[test]
 fn quick_preview_is_offered_only_for_supported_files() {
-    let entry = |name: &str, kind| FileEntry {
-        location: Location::local(format!("/fixture/{name}")),
+    let entry = |name: &str, kind| crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: Location::local(format!("/fixture/{name}")),
         native_name: name.into(),
         display_name: name.into(),
         kind,
         size: crate::model::MetadataValue::Unknown,
         modified_unix_seconds: crate::model::MetadataValue::Unknown,
-    };
+    }));
 
     assert!(entry_supports_quick_preview(&entry(
         "photo.png",
@@ -67,8 +70,12 @@ fn quick_preview_is_offered_only_for_supported_files() {
         "notes.txt",
         crate::model::EntryKind::FileSymbolicLink,
     )));
-    assert!(!entry_supports_quick_preview(&entry(
+    assert!(entry_supports_quick_preview(&entry(
         "archive.zip",
+        crate::model::EntryKind::File,
+    )));
+    assert!(entry_supports_quick_preview(&entry(
+        "letter.docx",
         crate::model::EntryKind::File,
     )));
     assert!(!entry_supports_quick_preview(&entry(
@@ -77,7 +84,7 @@ fn quick_preview_is_offered_only_for_supported_files() {
     )));
 
     let supported = entry("photo.png", crate::model::EntryKind::File);
-    let unsupported = entry("archive.zip", crate::model::EntryKind::File);
+    let unsupported = entry("unknown.data", crate::model::EntryKind::File);
     let directory = entry("photos", crate::model::EntryKind::Directory);
     assert!(entry_responds_to_single_click(&supported, true));
     assert!(!entry_responds_to_single_click(&supported, false));
@@ -122,14 +129,13 @@ fn local_file_drops_prefer_move_while_external_drops_prefer_copy() {
 
 #[test]
 fn multi_selection_summary_lists_at_most_three_names() {
-    let entry = |name: &str| FileEntry {
-        location: Location::local(format!("/fixture/{name}")),
+    let entry = |name: &str| crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: Location::local(format!("/fixture/{name}")),
         native_name: name.into(),
         display_name: name.into(),
         kind: crate::model::EntryKind::File,
         size: crate::model::MetadataValue::Unknown,
         modified_unix_seconds: crate::model::MetadataValue::Unknown,
-    };
+    }));
 
     assert_eq!(
         selected_items_summary(&[entry("one"), entry("two"), entry("three")]),
@@ -238,6 +244,7 @@ fn file_names_map_to_specific_lucide_icons() {
     assert_eq!(icon_for_name("setup.sh"), crate::assets::icons::TERMINAL);
     assert_eq!(icon_for_name("photo.webp"), crate::assets::icons::PICTURES);
     assert_eq!(icon_for_name("movie.mkv"), crate::assets::icons::VIDEOS);
+    assert_eq!(icon_for_name("album.flac"), crate::assets::icons::MUSIC);
     assert_eq!(icon_for_name("source.rs"), crate::assets::icons::FILE_CODE);
     assert_eq!(
         icon_for_name("backup.tar"),

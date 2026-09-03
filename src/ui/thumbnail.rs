@@ -12,6 +12,7 @@ use gtk::{gdk, gio, glib, prelude::*};
 use crate::{
     model::{FileEntry, MetadataValue},
     sandbox::{Cancellation, ParseOperation},
+    services::{FormatCapabilities, ThumbnailHandler, capabilities_by_name},
 };
 
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
@@ -74,10 +75,8 @@ impl ThumbnailCache {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ThumbnailKind {
-    Image,
-    RawImage,
-    Pdf,
-    Video,
+    FolderAlbum,
+    Sandboxed(ParseOperation),
 }
 
 pub(super) fn set_thumbnail_or_icon(
@@ -92,7 +91,28 @@ pub(super) fn set_thumbnail_or_icon(
     let Some(path) = entry.location.native_path().map(Path::to_path_buf) else {
         return;
     };
-    let Some(kind) = thumbnail_kind(&path) else {
+    if entry.is_directory() {
+        mark_nonempty_folder(image, image_id, request, path.clone());
+    }
+    if path.extension().and_then(std::ffi::OsStr::to_str) == Some("desktop") {
+        if let Some(app) = gio::DesktopAppInfo::from_filename(&path)
+            && let Some(icon) = app.icon()
+        {
+            crate::assets::remove_primary_icon(image);
+            image.set_from_gicon(&icon);
+            image.set_pixel_size(thumbnail_size.clamp(16, 256));
+        }
+        return;
+    }
+    let kind = if entry.is_directory() {
+        ThumbnailKind::FolderAlbum
+    } else if let FormatCapabilities {
+        thumbnail: Some(handler),
+        ..
+    } = capabilities_by_name(path.as_os_str())
+    {
+        ThumbnailKind::Sandboxed(thumbnail_operation(handler))
+    } else {
         return;
     };
     let thumbnail_size = thumbnail_size.clamp(16, 256);
@@ -135,6 +155,48 @@ pub(super) fn set_thumbnail_or_icon(
             return;
         };
         apply_thumbnail(&image, &bytes, thumbnail_size);
+    });
+}
+
+fn thumbnail_operation(handler: ThumbnailHandler) -> ParseOperation {
+    match handler {
+        ThumbnailHandler::Image => ParseOperation::ThumbnailImage,
+        ThumbnailHandler::Heif => ParseOperation::ThumbnailHeif,
+        ThumbnailHandler::RawImage => ParseOperation::ThumbnailRaw,
+        ThumbnailHandler::Pdf => ParseOperation::ThumbnailPdf,
+        ThumbnailHandler::Media => ParseOperation::ThumbnailVideo,
+    }
+}
+
+fn mark_nonempty_folder(image: &gtk::Image, image_id: usize, request: u64, path: PathBuf) {
+    let weak_image = glib::WeakRef::new();
+    weak_image.set(Some(image));
+    glib::MainContext::default().spawn_local(async move {
+        let Ok(nonempty) = gio::spawn_blocking(move || {
+            std::fs::read_dir(path)
+                .ok()
+                .and_then(|mut entries| entries.next())
+                .is_some()
+        })
+        .await
+        else {
+            return;
+        };
+        if !nonempty {
+            return;
+        }
+        let is_current = ACTIVE_REQUESTS.with(|requests| {
+            requests
+                .borrow()
+                .get(&image_id)
+                .is_some_and(|active| active.id == request)
+        });
+        if is_current
+            && let Some(image) = weak_image.upgrade()
+            && crate::assets::has_primary_icon(&image)
+        {
+            crate::assets::set_primary_icon(&image, crate::assets::icons::FOLDER_FILLED);
+        }
     });
 }
 
@@ -185,37 +247,64 @@ fn set_fallback_icon(image: &gtk::Image, icon: &str, size: i32) -> (usize, u64, 
     (image_id, request, cancellation)
 }
 
-fn thumbnail_kind(path: &Path) -> Option<ThumbnailKind> {
-    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
-    match extension.as_str() {
-        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tif" | "tiff" => {
-            Some(ThumbnailKind::Image)
-        }
-        "3fr" | "arw" | "cr2" | "cr3" | "dcr" | "dng" | "erf" | "kdc" | "mef" | "mos" | "mrw"
-        | "nef" | "nrw" | "orf" | "pef" | "raf" | "raw" | "rw2" | "rwl" | "sr2" | "srf" | "srw"
-        | "x3f" => Some(ThumbnailKind::RawImage),
-        "pdf" => Some(ThumbnailKind::Pdf),
-        "mp4" | "mkv" | "webm" | "mov" | "avi" | "m4v" | "mpeg" | "mpg" | "ogv" => {
-            Some(ThumbnailKind::Video)
-        }
-        _ => None,
-    }
-}
-
 fn render_thumbnail(
     path: &Path,
     kind: ThumbnailKind,
     size: i32,
     cancellation: &Cancellation,
 ) -> Result<Vec<u8>, String> {
-    let operation = match kind {
-        ThumbnailKind::Image => ParseOperation::ThumbnailImage,
-        ThumbnailKind::RawImage => ParseOperation::ThumbnailRaw,
-        ThumbnailKind::Pdf => ParseOperation::ThumbnailPdf,
-        ThumbnailKind::Video => ParseOperation::ThumbnailVideo,
+    if let ThumbnailKind::FolderAlbum = kind {
+        let (art, operation) =
+            folder_album_art(path).ok_or_else(|| "No folder artwork was found".to_owned())?;
+        return crate::sandbox::parse(&art, operation, size.clamp(16, 256), cancellation)
+            .map(|output| output.data);
+    }
+    let ThumbnailKind::Sandboxed(operation) = kind else {
+        unreachable!();
     };
     crate::sandbox::parse(path, operation, size.clamp(16, 256), cancellation)
         .map(|output| output.data)
+}
+
+pub(crate) fn folder_album_art(directory: &Path) -> Option<(std::path::PathBuf, ParseOperation)> {
+    let mut embedded = None;
+    let mut images = Vec::new();
+    for entry in std::fs::read_dir(directory).ok()?.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let extension = path
+            .extension()
+            .and_then(std::ffi::OsStr::to_str)
+            .map(str::to_ascii_lowercase);
+        if extension.as_deref() == Some("flac") && embedded.is_none() {
+            embedded = Some((path.clone(), ParseOperation::ThumbnailVideo));
+        }
+        if matches!(extension.as_deref(), Some("jpg" | "jpeg" | "png" | "webp")) {
+            let stem = path
+                .file_stem()
+                .and_then(std::ffi::OsStr::to_str)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let rank = match stem.as_str() {
+                "cover" => Some(0),
+                "folder" => Some(1),
+                "albumart" | "album-art" => Some(2),
+                "front" => Some(3),
+                _ => None,
+            };
+            if let Some(rank) = rank {
+                images.push((rank, path));
+            }
+        }
+    }
+    images.sort_by_key(|(rank, _)| *rank);
+    images
+        .into_iter()
+        .next()
+        .map(|(_, path)| (path, ParseOperation::ThumbnailImage))
+        .or(embedded)
 }
 
 #[cfg(test)]

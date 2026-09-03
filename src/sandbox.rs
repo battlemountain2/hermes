@@ -19,30 +19,54 @@ static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ParseOperation {
     ThumbnailImage,
+    ThumbnailHeif,
     ThumbnailRaw,
     ThumbnailPdf,
     ThumbnailVideo,
     PreviewImage,
+    PreviewHeif,
     PreviewPdf,
     PreviewMedia,
+    PreviewAudio,
+    ExtractPdfText,
+    PreviewArchive,
+    PreviewOffice,
+    ExtractOfficeText,
 }
 
 impl ParseOperation {
     fn argument(self) -> &'static str {
         match self {
             Self::ThumbnailImage => "thumbnail-image",
+            Self::ThumbnailHeif => "thumbnail-heif",
             Self::ThumbnailRaw => "thumbnail-raw",
             Self::ThumbnailPdf => "thumbnail-pdf",
             Self::ThumbnailVideo => "thumbnail-video",
             Self::PreviewImage => "preview-image",
+            Self::PreviewHeif => "preview-heif",
             Self::PreviewPdf => "preview-pdf",
             Self::PreviewMedia => "preview-media",
+            Self::PreviewAudio => "preview-audio",
+            Self::ExtractPdfText => "extract-pdf-text",
+            Self::PreviewArchive => "preview-archive",
+            Self::PreviewOffice => "preview-office",
+            Self::ExtractOfficeText => "extract-office-text",
         }
     }
 
     fn output_name(self) -> &'static str {
         if self == Self::PreviewMedia {
             "result.webm"
+        } else if self == Self::PreviewAudio {
+            "result.ogg"
+        } else if matches!(
+            self,
+            Self::ExtractPdfText
+                | Self::PreviewArchive
+                | Self::PreviewOffice
+                | Self::ExtractOfficeText
+        ) {
+            "result.txt"
         } else {
             "result.png"
         }
@@ -53,6 +77,10 @@ impl ParseOperation {
 pub(crate) struct Cancellation(Arc<AtomicBool>);
 
 impl Cancellation {
+    pub(crate) fn from_shared(cancelled: Arc<AtomicBool>) -> Self {
+        Self(cancelled)
+    }
+
     pub(crate) fn cancel(&self) {
         self.0.store(true, Ordering::Release);
     }
@@ -120,12 +148,32 @@ pub(crate) fn parse(
     let result_path = output.path().join(operation.output_name());
     let metadata = fs::metadata(&result_path)
         .map_err(|_| "The preview renderer produced no output".to_owned())?;
-    if metadata.len() == 0 || metadata.len() > MAX_OUTPUT_BYTES {
+    let text_output = matches!(
+        operation,
+        ParseOperation::ExtractPdfText
+            | ParseOperation::PreviewArchive
+            | ParseOperation::PreviewOffice
+            | ParseOperation::ExtractOfficeText
+    );
+    let permits_empty_output = text_output;
+    if (!permits_empty_output && metadata.len() == 0) || metadata.len() > MAX_OUTPUT_BYTES {
         return Err("The preview renderer produced an invalid output size".to_owned());
     }
     let data = fs::read(result_path).map_err(|error| error.to_string())?;
-    if operation != ParseOperation::PreviewMedia && !data.starts_with(b"\x89PNG\r\n\x1a\n") {
+    if !matches!(
+        operation,
+        ParseOperation::PreviewMedia
+            | ParseOperation::PreviewAudio
+            | ParseOperation::ExtractPdfText
+            | ParseOperation::PreviewArchive
+            | ParseOperation::PreviewOffice
+            | ParseOperation::ExtractOfficeText
+    ) && !data.starts_with(b"\x89PNG\r\n\x1a\n")
+    {
         return Err("The preview renderer produced invalid image data".to_owned());
+    }
+    if text_output && (data.contains(&0) || std::str::from_utf8(&data).is_err()) {
+        return Err("The document text extractor produced invalid text".to_owned());
     }
     let (page, pages) = read_metadata(&output.path().join("result.meta"));
     Ok(ParseOutput { data, page, pages })

@@ -31,6 +31,7 @@ pub mod icons {
     pub const FILE_ARCHIVE: &str = "strata-file-archive";
     pub const FILE_CODE: &str = "strata-file-code";
     pub const FOLDER: &str = "strata-folder";
+    pub const FOLDER_FILLED: &str = "strata-folder-filled";
     pub const HARD_DRIVE: &str = "strata-hard-drive";
     pub const INFO: &str = "strata-info";
     pub const FUNNEL: &str = "strata-funnel";
@@ -40,6 +41,7 @@ pub mod icons {
     pub const LIST_ACTIVE: &str = "strata-list-active";
     pub const KEYBOARD: &str = "strata-keyboard";
     pub const MONITOR: &str = "strata-monitor";
+    pub const MUSIC: &str = "strata-music";
     pub const PALETTE: &str = "strata-palette";
     pub const PANEL_LEFT: &str = "strata-panel-left-symbolic";
     pub const PENCIL: &str = "strata-pencil";
@@ -58,9 +60,10 @@ pub mod icons {
     pub const X: &str = "strata-x";
 }
 
-const FONT_VERSION: &str = "2.304";
+const FONT_VERSION: &str = "jetbrains-2.304-maple-7.9";
 const ICON_TEXTURE_CACHE_LIMIT: usize = 256;
 const JETBRAINS_MONO: &[u8] = include_bytes!("../data/fonts/JetBrainsMono[wght].ttf");
+const MAPLE_MONO: &[u8] = include_bytes!("../data/fonts/MapleMonoNormal[wght].ttf");
 
 struct PrimaryIcon {
     image: glib::WeakRef<gtk::Image>,
@@ -86,9 +89,11 @@ pub fn prepare() -> Result<(), Box<dyn std::error::Error>> {
         .join(FONT_VERSION);
     fs::create_dir_all(&font_directory)?;
 
-    let regular = font_directory.join("JetBrainsMono.ttf");
-    write_if_changed(&regular, JETBRAINS_MONO)?;
-    register_application_fonts([regular])?;
+    let jetbrains = font_directory.join("JetBrainsMono.ttf");
+    let maple = font_directory.join("MapleMonoNormal.ttf");
+    write_if_changed(&jetbrains, JETBRAINS_MONO)?;
+    write_if_changed(&maple, MAPLE_MONO)?;
+    register_application_fonts([jetbrains, maple])?;
 
     Ok(())
 }
@@ -139,6 +144,15 @@ pub fn remove_primary_icon(image: &gtk::Image) {
             .borrow_mut()
             .retain(|icon| icon.image.upgrade().as_ref() != Some(image));
     });
+}
+
+pub fn has_primary_icon(image: &gtk::Image) -> bool {
+    PRIMARY_ICONS.with(|icons| {
+        icons
+            .borrow()
+            .iter()
+            .any(|icon| icon.image.upgrade().as_ref() == Some(image))
+    })
 }
 
 pub fn text_icon(name: &str, pixel_size: i32) -> gtk::Image {

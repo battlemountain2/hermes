@@ -2,6 +2,19 @@
 
 The roadmap is ordered by risk and dependency rather than by visual prominence. Each milestone should leave Strata usable and measurable.
 
+## Hermes direction
+
+Strata is evolving toward a personal, local-first file manager named Hermes. The
+default experience stays clean and Miller-column based while advanced features
+remain opt-in. The next private workstream prioritizes dependable everyday file
+operations, a richer sandboxed preview registry, recursive and content search,
+and reveal-in-context navigation.
+
+Dual-pane browsing, the integrated terminal, and remote providers are deferred
+until the local workflow is complete. A folder tree will be an optional setting,
+and archive/custom actions will remain optional integrations rather than core
+dependencies.
+
 ## Milestone 0 — Foundation
 
 **Goal:** Replace the proof of concept with boundaries that can support the product without premature abstraction.
@@ -81,14 +94,24 @@ The roadmap is ordered by risk and dependency rather than by visual prominence. 
 
 **Exit:** Release checklist passes on Omarchy and representative non-Omarchy Linux environments.
 
+## Milestone 6 — Post v1 (Polish & Power Features)
+
+**Goal:** Close the functional gap with modern desktop managers (macOS Finder, Nautilus) and refine aesthetics.
+
+- Add fluid micro-animations for transitions (Grid to List) and previews
+- Investigate dynamic backgrounds and UI vibrancy/blur effects
+- Rendered Markdown previews and rich media metadata extraction (duration, codec, dimensions)
+- Directory summaries (item count, total size) and interactive disk space utilization bars
+- Checksum calculation integration for properties
+- Advanced permission management UI for local files
+- Nautilus-style type-ahead interactive filtering in views
+
 ## Later exploration
 
-- Remote locations
-- Archive browsing
-- Independent panes and tabs
+- Remote locations and cloud providers
+- Archive browsing natively as folders
+- Independent dual-panes
 - Saved workspaces
-- Batch rename
 - Global indexed search
 - Out-of-process or sandboxed extensions
 - Optional developer integrations such as Git status
-- Undo/Redo operation history with toolbar buttons and keyboard shortcuts where reversal can be guaranteed

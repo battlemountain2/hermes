@@ -75,6 +75,21 @@ theme = "azure-glow"
     assert!(!preferences.search_open_files_directly);
     assert_eq!(preferences.browser_mode, "columns");
     assert_eq!(preferences.browser_density, "compact");
+    assert_eq!(preferences.interface_font, "maple");
+}
+
+#[test]
+fn interface_font_preference_can_select_jetbrains_mono() {
+    let preferences: Preferences = toml::from_str(
+        r#"
+mode = "theme"
+theme = "azure-glow"
+interface_font = "jetbrains"
+"#,
+    )
+    .expect("font preferences should be valid");
+
+    assert_eq!(preferences.interface_font, "jetbrains");
 }
 
 #[test]

@@ -37,8 +37,13 @@ fn main() -> gtk::glib::ExitCode {
         eprintln!("Unable to prepare bundled assets: {error}");
     }
 
+    let application_id = if std::env::var_os("STRATA_DEV").is_some() {
+        "io.github.lgse.Strata.Dev"
+    } else {
+        APPLICATION_ID
+    };
     let application = gtk::Application::builder()
-        .application_id(APPLICATION_ID)
+        .application_id(application_id)
         .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
 

@@ -290,5 +290,5 @@ Legend: **P0** blocks the milestone, **P1** is required for its exit criteria, *
 - [ ] Expand the capability-limited plugin protocol beyond previews only after the preview provider API is proven
 - [ ] Evaluate remote location adapters
 - [ ] Evaluate archive browsing
-- [ ] Evaluate independent panes, tabs, and saved workspaces
+- [ ] Evaluate independent panes and saved workspaces
 - [ ] Evaluate batch rename and optional developer integrations

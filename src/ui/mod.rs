@@ -3,12 +3,16 @@
 mod blur;
 mod browser;
 mod browser_modes;
+pub mod folder_tree;
 mod motion;
-mod preview;
-mod search;
+pub mod preview;
+pub mod recent_folders;
+pub mod search;
 mod settings;
 mod theme;
-mod thumbnail;
+pub mod thumbnail;
+mod trails;
+mod status_bar;
 mod window;
 
 pub use window::{present, present_location};

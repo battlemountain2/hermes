@@ -27,6 +27,7 @@ Strata is an experimental, keyboard-first file manager for Linux. It is designed
 - Collapsible sidebar
 - Compact and airy density modes
 - List, Explorer, and Grid views
+- Persistent tabs with independent browsing context
 - Omarchy and system theming
 - Complete keyboard navigation
 
@@ -58,7 +59,7 @@ Strata is not yet available through Arch's package repositories. Download the ar
 Install the runtime libraries and optional video preview tools on Arch or Omarchy:
 
 ```bash
-sudo pacman -S --needed bubblewrap ffmpeg ffmpegthumbnailer fontconfig gtk4 gtksourceview5 poppler-glib
+sudo pacman -S --needed bubblewrap ffmpeg ffmpegthumbnailer fontconfig gst-plugins-good gtk4 gtksourceview5 libarchive poppler-glib
 ```
 
 Then verify, extract, and install the downloaded archive (replace the filename with the release you downloaded). The `gh attestation` check verifies the archive's signed GitHub Actions provenance:
@@ -75,7 +76,21 @@ Each archive also contains `SOURCE_COMMIT`, which records the exact commit used 
 
 Ensure `~/.local/bin` is on `PATH`, then run `strata`. Image thumbnails work without `ffmpegthumbnailer`; when `ffmpegthumbnailer` or `ffmpeg` is unavailable, video files fall back to their video icon or an unavailable preview. Bubblewrap is required: preview parsing fails closed rather than running untrusted native parsers without a sandbox. See [Preview sandbox](docs/preview-sandbox.md) for the providers, permissions, and resource limits.
 
-#### Optional RAW photo thumbnails
+Media playback requires the GStreamer auto-detection elements provided by
+`gst-plugins-good`. Without them, GTK cannot select an audio output and media
+previews remain at `0:00`.
+
+FLAC files with embedded cover art display album thumbnails when `ffmpegthumbnailer` is installed.
+The preview drawer can play the first 30 seconds through the sandboxed `ffmpeg` media pipeline.
+
+#### Optional HEIC/HEIF and RAW photo previews
+
+HEIC and HEIF thumbnails and previews use an installed GDK Pixbuf loader when available, then
+fall back to ImageMagick. On Arch or Omarchy, install ImageMagick and its HEIF decoder:
+
+```bash
+sudo pacman -S --needed imagemagick libheif
+```
 
 Strata recognizes common camera RAW formats, including DNG, CR2/CR3, NEF, ARW, RAF, ORF, RW2, PEF, and X3F. RAW decoding is provided by tools already installed on the host rather than bundled into Strata. It tries, in order:
 
@@ -83,7 +98,7 @@ Strata recognizes common camera RAW formats, including DNG, CR2/CR3, NEF, ARW, R
 2. ImageMagick (`magick` or `convert`); and
 3. the LibRaw-compatible `dcraw_emu` or `dcraw` thumbnail extractor.
 
-On Arch or Omarchy, the recommended setup is:
+On Arch or Omarchy, the recommended RAW setup is:
 
 ```bash
 sudo pacman -S --needed imagemagick libraw
@@ -177,6 +192,70 @@ The architectural boundaries and performance workflow are documented in [`docs/a
 
 ## Development
 
+### AI development handoff
+
+This checkout is the standalone, private **Hermes** project derived from Strata. The repository is
+`battlemountain2/hermes`, and active development currently happens on
+`feat/ui-updates`. The Rust package, executable, application ID, resource paths, cache paths,
+and some user-facing strings intentionally still use `strata`; perform that rename later as one
+coordinated release task rather than changing identifiers piecemeal.
+
+The current `feat/ui-updates` checkpoint is verified with:
+
+```bash
+cargo fmt --all
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test -q
+```
+
+The last completed baseline is **182 passing tests** with strict Clippy clean. To run the current development build rather
+than an older desktop-installed copy:
+
+```bash
+cd ~/Projects/hermes
+cargo build
+./target/debug/strata
+```
+
+Major completed Hermes work includes persistent tabs with a new-tab button, back/forward mouse
+buttons, drive mounting and styled eject confirmation, movable Trash/sidebar places, everyday file
+operations and Open With, clipboard status/details, folder-state and album-art thumbnails, trusted
+`.desktop` icons, optional Today/Yesterday views, recursive fuzzy search, reveal-in-context,
+structured and mouse-configurable search filters, opt-in bounded content search, broader text
+previews, and selectable Maple Mono/JetBrains Mono fonts. Search content reads run off the GTK
+thread, skip symlinks and binary-looking files, and cap direct text reads at 1 MiB.
+We also recently added an optional folder tree panel (configurable in Settings), image preview
+click-and-drag panning, and image auto-fit zoom scaling. The buggy list-row info buttons were
+removed to simplify the UI. Today/Yesterday sidebar searches now use a cancellable routed search
+source and publish an exact final result set after background indexing.
+
+The **Advanced Preview Registry** is complete in `src/services/formats.rs`. It centrally
+reports format family plus independent preview, thumbnail, and text-extractor capabilities. Local
+preview loading, quick-preview eligibility, thumbnails, preview labels/unavailable messages, and
+content-search eligibility now consume that registry. Sandbox operation selection remains outside
+the service layer. Opt-in content search supports PDF, DOCX, and ODT text through the Bubblewrap
+sandbox. Document work is cancellable and bounded to 32 documents per query, 32 MiB per input,
+and 1 MiB of extracted text; the search UI reports extraction or limit notices without blocking GTK.
+
+Archive support includes sandboxed content listings, ZIP and compressed TAR creation, and safe
+extract-here/extract-to workflows with progress and cancellation. Configurable, argument-based
+context-menu actions live in `~/.config/hermes/actions.toml`; Hermes never passes them through a
+shell. See [`docs/custom-actions.md`](docs/custom-actions.md).
+
+Preserve these decisions while continuing:
+
+- untrusted image, media, and PDF parsing remains sandboxed through Bubblewrap;
+- ImageMagick remains the first JPEG/image renderer while the glycin shared-memory crash workaround
+  is needed;
+- content search remains opt-in, cancellable, bounded, and off the GTK thread;
+- missing optional host tools degrade to icons or explicit unavailable states;
+- do not add dual-pane mode, an embedded terminal, or remote providers yet;
+- the optional folder-tree panel belongs in Settings, not permanently in the main layout;
+- preserve user changes in a dirty worktree and use `apply_patch` for source edits;
+- commit focused changes to `feat/ui-updates` (or branch as appropriate) and push to the private Hermes remote.
+
+Next: perform the coordinated Strata-to-Hermes application/package rename and release preparation.
+
 ### Requirements
 
 - The latest stable Rust release
@@ -189,7 +268,7 @@ The architectural boundaries and performance workflow are documented in [`docs/a
 On Arch Linux:
 
 ```bash
-sudo pacman -S --needed base-devel rust bubblewrap fontconfig gtk4 gtksourceview5 poppler-glib
+sudo pacman -S --needed base-devel rust bubblewrap fontconfig gtk4 gtksourceview5 libarchive poppler-glib
 ```
 
 Run Strata:
@@ -227,7 +306,9 @@ The final publishing job uses the protected `release` GitHub environment and is 
 
 ## Bundled assets
 
-Strata includes a curated Lucide icon subset and the regular JetBrains Mono variable font. See [third-party notices](THIRD_PARTY_LICENSES.md) for versions, modifications, and complete attribution.
+Strata/Hermes includes a curated Lucide icon subset plus the regular JetBrains Mono and Maple Mono
+Normal variable fonts. The interface font is selectable in Settings. See the bundled license files
+and [third-party notices](THIRD_PARTY_LICENSES.md) for attribution.
 
 ## Status
 

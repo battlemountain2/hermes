@@ -3,9 +3,18 @@
 use std::path::Path;
 
 use super::{
-    is_standard_place_location, parse_pinned_places, remove_pinned_place, reorder_places,
-    should_show_standard_place,
+    is_standard_place_location, mouse_navigation_delta, parse_pinned_places, remove_pinned_place,
+    reorder_places, should_show_standard_place,
 };
+
+#[test]
+fn mouse_side_buttons_map_to_history_navigation() {
+    assert_eq!(mouse_navigation_delta(8), Some(-1));
+    assert_eq!(mouse_navigation_delta(9), Some(1));
+    assert_eq!(mouse_navigation_delta(1), None);
+    assert_eq!(mouse_navigation_delta(2), None);
+    assert_eq!(mouse_navigation_delta(3), None);
+}
 
 #[test]
 fn places_can_move_before_an_earlier_item() {

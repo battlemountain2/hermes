@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{fs, path::Path, process::Command};
+use std::{
+    fs,
+    io::Read,
+    path::Path,
+    process::{Command, Stdio},
+};
 
 use gdk_pixbuf::prelude::*;
 use gtk::gio;
@@ -15,18 +20,40 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         .parse::<i32>()
         .map_err(|_| "Invalid preview helper size or page".to_owned())?;
 
+    if operation == "extract-pdf-text" {
+        let text = extract_pdf_text(input, value.max(1) as usize)?;
+        fs::write(output, text).map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    if operation == "preview-archive" {
+        let listing = archive_listing(input, value.max(1) as usize)?;
+        fs::write(output, listing).map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    if matches!(operation.as_str(), "preview-office" | "extract-office-text") {
+        let text = extract_office_text(input, value.max(1) as usize)?;
+        fs::write(output, text).map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
     let (png, metadata) = match operation.as_str() {
-        "thumbnail-image" => (render_pixbuf(input, value.clamp(16, 256))?, None),
+        "thumbnail-image" => (render_image(input, value.clamp(16, 256))?, None),
+        "thumbnail-heif" => (render_imagemagick(input, value.clamp(16, 256))?, None),
         "thumbnail-raw" => (render_raw(input, value.clamp(16, 256))?, None),
         "thumbnail-pdf" => (render_pdf_thumbnail(input, value.clamp(16, 256))?, None),
         "thumbnail-video" => (render_media(input, value.clamp(16, 256))?, None),
-        "preview-image" => (render_pixbuf(input, 1400)?, None),
+        "preview-image" => (render_image(input, 1400)?, None),
+        "preview-heif" => (render_imagemagick(input, 1400)?, None),
         "preview-pdf" => {
             let (png, page, pages) = render_pdf_page(input, value)?;
             (png, Some(format!("{page} {pages}")))
         }
         "preview-media" => {
             render_media_preview(input, output)?;
+            return Ok(());
+        }
+        "preview-audio" => {
+            render_audio_preview(input, output)?;
             return Ok(());
         }
         _ => return Err("Unknown preview helper operation".to_owned()),
@@ -46,10 +73,14 @@ fn render_pixbuf(path: &Path, size: i32) -> Result<Vec<u8>, String> {
         .map_err(|error| error.to_string())
 }
 
+fn render_image(path: &Path, size: i32) -> Result<Vec<u8>, String> {
+    // Prefer the bounded external decoder while glycin can inherit Strata's file-size limit and
+    // receive SIGXFSZ when allocating shared memory for large decoded JPEG pixel buffers.
+    render_imagemagick(path, size).or_else(|_| render_pixbuf(path, size))
+}
+
 fn render_raw(path: &Path, size: i32) -> Result<Vec<u8>, String> {
-    render_pixbuf(path, size)
-        .or_else(|_| render_imagemagick(path, size))
-        .or_else(|_| render_dcraw(path, size))
+    render_image(path, size).or_else(|_| render_dcraw(path, size))
 }
 
 fn render_imagemagick(path: &Path, size: i32) -> Result<Vec<u8>, String> {
@@ -67,7 +98,7 @@ fn render_imagemagick(path: &Path, size: i32) -> Result<Vec<u8>, String> {
             return Ok(output.stdout);
         }
     }
-    Err("No RAW image renderer succeeded".to_owned())
+    Err("ImageMagick could not render this image".to_owned())
 }
 
 fn render_dcraw(path: &Path, size: i32) -> Result<Vec<u8>, String> {
@@ -135,6 +166,126 @@ fn render_pdf_page(path: &Path, requested_page: i32) -> Result<(Vec<u8>, i32, i3
         .ok_or_else(|| "Unable to load that PDF page".to_owned())?;
     let png = render_pdf_surface(&page, 1400.0, 1800.0, 2_500_000.0)?;
     Ok((png, page_index, pages))
+}
+
+fn extract_pdf_text(path: &Path, byte_limit: usize) -> Result<Vec<u8>, String> {
+    let uri = gio::File::for_path(path).uri();
+    let document = poppler::Document::from_file(&uri, None).map_err(|error| error.to_string())?;
+    let mut output = String::new();
+    for page_index in 0..document.n_pages() {
+        let Some(page) = document.page(page_index) else {
+            continue;
+        };
+        let Some(text) = page.text() else {
+            continue;
+        };
+        if !output.is_empty() {
+            output.push('\n');
+        }
+        output.push_str(&text);
+        if output.len() >= byte_limit {
+            break;
+        }
+    }
+    if output.len() > byte_limit {
+        let mut end = byte_limit;
+        while !output.is_char_boundary(end) {
+            end = end.saturating_sub(1);
+        }
+        output.truncate(end);
+    }
+    Ok(output.into_bytes())
+}
+
+fn archive_listing(path: &Path, byte_limit: usize) -> Result<Vec<u8>, String> {
+    let output = bounded_command_output(Command::new("bsdtar").arg("-tf").arg(path), byte_limit)?;
+    let listing = String::from_utf8_lossy(&output);
+    let mut lines = listing.lines().take(500).collect::<Vec<_>>().join("\n");
+    if listing.lines().count() > 500 {
+        lines.push_str("\n…additional entries omitted");
+    }
+    Ok(lines.into_bytes())
+}
+
+fn extract_office_text(path: &Path, byte_limit: usize) -> Result<Vec<u8>, String> {
+    let extension = path
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or_default();
+    let member = if extension.eq_ignore_ascii_case("docx") {
+        "word/document.xml"
+    } else if extension.eq_ignore_ascii_case("odt") {
+        "content.xml"
+    } else {
+        return Err("This office document format is not supported".to_owned());
+    };
+    let xml = bounded_command_output(
+        Command::new("bsdtar").args(["-xOf"]).arg(path).arg(member),
+        byte_limit.saturating_mul(4).max(byte_limit),
+    )?;
+    let xml = String::from_utf8_lossy(&xml);
+    Ok(office_xml_text(&xml, byte_limit).into_bytes())
+}
+
+fn office_xml_text(xml: &str, byte_limit: usize) -> String {
+    let mut text = String::with_capacity(xml.len().min(byte_limit));
+    let mut in_tag = false;
+    for character in xml.chars() {
+        match character {
+            '<' => {
+                in_tag = true;
+                if !text.ends_with(char::is_whitespace) {
+                    text.push(' ');
+                }
+            }
+            '>' => in_tag = false,
+            _ if !in_tag => text.push(character),
+            _ => {}
+        }
+        if text.len() >= byte_limit {
+            break;
+        }
+    }
+    let text = text
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'");
+    let mut text = text.trim().to_owned();
+    if text.len() > byte_limit {
+        let mut end = byte_limit;
+        while !text.is_char_boundary(end) {
+            end = end.saturating_sub(1);
+        }
+        text.truncate(end);
+    }
+    text
+}
+
+fn bounded_command_output(command: &mut Command, byte_limit: usize) -> Result<Vec<u8>, String> {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let mut output = Vec::with_capacity(byte_limit.min(1024 * 1024));
+    let Some(stdout) = child.stdout.take() else {
+        return Err("The document tool produced no output".to_owned());
+    };
+    stdout
+        .take(byte_limit.saturating_add(1) as u64)
+        .read_to_end(&mut output)
+        .map_err(|error| error.to_string())?;
+    if output.len() > byte_limit {
+        output.truncate(byte_limit);
+        let _killed = child.kill();
+    }
+    let status = child.wait().map_err(|error| error.to_string())?;
+    if !status.success() && output.is_empty() {
+        return Err("The document tool could not read this file".to_owned());
+    }
+    Ok(output)
 }
 
 fn render_pdf_surface(
@@ -213,6 +364,53 @@ fn render_media_preview(path: &Path, output: &Path) -> Result<(), String> {
         .ok_or_else(|| "Unable to normalize media preview".to_owned())
 }
 
+fn render_audio_preview(path: &Path, output: &Path) -> Result<(), String> {
+    let status = Command::new("ffmpeg")
+        .args([
+            "-nostdin",
+            "-v",
+            "error",
+            "-threads",
+            "2",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=640x360:r=1",
+            "-i",
+        ])
+        .arg(path)
+        .args([
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-sn",
+            "-dn",
+            "-t",
+            "30",
+            "-c:v",
+            "libtheora",
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            "1",
+            "-c:a",
+            "libvorbis",
+            "-q:a",
+            "4",
+            "-f",
+            "ogg",
+            "-y",
+        ])
+        .arg(output)
+        .status()
+        .map_err(|error| error.to_string())?;
+    status
+        .success()
+        .then_some(())
+        .ok_or_else(|| "Unable to normalize audio preview".to_owned())
+}
+
 fn render_media(path: &Path, size: i32) -> Result<Vec<u8>, String> {
     let output = Command::new("ffmpegthumbnailer")
         .arg("-i")
@@ -228,3 +426,6 @@ fn render_media(path: &Path, size: i32) -> Result<Vec<u8>, String> {
         Err("Unable to render media thumbnail".to_owned())
     }
 }
+
+#[cfg(test)]
+mod tests;

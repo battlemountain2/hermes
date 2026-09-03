@@ -10,14 +10,13 @@ use crate::{
 
 #[test]
 fn deleted_trash_entries_refresh_the_trash_root() {
-    let entry = FileEntry {
-        location: Location::uri("trash:///photo.jpg"),
+    let entry = crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: Location::uri("trash:///photo.jpg"),
         native_name: "photo.jpg".into(),
         display_name: "photo.jpg".into(),
         kind: EntryKind::File,
         size: MetadataValue::Known(10),
         modified_unix_seconds: MetadataValue::Unknown,
-    };
+    }));
 
     assert_eq!(
         deletion_parent_location(&entry.location),
@@ -74,14 +73,13 @@ impl FileSource for WatchingFileSource {
     fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
         emit(DirectoryEvent::Batch {
             request_id: request.id,
-            entries: vec![FileEntry {
-                location: Location::local("/fixture/child"),
+            entries: vec![crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: Location::local("/fixture/child"),
                 native_name: OsString::from("child"),
                 display_name: "child".into(),
                 kind: EntryKind::Directory,
                 size: MetadataValue::Unknown,
                 modified_unix_seconds: MetadataValue::Unknown,
-            }],
+            }))],
         });
         emit(DirectoryEvent::Finished {
             request_id: request.id,
@@ -148,14 +146,13 @@ impl FileSource for RetryFileSource {
         } else {
             emit(DirectoryEvent::Batch {
                 request_id: request.id,
-                entries: vec![FileEntry {
-                    location: Location::local("/fixture/recovered"),
+                entries: vec![crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: Location::local("/fixture/recovered"),
                     native_name: OsString::from("recovered"),
                     display_name: "recovered".into(),
                     kind: EntryKind::Directory,
                     size: MetadataValue::Unknown,
                     modified_unix_seconds: MetadataValue::Unknown,
-                }],
+                }))],
             });
             emit(DirectoryEvent::Finished {
                 request_id: request.id,
@@ -187,14 +184,13 @@ impl FileSource for FilePreviewSource {
     fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
         emit(DirectoryEvent::Batch {
             request_id: request.id,
-            entries: vec![FileEntry {
-                location: Location::local("/fixture/example.conf"),
+            entries: vec![crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: Location::local("/fixture/example.conf"),
                 native_name: OsString::from("example.conf"),
                 display_name: "example.conf".into(),
                 kind: EntryKind::File,
                 size: MetadataValue::Known(12),
                 modified_unix_seconds: MetadataValue::Known(1),
-            }],
+            }))],
         });
         emit(DirectoryEvent::Finished {
             request_id: request.id,
@@ -211,14 +207,13 @@ impl FileSource for FakeFileSource {
     fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
         emit(DirectoryEvent::Batch {
             request_id: request.id,
-            entries: vec![FileEntry {
-                location: Location::local("/fixture/child"),
+            entries: vec![crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: Location::local("/fixture/child"),
                 native_name: OsString::from("child"),
                 display_name: "child".into(),
                 kind: EntryKind::Directory,
                 size: MetadataValue::Unknown,
                 modified_unix_seconds: MetadataValue::Unknown,
-            }],
+            }))],
         });
         emit(DirectoryEvent::Finished {
             request_id: request.id,
@@ -267,14 +262,13 @@ fn filesystem_notifications_update_the_affected_column_incrementally() {
         .borrow()
         .clone()
         .expect("the directory watcher should be installed");
-    callback(DirectoryChange::Upsert(FileEntry {
-        location: Location::local("/fixture/added"),
+    callback(DirectoryChange::Upsert(crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: Location::local("/fixture/added"),
         native_name: OsString::from("added"),
         display_name: "added".into(),
         kind: EntryKind::File,
         size: MetadataValue::Known(4),
         modified_unix_seconds: MetadataValue::Known(1),
-    }));
+    }))));
 
     assert!(events.borrow().iter().any(|event| matches!(
         event,
@@ -690,6 +684,43 @@ fn preview_and_open_are_distinct_file_actions() {
         BrowserEvent::OpenRequested { location }
             if location == &Location::local("/fixture/example.conf")
     )));
+}
+
+#[test]
+fn reveal_selects_a_file_after_its_parent_finishes_loading() {
+    let browser = Browser::new(Rc::new(FilePreviewSource));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let observed = events.clone();
+    browser.observe(move |event| observed.borrow_mut().push(event));
+
+    browser.reveal(Location::local("/fixture/example.conf"));
+
+    assert_eq!(browser.active_location(), Some(Location::local("/fixture")));
+    assert_eq!(
+        browser.focused_entry().map(|entry| entry.location.clone()),
+        Some(Location::local("/fixture/example.conf"))
+    );
+    assert!(events.borrow().iter().any(|event| matches!(
+        event,
+        BrowserEvent::SelectionSetChanged {
+            depth: 0,
+            focused: 0,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn reveal_selects_an_item_when_its_parent_is_already_open() {
+    let browser = Browser::new(Rc::new(FilePreviewSource));
+    browser.navigate(Location::local("/fixture"));
+
+    browser.reveal(Location::local("/fixture/example.conf"));
+
+    assert_eq!(
+        browser.focused_entry().map(|entry| entry.location.clone()),
+        Some(Location::local("/fixture/example.conf"))
+    );
 }
 
 #[test]

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{ffi::OsStr, path::Path, rc::Rc};
+use std::rc::Rc;
 
 use crate::model::FileEntry;
 
@@ -25,6 +25,9 @@ pub enum PreviewContent {
     Rasterized { png: Vec<u8> },
     SandboxedMedia { data: Vec<u8> },
     Pdf { png: Vec<u8>, page: i32, pages: i32 },
+    Code { language: String, content: String },
+    Markdown { content: String },
+    Model3D { format: String, data: Vec<u8> },
     Unsupported,
 }
 
@@ -48,48 +51,6 @@ pub enum PreviewEvent {
 
 pub trait PreviewProvider {
     fn load(&self, request: PreviewRequest, emit: Rc<dyn Fn(PreviewEvent)>) -> LoadHandle;
-}
-
-pub(crate) fn has_plain_text_extension(name: &OsStr) -> bool {
-    Path::new(name)
-        .extension()
-        .and_then(OsStr::to_str)
-        .is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "conf" | "ini"))
-}
-
-pub(crate) fn content_family(content_type: &str) -> PreviewContent {
-    if content_type == "application/pdf" {
-        PreviewContent::Pdf {
-            png: Vec::new(),
-            page: 0,
-            pages: 0,
-        }
-    } else if content_type.starts_with("image/") {
-        PreviewContent::Image
-    } else if content_type.starts_with("audio/") || content_type.starts_with("video/") {
-        PreviewContent::Media
-    } else if content_type.starts_with("text/")
-        || matches!(
-            content_type,
-            "application/json"
-                | "application/ld+json"
-                | "application/toml"
-                | "application/x-yaml"
-                | "application/xml"
-                | "application/javascript"
-                | "application/x-javascript"
-                | "application/x-shellscript"
-        )
-        || content_type.ends_with("+json")
-        || content_type.ends_with("+xml")
-    {
-        PreviewContent::Text {
-            content: String::new(),
-            truncated: false,
-        }
-    } else {
-        PreviewContent::Unsupported
-    }
 }
 
 #[cfg(test)]

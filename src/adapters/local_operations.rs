@@ -3,15 +3,28 @@
 #[cfg(test)]
 mod tests;
 
-use std::{future::Future, pin::Pin, rc::Rc};
+use std::{
+    future::Future,
+    path::{Path, PathBuf},
+    pin::Pin,
+    process::{Command, Stdio},
+    rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::{Duration, Instant},
+};
 
 use gtk::{gio, glib, prelude::*};
 
 use crate::{
     model::Location,
     services::{
-        CreateDirectoryRequest, DeleteRequest, LoadHandle, OperationEvent, OperationProvider,
-        PasteRequest, RenameRequest, RestoreRequest, validate_basename,
+        CompressArchiveRequest, CreateDirectoryRequest, CreateFileRequest, DeleteRequest,
+        ExtractArchiveRequest, LoadHandle, OperationEvent, OperationProvider, PasteRequest,
+        RenameRequest, RestoreRequest, validate_basename,
     },
 };
 
@@ -211,10 +224,46 @@ impl OperationProvider for LocalOperationProvider {
         LoadHandle::new(move || task.abort())
     }
 
+    fn create_file(
+        &self,
+        request: CreateFileRequest,
+        emit: Rc<dyn Fn(OperationEvent)>,
+    ) -> LoadHandle {
+        let task = glib::MainContext::default().spawn_local(async move {
+            let file = match validated_child(&gio_file(&request.parent), &request.name) {
+                Ok(file) => file,
+                Err(message) => {
+                    emit(OperationEvent::Failed {
+                        request_id: request.id,
+                        message: message.to_owned(),
+                    });
+                    return;
+                }
+            };
+            match file
+                .create_future(gio::FileCreateFlags::NONE, glib::Priority::DEFAULT)
+                .await
+            {
+                Ok(stream) => {
+                    drop(stream);
+                    emit(OperationEvent::Created {
+                        request_id: request.id,
+                    });
+                }
+                Err(error) => emit(OperationEvent::Failed {
+                    request_id: request.id,
+                    message: error.to_string(),
+                }),
+            }
+        });
+        LoadHandle::new(move || task.abort())
+    }
+
     fn paste(&self, request: PasteRequest, emit: Rc<dyn Fn(OperationEvent)>) -> LoadHandle {
         let task = glib::MainContext::default().spawn_local(async move {
             let destination = gio_file(&request.destination);
-            for source in &request.sources {
+            let total = request.sources.len();
+            for (completed, source) in request.sources.iter().enumerate() {
                 let source = gio_file(source);
                 let Some(name) = source.basename() else {
                     emit(OperationEvent::Failed {
@@ -275,6 +324,11 @@ impl OperationProvider for LocalOperationProvider {
                     });
                     return;
                 }
+                emit(OperationEvent::TransferProgress {
+                    request_id: request.id,
+                    completed: completed + 1,
+                    total,
+                });
             }
             emit(OperationEvent::Pasted {
                 request_id: request.id,
@@ -395,5 +449,206 @@ impl OperationProvider for LocalOperationProvider {
             }
         });
         LoadHandle::new(move || task.abort())
+    }
+
+    fn extract_archive(
+        &self,
+        request: ExtractArchiveRequest,
+        emit: Rc<dyn Fn(OperationEvent)>,
+    ) -> LoadHandle {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = cancelled.clone();
+        let task = glib::MainContext::default().spawn_local(async move {
+            emit(OperationEvent::ArchiveProgress {
+                request_id: request.id,
+                completed: 0,
+                total: 1,
+            });
+            let archive = request.archive.native_path().map(Path::to_path_buf);
+            let destination = request.destination.native_path().map(Path::to_path_buf);
+            let result = match (archive, destination) {
+                (Some(archive), Some(destination)) => gio::spawn_blocking(move || {
+                    extract_archive(&archive, &destination, &worker_cancelled)
+                })
+                .await
+                .map_err(|_| "Archive extraction was cancelled".to_owned())
+                .and_then(|result| result),
+                _ => Err("Archives can only be extracted to local folders".to_owned()),
+            };
+            match result {
+                Ok(()) => {
+                    emit(OperationEvent::ArchiveProgress {
+                        request_id: request.id,
+                        completed: 1,
+                        total: 1,
+                    });
+                    emit(OperationEvent::ArchiveCompleted {
+                        request_id: request.id,
+                        refresh: request
+                            .destination
+                            .parent()
+                            .unwrap_or_else(|| request.destination.clone()),
+                    });
+                }
+                Err(message) => emit(OperationEvent::Failed {
+                    request_id: request.id,
+                    message,
+                }),
+            }
+        });
+        LoadHandle::new(move || {
+            cancelled.store(true, Ordering::Release);
+            task.abort();
+        })
+    }
+
+    fn compress_archive(
+        &self,
+        request: CompressArchiveRequest,
+        emit: Rc<dyn Fn(OperationEvent)>,
+    ) -> LoadHandle {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = cancelled.clone();
+        let task = glib::MainContext::default().spawn_local(async move {
+            emit(OperationEvent::ArchiveProgress {
+                request_id: request.id,
+                completed: 0,
+                total: 1,
+            });
+            let sources = request
+                .sources
+                .iter()
+                .map(|source| source.native_path().map(Path::to_path_buf))
+                .collect::<Option<Vec<_>>>();
+            let output = request.output.native_path().map(Path::to_path_buf);
+            let result = match (sources, output) {
+                (Some(sources), Some(output)) => gio::spawn_blocking(move || {
+                    compress_archive(&sources, &output, &worker_cancelled)
+                })
+                .await
+                .map_err(|_| "Archive creation was cancelled".to_owned())
+                .and_then(|result| result),
+                _ => Err("Archives can only be created from local files".to_owned()),
+            };
+            match result {
+                Ok(()) => {
+                    emit(OperationEvent::ArchiveProgress {
+                        request_id: request.id,
+                        completed: 1,
+                        total: 1,
+                    });
+                    let refresh = request
+                        .output
+                        .parent()
+                        .unwrap_or_else(|| request.output.clone());
+                    emit(OperationEvent::ArchiveCompleted {
+                        request_id: request.id,
+                        refresh,
+                    });
+                }
+                Err(message) => emit(OperationEvent::Failed {
+                    request_id: request.id,
+                    message,
+                }),
+            }
+        });
+        LoadHandle::new(move || {
+            cancelled.store(true, Ordering::Release);
+            task.abort();
+        })
+    }
+}
+
+const ARCHIVE_TIME_LIMIT: Duration = Duration::from_secs(300);
+
+fn extract_archive(
+    archive: &Path,
+    destination: &Path,
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
+    if !archive.is_file() {
+        return Err("The selected archive is unavailable".to_owned());
+    }
+    if destination.exists() {
+        return Err("The extraction destination already exists".to_owned());
+    }
+    std::fs::create_dir(destination).map_err(|error| error.to_string())?;
+    let mut command = Command::new("bsdtar");
+    command
+        .args(["-xpf"])
+        .arg(archive)
+        .args(["--no-same-owner", "--no-same-permissions", "-C"])
+        .arg(destination);
+    if let Err(error) = run_archive_command(&mut command, cancelled) {
+        let _removed = std::fs::remove_dir(destination);
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn compress_archive(
+    sources: &[PathBuf],
+    output: &Path,
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
+    if sources.is_empty() {
+        return Err("Select at least one item to compress".to_owned());
+    }
+    if output.exists() {
+        return Err("An archive with that name already exists".to_owned());
+    }
+    let parent = output
+        .parent()
+        .ok_or_else(|| "The archive destination is invalid".to_owned())?;
+    if sources.iter().any(|source| source.parent() != Some(parent)) {
+        return Err("Selected items must come from the same folder".to_owned());
+    }
+    let names = sources
+        .iter()
+        .map(|source| {
+            source
+                .file_name()
+                .map(PathBuf::from)
+                .ok_or_else(|| "A selected item has no file name".to_owned())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut command = Command::new("bsdtar");
+    command
+        .current_dir(parent)
+        .args(["-caf"])
+        .arg(output)
+        .arg("--");
+    command.args(names);
+    if let Err(error) = run_archive_command(&mut command, cancelled) {
+        let _removed = std::fs::remove_file(output);
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn run_archive_command(command: &mut Command, cancelled: &AtomicBool) -> Result<(), String> {
+    let mut child = command
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("Unable to start bsdtar: {error}"))?;
+    let started = Instant::now();
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            let _killed = child.kill();
+            let _waited = child.wait();
+            return Err("Archive operation cancelled".to_owned());
+        }
+        if started.elapsed() >= ARCHIVE_TIME_LIMIT {
+            let _killed = child.kill();
+            let _waited = child.wait();
+            return Err("Archive operation timed out".to_owned());
+        }
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(_)) => return Err("bsdtar could not process this archive".to_owned()),
+            Ok(None) => thread::sleep(Duration::from_millis(30)),
+            Err(error) => return Err(format!("Unable to monitor bsdtar: {error}")),
+        }
     }
 }
