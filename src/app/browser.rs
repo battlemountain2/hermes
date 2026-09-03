@@ -612,6 +612,10 @@ impl Browser {
         self.state.borrow().selected_entries()
     }
 
+    pub fn column_entries(&self, depth: usize) -> Option<Vec<FileEntry>> {
+        self.state.borrow().columns.get(depth).map(|col| col.entries.clone())
+    }
+
     pub fn set_selection(&self, depth: usize, positions: &[usize], focused: Option<usize>) {
         let mut state = self.state.borrow_mut();
         if state.set_selection(depth, positions, focused) {
@@ -1053,7 +1057,7 @@ impl Browser {
         }
         self.select(depth, position);
         if entry.is_directory() {
-            self.descend(depth, entry.location);
+            self.descend(depth, entry.location.clone());
         } else {
             self.emit(BrowserEvent::PreviewRequested { entry });
         }
@@ -1089,10 +1093,10 @@ impl Browser {
             return;
         };
         if entry.is_directory() {
-            self.navigate(entry.location);
+            self.navigate(entry.location.clone());
         } else {
             self.emit(BrowserEvent::OpenRequested {
-                location: entry.location,
+                location: entry.location.clone(),
             });
         }
     }
@@ -1141,10 +1145,10 @@ impl Browser {
         };
 
         if entry.is_directory() {
-            self.descend(depth, entry.location);
+            self.descend(depth, entry.location.clone());
         } else {
             self.emit(BrowserEvent::OpenRequested {
-                location: entry.location,
+                location: entry.location.clone(),
             });
         }
     }

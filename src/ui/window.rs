@@ -170,6 +170,10 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     );
     let context_trails = trails.clone();
     let context_view = capture_view.clone();
+    let context_tab_bar = tab_bar.clone();
+    let status_bar = Rc::new(super::status_bar::StatusBar::new());
+    let context_status_bar = status_bar.clone();
+    let context_controller = controller.clone();
     controller.observe(move |event| {
         if matches!(
             event,
@@ -178,9 +182,39 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
                 | BrowserEvent::SortingFinished { .. }
                 | BrowserEvent::PreviewRequested { .. }
                 | BrowserEvent::FocusChanged { .. }
-        ) && let Err(error) = context_trails.update_active_view(context_view())
-        {
-            tracing::warn!(%error, "unable to save Trail view state");
+        ) {
+            if let Err(error) = context_trails.update_active_view(context_view()) {
+                tracing::warn!(%error, "unable to save Trail view state");
+            }
+            context_tab_bar.refresh();
+        }
+        if matches!(
+            event,
+            BrowserEvent::EntriesInserted { .. }
+                | BrowserEvent::EntriesReplaced { .. }
+                | BrowserEvent::EntriesSpliced { .. }
+                | BrowserEvent::SelectionSetChanged { .. }
+                | BrowserEvent::FocusChanged { .. }
+                | BrowserEvent::ColumnAdded { .. }
+        ) {
+            let mut total_items = 0;
+            let mut selected_items = 0;
+            let mut selected_bytes = 0;
+            
+            if let Some(depth) = context_controller.active_depth() {
+                if let Some(entries) = context_controller.column_entries(depth) {
+                    total_items = entries.len();
+                }
+                let selected = context_controller.selected_entries();
+                selected_items = selected.len();
+                for entry in selected {
+                    if let crate::model::MetadataValue::Known(size) = entry.size {
+                        selected_bytes += size;
+                    }
+                }
+            }
+            context_status_bar.update_item_count(total_items);
+            context_status_bar.update_selection(selected_items, selected_bytes);
         }
     });
     header.pack_start(&sidebar_toggle);
@@ -251,7 +285,11 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     folder_tree.set_visible(theme_manager.show_folder_tree());
 
     tree_paned.set_start_child(Some(&folder_tree));
-    tree_paned.set_end_child(Some(&browser.widget()));
+    let browser_vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    browser_vbox.append(&browser.widget());
+    browser_vbox.append(&status_bar.container);
+    
+    tree_paned.set_end_child(Some(&browser_vbox));
 
     content.set_end_child(Some(&tree_paned));
     let animation_generation = Rc::new(Cell::new(0));
@@ -320,14 +358,13 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         if search_preferences.search_open_files_directly() {
             search_controller.open_location(location);
         } else {
-            search_preview.show(FileEntry {
-                location,
+            search_preview.show(crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location,
                 native_name: item.path.file_name().unwrap_or_default().to_os_string(),
                 display_name: item.name,
                 kind: EntryKind::File,
                 size: MetadataValue::Unknown,
                 modified_unix_seconds: MetadataValue::Unknown,
-            });
+            })));
         }
     });
     let dismissed_search_root = blurred_root.clone();
@@ -732,16 +769,42 @@ fn install_keyboard_navigation(
             (gtk::gdk::Key::Home, true) => {
                 browser.navigate(Location::local(home_directory()));
             }
-            (gtk::gdk::Key::j | gtk::gdk::Key::Down, false) => browser.move_selection(1),
-            (gtk::gdk::Key::k | gtk::gdk::Key::Up, false) => browser.move_selection(-1),
-            (gtk::gdk::Key::h | gtk::gdk::Key::Left, false) => view.navigate_left(),
+            (gtk::gdk::Key::j | gtk::gdk::Key::Down, false) => {
+                if view.view_mode() == BrowserMode::Columns || key == gtk::gdk::Key::j {
+                    browser.move_selection(1)
+                } else {
+                    return glib::Propagation::Proceed;
+                }
+            }
+            (gtk::gdk::Key::k | gtk::gdk::Key::Up, false) => {
+                if view.view_mode() == BrowserMode::Columns || key == gtk::gdk::Key::k {
+                    browser.move_selection(-1)
+                } else {
+                    return glib::Propagation::Proceed;
+                }
+            }
+            (gtk::gdk::Key::h | gtk::gdk::Key::Left, false) => {
+                if view.view_mode() == BrowserMode::Columns || key == gtk::gdk::Key::h {
+                    view.navigate_left()
+                } else {
+                    return glib::Propagation::Proceed;
+                }
+            }
             (
                 gtk::gdk::Key::l
                 | gtk::gdk::Key::Right
                 | gtk::gdk::Key::Return
                 | gtk::gdk::Key::KP_Enter,
                 false,
-            ) => view.activate_focused(),
+            ) => {
+                if key == gtk::gdk::Key::Return || key == gtk::gdk::Key::KP_Enter {
+                    view.activate_focused()
+                } else if view.view_mode() == BrowserMode::Columns || key == gtk::gdk::Key::l {
+                    view.activate_focused()
+                } else {
+                    return glib::Propagation::Proceed;
+                }
+            }
             (gtk::gdk::Key::Escape, false) => browser.escape(),
             _ => return glib::Propagation::Proceed,
         }
@@ -1101,13 +1164,13 @@ impl SidebarState {
             return;
         }
         self.pinned_places.borrow_mut().push((location, name));
-        save_pinned_places(&self.pinned_places.borrow());
+        save_pinned_places(self.pinned_places.borrow().clone());
         self.rebuild();
     }
 
     fn unpin_location(self: &Rc<Self>, location: &Location) {
         if remove_pinned_place(&mut self.pinned_places.borrow_mut(), location) {
-            save_pinned_places(&self.pinned_places.borrow());
+            save_pinned_places(self.pinned_places.borrow().clone());
             self.rebuild();
         }
     }
@@ -1287,7 +1350,7 @@ impl SidebarState {
     fn reorder_place(self: &Rc<Self>, source: &str, target: &str, after: bool) {
         let changed = reorder_places(&mut self.place_order.borrow_mut(), source, target, after);
         if changed {
-            save_place_order(&self.place_order.borrow());
+            save_place_order(self.place_order.borrow().clone());
             self.rebuild();
         }
     }
@@ -1929,14 +1992,16 @@ fn load_place_order() -> Vec<&'static str> {
     order
 }
 
-fn save_place_order(order: &[&'static str]) {
+fn save_place_order(order: Vec<&'static str>) {
     let path = place_order_path();
-    let Some(parent) = path.parent() else {
-        return;
-    };
-    if std::fs::create_dir_all(parent).is_ok() {
-        let _ = std::fs::write(path, format!("{}\n", order.join("\n")));
-    }
+    gio::spawn_blocking(move || {
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        if std::fs::create_dir_all(parent).is_ok() {
+            let _ = std::fs::write(path, format!("{}\n", order.join("\n")));
+        }
+    });
 }
 
 fn load_pinned_places() -> Vec<(Location, String)> {
@@ -1974,27 +2039,29 @@ fn parse_pinned_places(contents: &str) -> Vec<(Location, String)> {
     places
 }
 
-fn save_pinned_places(places: &[(Location, String)]) {
+fn save_pinned_places(places: Vec<(Location, String)>) {
     let path = pinned_places_path();
-    let Some(parent) = path.parent() else {
-        return;
-    };
-    if std::fs::create_dir_all(parent).is_err() {
-        return;
-    }
-    let mut contents = String::new();
-    for (location, name) in places {
-        let uri = location
-            .native_path()
-            .map(gio::File::for_path)
-            .map(|file| file.uri().to_string())
-            .or_else(|| location.uri_value().map(str::to_owned));
-        if let Some(uri) = uri {
-            let label = name.replace(['\n', '\r'], " ");
-            contents.push_str(&format!("{uri} {label}\n"));
+    gio::spawn_blocking(move || {
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
         }
-    }
-    let _result = std::fs::write(path, contents);
+        let mut contents = String::new();
+        for (location, name) in places {
+            let uri = location
+                .native_path()
+                .map(gio::File::for_path)
+                .map(|file| file.uri().to_string())
+                .or_else(|| location.uri_value().map(str::to_owned));
+            if let Some(uri) = uri {
+                let label = name.replace(['\n', '\r'], " ");
+                contents.push_str(&format!("{uri} {label}\n"));
+            }
+        }
+        let _result = std::fs::write(path, contents);
+    });
 }
 
 fn home_directory() -> PathBuf {

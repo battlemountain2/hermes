@@ -2857,7 +2857,7 @@ impl ViewState {
                         .and_then(|position| state.browser.entry_at(depth, position));
                     if let Some(entry) = entry {
                         if entry.is_directory() {
-                            state.schedule_peek(depth, entry.location, anchor.clone());
+                            state.schedule_peek(depth, entry.location.clone(), anchor.clone());
                         } else {
                             cancel_source(&state.pending_peek);
                             state.browser.close_peek();
@@ -2949,7 +2949,7 @@ impl ViewState {
                 )
                 .and_then(|position| state.browser.entry_at(depth, position))
                 .filter(FileEntry::is_directory)
-                .map(|entry| entry.location) else {
+                .map(|entry| entry.location.clone()) else {
                     return false;
                 };
                 transfer_dropped_files(&state, target, value, destination)
@@ -4225,7 +4225,7 @@ pub(super) fn install_item_context_menu(
             && entry.is_directory()
             && let Some(handler) = state.pin_handler.borrow().as_ref()
         {
-            handler(entry.location, entry.display_name);
+            handler(entry.location.clone(), entry.display_name.clone());
         }
     });
     let weak = Rc::downgrade(state);
@@ -4492,8 +4492,7 @@ fn trash_file_entry(file: gio::File, info: &gio::FileInfo) -> FileEntry {
         (gio::FileType::SymbolicLink, _) => EntryKind::SymbolicLink,
         _ => EntryKind::Other,
     };
-    FileEntry {
-        location: location_for_gio_file(&file),
+    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: location_for_gio_file(&file),
         native_name: info.name().into_os_string(),
         display_name: info.display_name().to_string(),
         kind,
@@ -4506,7 +4505,7 @@ fn trash_file_entry(file: gio::File, info: &gio::FileInfo) -> FileEntry {
             .modification_date_time()
             .map(|time| crate::model::MetadataValue::Known(time.to_unix()))
             .unwrap_or(crate::model::MetadataValue::Unavailable),
-    }
+    }))
 }
 
 fn selected_items_summary(entries: &[FileEntry]) -> String {
@@ -4707,7 +4706,7 @@ fn connect_extract_here(
         let destination = unique_archive_destination(parent, &archive_stem(path));
         state
             .browser
-            .extract_archive(entry.location, Location::local(destination));
+            .extract_archive(entry.location.clone(), Location::local(destination));
     });
 }
 

@@ -83,8 +83,7 @@ fn search_query(uri: &str) -> &str {
 }
 
 fn search_entry(item: &crate::services::SearchItem) -> FileEntry {
-    FileEntry {
-        location: Location::local(&item.path),
+    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: Location::local(&item.path),
         native_name: item.path.file_name().unwrap_or_default().to_owned(),
         display_name: item.name.clone(),
         kind: if item.is_directory {
@@ -96,7 +95,7 @@ fn search_entry(item: &crate::services::SearchItem) -> FileEntry {
         modified_unix_seconds: item
             .modified_unix_seconds
             .map_or(MetadataValue::Unknown, MetadataValue::Known),
-    }
+    }))
 }
 
 #[cfg(test)]

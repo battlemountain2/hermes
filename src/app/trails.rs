@@ -144,6 +144,7 @@ impl Trails {
             return Ok(false);
         };
         trail.name = name;
+        trail.custom_name = true;
         self.store.save(&stored)?;
         Ok(true)
     }
@@ -204,6 +205,9 @@ impl Trails {
             return Ok(());
         }
         trail.locations = locations;
+        if !trail.custom_name {
+            trail.name = location.display_name();
+        }
         self.store.save(&stored)
     }
 

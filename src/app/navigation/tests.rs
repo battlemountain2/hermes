@@ -17,14 +17,13 @@ fn entry(path: &str) -> FileEntry {
 }
 
 fn named_entry(path: &str, name: &str) -> FileEntry {
-    FileEntry {
-        location: location(path),
+    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: location(path),
         native_name: OsString::from(name),
         display_name: name.into(),
         kind: EntryKind::Directory,
         size: MetadataValue::Unknown,
         modified_unix_seconds: MetadataValue::Unknown,
-    }
+    }))
 }
 
 #[test]
@@ -477,7 +476,7 @@ fn changing_sort_preferences_preserves_the_selected_entry() {
     assert_eq!(
         state
             .focused_entry()
-            .map(|(_, _, entry)| entry.display_name),
+            .map(|(_, _, entry)| entry.display_name.clone()),
         Some("a".into())
     );
 }

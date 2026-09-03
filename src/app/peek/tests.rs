@@ -6,14 +6,13 @@ use super::*;
 use crate::model::{EntryKind, MetadataValue};
 
 fn entry() -> FileEntry {
-    FileEntry {
-        location: Location::local("/home/project/child"),
+    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: Location::local("/home/project/child"),
         native_name: OsString::from("child"),
         display_name: "child".into(),
         kind: EntryKind::Directory,
         size: MetadataValue::Unknown,
         modified_unix_seconds: MetadataValue::Unknown,
-    }
+    }))
 }
 
 #[test]

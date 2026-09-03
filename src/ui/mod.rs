@@ -10,8 +10,9 @@ pub mod recent_folders;
 pub mod search;
 mod settings;
 mod theme;
-mod thumbnail;
+pub mod thumbnail;
 mod trails;
+mod status_bar;
 mod window;
 
 pub use window::{present, present_location};

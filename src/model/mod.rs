@@ -197,13 +197,24 @@ pub enum MetadataValue<T> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FileEntry {
+pub struct FileEntry(pub std::rc::Rc<FileEntryInner>);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileEntryInner {
     pub location: Location,
     pub native_name: OsString,
     pub display_name: String,
     pub kind: EntryKind,
     pub size: MetadataValue<u64>,
     pub modified_unix_seconds: MetadataValue<i64>,
+}
+
+impl std::ops::Deref for FileEntry {
+    type Target = FileEntryInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl FileEntry {

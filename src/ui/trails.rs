@@ -117,7 +117,7 @@ impl TabBar {
         self.refresh();
     }
 
-    fn refresh(self: &Rc<Self>) {
+    pub fn refresh(self: &Rc<Self>) {
         while let Some(child) = self.tabs.first_child() {
             self.tabs.remove(&child);
         }

@@ -473,17 +473,27 @@ impl PreviewState {
                             }
                         });
 
+                        let pointer_pos = Rc::new(Cell::new((0.0, 0.0)));
+                        let motion = gtk::EventControllerMotion::new();
+                        let pointer_pos_clone = pointer_pos.clone();
+                        motion.connect_motion(move |_, x, y| {
+                            pointer_pos_clone.set((x, y));
+                        });
+                        scroll.add_controller(motion);
+
                         let controller = gtk::EventControllerScroll::new(
                             gtk::EventControllerScrollFlags::VERTICAL,
                         );
 
                         let picture_ref = picture.clone();
+                        let scroll_for_zoom = scroll.clone();
                         controller.connect_scroll(move |_, _dx, dy| {
                             let current = zoom_level.get();
                             // dy is usually around 1.0 for a standard wheel click, but can be tiny for smooth scroll
                             // Use an exponential curve so smooth scrolling feels natural
                             let factor = 1.15f64.powf(-dy);
                             let new_zoom = (current * factor).clamp(0.1, 10.0);
+                            let actual_factor = new_zoom / current;
 
                             zoom_level.set(new_zoom);
 
@@ -492,6 +502,9 @@ impl PreviewState {
                                 (height * new_zoom) as i32,
                             );
                             picture_ref.set_can_shrink(true);
+
+                            let (px, py) = pointer_pos.get();
+                            preserve_view_pointer(&scroll_for_zoom, actual_factor, px, py);
 
                             gtk::glib::Propagation::Stop
                         });
@@ -557,6 +570,15 @@ impl PreviewState {
             }
             PreviewContent::Pdf { png, page, pages } => {
                 self.render_pdf_viewer(preview.entry, png, page, pages);
+            }
+            PreviewContent::Code { language, .. } => {
+                self.show_message("Code Preview", &format!("SourceView5 placeholder for {}", language));
+            }
+            PreviewContent::Markdown { .. } => {
+                self.show_message("Markdown Render", "Rich markdown viewer placeholder");
+            }
+            PreviewContent::Model3D { format, .. } => {
+                self.show_message("3D Model Viewer", &format!("Canvas placeholder for {}", format));
             }
             PreviewContent::Unsupported => {
                 self.show_message("No visual preview", family.unavailable_reason());
@@ -939,6 +961,27 @@ fn resize_pdf_page(overlay: &gtk::Overlay, picture: &gtk::Picture, target_width:
         let ratio = f64::from(texture_width) / f64::from(texture_height);
         overlay.set_size_request(width, (f64::from(width) / ratio).round() as i32);
     }
+}
+
+fn preserve_view_pointer(scroll: &gtk::ScrolledWindow, factor: f64, pointer_x: f64, pointer_y: f64) {
+    let horizontal = scroll.hadjustment();
+    let vertical = scroll.vadjustment();
+    let old_x = horizontal.value() + pointer_x;
+    let old_y = vertical.value() + pointer_y;
+    glib::idle_add_local_once(glib::clone!(
+        #[weak]
+        scroll,
+        move || {
+            set_adjustment_value(
+                &scroll.hadjustment(),
+                old_x * factor - pointer_x,
+            );
+            set_adjustment_value(
+                &scroll.vadjustment(),
+                old_y * factor - pointer_y,
+            );
+        }
+    ));
 }
 
 fn preserve_pdf_view_center(scroll: &gtk::ScrolledWindow, factor: f64) {

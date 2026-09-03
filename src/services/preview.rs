@@ -25,6 +25,9 @@ pub enum PreviewContent {
     Rasterized { png: Vec<u8> },
     SandboxedMedia { data: Vec<u8> },
     Pdf { png: Vec<u8>, page: i32, pages: i32 },
+    Code { language: String, content: String },
+    Markdown { content: String },
+    Model3D { format: String, data: Vec<u8> },
     Unsupported,
 }
 

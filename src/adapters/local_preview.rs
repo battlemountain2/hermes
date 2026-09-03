@@ -129,6 +129,18 @@ impl PreviewProvider for LocalPreviewProvider {
                     }
                     Err(_) => return,
                 };
+            } else if entry.kind == crate::model::EntryKind::Directory {
+                if let Some(path) = entry.location.native_path().map(ToOwned::to_owned) {
+                    let cancellation = cancellation_for_task.clone();
+                    if let Ok(Some(output)) = gio::spawn_blocking(move || {
+                        crate::ui::thumbnail::folder_album_art(&path)
+                            .and_then(|(art, op)| crate::sandbox::parse(&art, op, 800, &cancellation).ok())
+                    })
+                    .await
+                    {
+                        content = PreviewContent::Rasterized { png: output.data };
+                    }
+                }
             } else if matches!(content, PreviewContent::Text { .. }) {
                 content = match read_text(&file, request.text_byte_limit).await {
                     Ok((content, truncated)) => PreviewContent::Text { content, truncated },

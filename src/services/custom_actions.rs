@@ -48,7 +48,9 @@ pub fn load_custom_actions() -> Result<Vec<CustomAction>, String> {
             return Err("Every custom action needs a name and command".to_owned());
         }
     }
-    Ok(file.actions)
+    let mut actions = file.actions;
+    actions.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(actions)
 }
 
 pub fn create_custom_actions_template() -> Result<PathBuf, String> {

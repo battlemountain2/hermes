@@ -2043,7 +2043,7 @@ fn install_grid_peek(
         if let (Some(state), Some(entry)) = (state_for_enter.upgrade(), entry)
             && entry.is_directory()
         {
-            state.schedule_peek(depth, entry.location, entered_card.clone());
+            state.schedule_peek(depth, entry.location.clone(), entered_card.clone());
         }
     });
     motion.connect_leave(move |_| {
@@ -2182,7 +2182,7 @@ fn install_explorer_drag_drop(
         let Some(destination) = position
             .and_then(|position| browser.entry_at(depth, position))
             .filter(FileEntry::is_directory)
-            .map(|entry| entry.location)
+            .map(|entry| entry.location.clone())
         else {
             return false;
         };

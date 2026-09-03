@@ -207,7 +207,7 @@ headerbar menubutton.header-action > button:focus-visible image {
   background: @theme_surface;
   border: 1px solid alpha(@theme_accent, 0.22);
   border-radius: 7px;
-  box-shadow: 0 8px 28px alpha(#000000, 0.45);
+  box-shadow: 0 8px 28px alpha(black, 0.45);
   padding: 0;
 }
 
@@ -795,7 +795,7 @@ headerbar menubutton.header-action > button:focus-visible image {
   background: @theme_surface;
   border: 1px solid alpha(@theme_accent, 0.22);
   border-radius: 7px;
-  box-shadow: 0 18px 54px alpha(#000000, 0.6);
+  box-shadow: 0 18px 54px alpha(black, 0.6);
 }
 
 .settings-navigation {
@@ -980,7 +980,7 @@ switch slider,
 switch:checked slider {
   background: @theme_text;
   border: none;
-  box-shadow: 0 1px 3px alpha(#000000, 0.4);
+  box-shadow: 0 1px 3px alpha(black, 0.4);
   min-height: 18px;
   min-width: 18px;
 }
@@ -1212,7 +1212,7 @@ paned > separator {
   background: @theme_surface;
   border: 1px solid alpha(@theme_accent, 0.34);
   border-radius: 6px;
-  box-shadow: 0 12px 32px alpha(#000000, 0.42);
+  box-shadow: 0 12px 32px alpha(black, 0.42);
   color: @theme_text;
   padding: 0;
 }
@@ -1307,7 +1307,7 @@ menubutton.column-header-action > button:focus-visible image {
   background: @theme_surface;
   border: 1px solid alpha(@theme_accent, 0.22);
   border-radius: 7px;
-  box-shadow: 0 8px 28px alpha(#000000, 0.45);
+  box-shadow: 0 8px 28px alpha(black, 0.45);
   padding: 0;
 }
 

@@ -51,6 +51,8 @@ pub struct Trail {
     pub view: TrailViewState,
     #[serde(default)]
     pub pinned: bool,
+    #[serde(default)]
+    pub custom_name: bool,
 }
 
 impl Trail {
@@ -65,6 +67,7 @@ impl Trail {
                 ..TrailViewState::default()
             },
             pinned: false,
+            custom_name: false,
         })
     }
 

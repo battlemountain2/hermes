@@ -65,19 +65,36 @@ pub fn build_folder_tree(browser: BrowserView) -> gtk::Widget {
 
         // For now, return a new ListStore populated synchronously for children
         let store = gio::ListStore::new::<TreeNode>();
-        if let Some(path) = loc.native_path()
-            && let Ok(dir) = std::fs::read_dir(path)
-        {
-            let mut entries: Vec<_> = dir.filter_map(Result::ok).collect();
-            entries.sort_by_key(|e| e.file_name());
-            for entry in entries {
-                if let Ok(file_type) = entry.file_type()
-                    && file_type.is_dir()
-                {
-                    store.append(&TreeNode::new(Location::local(entry.path())));
+        
+        if let Some(path) = loc.native_path() {
+            let store_clone = store.clone();
+            let path_buf = path.to_path_buf();
+            
+            glib::MainContext::default().spawn_local(async move {
+                let entries = gio::spawn_blocking(move || {
+                    let mut folders = Vec::new();
+                    if let Ok(dir) = std::fs::read_dir(&path_buf) {
+                        let mut entries: Vec<_> = dir.filter_map(Result::ok).collect();
+                        entries.sort_by_key(|e| e.file_name());
+                        for entry in entries {
+                            if let Ok(file_type) = entry.file_type() {
+                                if file_type.is_dir() {
+                                    folders.push(entry.path());
+                                }
+                            }
+                        }
+                    }
+                    folders
+                })
+                .await
+                .unwrap_or_default();
+
+                for folder_path in entries {
+                    store_clone.append(&TreeNode::new(Location::local(folder_path)));
                 }
-            }
+            });
         }
+        
         Some(store.upcast())
     });
 

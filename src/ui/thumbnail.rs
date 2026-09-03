@@ -266,7 +266,7 @@ fn render_thumbnail(
         .map(|output| output.data)
 }
 
-fn folder_album_art(directory: &Path) -> Option<(std::path::PathBuf, ParseOperation)> {
+pub(crate) fn folder_album_art(directory: &Path) -> Option<(std::path::PathBuf, ParseOperation)> {
     let mut embedded = None;
     let mut images = Vec::new();
     for entry in std::fs::read_dir(directory).ok()?.flatten() {
