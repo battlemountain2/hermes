@@ -411,7 +411,7 @@ impl ThemeManager {
         }
     }
 
-    fn current_tokens(&self) -> Option<ThemeTokens> {
+    pub(crate) fn current_tokens(&self) -> Option<ThemeTokens> {
         let id = self.preferences.borrow().theme.clone();
         self.themes
             .borrow()

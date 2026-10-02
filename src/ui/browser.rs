@@ -3060,10 +3060,7 @@ impl ViewState {
             let Some(size) = spacer.next_sibling().and_downcast::<gtk::Label>() else {
                 return;
             };
-            let Some(info_button) = size.next_sibling().and_downcast::<gtk::MenuButton>() else {
-                return;
-            };
-            let Some(chevron) = info_button.next_sibling().and_downcast::<gtk::Image>() else {
+            let Some(chevron) = size.next_sibling().and_downcast::<gtk::Image>() else {
                 return;
             };
             label.set_label(model_display_name(&value.string()));

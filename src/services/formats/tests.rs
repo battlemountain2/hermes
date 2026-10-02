@@ -251,6 +251,7 @@ fn quick_preview_supported_for_previewable_families() {
     assert!(FormatFamily::PlainText.supports_quick_preview());
     assert!(FormatFamily::Svg.supports_quick_preview());
     assert!(FormatFamily::Image.supports_quick_preview());
+    assert!(FormatFamily::GeoTiff.supports_quick_preview());
     assert!(FormatFamily::Heif.supports_quick_preview());
     assert!(FormatFamily::RawImage.supports_quick_preview());
     assert!(FormatFamily::Pdf.supports_quick_preview());
@@ -285,6 +286,7 @@ fn searchable_text_for_text_families() {
 #[test]
 fn not_searchable_text_for_binary_families() {
     assert_eq!(FormatFamily::Image.text_extractor(), None);
+    assert_eq!(FormatFamily::GeoTiff.text_extractor(), None);
     assert_eq!(FormatFamily::Heif.text_extractor(), None);
     assert_eq!(FormatFamily::Video.text_extractor(), None);
     assert_eq!(FormatFamily::Pdf.text_extractor(), Some(TextExtractor::Pdf));
@@ -317,6 +319,7 @@ fn provides_display_labels_for_all_families() {
     assert_eq!(FormatFamily::PlainText.display_label(), "Text");
     assert_eq!(FormatFamily::Svg.display_label(), "SVG Image");
     assert_eq!(FormatFamily::Image.display_label(), "Image");
+    assert_eq!(FormatFamily::GeoTiff.display_label(), "GeoTIFF");
     assert_eq!(FormatFamily::Heif.display_label(), "HEIF Image");
     assert_eq!(FormatFamily::RawImage.display_label(), "Camera RAW");
     assert_eq!(FormatFamily::Pdf.display_label(), "PDF Document");
@@ -328,6 +331,9 @@ fn provides_display_labels_for_all_families() {
     assert_eq!(FormatFamily::Video.display_label(), "Video");
     assert_eq!(FormatFamily::DesktopEntry.display_label(), "Application");
     assert_eq!(FormatFamily::Archive.display_label(), "Archive");
+    assert_eq!(FormatFamily::Model.display_label(), "3D Model");
+    assert_eq!(FormatFamily::Comic.display_label(), "Comic Archive");
+    assert_eq!(FormatFamily::Spreadsheet.display_label(), "Spreadsheet");
     assert_eq!(FormatFamily::Unknown.display_label(), "File");
 }
 
@@ -336,6 +342,10 @@ fn preview_handlers_match_format_capabilities() {
     assert_eq!(
         FormatFamily::Image.preview_handler(),
         Some(PreviewHandler::Image)
+    );
+    assert_eq!(
+        FormatFamily::GeoTiff.preview_handler(),
+        Some(PreviewHandler::GeoTiff)
     );
     assert_eq!(
         FormatFamily::Svg.preview_handler(),
@@ -373,7 +383,35 @@ fn preview_handlers_match_format_capabilities() {
         FormatFamily::OfficeDocument.preview_handler(),
         Some(PreviewHandler::Office)
     );
+    assert_eq!(
+        FormatFamily::Model.preview_handler(),
+        Some(PreviewHandler::Model)
+    );
+    assert_eq!(
+        FormatFamily::Comic.preview_handler(),
+        Some(PreviewHandler::ArchiveCover)
+    );
+    assert_eq!(
+        FormatFamily::Spreadsheet.preview_handler(),
+        Some(PreviewHandler::Spreadsheet)
+    );
     assert_eq!(FormatFamily::Unknown.preview_handler(), None);
+}
+
+#[test]
+fn classifies_geotiff_by_extension_and_mime() {
+    assert_eq!(
+        classify_by_name(OsStr::new("elevation.tif")),
+        FormatFamily::GeoTiff
+    );
+    assert_eq!(
+        classify_by_name(OsStr::new("imagery.TIFF")),
+        FormatFamily::GeoTiff
+    );
+    assert_eq!(
+        classify_by_mime("image/tiff"),
+        FormatFamily::GeoTiff
+    );
 }
 
 // ---------------------------------------------------------------------------

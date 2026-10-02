@@ -1,5 +1,9 @@
 # Agent Instructions
 
+## Current handoff
+
+- Read `NEXT_AGENT.md` for the latest user priorities and the status of the Antigravity work-in-progress snapshot.
+
 ## Git workflow
 
 - Never commit or push directly to `main`. Work from a GitHub issue and submit changes through a pull request.

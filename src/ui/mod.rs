@@ -12,7 +12,8 @@ mod settings;
 mod theme;
 pub mod thumbnail;
 mod trails;
-mod status_bar;
+pub mod status_bar;
+pub mod table_view;
 mod window;
 
 pub use window::{present, present_location};

@@ -165,6 +165,8 @@ fn thumbnail_operation(handler: ThumbnailHandler) -> ParseOperation {
         ThumbnailHandler::RawImage => ParseOperation::ThumbnailRaw,
         ThumbnailHandler::Pdf => ParseOperation::ThumbnailPdf,
         ThumbnailHandler::Media => ParseOperation::ThumbnailVideo,
+        ThumbnailHandler::Model => ParseOperation::PreviewModel,
+        ThumbnailHandler::Cover => ParseOperation::PreviewArchiveCover,
     }
 }
 

@@ -1,0 +1,119 @@
+diff --git a/src/ui/window.rs b/src/ui/window.rs
+index 548eb22..1122334 100644
+--- a/src/ui/window.rs
++++ b/src/ui/window.rs
+@@ -14,7 +14,7 @@ use crate::{
+     adapters::{LocalOperationProvider, LocalPreviewProvider, LocalTrailStore, RoutedFileSource},
+     app::{Browser, BrowserEvent, Trails},
+     model::{
+-        EntryKind, FileEntry, Location, MetadataValue, Trail, TrailBrowserDensity,
++        EntryKind, Location, MetadataValue, Trail, TrailBrowserDensity,
+         TrailBrowserMode, TrailViewState,
+     },
+ };
+@@ -172,6 +172,7 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
+     let context_view = capture_view.clone();
+     let context_tab_bar = tab_bar.clone();
+     let status_bar = Rc::new(super::status_bar::StatusBar::new());
++    status_bar.update_free_space(&location);
+     let context_status_bar = status_bar.clone();
+     let context_controller = controller.clone();
+     controller.observe(move |event| {
+@@ -197,6 +198,9 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
+                 | BrowserEvent::SelectionSetChanged { .. }
+                 | BrowserEvent::FocusChanged { .. }
+                 | BrowserEvent::ColumnAdded { .. }
++                | BrowserEvent::ColumnsTruncated { .. }
++                | BrowserEvent::ColumnReloaded { .. }
++                | BrowserEvent::Reset
+         ) {
+             let mut total_items = 0;
+             let mut selected_items = 0;
+@@ -216,6 +220,14 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
+             }
+             context_status_bar.update_item_count(total_items);
+             context_status_bar.update_selection(selected_items, selected_bytes);
++
++            if let Some(location) = context_controller.active_location() {
++                if let Some(path) = location.native_path() {
++                    context_status_bar.update_free_space(path);
++                } else {
++                    context_status_bar.clear_free_space();
++                }
++            }
+         }
+     });
+     header.pack_start(&sidebar_toggle);
+diff --git a/src/ui/status_bar.rs b/src/ui/status_bar.rs
+index abcdef1..2345678 100644
+--- a/src/ui/status_bar.rs
++++ b/src/ui/status_bar.rs
+@@ -44,17 +44,11 @@ impl StatusBar {
+     }
+     
+     pub fn update_item_count(&self, count: usize) {
+-        if count == 1 {
+-            self.item_count.set_text("1 item");
+-        } else {
+-            self.item_count.set_text(&format!("{} items", count));
+-        }
++        self.item_count.set_text(&format_item_count(count));
+     }
+     
+     pub fn update_selection(&self, count: usize, total_bytes: u64) {
+-        if count == 0 {
+-            self.selection_info.set_text("");
+-        } else {
+-            let size_str = format_file_size(total_bytes);
+-            self.selection_info.set_text(&format!("{} selected, {}", count, size_str));
+-        }
++        self.selection_info.set_text(&format_selection(count, total_bytes));
+     }
+     
+     pub fn update_free_space(&self, path: &Path) {
+@@ -70,7 +64,7 @@ impl StatusBar {
+             ).await {
+                 if info.has_attribute("filesystem::free") {
+                     let free_bytes = info.attribute_uint64("filesystem::free");
+-                    let size_str = format_file_size(free_bytes);
+-                    free_space_label.set_text(&format!("{} free", size_str));
++                    free_space_label.set_text(&format_free_space(free_bytes));
+                 } else {
+                     free_space_label.set_text("");
+                 }
+@@ -80,9 +74,32 @@ impl StatusBar {
+             }
+         });
+     }
++
++    pub fn clear_free_space(&self) {
++        self.free_space.set_text("");
++    }
+ }
+ 
+-pub fn build_status_bar() -> StatusBar {
+-    StatusBar::new()
++pub(crate) fn format_item_count(count: usize) -> String {
++    if count == 1 {
++        "1 item".into()
++    } else {
++        format!("{} items", count)
++    }
+ }
++
++pub(crate) fn format_selection(count: usize, total_bytes: u64) -> String {
++    if count == 0 {
++        String::new()
++    } else {
++        let size_str = format_file_size(total_bytes);
++        format!("{} selected, {}", count, size_str)
++    }
++}
++
++pub(crate) fn format_free_space(free_bytes: u64) -> String {
++    let size_str = format_file_size(free_bytes);
++    format!("{} free", size_str)
++}
++
++#[cfg(test)]
++mod tests;

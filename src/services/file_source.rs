@@ -15,6 +15,7 @@ pub struct DirectoryRequest {
     pub include_hidden: bool,
 }
 
+#[expect(dead_code, reason = "Validation error variants for location validation")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LocationValidationError {
     Empty,
