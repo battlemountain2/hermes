@@ -12,8 +12,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-const WALL_TIME_LIMIT: Duration = Duration::from_secs(12);
-const MAX_OUTPUT_BYTES: u64 = 32 * 1024 * 1024;
+pub(crate) mod browser;
+
+pub(crate) const WALL_TIME_LIMIT: Duration = Duration::from_secs(12);
+pub(crate) const MAX_OUTPUT_BYTES: u64 = 32 * 1024 * 1024;
+pub(crate) const MAX_TEXT_LAYER_BYTES: u64 = 8 * 1024 * 1024;
+pub(crate) const FILE_SIZE_LIMIT_BYTES: u64 = 32 * 1024 * 1024;
+pub(crate) const ADDRESS_SPACE_LIMIT_BYTES: u64 = 1_342_177_280;
+pub(crate) const CPU_TIME_LIMIT_SECS: u64 = 10;
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,6 +30,7 @@ pub(crate) enum ParseOperation {
     ThumbnailPdf,
     ThumbnailVideo,
     PreviewImage,
+    PreviewGeoTiff,
     PreviewHeif,
     PreviewPdf,
     PreviewMedia,
@@ -32,6 +39,11 @@ pub(crate) enum ParseOperation {
     PreviewArchive,
     PreviewOffice,
     ExtractOfficeText,
+    PreviewModel,
+    PreviewArchiveCover,
+    PreviewSpreadsheet,
+    PreviewAudioWaveform,
+    ExtractSpreadsheetText,
 }
 
 impl ParseOperation {
@@ -43,6 +55,7 @@ impl ParseOperation {
             Self::ThumbnailPdf => "thumbnail-pdf",
             Self::ThumbnailVideo => "thumbnail-video",
             Self::PreviewImage => "preview-image",
+            Self::PreviewGeoTiff => "preview-geotiff",
             Self::PreviewHeif => "preview-heif",
             Self::PreviewPdf => "preview-pdf",
             Self::PreviewMedia => "preview-media",
@@ -51,6 +64,11 @@ impl ParseOperation {
             Self::PreviewArchive => "preview-archive",
             Self::PreviewOffice => "preview-office",
             Self::ExtractOfficeText => "extract-office-text",
+            Self::PreviewModel => "preview-model",
+            Self::PreviewArchiveCover => "preview-archive-cover",
+            Self::PreviewSpreadsheet => "preview-spreadsheet",
+            Self::PreviewAudioWaveform => "preview-audio-waveform",
+            Self::ExtractSpreadsheetText => "extract-spreadsheet-text",
         }
     }
 
@@ -65,6 +83,7 @@ impl ParseOperation {
                 | Self::PreviewArchive
                 | Self::PreviewOffice
                 | Self::ExtractOfficeText
+                | Self::ExtractSpreadsheetText
         ) {
             "result.txt"
         } else {
@@ -94,6 +113,8 @@ pub(crate) struct ParseOutput {
     pub(crate) data: Vec<u8>,
     pub(crate) page: i32,
     pub(crate) pages: i32,
+    pub(crate) metadata: Option<Vec<u8>>,
+    pub(crate) text_layer: Option<crate::services::preview::PdfTextLayer>,
 }
 
 pub(crate) fn parse(
@@ -112,6 +133,35 @@ pub(crate) fn parse(
         return Err("Preview input is not a regular file".to_owned());
     }
 
+    if let Some(result) = browser::preview(&input, &operation, cancellation) {
+        return result.map(|(data, metadata)| ParseOutput {
+            data,
+            page: 0,
+            pages: 0,
+            metadata,
+            text_layer: None,
+        });
+    }
+
+    if let Some(result) = browser::thumbnail_parse(&input, operation, cancellation) {
+        return result.map(|data| ParseOutput {
+            data,
+            page: 0,
+            pages: 0,
+            metadata: None,
+            text_layer: None,
+        });
+    }
+
+    parse_one_shot(&input, operation, value, cancellation)
+}
+
+fn parse_one_shot(
+    input: &Path,
+    operation: ParseOperation,
+    value: i32,
+    cancellation: &Cancellation,
+) -> Result<ParseOutput, String> {
     let output = PrivateOutput::create().map_err(|error| error.to_string())?;
     let executable = std::env::current_exe()
         .map_err(|error| format!("Unable to locate the Strata executable: {error}"))?;
@@ -154,8 +204,9 @@ pub(crate) fn parse(
             | ParseOperation::PreviewArchive
             | ParseOperation::PreviewOffice
             | ParseOperation::ExtractOfficeText
+            | ParseOperation::ExtractSpreadsheetText
     );
-    let permits_empty_output = text_output;
+    let permits_empty_output = text_output || operation == ParseOperation::PreviewSpreadsheet;
     if (!permits_empty_output && metadata.len() == 0) || metadata.len() > MAX_OUTPUT_BYTES {
         return Err("The preview renderer produced an invalid output size".to_owned());
     }
@@ -168,6 +219,8 @@ pub(crate) fn parse(
             | ParseOperation::PreviewArchive
             | ParseOperation::PreviewOffice
             | ParseOperation::ExtractOfficeText
+            | ParseOperation::ExtractSpreadsheetText
+            | ParseOperation::PreviewSpreadsheet
     ) && !data.starts_with(b"\x89PNG\r\n\x1a\n")
     {
         return Err("The preview renderer produced invalid image data".to_owned());
@@ -175,8 +228,30 @@ pub(crate) fn parse(
     if text_output && (data.contains(&0) || std::str::from_utf8(&data).is_err()) {
         return Err("The document text extractor produced invalid text".to_owned());
     }
-    let (page, pages) = read_metadata(&output.path().join("result.meta"));
-    Ok(ParseOutput { data, page, pages })
+    let meta_path = output.path().join("result.meta");
+    let (page, pages) = read_metadata(&meta_path);
+    let metadata = fs::read(&meta_path).ok();
+    let text_layer = if operation == ParseOperation::PreviewPdf {
+        let text_path = output.path().join("result.text");
+        if let Ok(bytes) = fs::read(&text_path) {
+            if (bytes.len() as u64) <= MAX_TEXT_LAYER_BYTES {
+                serde_json::from_slice(&bytes).ok()
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    Ok(ParseOutput {
+        data,
+        page,
+        pages,
+        metadata,
+        text_layer,
+    })
 }
 
 fn sandbox_command(
@@ -240,9 +315,9 @@ fn sandbox_command(
     command.args([
         "--",
         "/usr/bin/prlimit",
-        "--as=1342177280",
-        "--cpu=10",
-        "--fsize=33554432",
+        &format!("--as={ADDRESS_SPACE_LIMIT_BYTES}"),
+        &format!("--cpu={CPU_TIME_LIMIT_SECS}"),
+        &format!("--fsize={FILE_SIZE_LIMIT_BYTES}"),
         "--",
         "/app/strata",
         "--preview-helper",

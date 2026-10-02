@@ -65,12 +65,31 @@ impl PreviewProvider for LocalPreviewProvider {
                     png: Vec::new(),
                     page: 0,
                     pages: 0,
+                    text_layer: None,
                 },
-                Some(PreviewHandler::Audio | PreviewHandler::Video) => PreviewContent::Media,
-                Some(PreviewHandler::Image | PreviewHandler::Heif) => PreviewContent::Image,
+                Some(PreviewHandler::Audio) => PreviewContent::AudioWaveform {
+                    png: Vec::new(),
+                    metadata: crate::services::preview::AudioMetadata {
+                        format: String::new(),
+                        duration_seconds: 0.0,
+                        sample_rate: 0,
+                        channels: 0,
+                        bitrate: None,
+                    },
+                },
+                Some(PreviewHandler::Video) => PreviewContent::Media,
+                Some(PreviewHandler::Image | PreviewHandler::Heif | PreviewHandler::GeoTiff) => {
+                    PreviewContent::Image
+                }
                 Some(PreviewHandler::Archive | PreviewHandler::Office) => PreviewContent::Text {
                     content: String::new(),
                     truncated: false,
+                },
+                Some(PreviewHandler::Model | PreviewHandler::ArchiveCover) => {
+                    PreviewContent::Rasterized { png: Vec::new() }
+                }
+                Some(PreviewHandler::Spreadsheet) => PreviewContent::Spreadsheet {
+                    table: crate::services::table::SpreadsheetData::default(),
                 },
                 _ => PreviewContent::Unsupported,
             };
@@ -97,6 +116,43 @@ impl PreviewProvider for LocalPreviewProvider {
                             png: output.data,
                             page: output.page,
                             pages: output.pages,
+                            text_layer: output.text_layer.map(std::sync::Arc::new),
+                        }
+                    }
+                    Ok(Ok(output)) if operation == ParseOperation::PreviewGeoTiff => {
+                        let metadata: Option<crate::sandbox_helper::geotiff::GeoTiffMetadata> = output
+                            .metadata
+                            .as_ref()
+                            .and_then(|bytes| serde_json::from_slice(bytes).ok());
+                        match metadata {
+                            Some(metadata) => PreviewContent::GeoTiff {
+                                png: output.data,
+                                metadata,
+                            },
+                            None => PreviewContent::Rasterized { png: output.data },
+                        }
+                    }
+                    Ok(Ok(output)) if operation == ParseOperation::PreviewAudioWaveform => {
+                        let metadata: Option<crate::services::preview::AudioMetadata> = output
+                            .metadata
+                            .as_ref()
+                            .and_then(|bytes| serde_json::from_slice(bytes).ok());
+                        match metadata {
+                            Some(metadata) => PreviewContent::AudioWaveform {
+                                png: output.data,
+                                metadata,
+                            },
+                            None => PreviewContent::Rasterized { png: output.data },
+                        }
+                    }
+                    Ok(Ok(output)) if operation == ParseOperation::PreviewSpreadsheet => {
+                        let table: Option<crate::services::table::SpreadsheetData> = output
+                            .metadata
+                            .as_ref()
+                            .and_then(|bytes| serde_json::from_slice(bytes).ok());
+                        match table {
+                            Some(table) => PreviewContent::Spreadsheet { table },
+                            None => PreviewContent::Unsupported,
                         }
                     }
                     Ok(Ok(output))
@@ -176,10 +232,14 @@ fn preview_operation(handler: PreviewHandler) -> Option<ParseOperation> {
         PreviewHandler::Image => Some(ParseOperation::PreviewImage),
         PreviewHandler::Heif => Some(ParseOperation::PreviewHeif),
         PreviewHandler::Pdf => Some(ParseOperation::PreviewPdf),
-        PreviewHandler::Audio => Some(ParseOperation::PreviewAudio),
+        PreviewHandler::Audio => Some(ParseOperation::PreviewAudioWaveform),
         PreviewHandler::Video => Some(ParseOperation::PreviewMedia),
         PreviewHandler::Archive => Some(ParseOperation::PreviewArchive),
         PreviewHandler::Office => Some(ParseOperation::PreviewOffice),
+        PreviewHandler::GeoTiff => Some(ParseOperation::PreviewGeoTiff),
+        PreviewHandler::Model => Some(ParseOperation::PreviewModel),
+        PreviewHandler::ArchiveCover => Some(ParseOperation::PreviewArchiveCover),
+        PreviewHandler::Spreadsheet => Some(ParseOperation::PreviewSpreadsheet),
     }
 }
 

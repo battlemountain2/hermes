@@ -3,9 +3,11 @@
 mod custom_actions;
 mod file_source;
 mod formats;
+pub(crate) mod model_preview;
 mod operations;
-mod preview;
+pub(crate) mod preview;
 mod search;
+pub(crate) mod table;
 mod trails;
 
 pub(crate) use custom_actions::{
@@ -27,7 +29,8 @@ pub use operations::{
     RenameRequest, RestoreRequest, validate_basename,
 };
 pub use preview::{
-    Preview, PreviewContent, PreviewEvent, PreviewProvider, PreviewRequest, PreviewRequestId,
+    PdfTextLayer, Preview, PreviewContent, PreviewEvent, PreviewProvider, PreviewRequest,
+    PreviewRequestId,
 };
 pub(crate) use search::{
     SearchEvent, SearchFilterValues, SearchHandle, SearchItem, TextExtractionProvider, index_tree,

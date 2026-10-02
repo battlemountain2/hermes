@@ -14,7 +14,7 @@ use crate::{
     adapters::{LocalOperationProvider, LocalPreviewProvider, LocalTrailStore, RoutedFileSource},
     app::{Browser, BrowserEvent, Trails},
     model::{
-        EntryKind, FileEntry, Location, MetadataValue, Trail, TrailBrowserDensity,
+        EntryKind, Location, MetadataValue, Trail, TrailBrowserDensity,
         TrailBrowserMode, TrailViewState,
     },
 };
@@ -172,6 +172,7 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     let context_view = capture_view.clone();
     let context_tab_bar = tab_bar.clone();
     let status_bar = Rc::new(super::status_bar::StatusBar::new());
+    status_bar.update_free_space(&location);
     let context_status_bar = status_bar.clone();
     let context_controller = controller.clone();
     controller.observe(move |event| {
@@ -196,6 +197,9 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
                 | BrowserEvent::SelectionSetChanged { .. }
                 | BrowserEvent::FocusChanged { .. }
                 | BrowserEvent::ColumnAdded { .. }
+                | BrowserEvent::ColumnsTruncated { .. }
+                | BrowserEvent::ColumnReloaded { .. }
+                | BrowserEvent::Reset
         ) {
             let mut total_items = 0;
             let mut selected_items = 0;
@@ -215,6 +219,18 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
             }
             context_status_bar.update_item_count(total_items);
             context_status_bar.update_selection(selected_items, selected_bytes);
+
+            if !matches!(event, BrowserEvent::SelectionSetChanged { .. }) {
+                if let Some(path) = context_controller
+                    .active_location()
+                    .as_ref()
+                    .and_then(|l| l.native_path())
+                {
+                    context_status_bar.update_free_space(path);
+                } else {
+                    context_status_bar.clear_free_space();
+                }
+            }
         }
     });
     header.pack_start(&sidebar_toggle);

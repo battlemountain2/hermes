@@ -10,7 +10,20 @@ use std::{
 use gdk_pixbuf::prelude::*;
 use gtk::gio;
 
+pub(crate) mod archive_cover;
+pub(crate) mod audio;
+pub(crate) mod geotiff;
+pub(crate) mod model;
+pub(crate) mod sniff;
+pub(crate) mod table;
+
 pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
+    if arguments
+        .first()
+        .is_some_and(|op| op == "browser-worker" || op == "--browser-worker")
+    {
+        return crate::sandbox::browser::run();
+    }
     let [operation, input, output, value] = arguments else {
         return Err("Invalid preview helper arguments".to_owned());
     };
@@ -22,6 +35,11 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
 
     if operation == "extract-pdf-text" {
         let text = extract_pdf_text(input, value.max(1) as usize)?;
+        fs::write(output, text).map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    if operation == "extract-spreadsheet-text" {
+        let text = table::extract_spreadsheet_text(input, value.max(1) as usize)?;
         fs::write(output, text).map_err(|error| error.to_string())?;
         return Ok(());
     }
@@ -45,7 +63,10 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         "preview-image" => (render_image(input, 1400)?, None),
         "preview-heif" => (render_imagemagick(input, 1400)?, None),
         "preview-pdf" => {
-            let (png, page, pages) = render_pdf_page(input, value)?;
+            let (png, page, pages, text_layer) = render_pdf_page(input, value)?;
+            if let Some(text_bytes) = text_layer {
+                let _ = fs::write(output.with_file_name("result.text"), text_bytes);
+            }
             (png, Some(format!("{page} {pages}")))
         }
         "preview-media" => {
@@ -55,6 +76,20 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         "preview-audio" => {
             render_audio_preview(input, output)?;
             return Ok(());
+        }
+        "preview-geotiff" => {
+            let (png, meta_json) = geotiff::render_geotiff(input, value.max(1))?;
+            (png, Some(meta_json))
+        }
+        "preview-model" => (model::render_model(input, value.clamp(16, 800) as u32)?, None),
+        "preview-archive-cover" => (archive_cover::render_cover(input, value.clamp(16, 1400))?, None),
+        "preview-spreadsheet" => {
+            let (png, json) = table::render_spreadsheet(input)?;
+            (png, Some(json))
+        }
+        "preview-audio-waveform" => {
+            let (png, meta_json) = audio::render_waveform_and_meta(input)?;
+            (png, Some(meta_json))
         }
         _ => return Err("Unknown preview helper operation".to_owned()),
     };
@@ -73,13 +108,29 @@ fn render_pixbuf(path: &Path, size: i32) -> Result<Vec<u8>, String> {
         .map_err(|error| error.to_string())
 }
 
-fn render_image(path: &Path, size: i32) -> Result<Vec<u8>, String> {
+pub(crate) fn render_image(path: &Path, size: i32) -> Result<Vec<u8>, String> {
+    if let Some((width, height)) = sniff::image_dimensions(path) {
+        if sniff::exceeds_decoded_frame_budget(width, height) {
+            if let Some(png) = sniff::read_exif_thumbnail(path, size) {
+                return Ok(png);
+            }
+            return Err("Image dimensions exceed the decoded frame budget".to_owned());
+        }
+    }
     // Prefer the bounded external decoder while glycin can inherit Strata's file-size limit and
     // receive SIGXFSZ when allocating shared memory for large decoded JPEG pixel buffers.
     render_imagemagick(path, size).or_else(|_| render_pixbuf(path, size))
 }
 
-fn render_raw(path: &Path, size: i32) -> Result<Vec<u8>, String> {
+pub(crate) fn render_raw(path: &Path, size: i32) -> Result<Vec<u8>, String> {
+    if let Some((width, height)) = sniff::image_dimensions(path) {
+        if sniff::exceeds_decoded_frame_budget(width, height) {
+            if let Some(png) = sniff::read_exif_thumbnail(path, size) {
+                return Ok(png);
+            }
+            return Err("Image dimensions exceed the decoded frame budget".to_owned());
+        }
+    }
     render_image(path, size).or_else(|_| render_dcraw(path, size))
 }
 
@@ -153,7 +204,7 @@ fn render_pdf_thumbnail(path: &Path, size: i32) -> Result<Vec<u8>, String> {
     )
 }
 
-fn render_pdf_page(path: &Path, requested_page: i32) -> Result<(Vec<u8>, i32, i32), String> {
+pub(crate) fn render_pdf_page(path: &Path, requested_page: i32) -> Result<(Vec<u8>, i32, i32, Option<Vec<u8>>), String> {
     let uri = gio::File::for_path(path).uri();
     let document = poppler::Document::from_file(&uri, None).map_err(|error| error.to_string())?;
     let pages = document.n_pages();
@@ -164,8 +215,68 @@ fn render_pdf_page(path: &Path, requested_page: i32) -> Result<(Vec<u8>, i32, i3
     let page = document
         .page(page_index)
         .ok_or_else(|| "Unable to load that PDF page".to_owned())?;
+    let (page_width, page_height) = page.size();
+    if page_width <= 0.0 || page_height <= 0.0 {
+        return Err("The PDF page has invalid dimensions".to_owned());
+    }
+    let scale = (1400.0 / page_width)
+        .min(1800.0 / page_height)
+        .min((2_500_000.0 / (page_width * page_height)).sqrt());
+    let width = (page_width * scale).ceil().max(1.0) as i32;
+    let height = (page_height * scale).ceil().max(1.0) as i32;
+
     let png = render_pdf_surface(&page, 1400.0, 1800.0, 2_500_000.0)?;
-    Ok((png, page_index, pages))
+    let text_layer = pdf_text_layer(&page, width, height, scale);
+    Ok((png, page_index, pages, text_layer))
+}
+
+#[expect(
+    unsafe_code,
+    reason = "poppler-rs exposes no safe binding for poppler_page_get_text_layout"
+)]
+fn pdf_text_layer(page: &poppler::Page, width: i32, height: i32, scale: f64) -> Option<Vec<u8>> {
+    use gtk::glib::translate::ToGlibPtr;
+
+    let text = page.text()?;
+    if text.is_empty() {
+        return None;
+    }
+    let mut rects = std::ptr::null_mut();
+    let mut count = 0u32;
+    // SAFETY: page is a valid PopplerPage; rects/count are valid out-pointers.
+    let ok = unsafe {
+        poppler::ffi::poppler_page_get_text_layout(page.to_glib_none().0, &mut rects, &mut count)
+    };
+    if ok == gtk::glib::ffi::GFALSE || rects.is_null() {
+        return None;
+    }
+    // SAFETY: on success poppler returned a g_malloc'd array of count rectangles.
+    let layout = unsafe { std::slice::from_raw_parts(rects, count as usize) };
+    let glyphs: Vec<[f32; 4]> = layout
+        .iter()
+        .map(|rect| {
+            [
+                (rect.x1 * scale) as f32,
+                (rect.y1 * scale) as f32,
+                (rect.x2 * scale) as f32,
+                (rect.y2 * scale) as f32,
+            ]
+        })
+        .collect();
+    // SAFETY: rects came from g_malloc and is freed exactly once here.
+    unsafe { gtk::glib::ffi::g_free(rects.cast()) };
+    if glyphs.len() != text.chars().count() {
+        return None;
+    }
+    let layer = crate::services::preview::PdfTextLayer {
+        width: width as f32,
+        height: height as f32,
+        text: text.to_string(),
+        glyphs,
+    };
+    serde_json::to_vec(&layer)
+        .ok()
+        .filter(|bytes| bytes.len() as u64 <= crate::sandbox::MAX_TEXT_LAYER_BYTES)
 }
 
 fn extract_pdf_text(path: &Path, byte_limit: usize) -> Result<Vec<u8>, String> {
@@ -214,7 +325,7 @@ fn extract_office_text(path: &Path, byte_limit: usize) -> Result<Vec<u8>, String
         .unwrap_or_default();
     let member = if extension.eq_ignore_ascii_case("docx") {
         "word/document.xml"
-    } else if extension.eq_ignore_ascii_case("odt") {
+    } else if extension.eq_ignore_ascii_case("odt") || extension.eq_ignore_ascii_case("ods") {
         "content.xml"
     } else {
         return Err("This office document format is not supported".to_owned());

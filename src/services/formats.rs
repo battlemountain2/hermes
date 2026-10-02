@@ -12,12 +12,16 @@ use std::{ffi::OsStr, path::Path};
 pub enum PreviewHandler {
     Text,
     Image,
+    GeoTiff,
     Heif,
     Pdf,
     Audio,
     Video,
     Archive,
     Office,
+    Model,
+    ArchiveCover,
+    Spreadsheet,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -27,6 +31,8 @@ pub enum ThumbnailHandler {
     RawImage,
     Pdf,
     Media,
+    Model,
+    Cover,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -34,6 +40,7 @@ pub enum TextExtractor {
     PlainText,
     Pdf,
     Office,
+    Spreadsheet,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -54,8 +61,10 @@ pub enum FormatFamily {
     PlainText,
     /// SVG — previewable as an image *and* searchable as text.
     Svg,
-    /// Standard raster images (PNG, JPEG, WebP, GIF, BMP, TIFF, AVIF, …).
+    /// Standard raster images (PNG, JPEG, WebP, GIF, BMP, AVIF, …).
     Image,
+    /// GeoTIFF geospatial raster imagery (.tif, .tiff).
+    GeoTiff,
     /// HEIF / HEIC — requires its own ImageMagick sandbox path.
     Heif,
     /// Camera RAW formats (CR2, CR3, NEF, DNG, ARW, …).
@@ -72,6 +81,12 @@ pub enum FormatFamily {
     DesktopEntry,
     /// Compressed archives (ZIP, TAR, …).
     Archive,
+    /// 3D geometry files (STL, 3MF).
+    Model,
+    /// Comic books and eBooks (EPUB, CBZ, CBR).
+    Comic,
+    /// Spreadsheets (ODS, XLS, XLSX).
+    Spreadsheet,
     /// Anything we don't recognize.
     Unknown,
 }
@@ -86,12 +101,16 @@ impl FormatFamily {
         match self {
             Self::PlainText => Some(PreviewHandler::Text),
             Self::Image | Self::Svg | Self::RawImage => Some(PreviewHandler::Image),
+            Self::GeoTiff => Some(PreviewHandler::GeoTiff),
             Self::Heif => Some(PreviewHandler::Heif),
             Self::Pdf => Some(PreviewHandler::Pdf),
             Self::Audio => Some(PreviewHandler::Audio),
             Self::Video => Some(PreviewHandler::Video),
             Self::Archive => Some(PreviewHandler::Archive),
             Self::OfficeDocument => Some(PreviewHandler::Office),
+            Self::Model => Some(PreviewHandler::Model),
+            Self::Comic => Some(PreviewHandler::ArchiveCover),
+            Self::Spreadsheet => Some(PreviewHandler::Spreadsheet),
             Self::DesktopEntry | Self::Unknown => None,
         }
     }
@@ -101,6 +120,7 @@ impl FormatFamily {
             Self::PlainText | Self::Svg => Some(TextExtractor::PlainText),
             Self::Pdf => Some(TextExtractor::Pdf),
             Self::OfficeDocument => Some(TextExtractor::Office),
+            Self::Spreadsheet => Some(TextExtractor::Spreadsheet),
             _ => None,
         }
     }
@@ -122,6 +142,7 @@ impl FormatFamily {
             Self::PlainText => "Text",
             Self::Svg => "SVG Image",
             Self::Image => "Image",
+            Self::GeoTiff => "GeoTIFF",
             Self::Heif => "HEIF Image",
             Self::RawImage => "Camera RAW",
             Self::Pdf => "PDF Document",
@@ -130,6 +151,9 @@ impl FormatFamily {
             Self::Video => "Video",
             Self::DesktopEntry => "Application",
             Self::Archive => "Archive",
+            Self::Model => "3D Model",
+            Self::Comic => "Comic Archive",
+            Self::Spreadsheet => "Spreadsheet",
             Self::Unknown => "File",
         }
     }
@@ -164,6 +188,31 @@ pub fn classify_by_mime(content_type: &str) -> FormatFamily {
     ) {
         return FormatFamily::OfficeDocument;
     }
+    if matches!(
+        content_type,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            | "application/vnd.ms-excel"
+            | "application/vnd.oasis.opendocument.spreadsheet"
+    ) {
+        return FormatFamily::Spreadsheet;
+    }
+    if matches!(
+        content_type,
+        "application/epub+zip"
+            | "application/vnd.comicbook+zip"
+            | "application/vnd.comicbook-rar"
+    ) {
+        return FormatFamily::Comic;
+    }
+    if matches!(
+        content_type,
+        "model/stl"
+            | "application/sla"
+            | "model/3mf"
+            | "application/vnd.ms-package.3dmanufacturing-3dmodel+xml"
+    ) {
+        return FormatFamily::Model;
+    }
     if content_type == "image/svg+xml" {
         return FormatFamily::Svg;
     }
@@ -172,6 +221,8 @@ pub fn classify_by_mime(content_type: &str) -> FormatFamily {
     if content_type.starts_with("image/") {
         return if content_type == "image/heif" || content_type == "image/heic" {
             FormatFamily::Heif
+        } else if content_type == "image/tiff" {
+            FormatFamily::GeoTiff
         } else {
             FormatFamily::Image
         };
@@ -244,9 +295,12 @@ pub fn classify_by_name(name: &OsStr) -> FormatFamily {
         "svg" => FormatFamily::Svg,
 
         // Standard raster images
-        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tif" | "tiff" | "avif" => {
+        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "avif" => {
             FormatFamily::Image
         }
+
+        // GeoTIFF geospatial raster imagery
+        "tif" | "tiff" => FormatFamily::GeoTiff,
 
         // HEIF / HEIC
         "heic" | "heif" => FormatFamily::Heif,
@@ -261,6 +315,15 @@ pub fn classify_by_name(name: &OsStr) -> FormatFamily {
 
         // Office documents with XML content stored in a ZIP container
         "docx" | "odt" => FormatFamily::OfficeDocument,
+
+        // Spreadsheets
+        "xlsx" | "xls" | "ods" => FormatFamily::Spreadsheet,
+
+        // 3D Models
+        "stl" | "3mf" => FormatFamily::Model,
+
+        // eBooks & Comics
+        "epub" | "cbz" | "cbr" => FormatFamily::Comic,
 
         // Audio
         "flac" | "mp3" | "ogg" | "opus" | "m4a" | "aac" | "wav" | "wma" => FormatFamily::Audio,
@@ -304,6 +367,8 @@ pub fn thumbnail_handler_for_name(name: &OsStr) -> Option<ThumbnailHandler> {
         | "nef" | "nrw" | "orf" | "pef" | "raf" | "raw" | "rw2" | "rwl" | "sr2" | "srf" | "srw"
         | "x3f" => Some(ThumbnailHandler::RawImage),
         "pdf" => Some(ThumbnailHandler::Pdf),
+        "stl" | "3mf" => Some(ThumbnailHandler::Model),
+        "epub" | "cbz" | "cbr" => Some(ThumbnailHandler::Cover),
         "flac" | "mp4" | "mkv" | "webm" | "mov" | "avi" | "m4v" | "mpeg" | "mpg" | "ogv" => {
             Some(ThumbnailHandler::Media)
         }

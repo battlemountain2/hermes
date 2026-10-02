@@ -24,6 +24,7 @@ impl TextExtractionProvider for LocalTextExtractionProvider {
         let operation = match extractor {
             TextExtractor::Pdf => ParseOperation::ExtractPdfText,
             TextExtractor::Office => ParseOperation::ExtractOfficeText,
+            TextExtractor::Spreadsheet => ParseOperation::ExtractSpreadsheetText,
             TextExtractor::PlainText => {
                 return Err("Direct text extraction does not require the sandbox".to_owned());
             }

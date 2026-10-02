@@ -498,7 +498,7 @@ fn search_file_content(
     let extractor = capabilities_by_name(item.path.as_os_str()).text_extractor?;
     let content = match extractor {
         TextExtractor::PlainText => read_plain_text(&item.path, metadata.len())?,
-        TextExtractor::Pdf | TextExtractor::Office => {
+        TextExtractor::Pdf | TextExtractor::Office | TextExtractor::Spreadsheet => {
             if metadata.len() > MAX_DOCUMENT_FILE_SIZE {
                 return None;
             }

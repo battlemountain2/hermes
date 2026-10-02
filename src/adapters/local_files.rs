@@ -32,6 +32,7 @@ enum PendingMonitorChange {
     Rescan,
 }
 
+#[expect(dead_code, reason = "Validation error mapping for file paths")]
 fn map_validation_error(error: std::io::Error) -> LocationValidationError {
     match error.kind() {
         ErrorKind::NotFound => LocationValidationError::Missing,
