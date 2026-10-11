@@ -67,17 +67,22 @@ impl PreviewProvider for LocalPreviewProvider {
                     pages: 0,
                     text_layer: None,
                 },
-                Some(PreviewHandler::Audio) => PreviewContent::AudioWaveform {
-                    png: Vec::new(),
-                    metadata: crate::services::preview::AudioMetadata {
-                        format: String::new(),
-                        duration_seconds: 0.0,
-                        sample_rate: 0,
-                        channels: 0,
-                        bitrate: None,
-                    },
+                Some(PreviewHandler::Audio) => PreviewContent::Audio {
+                    metadata: crate::services::preview::AudioMetadata::default(),
                 },
-                Some(PreviewHandler::Video) => PreviewContent::Media,
+                Some(PreviewHandler::Video) => {
+                    let Some(path) = entry.location.native_path() else {
+                        emit(PreviewEvent::Failed {
+                            request_id,
+                            entry,
+                            message: "Only local files can be played safely".into(),
+                        });
+                        return;
+                    };
+                    PreviewContent::StreamingMedia {
+                        path: path.to_owned(),
+                    }
+                }
                 Some(PreviewHandler::Image | PreviewHandler::Heif | PreviewHandler::GeoTiff) => {
                     PreviewContent::Image
                 }
@@ -94,7 +99,11 @@ impl PreviewProvider for LocalPreviewProvider {
                 _ => PreviewContent::Unsupported,
             };
 
-            let operation = handler.and_then(preview_operation);
+            let operation = if crate::services::is_gif_image(&entry.native_name, &content_type) {
+                Some(ParseOperation::PreviewAnimation)
+            } else {
+                handler.and_then(preview_operation)
+            };
             if let Some(operation) = operation {
                 let Some(path) = entry.location.native_path().map(ToOwned::to_owned) else {
                     emit(PreviewEvent::Failed {
@@ -106,11 +115,15 @@ impl PreviewProvider for LocalPreviewProvider {
                 };
                 let value = request.pdf_page;
                 let cancellation = cancellation_for_task.clone();
-                content = match gio::spawn_blocking(move || {
-                    crate::sandbox::parse(&path, operation, value, &cancellation)
+                let result = gio::spawn_blocking(move || {
+                    if operation == ParseOperation::PreviewAudioMetadata {
+                        super::music_metadata::read_audio_metadata(&path, &cancellation)
+                    } else {
+                        crate::sandbox::parse(&path, operation, value, &cancellation)
+                    }
                 })
-                .await
-                {
+                .await;
+                content = match result {
                     Ok(Ok(output)) if operation == ParseOperation::PreviewPdf => {
                         PreviewContent::Pdf {
                             png: output.data,
@@ -120,10 +133,11 @@ impl PreviewProvider for LocalPreviewProvider {
                         }
                     }
                     Ok(Ok(output)) if operation == ParseOperation::PreviewGeoTiff => {
-                        let metadata: Option<crate::sandbox_helper::geotiff::GeoTiffMetadata> = output
-                            .metadata
-                            .as_ref()
-                            .and_then(|bytes| serde_json::from_slice(bytes).ok());
+                        let metadata: Option<crate::sandbox_helper::geotiff::GeoTiffMetadata> =
+                            output
+                                .metadata
+                                .as_ref()
+                                .and_then(|bytes| serde_json::from_slice(bytes).ok());
                         match metadata {
                             Some(metadata) => PreviewContent::GeoTiff {
                                 png: output.data,
@@ -132,17 +146,19 @@ impl PreviewProvider for LocalPreviewProvider {
                             None => PreviewContent::Rasterized { png: output.data },
                         }
                     }
-                    Ok(Ok(output)) if operation == ParseOperation::PreviewAudioWaveform => {
-                        let metadata: Option<crate::services::preview::AudioMetadata> = output
-                            .metadata
-                            .as_ref()
-                            .and_then(|bytes| serde_json::from_slice(bytes).ok());
+                    Ok(Ok(output)) if operation == ParseOperation::PreviewAudioMetadata => {
+                        let metadata: Option<crate::services::preview::AudioMetadata> =
+                            serde_json::from_slice(&output.data).ok();
                         match metadata {
-                            Some(metadata) => PreviewContent::AudioWaveform {
-                                png: output.data,
-                                metadata,
-                            },
-                            None => PreviewContent::Rasterized { png: output.data },
+                            Some(metadata) => PreviewContent::Audio { metadata },
+                            None => {
+                                emit(PreviewEvent::Failed {
+                                    request_id,
+                                    entry,
+                                    message: "Invalid audio metadata response".into(),
+                                });
+                                return;
+                            }
                         }
                     }
                     Ok(Ok(output)) if operation == ParseOperation::PreviewSpreadsheet => {
@@ -155,12 +171,10 @@ impl PreviewProvider for LocalPreviewProvider {
                             None => PreviewContent::Unsupported,
                         }
                     }
-                    Ok(Ok(output))
-                        if matches!(
-                            operation,
-                            ParseOperation::PreviewMedia | ParseOperation::PreviewAudio
-                        ) =>
-                    {
+                    Ok(Ok(output)) if operation == ParseOperation::PreviewAnimation => {
+                        PreviewContent::SandboxedAnimation { data: output.data }
+                    }
+                    Ok(Ok(output)) if operation == ParseOperation::PreviewAudio => {
                         PreviewContent::SandboxedMedia { data: output.data }
                     }
                     Ok(Ok(output))
@@ -189,8 +203,9 @@ impl PreviewProvider for LocalPreviewProvider {
                 if let Some(path) = entry.location.native_path().map(ToOwned::to_owned) {
                     let cancellation = cancellation_for_task.clone();
                     if let Ok(Some(output)) = gio::spawn_blocking(move || {
-                        crate::ui::thumbnail::folder_album_art(&path)
-                            .and_then(|(art, op)| crate::sandbox::parse(&art, op, 800, &cancellation).ok())
+                        crate::ui::thumbnail::folder_album_art(&path).and_then(|(art, op)| {
+                            crate::sandbox::parse(&art, op, 800, &cancellation).ok()
+                        })
                     })
                     .await
                     {
@@ -232,8 +247,8 @@ fn preview_operation(handler: PreviewHandler) -> Option<ParseOperation> {
         PreviewHandler::Image => Some(ParseOperation::PreviewImage),
         PreviewHandler::Heif => Some(ParseOperation::PreviewHeif),
         PreviewHandler::Pdf => Some(ParseOperation::PreviewPdf),
-        PreviewHandler::Audio => Some(ParseOperation::PreviewAudioWaveform),
-        PreviewHandler::Video => Some(ParseOperation::PreviewMedia),
+        PreviewHandler::Audio => Some(ParseOperation::PreviewAudioMetadata),
+        PreviewHandler::Video => None,
         PreviewHandler::Archive => Some(ParseOperation::PreviewArchive),
         PreviewHandler::Office => Some(ParseOperation::PreviewOffice),
         PreviewHandler::GeoTiff => Some(ParseOperation::PreviewGeoTiff),

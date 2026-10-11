@@ -2,6 +2,7 @@
 
 use std::{
     fs, io,
+    io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
@@ -33,7 +34,7 @@ pub(crate) enum ParseOperation {
     PreviewGeoTiff,
     PreviewHeif,
     PreviewPdf,
-    PreviewMedia,
+    PreviewAnimation,
     PreviewAudio,
     ExtractPdfText,
     PreviewArchive,
@@ -42,13 +43,17 @@ pub(crate) enum ParseOperation {
     PreviewModel,
     PreviewArchiveCover,
     PreviewSpreadsheet,
-    PreviewAudioWaveform,
+    PreviewAudioMetadata,
+    MusicTags,
+    MusicWaveform,
     ExtractSpreadsheetText,
 }
 
 impl ParseOperation {
     fn argument(self) -> &'static str {
         match self {
+            Self::MusicTags => "music-tags",
+            Self::MusicWaveform => "music-waveform",
             Self::ThumbnailImage => "thumbnail-image",
             Self::ThumbnailHeif => "thumbnail-heif",
             Self::ThumbnailRaw => "thumbnail-raw",
@@ -58,7 +63,7 @@ impl ParseOperation {
             Self::PreviewGeoTiff => "preview-geotiff",
             Self::PreviewHeif => "preview-heif",
             Self::PreviewPdf => "preview-pdf",
-            Self::PreviewMedia => "preview-media",
+            Self::PreviewAnimation => "preview-animation",
             Self::PreviewAudio => "preview-audio",
             Self::ExtractPdfText => "extract-pdf-text",
             Self::PreviewArchive => "preview-archive",
@@ -67,13 +72,18 @@ impl ParseOperation {
             Self::PreviewModel => "preview-model",
             Self::PreviewArchiveCover => "preview-archive-cover",
             Self::PreviewSpreadsheet => "preview-spreadsheet",
-            Self::PreviewAudioWaveform => "preview-audio-waveform",
+            Self::PreviewAudioMetadata => "preview-audio-metadata",
             Self::ExtractSpreadsheetText => "extract-spreadsheet-text",
         }
     }
 
     fn output_name(self) -> &'static str {
-        if self == Self::PreviewMedia {
+        if matches!(
+            self,
+            Self::MusicTags | Self::MusicWaveform | Self::PreviewAudioMetadata
+        ) {
+            "result.json"
+        } else if self == Self::PreviewAnimation {
             "result.webm"
         } else if self == Self::PreviewAudio {
             "result.ogg"
@@ -104,7 +114,7 @@ impl Cancellation {
         self.0.store(true, Ordering::Release);
     }
 
-    fn is_cancelled(&self) -> bool {
+    pub(crate) fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Acquire)
     }
 }
@@ -162,13 +172,36 @@ fn parse_one_shot(
     value: i32,
     cancellation: &Cancellation,
 ) -> Result<ParseOutput, String> {
-    let output = PrivateOutput::create().map_err(|error| error.to_string())?;
-    let executable = std::env::current_exe()
+    let executable = helper_executable()
         .map_err(|error| format!("Unable to locate the Strata executable: {error}"))?;
-    let mut command = sandbox_command(&executable, &input, output.path(), operation, value);
+    parse_one_shot_with_executable(input, operation, value, cancellation, &executable)
+}
+
+pub(super) fn helper_executable() -> io::Result<PathBuf> {
+    let executable = std::env::current_exe()?;
+    #[cfg(test)]
+    let executable = executable
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| io::Error::other("Test executable location missing"))?
+        .join("strata");
+    Ok(executable)
+}
+
+pub(crate) fn parse_one_shot_with_executable(
+    input: &Path,
+    operation: ParseOperation,
+    value: i32,
+    cancellation: &Cancellation,
+    executable: &Path,
+) -> Result<ParseOutput, String> {
+    let output = PrivateOutput::create().map_err(|error| error.to_string())?;
+    let mut command = sandbox_command(executable, input, output.path(), operation, value);
+    let diagnostic_path = output.path().join("renderer.stderr");
+    let diagnostic = fs::File::create(&diagnostic_path).map_err(|error| error.to_string())?;
     let mut child = command
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::from(diagnostic))
         .spawn()
         .map_err(|error| format!("Unable to start the preview sandbox: {error}"))?;
     let started = Instant::now();
@@ -192,7 +225,13 @@ fn parse_one_shot(
         }
     };
     if !status.success() {
-        return Err("The sandboxed preview renderer failed".to_owned());
+        let mut diagnostic = Vec::new();
+        if let Ok(file) = fs::File::open(&diagnostic_path) {
+            let _read = file.take(4096).read_to_end(&mut diagnostic);
+        }
+        let message = renderer_failure_message(status, &diagnostic);
+        tracing::warn!(?operation, %status, "preview renderer failed");
+        return Err(message);
     }
 
     let result_path = output.path().join(operation.output_name());
@@ -213,7 +252,10 @@ fn parse_one_shot(
     let data = fs::read(result_path).map_err(|error| error.to_string())?;
     if !matches!(
         operation,
-        ParseOperation::PreviewMedia
+        ParseOperation::MusicTags
+            | ParseOperation::PreviewAudioMetadata
+            | ParseOperation::MusicWaveform
+            | ParseOperation::PreviewAnimation
             | ParseOperation::PreviewAudio
             | ParseOperation::ExtractPdfText
             | ParseOperation::PreviewArchive
@@ -252,6 +294,23 @@ fn parse_one_shot(
         metadata,
         text_layer,
     })
+}
+
+fn renderer_failure_message(status: std::process::ExitStatus, diagnostic: &[u8]) -> String {
+    let diagnostic = String::from_utf8_lossy(diagnostic);
+    let detail: String = diagnostic
+        .chars()
+        .filter(|character| !character.is_control() || *character == '\n')
+        .take(2048)
+        .collect();
+    let detail = detail.trim();
+    if detail.is_empty() {
+        format!(
+            "The sandboxed preview renderer failed ({status}). It may have exceeded a resource limit."
+        )
+    } else {
+        format!("The sandboxed preview renderer failed ({status}): {detail}")
+    }
 }
 
 fn sandbox_command(

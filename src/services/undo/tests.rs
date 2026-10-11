@@ -97,7 +97,7 @@ fn clear_empties_history() {
 fn trash_description_single() {
     use crate::model::{EntryKind, MetadataValue};
     let entry = UndoEntry::Trash {
-        entries: vec![crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner {
+        entries: vec![crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None,
             location: Location::local("/tmp/doc.txt"),
             native_name: "doc.txt".into(),
             display_name: "doc.txt".to_owned(),
@@ -114,7 +114,7 @@ fn trash_description_multiple() {
     use crate::model::{EntryKind, MetadataValue};
     let entry = UndoEntry::Trash {
         entries: vec![
-            crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner {
+            crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None,
                 location: Location::local("/tmp/a.txt"),
                 native_name: "a.txt".into(),
                 display_name: "a.txt".to_owned(),
@@ -122,7 +122,7 @@ fn trash_description_multiple() {
                 size: MetadataValue::Unknown,
                 modified_unix_seconds: MetadataValue::Unknown,
             })),
-            crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner {
+            crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None,
                 location: Location::local("/tmp/b.txt"),
                 native_name: "b.txt".into(),
                 display_name: "b.txt".to_owned(),

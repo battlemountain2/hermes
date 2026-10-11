@@ -6,6 +6,9 @@
 //! same application events and emits the same navigation/selection intents, so adding another
 //! presentation does not require scattering mode checks throughout the main browser view.
 
+#[cfg(test)]
+pub(super) mod tests;
+
 use std::{
     cell::{Cell, RefCell},
     rc::{Rc, Weak},
@@ -55,6 +58,95 @@ pub enum BrowserMode {
     Columns,
     Grid,
     Explorer,
+}
+
+impl BrowserMode {
+    pub(super) fn action_name(self) -> &'static str {
+        match self {
+            Self::Columns => "list",
+            Self::Grid => "grid",
+            Self::Explorer => "explorer",
+        }
+    }
+
+    pub(super) fn from_action_name(name: &str) -> Option<Self> {
+        match name {
+            "list" => Some(Self::Columns),
+            "grid" => Some(Self::Grid),
+            "explorer" => Some(Self::Explorer),
+            _ => None,
+        }
+    }
+}
+
+pub(super) fn view_options_content(popover: &gtk::Popover) -> gtk::Box {
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.add_css_class("appearance-menu");
+    let heading = gtk::Label::new(Some("VIEW"));
+    heading.add_css_class("menu-heading");
+    heading.set_xalign(0.0);
+    content.append(&heading);
+    let mut checks = Vec::new();
+    for (mode, label, icon) in [
+        (BrowserMode::Columns, "List", crate::assets::icons::LIST),
+        (BrowserMode::Grid, "Grid", crate::assets::icons::GRID),
+        (BrowserMode::Explorer, "Explorer", crate::assets::icons::ROWS),
+    ] {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        row.append(&crate::assets::primary_icon(icon, 16));
+        let label = gtk::Label::new(Some(label));
+        label.set_xalign(0.0);
+        label.set_hexpand(true);
+        row.append(&label);
+        let check = crate::assets::primary_icon(crate::assets::icons::CHECK, 16);
+        row.append(&check);
+        let button = gtk::Button::builder()
+            .child(&row)
+            .has_frame(false)
+            .build();
+        button.add_css_class("appearance-option");
+        let weak_popover = popover.downgrade();
+        button.connect_clicked(move |button| {
+            let _ = button.activate_action(
+                "win.view-mode",
+                Some(&mode.action_name().to_variant()),
+            );
+            if let Some(popover) = weak_popover.upgrade() {
+                popover.popdown();
+            }
+        });
+        checks.push((mode, check));
+        content.append(&button);
+    }
+    popover.connect_show(move |popover| {
+        let state = popover
+            .root()
+            .and_downcast::<gtk::ApplicationWindow>()
+            .and_then(|window| window.lookup_action("view-mode"))
+            .and_then(|action| action.state())
+            .and_then(|state| state.get::<String>());
+        for (mode, check) in &checks {
+            check.set_visible(state.as_deref() == Some(mode.action_name()));
+        }
+    });
+    content
+}
+
+pub(super) fn view_options_button() -> gtk::MenuButton {
+    let popover = gtk::Popover::new();
+    popover.set_has_arrow(false);
+    popover.set_child(Some(&view_options_content(&popover)));
+    popover.add_css_class("appearance-popover");
+    let button = gtk::MenuButton::builder()
+        .tooltip_text("View options")
+        .popover(&popover)
+        .build();
+    button.set_child(Some(&crate::assets::text_icon(
+        crate::assets::icons::GRID,
+        16,
+    )));
+    button.add_css_class("column-header-action");
+    button
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -119,6 +211,33 @@ pub struct ModeViews {
 }
 
 impl ModeViews {
+    pub(super) fn configure_empty(&mut self, mode: BrowserMode, density: BrowserDensity) {
+        self.mode = mode;
+        self.set_density(density);
+        self.stack.set_visible_child_name(match mode {
+            BrowserMode::Columns => "columns",
+            BrowserMode::Grid => "grid",
+            BrowserMode::Explorer => "explorer",
+        });
+    }
+
+    pub(super) fn empty_presentation(&self, columns: &gtk::ScrolledWindow) -> Self {
+        let mut presentation = Self::new(columns, self.browser.clone());
+        presentation.single_click_previews = self.single_click_previews.clone();
+        presentation.transfer_handler = self.transfer_handler.clone();
+        presentation.cut_locations = self.cut_locations.clone();
+        presentation.context_state.replace(self.context_state.borrow().clone());
+        presentation.grid_thumbnail_size.set(self.grid_thumbnail_size.get());
+        presentation.mode = self.mode;
+        presentation.set_density(self.density);
+        presentation.stack.set_visible_child_name(match self.mode {
+            BrowserMode::Columns => "columns",
+            BrowserMode::Grid => "grid",
+            BrowserMode::Explorer => "explorer",
+        });
+        presentation
+    }
+
     pub fn new(columns: &gtk::ScrolledWindow, browser: Rc<Browser>) -> Self {
         let grid_root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         grid_root.add_css_class("mode-grid-columns");
@@ -406,9 +525,20 @@ impl ModeViews {
     }
 
     pub fn set_mode(&mut self, mode: BrowserMode) {
+        if self.mode == mode {
+            return;
+        }
         self.cancel_new_folder();
         self.cancel_rename();
         self.mode = mode;
+        if mode != BrowserMode::Grid {
+            clear_box(&self.grid_root);
+            self.grid_panes.clear();
+        }
+        if mode != BrowserMode::Explorer {
+            clear_box(&self.explorer_root);
+            self.explorer_pane = None;
+        }
         self.stack.set_visible_child_name(match mode {
             BrowserMode::Columns => "columns",
             BrowserMode::Grid => "grid",
@@ -486,37 +616,42 @@ impl ModeViews {
             BrowserEvent::ColumnAdded { depth, location } => {
                 clear_box(&self.grid_root);
                 self.grid_panes.clear();
-                let pane = build_grid_pane(
-                    self.browser.clone(),
-                    self.single_click_previews.clone(),
-                    self.transfer_handler.clone(),
-                    self.cut_locations.clone(),
-                    GridOptions {
-                        peek_state: self.context_state.borrow().clone(),
-                        thumbnail_size: self.grid_thumbnail_size.clone(),
-                        active_new_folder: self.active_new_folder.clone(),
-                    },
-                    *depth,
-                    &location.display_name(),
-                );
-                configure_grid_density(&pane, self.density);
-                self.install_context_menu(&pane);
-                self.grid_root.append(&pane.shell);
-                self.grid_panes.push(pane);
+                if self.mode == BrowserMode::Grid {
+                    let pane = build_grid_pane(
+                        self.browser.clone(),
+                        self.single_click_previews.clone(),
+                        self.transfer_handler.clone(),
+                        self.cut_locations.clone(),
+                        GridOptions {
+                            peek_state: self.context_state.borrow().clone(),
+                            thumbnail_size: self.grid_thumbnail_size.clone(),
+                            active_new_folder: self.active_new_folder.clone(),
+                        },
+                        *depth,
+                        &location.display_name(),
+                    );
+                    configure_grid_density(&pane, self.density);
+                    self.install_context_menu(&pane);
+                    self.grid_root.append(&pane.shell);
+                    self.grid_panes.push(pane);
+                }
 
                 clear_box(&self.explorer_root);
-                let pane = build_explorer_pane(
-                    self.browser.clone(),
-                    self.single_click_previews.clone(),
-                    self.transfer_handler.clone(),
-                    self.cut_locations.clone(),
-                    self.active_new_folder.clone(),
-                    *depth,
-                    &location.display_name(),
-                );
-                self.install_context_menu(&pane);
-                self.explorer_root.append(&pane.shell);
-                self.explorer_pane = Some(pane);
+                self.explorer_pane = None;
+                if self.mode == BrowserMode::Explorer {
+                    let pane = build_explorer_pane(
+                        self.browser.clone(),
+                        self.single_click_previews.clone(),
+                        self.transfer_handler.clone(),
+                        self.cut_locations.clone(),
+                        self.active_new_folder.clone(),
+                        *depth,
+                        &location.display_name(),
+                    );
+                    self.install_context_menu(&pane);
+                    self.explorer_root.append(&pane.shell);
+                    self.explorer_pane = Some(pane);
+                }
             }
             BrowserEvent::EntriesInserted { depth, insertions } => {
                 for pane in self.panes_at(*depth) {
@@ -533,6 +668,7 @@ impl ModeViews {
             }
             BrowserEvent::EntriesReplaced { depth, entries } => {
                 for pane in self.panes_at(*depth) {
+                    super::browser::sync_sort_direction_header(&pane.shell, &self.browser, *depth);
                     replace_entries(pane, entries);
                 }
             }
@@ -701,6 +837,9 @@ impl ModeViews {
     }
 
     fn rebuild_grid(&mut self) {
+        if self.mode != BrowserMode::Grid {
+            return;
+        }
         let Some(depth) = self.browser.active_depth() else {
             return;
         };
@@ -730,6 +869,9 @@ impl ModeViews {
     }
 
     fn rebuild_explorer(&mut self) {
+        if self.mode != BrowserMode::Explorer {
+            return;
+        }
         let Some(depth) = self.browser.active_depth() else {
             return;
         };
@@ -868,6 +1010,8 @@ fn grid_controls(browser: &Rc<Browser>, depth: usize, thumbnail_size: i32) -> Gr
     thumbnail_popover.set_has_arrow(false);
     thumbnail_popover.add_css_class("grid-thumbnail-popover");
     let thumbnail_content = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    thumbnail_content.append(&view_options_content(&thumbnail_popover));
+    thumbnail_content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     let thumbnail_heading = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     let thumbnail_title = gtk::Label::new(Some("Thumbnail size"));
     thumbnail_title.add_css_class("grid-thumbnail-title");
@@ -905,7 +1049,7 @@ fn grid_controls(browser: &Rc<Browser>, depth: usize, thumbnail_size: i32) -> Gr
     thumbnail_content.append(&thumbnail_extremes);
     thumbnail_popover.set_child(Some(&thumbnail_content));
     let thumbnail_menu = gtk::MenuButton::builder()
-        .tooltip_text("Thumbnail size")
+        .tooltip_text("View options and thumbnail size")
         .popover(&thumbnail_popover)
         .build();
     thumbnail_menu.add_css_class("column-header-action");
@@ -1036,13 +1180,15 @@ fn build_grid_pane(
         let active_for_leave = active_for_setup.clone();
         let browser_for_leave = browser_for_setup.clone();
         let location_for_leave = folder_location.clone();
-        let field_for_leave = field.clone();
-        focus.connect_leave(move |_| {
+        focus.connect_leave(move |focus| {
+            let Some(field) = focus.widget().and_downcast::<gtk::Entry>() else {
+                return;
+            };
             submit_mode_new_folder(
                 &active_for_leave,
                 &browser_for_leave,
                 &location_for_leave,
-                &field_for_leave,
+                &field,
             );
         });
         field.add_controller(focus);
@@ -1515,6 +1661,7 @@ fn build_explorer_pane(
     actions.add_css_class("grid-header-actions");
     let (filter_entry, filter_revealer, filter_button) =
         filter_controls("Filter explorer (Ctrl+F)");
+    actions.append(&view_options_button());
     actions.append(&filter_button);
     let (shell, content, model, stack, status, spinner) = pane_base(
         title,
@@ -1601,13 +1748,15 @@ fn build_explorer_pane(
         let active_for_leave = active_for_setup.clone();
         let browser_for_leave = browser_for_setup.clone();
         let location_for_leave = folder_location.clone();
-        let field_for_leave = field.clone();
-        focus.connect_leave(move |_| {
+        focus.connect_leave(move |focus| {
+            let Some(field) = focus.widget().and_downcast::<gtk::Entry>() else {
+                return;
+            };
             submit_mode_new_folder(
                 &active_for_leave,
                 &browser_for_leave,
                 &location_for_leave,
-                &field_for_leave,
+                &field,
             );
         });
         field.add_controller(focus);
@@ -1903,15 +2052,19 @@ fn collection_with_marquee(
     });
 
     let active_for_update = active.clone();
-    let view_for_update = view.clone();
-    let overlay_for_update = overlay.clone();
+    let overlay_for_update = overlay.downgrade();
     let marquee_for_update = marquee_box.clone();
     let selection_for_update = selection.clone();
     let items_for_update = bound_items.clone();
-    marquee.connect_drag_update(move |_, offset_x, offset_y| {
+    marquee.connect_drag_update(move |gesture, offset_x, offset_y| {
         if !active_for_update.get() {
             return;
         }
+        let (Some(view_for_update), Some(overlay_for_update)) =
+            (gesture.widget(), overlay_for_update.upgrade())
+        else {
+            return;
+        };
         let (origin_x, origin_y) = origin.get();
         let current_x = origin_x + offset_x;
         let current_y = origin_y + offset_y;
@@ -2028,10 +2181,14 @@ fn install_grid_peek(
         return;
     };
     let motion = gtk::EventControllerMotion::new();
-    let entered_item = item.clone();
-    let entered_card: gtk::Widget = card.clone().upcast();
+    let entered_item = item.downgrade();
     let state_for_enter = state.clone();
-    motion.connect_enter(move |_, _, _| {
+    motion.connect_enter(move |motion, _, _| {
+        let (Some(entered_item), Some(entered_card)) =
+            (entered_item.upgrade(), motion.widget())
+        else {
+            return;
+        };
         let position = entered_item.position();
         if position == gtk::INVALID_LIST_POSITION {
             return;
@@ -2095,10 +2252,11 @@ fn install_explorer_drag_drop(
         .actions(gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE)
         .build();
     drag.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let dragged_item = item.clone();
+    let dragged_item = item.downgrade();
     let browser_for_drag = browser.clone();
     let map_for_drag = position_map.clone();
     drag.connect_prepare(move |source, x, y| {
+        let dragged_item = dragged_item.upgrade()?;
         let browser = browser_for_drag.upgrade()?;
         let position = dragged_item.position();
         if position == gtk::INVALID_LIST_POSITION {
@@ -2123,32 +2281,46 @@ fn install_explorer_drag_drop(
         source.set_icon(Some(&paintable), x.round() as i32, y.round() as i32);
         super::browser::file_drag_content(&entries)
     });
-    let dragged_row = row.clone();
-    drag.connect_drag_begin(move |_, _| dragged_row.add_css_class("dragging"));
-    let dragged_row = row.clone();
-    drag.connect_drag_end(move |_, _, _| dragged_row.remove_css_class("dragging"));
+    drag.connect_drag_begin(|source, _| {
+        if let Some(row) = source.widget() {
+            row.add_css_class("dragging");
+        }
+    });
+    drag.connect_drag_end(|source, _, _| {
+        if let Some(row) = source.widget() {
+            row.remove_css_class("dragging");
+        }
+    });
     row.add_controller(drag);
 
     let drop = gtk::DropTarget::new(
         gtk::gdk::FileList::static_type(),
         gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE,
     );
-    let highlighted_row = row.clone();
-    drop.connect_enter(move |target, _, _| {
-        highlighted_row.add_css_class("drop-destination");
+    drop.connect_enter(|target, _, _| {
+        if let Some(row) = target.widget() {
+            row.add_css_class("drop-destination");
+        }
         super::browser::file_drop_action(target)
     });
-    let highlighted_row = row.clone();
-    drop.connect_motion(move |target, _, _| {
-        highlighted_row.add_css_class("drop-destination");
+    drop.connect_motion(|target, _, _| {
+        if let Some(row) = target.widget() {
+            row.add_css_class("drop-destination");
+        }
         super::browser::file_drop_action(target)
     });
-    let highlighted_row = row.clone();
-    drop.connect_leave(move |_| highlighted_row.remove_css_class("drop-destination"));
-    let accepted_item = item.clone();
+    drop.connect_leave(|target| {
+        if let Some(row) = target.widget() {
+            row.remove_css_class("drop-destination");
+        }
+    });
+    let accepted_item = item.downgrade();
     let browser_for_accept = browser.clone();
     let map_for_accept = position_map.clone();
     drop.connect_accept(move |_, offered| {
+        let Some(accepted_item) = accepted_item.upgrade() else {
+            return false;
+        };
         let Some(browser) = browser_for_accept.upgrade() else {
             return false;
         };
@@ -2165,12 +2337,16 @@ fn install_explorer_drag_drop(
                 .formats()
                 .contains_type(gtk::gdk::FileList::static_type())
     });
-    let dropped_item = item.clone();
+    let dropped_item = item.downgrade();
     let browser_for_drop = browser;
     let map_for_drop = position_map;
-    let dropped_row = row.clone();
     drop.connect_drop(move |target, value, _, _| {
-        dropped_row.remove_css_class("drop-destination");
+        if let Some(row) = target.widget() {
+            row.remove_css_class("drop-destination");
+        }
+        let Some(dropped_item) = dropped_item.upgrade() else {
+            return false;
+        };
         let Some(browser) = browser_for_drop.upgrade() else {
             return false;
         };
@@ -2211,8 +2387,11 @@ fn install_modified_selection_click(
     let click = gtk::GestureClick::new();
     click.set_button(1);
     click.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let item = item.clone();
+    let item = item.downgrade();
     click.connect_pressed(move |gesture, _, _, _| {
+        let Some(item) = item.upgrade() else {
+            return;
+        };
         let position = item.position();
         if position == gtk::INVALID_LIST_POSITION {
             return;
@@ -2278,8 +2457,11 @@ fn install_preview_click(
 ) {
     let click = gtk::GestureClick::new();
     click.set_button(1);
-    let item = item.clone();
+    let item = item.downgrade();
     click.connect_released(move |gesture, press_count, _, _| {
+        let Some(item) = item.upgrade() else {
+            return;
+        };
         if press_count != 1 || !enabled.get() {
             return;
         }
@@ -2323,6 +2505,7 @@ fn connect_selection(
     filtered: Option<gio::ListModel>,
 ) {
     let syncing = syncing.clone();
+    let browser = Rc::downgrade(&browser);
     selection.connect_selection_changed(move |selection, _, _| {
         if syncing.get() {
             return;
@@ -2334,7 +2517,9 @@ fn connect_selection(
             })
             .collect::<Vec<_>>();
         let focused = positions.last().copied();
-        browser.set_selection(depth, &positions, focused);
+        if let Some(browser) = browser.upgrade() {
+            browser.set_selection(depth, &positions, focused);
+        }
     });
 }
 
@@ -2379,7 +2564,9 @@ fn replace_entries(pane: &Pane, entries: &[FileEntry]) {
         .iter()
         .map(|entry| entry.display_name.as_str())
         .collect();
+    let syncing = pane.syncing_selection.replace(true);
     pane.model.splice(0, pane.model.n_items(), &values);
+    pane.syncing_selection.set(syncing);
     show_count(pane);
 }
 

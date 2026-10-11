@@ -6,18 +6,21 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver, RecvTimeoutError, Sender},
+        atomic::AtomicBool,
     },
-    time::{Duration, Instant},
 };
 
 use gio::glib;
 
 use super::{TextExtractor, capabilities_by_name};
+use crate::model::MusicTags;
+
+mod worker;
+mod scope;
+pub(crate) use scope::{SearchScope, ScopedSearch};
+pub(crate) use worker::{SearchHandle, index_tree};
 
 const RESULT_LIMIT: usize = 100;
-const PUBLISH_INTERVAL: Duration = Duration::from_millis(50);
 const MAX_CONTENT_FILE_SIZE: u64 = 1024 * 1024;
 const MAX_DOCUMENT_FILE_SIZE: u64 = 32 * 1024 * 1024;
 const MAX_DOCUMENT_EXTRACTIONS_PER_QUERY: usize = 32;
@@ -45,8 +48,32 @@ pub struct SearchItem {
     pub name: String,
     pub is_directory: bool,
     pub modified_unix_seconds: Option<i64>,
+    pub music_tags: Option<MusicTags>,
     search_name: String,
     search_path: String,
+    search_metadata: String,
+    source_identity: Option<super::music_library::FileIdentity>,
+}
+
+impl SearchItem {
+    pub(crate) fn file_entry(&self) -> crate::model::FileEntry {
+        use crate::model::{EntryKind, FileEntry, FileEntryInner, Location, MetadataValue};
+        FileEntry(std::rc::Rc::new(FileEntryInner {
+            music_tags: self.music_tags.clone(),
+            location: Location::local(&self.path),
+            native_name: self.path.file_name().unwrap_or_default().to_owned(),
+            display_name: self.name.clone(),
+            kind: if self.is_directory { EntryKind::Directory } else { EntryKind::File },
+            size: self.source_identity.as_ref().map_or(MetadataValue::Unknown, |identity| MetadataValue::Known(identity.size())),
+            modified_unix_seconds: self.modified_unix_seconds.map_or(MetadataValue::Unknown, MetadataValue::Known),
+        }))
+    }
+    pub(crate) fn from_path(path: PathBuf, root: &Path, is_directory: bool, modified_unix_seconds: Option<i64>) -> Self {
+        let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        Self { search_name: name.to_lowercase(),
+            search_path: path.strip_prefix(root).unwrap_or(&path).to_string_lossy().to_lowercase(),
+            name, path, is_directory, modified_unix_seconds, music_tags: None, search_metadata: String::new(), source_identity: None }
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -81,203 +108,10 @@ pub enum SearchEvent {
     },
 }
 
-enum SearchCommand {
-    Query(String),
-}
-
-pub struct SearchHandle {
-    cancelled: Arc<AtomicBool>,
-    commands: Sender<SearchCommand>,
-}
-
-impl SearchHandle {
-    pub fn query(&self, query: &str) {
-        let _sent = self
-            .commands
-            .send(SearchCommand::Query(query.trim().to_owned()));
-    }
-}
-
-impl Drop for SearchHandle {
-    fn drop(&mut self) {
-        self.cancelled.store(true, Ordering::Relaxed);
-    }
-}
-
-/// Builds and searches the index entirely off the GTK thread. The UI receives only the best
-/// bounded result set, so typing remains responsive even while very large trees are being walked.
-pub fn index_tree(
-    root: PathBuf,
-    text_extraction: Arc<dyn TextExtractionProvider>,
-) -> (SearchHandle, Receiver<SearchEvent>) {
-    let (command_sender, command_receiver) = mpsc::channel();
-    let (event_sender, event_receiver) = mpsc::channel();
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let worker_cancelled = cancelled.clone();
-    let _worker = std::thread::Builder::new()
-        .name("strata-search-index".into())
-        .spawn(move || {
-            let mut index = Vec::new();
-            let mut query = String::new();
-            let mut matches = Vec::<(i64, SearchItem)>::new();
-            let mut document_extractions_remaining = MAX_DOCUMENT_EXTRACTIONS_PER_QUERY;
-            let mut notice = None;
-            let mut last_publish = Instant::now();
-            let walker = ignore::WalkBuilder::new(&root)
-                .hidden(true)
-                .follow_links(false)
-                .standard_filters(true)
-                .require_git(false)
-                .build();
-
-            for entry in walker
-                .filter_map(Result::ok)
-                .filter(|entry| entry.depth() > 0)
-            {
-                if worker_cancelled.load(Ordering::Relaxed) {
-                    return;
-                }
-                let mut content_search = ContentSearchContext {
-                    text_extraction: text_extraction.as_ref(),
-                    cancelled: &worker_cancelled,
-                    document_extractions_remaining: &mut document_extractions_remaining,
-                    notice: &mut notice,
-                };
-                apply_pending_queries(
-                    &command_receiver,
-                    &event_sender,
-                    &index,
-                    &mut query,
-                    &mut matches,
-                    true,
-                    &mut content_search,
-                );
-                let is_directory = entry.file_type().is_some_and(|kind| kind.is_dir());
-                let modified_unix_seconds = entry
-                    .metadata()
-                    .ok()
-                    .and_then(|metadata| metadata.modified().ok())
-                    .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
-                    .and_then(|duration| i64::try_from(duration.as_secs()).ok());
-                let path = entry.into_path();
-                let name = path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned();
-                let search_path = path
-                    .strip_prefix(&root)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .to_lowercase();
-                let item = SearchItem {
-                    search_name: name.to_lowercase(),
-                    name,
-                    is_directory,
-                    modified_unix_seconds,
-                    path,
-                    search_path,
-                };
-                if let Some(score) = score_item(
-                    &item,
-                    &ParsedSearchQuery::parse(&query),
-                    &mut content_search,
-                ) {
-                    insert_match(&mut matches, score, item.clone());
-                }
-                index.push(item);
-
-                if !query.is_empty() && last_publish.elapsed() >= PUBLISH_INTERVAL {
-                    publish(&event_sender, &query, &matches, true, notice.as_deref());
-                    last_publish = Instant::now();
-                }
-            }
-
-            publish(&event_sender, &query, &matches, false, notice.as_deref());
-            while !worker_cancelled.load(Ordering::Relaxed) {
-                match command_receiver.recv_timeout(Duration::from_millis(50)) {
-                    Ok(SearchCommand::Query(next)) => {
-                        query = command_receiver
-                            .try_iter()
-                            .map(|SearchCommand::Query(query)| query)
-                            .last()
-                            .unwrap_or(next);
-                        document_extractions_remaining = MAX_DOCUMENT_EXTRACTIONS_PER_QUERY;
-                        notice = None;
-                        let mut content_search = ContentSearchContext {
-                            text_extraction: text_extraction.as_ref(),
-                            cancelled: &worker_cancelled,
-                            document_extractions_remaining: &mut document_extractions_remaining,
-                            notice: &mut notice,
-                        };
-                        matches = score_index(&index, &query, &mut content_search);
-                        publish(&event_sender, &query, &matches, false, notice.as_deref());
-                    }
-                    Err(RecvTimeoutError::Timeout) => {}
-                    Err(RecvTimeoutError::Disconnected) => return,
-                }
-            }
-        });
-    (
-        SearchHandle {
-            cancelled,
-            commands: command_sender,
-        },
-        event_receiver,
-    )
-}
-
-fn apply_pending_queries(
-    receiver: &Receiver<SearchCommand>,
-    sender: &Sender<SearchEvent>,
-    index: &[SearchItem],
-    query: &mut String,
-    matches: &mut Vec<(i64, SearchItem)>,
-    indexing: bool,
-    content_search: &mut ContentSearchContext<'_>,
-) {
-    let Some(next) = receiver
-        .try_iter()
-        .map(|SearchCommand::Query(query)| query)
-        .last()
-    else {
-        return;
-    };
-    *query = next;
-    *content_search.document_extractions_remaining = MAX_DOCUMENT_EXTRACTIONS_PER_QUERY;
-    *content_search.notice = None;
-    *matches = score_index(index, query, content_search);
-    publish(
-        sender,
-        query,
-        matches,
-        indexing,
-        content_search.notice.as_deref(),
-    );
-}
-
-fn score_index(
-    index: &[SearchItem],
-    query: &str,
-    content_search: &mut ContentSearchContext<'_>,
-) -> Vec<(i64, SearchItem)> {
-    let mut matches = Vec::with_capacity(RESULT_LIMIT);
-    let normalized_query = query.trim().to_lowercase();
-    let parsed = ParsedSearchQuery::parse(&normalized_query);
-    for item in index {
-        if content_search.cancelled.load(Ordering::Relaxed) {
-            break;
-        }
-        if let Some(score) = score_item(item, &parsed, content_search) {
-            insert_match(&mut matches, score, item.clone());
-        }
-    }
-    matches
-}
 
 fn insert_match(matches: &mut Vec<(i64, SearchItem)>, score: i64, item: SearchItem) {
     let position = matches
-        .binary_search_by(|candidate| candidate.0.cmp(&score).reverse())
+        .binary_search_by(|candidate| candidate.0.cmp(&score).reverse().then_with(|| candidate.1.path.cmp(&item.path)))
         .unwrap_or_else(|position| position);
     if position < RESULT_LIMIT {
         matches.insert(position, (score, item));
@@ -285,23 +119,6 @@ fn insert_match(matches: &mut Vec<(i64, SearchItem)>, score: i64, item: SearchIt
     }
 }
 
-fn publish(
-    sender: &Sender<SearchEvent>,
-    query: &str,
-    matches: &[(i64, SearchItem)],
-    indexing: bool,
-    notice: Option<&str>,
-) {
-    if query.is_empty() {
-        return;
-    }
-    let _sent = sender.send(SearchEvent::Results {
-        query: query.to_owned(),
-        items: matches.iter().map(|(_, item)| item.clone()).collect(),
-        indexing,
-        notice: notice.map(str::to_owned),
-    });
-}
 
 /// Scores ordered character matches, strongly preferring names, contiguous runs and word/path
 /// boundaries. Exact substrings rank ahead of looser fuzzy matches.
@@ -372,6 +189,9 @@ fn score_item(
         10_000 - position as i64 * 12 - item.search_name.len() as i64
     } else if let Some(position) = item.search_path.find(query) {
         7_000 - position as i64 * 4 - item.search_path.len() as i64
+    } else if query.split_whitespace().all(|term|
+        item.search_metadata.contains(term) || item.search_name.contains(term) || item.search_path.contains(term)) {
+        8_000 - item.search_metadata.len() as i64
     } else {
         fuzzy_subsequence_score(&item.search_path, query)?
     };

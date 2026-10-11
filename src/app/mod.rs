@@ -2,6 +2,7 @@
 
 mod browser;
 mod navigation;
+pub(crate) mod music_order;
 mod peek;
 mod trails;
 

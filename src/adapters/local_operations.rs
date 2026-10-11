@@ -3,6 +3,8 @@
 #[cfg(test)]
 mod tests;
 
+mod transfer;
+
 use std::{
     future::Future,
     path::{Path, PathBuf},
@@ -47,7 +49,6 @@ fn transfer_is_noop(source: &gio::File, destination: &gio::File, target: &gio::F
 fn copy_recursively(
     source: gio::File,
     target: gio::File,
-    overwrite_existing: bool,
 ) -> Pin<Box<dyn Future<Output = Result<(), glib::Error>>>> {
     Box::pin(async move {
         let info = source
@@ -58,11 +59,9 @@ fn copy_recursively(
             )
             .await?;
         if info.file_type() == gio::FileType::Directory {
-            if !overwrite_existing || !target.query_exists(None::<&gio::Cancellable>) {
-                target
-                    .make_directory_future(glib::Priority::DEFAULT)
-                    .await?;
-            }
+            target
+                .make_directory_future(glib::Priority::DEFAULT)
+                .await?;
             let enumerator = source
                 .enumerate_children_future(
                     "standard::name",
@@ -78,23 +77,13 @@ fn copy_recursively(
                     break;
                 }
                 for child in children {
-                    copy_recursively(
-                        source.child(child.name()),
-                        target.child(child.name()),
-                        overwrite_existing,
-                    )
-                    .await?;
+                    copy_recursively(source.child(child.name()), target.child(child.name()))
+                        .await?;
                 }
             }
             Ok(())
         } else {
-            let flags = gio::FileCopyFlags::ALL_METADATA
-                | gio::FileCopyFlags::NOFOLLOW_SYMLINKS
-                | if overwrite_existing {
-                    gio::FileCopyFlags::OVERWRITE
-                } else {
-                    gio::FileCopyFlags::NONE
-                };
+            let flags = gio::FileCopyFlags::ALL_METADATA | gio::FileCopyFlags::NOFOLLOW_SYMLINKS;
             let (copy, _progress) = source.copy_future(&target, flags, glib::Priority::DEFAULT);
             copy.await
         }
@@ -260,69 +249,47 @@ impl OperationProvider for LocalOperationProvider {
     }
 
     fn paste(&self, request: PasteRequest, emit: Rc<dyn Fn(OperationEvent)>) -> LoadHandle {
+        let cancellable = gio::Cancellable::new();
+        let worker_cancellable = cancellable.clone();
         let task = glib::MainContext::default().spawn_local(async move {
             let destination = gio_file(&request.destination);
             let total = request.sources.len();
-            for (completed, source) in request.sources.iter().enumerate() {
-                let source = gio_file(source);
+            let mut errors = Vec::new();
+            for (completed, location) in request.sources.iter().enumerate() {
+                let source = gio_file(location);
                 let Some(name) = source.basename() else {
-                    emit(OperationEvent::Failed {
+                    errors.push("A clipboard item has no file name".to_owned());
+                    emit(OperationEvent::TransferProgress {
                         request_id: request.id,
-                        message: "A clipboard item has no file name".to_owned(),
+                        completed: completed + 1,
+                        total,
                     });
-                    return;
+                    continue;
                 };
-                let target = destination.child(name);
+                let target = destination.child(&name);
                 if transfer_is_noop(&source, &destination, &target) {
+                    emit(OperationEvent::TransferProgress {
+                        request_id: request.id,
+                        completed: completed + 1,
+                        total,
+                    });
                     continue;
                 }
-                if request.overwrite_existing && target.query_exists(None::<&gio::Cancellable>) {
-                    let target_type = target
-                        .query_info_future(
-                            "standard::type",
-                            gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS,
-                            glib::Priority::DEFAULT,
-                        )
-                        .await
-                        .map(|info| info.file_type());
-                    let result = match target_type {
-                        Ok(file_type) => {
-                            permanently_delete(
-                                target.clone(),
-                                file_type == gio::FileType::Directory,
-                            )
-                            .await
-                        }
-                        Err(error) => Err(error),
-                    };
-                    if let Err(error) = result {
-                        emit(OperationEvent::Failed {
-                            request_id: request.id,
-                            message: error.to_string(),
-                        });
-                        return;
-                    }
-                }
-                let flags = gio::FileCopyFlags::ALL_METADATA
-                    | gio::FileCopyFlags::NOFOLLOW_SYMLINKS
-                    | if request.overwrite_existing {
-                        gio::FileCopyFlags::OVERWRITE
-                    } else {
-                        gio::FileCopyFlags::NONE
-                    };
-                let result = if request.move_sources {
-                    let (transfer, _progress) =
-                        source.move_future(&target, flags, glib::Priority::DEFAULT);
-                    transfer.await
-                } else {
-                    copy_recursively(source, target, request.overwrite_existing).await
-                };
-                if let Err(error) = result {
-                    emit(OperationEvent::Failed {
+                match transfer::transfer_item(
+                    source,
+                    target,
+                    request.move_sources,
+                    request.overwrite_existing,
+                    worker_cancellable.clone(),
+                )
+                .await
+                {
+                    Ok(()) => emit(OperationEvent::TransferItemCompleted {
                         request_id: request.id,
-                        message: error.to_string(),
-                    });
-                    return;
+                        source: location.clone(),
+                        move_source: request.move_sources,
+                    }),
+                    Err(error) => errors.push(format!("{}: {error}", name.to_string_lossy())),
                 }
                 emit(OperationEvent::TransferProgress {
                     request_id: request.id,
@@ -330,11 +297,21 @@ impl OperationProvider for LocalOperationProvider {
                     total,
                 });
             }
-            emit(OperationEvent::Pasted {
-                request_id: request.id,
-            });
+            if errors.is_empty() {
+                emit(OperationEvent::Pasted {
+                    request_id: request.id,
+                });
+            } else {
+                emit(OperationEvent::TransferCompletedWithErrors {
+                    request_id: request.id,
+                    message: operation_error_summary(&errors, "transferred"),
+                });
+            }
         });
-        LoadHandle::new(move || task.abort())
+        LoadHandle::new(move || {
+            cancellable.cancel();
+            task.abort();
+        })
     }
 
     fn delete(&self, request: DeleteRequest, emit: Rc<dyn Fn(OperationEvent)>) -> LoadHandle {

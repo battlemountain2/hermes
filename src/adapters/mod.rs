@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+mod cached_files;
 mod local_files;
 mod local_operations;
 mod local_preview;
 mod local_text_extraction;
 mod local_trails;
+pub(crate) mod music_metadata;
 
 mod search_source;
 
@@ -17,25 +19,65 @@ pub use search_source::SearchFileSource;
 
 use crate::{
     model::Location,
-    services::{DirectoryEvent, DirectoryRequest, FileSource, LoadHandle, LocationValidationError},
+    services::{
+        DirectoryChange, DirectoryEvent, DirectoryRequest, FileSource, LoadHandle,
+        LocationValidationError,
+    },
 };
 use std::rc::Rc;
 
 pub struct RoutedFileSource {
-    local: LocalFileSource,
+    local: cached_files::CachedFileSource,
     search: SearchFileSource,
 }
 
 impl RoutedFileSource {
     pub fn new() -> Self {
         Self {
-            local: LocalFileSource,
+            local: cached_files::CachedFileSource::new(Rc::new(LocalFileSource)),
             search: SearchFileSource::new(),
         }
     }
 }
 
 impl FileSource for RoutedFileSource {
+    fn invalidate(&self, location: &Location) {
+        if location
+            .uri_value()
+            .is_some_and(|uri| uri.starts_with("search://"))
+        {
+            self.search.invalidate(location);
+        } else {
+            self.local.invalidate(location);
+        }
+    }
+
+    fn watch(
+        &self,
+        location: Location,
+        include_hidden: bool,
+        notify: Rc<dyn Fn(DirectoryChange)>,
+    ) -> Option<LoadHandle> {
+        if location
+            .uri_value()
+            .is_some_and(|uri| uri.starts_with("search://"))
+        {
+            None
+        } else {
+            self.local.watch(location, include_hidden, notify)
+        }
+    }
+
+    fn watch_invalidation(&self, location: &Location, notify: Rc<dyn Fn()>) -> Option<LoadHandle> {
+        if location
+            .uri_value()
+            .is_some_and(|uri| uri.starts_with("search://"))
+        {
+            None
+        } else {
+            self.local.watch_invalidation(location, notify)
+        }
+    }
     fn validate_location(&self, location: &Location) -> Result<(), LocationValidationError> {
         if location
             .uri_value()

@@ -32,6 +32,30 @@ enum PendingMonitorChange {
     Rescan,
 }
 
+#[derive(Default)]
+struct PendingMusic {
+    entries: Vec<FileEntry>,
+    bytes: usize,
+    rescan: bool,
+}
+
+impl PendingMusic {
+    fn push(&mut self, entry: &FileEntry) {
+        if self.rescan {
+            return;
+        }
+        let bytes = super::cached_files::entry_bytes(entry);
+        if self.bytes.saturating_add(bytes) > 8 * 1024 * 1024 || self.entries.len() >= 4096 {
+            self.entries = Vec::new();
+            self.bytes = 0;
+            self.rescan = true;
+            return;
+        }
+        self.bytes += bytes;
+        self.entries.push(entry.clone());
+    }
+}
+
 #[expect(dead_code, reason = "Validation error mapping for file paths")]
 fn map_validation_error(error: std::io::Error) -> LocationValidationError {
     match error.kind() {
@@ -47,6 +71,16 @@ fn location_for_file(file: &gio::File) -> Location {
         .unwrap_or_else(|| Location::uri(file.uri()))
 }
 
+fn directory_error_message(location: &Location, error: &glib::Error) -> String {
+    if location.uri_value().is_some_and(|uri| uri.starts_with("trash:"))
+        && error.matches(gio::IOErrorEnum::NotSupported)
+    {
+        "Trash support is unavailable. Install the GVfs trash backend (Arch: sudo pacman -S --needed gvfs), then restart Hermes.".into()
+    } else {
+        error.to_string()
+    }
+}
+
 fn entry_from_info(location: Location, info: gio::FileInfo) -> FileEntry {
     let native_name = info.name().into_os_string();
     let kind = match (info.file_type(), info.is_symlink()) {
@@ -57,7 +91,7 @@ fn entry_from_info(location: Location, info: gio::FileInfo) -> FileEntry {
         (gio::FileType::SymbolicLink, _) => EntryKind::SymbolicLink,
         _ => EntryKind::Other,
     };
-    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location,
+    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location,
         native_name,
         display_name: info.display_name().to_string(),
         kind,
@@ -93,6 +127,9 @@ impl FileSource for LocalFileSource {
         let started = Instant::now();
         tracing::info!(request_id = request_id.0, location = %display_location, "directory load started");
 
+        let cancellation = crate::sandbox::Cancellation::default();
+        let worker_cancellation = cancellation.clone();
+
         let task = glib::MainContext::default().spawn_local(async move {
             let directory = location
                 .native_path()
@@ -111,7 +148,7 @@ impl FileSource for LocalFileSource {
                     tracing::warn!(request_id = request_id.0, error = %error, "directory load failed");
                     emit(DirectoryEvent::Failed {
                         request_id,
-                        message: error.to_string(),
+                        message: directory_error_message(&location, &error),
                     });
                     return;
                 }
@@ -119,9 +156,17 @@ impl FileSource for LocalFileSource {
 
             let mut total_entries = 0usize;
             let mut first_batch = true;
+            let mut music = PendingMusic::default();
             loop {
                 match enumerator
-                    .next_files_future(request.batch_size as i32, glib::Priority::DEFAULT)
+                    .next_files_future(
+                        if first_batch {
+                            request.batch_size.clamp(1, 32)
+                        } else {
+                            request.batch_size.clamp(1, 128)
+                        } as i32,
+                        glib::Priority::DEFAULT,
+                    )
                     .await
                 {
                     Ok(files) if files.is_empty() => {
@@ -132,6 +177,26 @@ impl FileSource for LocalFileSource {
                             "directory load finished"
                         );
                         emit(DirectoryEvent::Finished { request_id });
+                        if worker_cancellation.is_cancelled() {
+                            return;
+                        }
+                        if music.rescan {
+                            enrich_directory_music(
+                                &directory,
+                                request.include_hidden,
+                                request_id,
+                                &emit,
+                                worker_cancellation,
+                            ).await;
+                            break;
+                        }
+                        for chunk in music.entries.chunks(32) {
+                            let entries = super::music_metadata::enrich(chunk.to_vec(), worker_cancellation.clone()).await;
+                            if worker_cancellation.is_cancelled() {
+                                return;
+                            }
+                            emit(DirectoryEvent::MusicMetadata { request_id, entries });
+                        }
                         break;
                     }
                     Ok(files) => {
@@ -143,7 +208,18 @@ impl FileSource for LocalFileSource {
                                 entry_from_info(location_for_file(&child), info)
                             })
                             .collect();
+                        if entries.is_empty() {
+                            continue;
+                        }
                         total_entries += entries.len();
+                        if !music.rescan {
+                            for entry in entries.iter().filter(|entry| crate::app::music_order::is_audio(entry)) {
+                                music.push(entry);
+                                if music.rescan {
+                                    break;
+                                }
+                            }
+                        }
                         if first_batch {
                             tracing::info!(
                                 request_id = request_id.0,
@@ -172,8 +248,49 @@ impl FileSource for LocalFileSource {
 
         LoadHandle::new(move || {
             tracing::debug!(request_id = request_id.0, "directory load cancelled");
+            cancellation.cancel();
             task.abort();
         })
+    }
+
+    fn watch_invalidation(
+        &self,
+        location: &Location,
+        notify: Rc<dyn Fn()>,
+    ) -> Option<LoadHandle> {
+        let path = location.native_path()?;
+        let file = gio::File::for_path(path);
+        let monitor = file
+            .monitor_directory(gio::FileMonitorFlags::WATCH_MOVES, None::<&gio::Cancellable>)
+            .ok()?;
+        monitor.set_rate_limit(0);
+        let directory_notify = notify.clone();
+        monitor.connect_changed(move |_, _, _, _| directory_notify());
+        let mut handles = vec![LoadHandle::new(move || {
+            let _cancelled = monitor.cancel();
+        })];
+        let mut watched_path = path;
+        for _ in 0..64 {
+            let Some(parent) = watched_path.parent() else {
+                return Some(LoadHandle::new(move || drop(handles)));
+            };
+            let watched = gio::File::for_path(watched_path);
+            let monitor = gio::File::for_path(parent)
+                .monitor_directory(gio::FileMonitorFlags::WATCH_MOVES, None::<&gio::Cancellable>)
+                .ok()?;
+            monitor.set_rate_limit(0);
+            let parent_notify = notify.clone();
+            monitor.connect_changed(move |_, file, other_file, _| {
+                if file.equal(&watched) || other_file.is_some_and(|other| other.equal(&watched)) {
+                    parent_notify();
+                }
+            });
+            handles.push(LoadHandle::new(move || {
+                let _cancelled = monitor.cancel();
+            }));
+            watched_path = parent;
+        }
+        None
     }
 
     fn watch(
@@ -272,6 +389,47 @@ impl FileSource for LocalFileSource {
     }
 }
 
+async fn enrich_directory_music(
+    directory: &gio::File,
+    include_hidden: bool,
+    request_id: crate::services::RequestId,
+    emit: &Rc<dyn Fn(DirectoryEvent)>,
+    cancellation: crate::sandbox::Cancellation,
+) {
+    let Ok(enumerator) = directory
+        .enumerate_children_future(
+            ATTRIBUTES,
+            gio::FileQueryInfoFlags::NONE,
+            glib::Priority::DEFAULT,
+        )
+        .await
+    else {
+        return;
+    };
+    while !cancellation.is_cancelled() {
+        let Ok(files) = enumerator.next_files_future(32, glib::Priority::DEFAULT).await else {
+            return;
+        };
+        if files.is_empty() || cancellation.is_cancelled() {
+            return;
+        }
+        let entries = files
+            .into_iter()
+            .filter(|info| include_hidden || !info.is_hidden())
+            .map(|info| entry_from_info(location_for_file(&directory.child(info.name())), info))
+            .filter(crate::app::music_order::is_audio)
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            continue;
+        }
+        let entries = super::music_metadata::enrich(entries, cancellation.clone()).await;
+        if cancellation.is_cancelled() {
+            return;
+        }
+        emit(DirectoryEvent::MusicMetadata { request_id, entries });
+    }
+}
+
 fn merge_pending_change(
     existing: PendingMonitorChange,
     incoming: PendingMonitorChange,
@@ -354,6 +512,9 @@ fn query_monitored_entry(
         match result {
             Ok(info) if include_hidden || !info.is_hidden() => {
                 let entry = entry_from_info(Location::local(path), info);
+                let mut entries = super::music_metadata::enrich(vec![entry], crate::sandbox::Cancellation::default()).await;
+                if cancelled.get() { return; }
+                let entry = entries.remove(0);
                 if let Some(from) = moved_from {
                     notify(DirectoryChange::Move {
                         from: Location::local(from),

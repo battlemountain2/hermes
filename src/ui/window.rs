@@ -14,7 +14,7 @@ use crate::{
     adapters::{LocalOperationProvider, LocalPreviewProvider, LocalTrailStore, RoutedFileSource},
     app::{Browser, BrowserEvent, Trails},
     model::{
-        EntryKind, Location, MetadataValue, Trail, TrailBrowserDensity,
+        Location, Trail, TrailBrowserDensity,
         TrailBrowserMode, TrailViewState,
     },
 };
@@ -86,11 +86,25 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     let controller = browser.browser();
     controller.set_preferences(initial_view.preferences);
     let preview = PreviewDrawer::new(Rc::new(LocalPreviewProvider));
+    let music_player = super::music::MusicPlayer::for_application(application);
+    install_audio_playback_coordination(&window, &preview, music_player.controller());
+    let activated_music = music_player.clone();
+    let activated_music_preview = preview.clone();
+    browser.set_open_handler(Rc::new(move |location| {
+        let Some(path) = location.native_path() else { return false; };
+        if crate::services::classify_by_name(path.as_os_str()) != crate::services::FormatFamily::Audio {
+            return false;
+        }
+        activated_music_preview.close();
+        activated_music.play_folder(path.to_owned());
+        true
+    }));
     let preview_for_selection = preview.clone();
     let weak_controller = Rc::downgrade(&controller);
     let observed_trails = trails.clone();
     controller.observe(move |event| match event {
-        BrowserEvent::ColumnAdded { .. } | BrowserEvent::ColumnsTruncated { .. } => {
+        BrowserEvent::ColumnAdded { .. } | BrowserEvent::ColumnsTruncated { .. }
+        | BrowserEvent::TabRestored { .. } => {
             let Some(browser) = weak_controller.upgrade() else {
                 return;
             };
@@ -123,6 +137,14 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     let header = gtk::HeaderBar::new();
     header.set_show_title_buttons(false);
     header.set_title_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
+    let music_toggle = gtk::ToggleButton::builder()
+        .tooltip_text("Music player · Ctrl+M")
+        .build();
+    music_toggle.set_child(Some(&crate::assets::primary_icon(
+        crate::assets::icons::MUSIC,
+        18,
+    )));
+    music_toggle.add_css_class("header-action");
     let sidebar_toggle = gtk::ToggleButton::builder()
         .active(initial_view.sidebar_open)
         .tooltip_text("Toggle sidebar")
@@ -146,27 +168,50 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         sidebar_open: captured_sidebar.is_active(),
         preview_open: captured_preview.is_open(),
     });
+    let mode_action = gio::SimpleAction::new_stateful(
+        "view-mode",
+        Some(glib::VariantTy::STRING),
+        &browser.view_mode().action_name().to_variant(),
+    );
+    let mode_browser = browser.clone();
+    let mode_preferences = theme_manager.clone();
+    let mode_trails = trails.clone();
+    let mode_capture = capture_view.clone();
+    mode_action.connect_activate(move |action, parameter| {
+        let Some(mode) = parameter
+            .and_then(|parameter| parameter.str())
+            .and_then(BrowserMode::from_action_name)
+        else {
+            return;
+        };
+        mode_browser.set_view_mode(mode);
+        mode_preferences.set_browser_mode(mode);
+        action.set_state(&mode.action_name().to_variant());
+        if let Err(error) = mode_trails.update_active_view(mode_capture()) {
+            tracing::warn!(%error, "unable to save Trail view mode");
+        }
+    });
+    window.add_action(&mode_action);
     let activated_browser = browser.clone();
-    let activated_controller = controller.clone();
     let activated_sidebar = sidebar_toggle.clone();
     let activated_preview = preview.clone();
+    let file_workspace_toggle = music_toggle.clone();
+    let activated_trails = trails.clone();
+    let activated_view = capture_view.clone();
     let activate_tab: Rc<dyn Fn(Trail)> = Rc::new(move |trail| {
-        activated_browser.set_view_mode(browser_mode(trail.view.browser_mode));
-        activated_browser.set_density(browser_density(trail.view.density));
-        activated_controller.set_preferences(trail.view.preferences);
+        file_workspace_toggle.set_active(false);
+        activated_preview.close();
+        activated_browser.activate_tab(&trail);
         activated_sidebar.set_active(trail.view.sidebar_open);
-        if !trail.view.preview_open {
-            activated_preview.close();
-        }
-        if let Some(location) = trail.active_location() {
-            activated_controller.navigate(location.clone());
+        if let Err(error) = activated_trails.update_active_view(activated_view()) {
+            tracing::warn!(%error, "unable to save activated tab view");
         }
     });
     let tab_bar = TabBar::new(
         trails.clone(),
         controller.clone(),
         capture_view.clone(),
-        activate_tab,
+        activate_tab.clone(),
     );
     let context_trails = trails.clone();
     let context_view = capture_view.clone();
@@ -179,6 +224,7 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         if matches!(
             event,
             BrowserEvent::ColumnAdded { .. }
+                | BrowserEvent::TabRestored { .. }
                 | BrowserEvent::ColumnsTruncated { .. }
                 | BrowserEvent::SortingFinished { .. }
                 | BrowserEvent::PreviewRequested { .. }
@@ -192,6 +238,7 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         if matches!(
             event,
             BrowserEvent::EntriesInserted { .. }
+                | BrowserEvent::TabRestored { .. }
                 | BrowserEvent::EntriesReplaced { .. }
                 | BrowserEvent::EntriesSpliced { .. }
                 | BrowserEvent::SelectionSetChanged { .. }
@@ -234,6 +281,7 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         }
     });
     header.pack_start(&sidebar_toggle);
+    header.pack_start(&music_toggle);
     header.pack_start(&browser.location_widget());
     let search_button = gtk::Button::builder()
         .tooltip_text("Search (Ctrl+K)")
@@ -354,7 +402,46 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         &preview_split,
         Rc::new(move || measured_content.position() + measured_browser.preview_occupied_width()),
     );
-    root.append(&preview_split);
+    let workspace = gtk::Stack::new();
+    workspace.set_vexpand(true);
+    workspace.add_named(&preview_split, Some("files"));
+    workspace.add_named(&music_player.view(), Some("music"));
+    workspace.set_visible_child_name("files");
+    root.append(&workspace);
+    root.append(&music_player.bar());
+    let shown_workspace = workspace.clone();
+    music_toggle.connect_toggled(move |button| {
+        shown_workspace.set_visible_child_name(if button.is_active() { "music" } else { "files" });
+    });
+    let artwork_music_toggle = music_toggle.downgrade();
+    music_player.connect_open_player(Rc::new(move || {
+        if let Some(toggle) = artwork_music_toggle.upgrade() {
+            toggle.set_active(true);
+        }
+    }));
+    let music_action = gio::SimpleAction::new("music", None);
+    let toggled_music = music_toggle;
+    music_action.connect_activate(move |_, _| toggled_music.set_active(!toggled_music.is_active()));
+    window.add_action(&music_action);
+    application.set_accels_for_action("win.music", &["<Control>m"]);
+    let play_music = gio::SimpleAction::new("play-music-selection", None);
+    let selected_music = music_player.clone();
+    let selected_controller = controller.clone();
+    let selected_preview = preview.clone();
+    play_music.connect_activate(move |_, _| {
+        let entries = selected_controller.selected_entries();
+        if entries.iter().any(crate::app::music_order::is_audio) {
+            selected_preview.close();
+            selected_music.play_files(entries);
+        }
+    });
+    window.add_action(&play_music);
+    application.set_accels_for_action("win.play-music-selection", &["<Control>Return"]);
+    let queue_music = gio::SimpleAction::new("queue-music-selection", None);
+    let queued_music = music_player.clone();
+    let queued_controller = controller.clone();
+    queue_music.connect_activate(move |_, _| queued_music.queue_files(queued_controller.selected_entries()));
+    window.add_action(&queue_music);
 
     let window_overlay = gtk::Overlay::new();
     let blurred_root = BlurBin::new(&root);
@@ -374,13 +461,7 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         if search_preferences.search_open_files_directly() {
             search_controller.open_location(location);
         } else {
-            search_preview.show(crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location,
-                native_name: item.path.file_name().unwrap_or_default().to_os_string(),
-                display_name: item.name,
-                kind: EntryKind::File,
-                size: MetadataValue::Unknown,
-                modified_unix_seconds: MetadataValue::Unknown,
-            })));
+            search_preview.show(item.file_entry());
         }
     });
     let dismissed_search_root = blurred_root.clone();
@@ -390,6 +471,19 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         dismissed_search_button.remove_css_class("active");
     });
     let search_dialog = SearchDialog::new(activate_search_result, dismiss_search);
+    let result_tabs = trails.clone();
+    let activate_results = activate_tab;
+    search_dialog.set_open_results(Rc::new(move |uri| {
+        let location = Location::uri(uri);
+        match result_tabs.create("Search", location, TrailViewState::default()) {
+            Ok(id) => {
+                if let Some(trail) = result_tabs.all().into_iter().find(|trail| trail.id == id) {
+                    activate_results(trail);
+                }
+            }
+            Err(error) => tracing::warn!(%error, "unable to create search results tab"),
+        }
+    }));
     window_overlay.add_overlay(&search_dialog.widget());
     let shown_search = search_dialog.clone();
     let search_browser = controller.clone();
@@ -427,6 +521,17 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     });
     window.add_action(&search_action);
     application.set_accels_for_action("win.search", &["<Control>k"]);
+    let music_search_action = gio::SimpleAction::new("search-music", None);
+    let music_search_dialog = search_dialog.clone();
+    let music_search_root = blurred_root.clone();
+    let music_search_button = search_button.clone();
+    music_search_action.connect_activate(move |_, _| {
+        music_search_button.add_css_class("active");
+        music_search_root.set_blurred(true);
+        music_search_dialog.show_music();
+    });
+    window.add_action(&music_search_action);
+    application.set_accels_for_action("win.search-music", &["<Control><Shift>k"]);
 
     let weak_sidebar = Rc::downgrade(&sidebar.state);
     let weak_folder_tree = folder_tree.downgrade();
@@ -502,15 +607,50 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         capture_view,
     );
     install_mouse_navigation(&window, &controller);
-    browser.navigate(location);
+    if let Some(id) = trails.active_id()
+        && let Some(mut trail) = trails.all().into_iter().find(|trail| trail.id == id)
+    {
+        trail.locations = Location::local(&location).breadcrumbs();
+        browser.activate_tab(&trail);
+    } else {
+        browser.navigate(location);
+    }
 
     let browser_controller = browser.browser();
     window.connect_destroy(move |_| {
+        music_player.dispose_view();
         browser_controller.clear_observer();
         sidebar.disconnect();
     });
     window.present();
     crate::metrics::mark_window_presented();
+}
+
+pub(crate) fn install_audio_playback_coordination(
+    window: &gtk::ApplicationWindow,
+    preview: &PreviewDrawer,
+    music_controller: Rc<super::music::controller::Controller>,
+) {
+    let paused_music_controller = Rc::downgrade(&music_controller);
+    preview.set_audio_play_handler(Rc::new(move || {
+        if let Some(controller) = paused_music_controller.upgrade() {
+            controller.pause();
+        }
+    }));
+    let paused_audio_preview = preview.clone();
+    let resumed_music_controller = Rc::downgrade(&music_controller);
+    let observer: Rc<dyn Fn()> = Rc::new(move || {
+        if resumed_music_controller.upgrade().is_some_and(|controller| {
+            controller.status() == super::music::controller::PlaybackStatus::Playing
+        }) {
+            paused_audio_preview.pause_audio_preview();
+        }
+    });
+    music_controller.observe(&observer);
+    let retained_observer = RefCell::new(Some(observer));
+    window.connect_destroy(move |_| {
+        retained_observer.take();
+    });
 }
 
 fn install_mouse_navigation(window: &gtk::ApplicationWindow, browser: &Rc<Browser>) {
@@ -658,11 +798,14 @@ fn install_keyboard_navigation(
         let shift = modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK);
         if control && matches!(key, gtk::gdk::Key::k | gtk::gdk::Key::K) {
             if let Err(error) =
-                gtk::prelude::WidgetExt::activate_action(&dialog_parent, "win.search", None)
+                gtk::prelude::WidgetExt::activate_action(&dialog_parent, if shift { "win.search-music" } else { "win.search" }, None)
             {
                 tracing::warn!(%error, "unable to activate global search shortcut");
             }
             return glib::Propagation::Stop;
+        }
+        if !view.widget().is_mapped() {
+            return glib::Propagation::Proceed;
         }
         if key == gtk::gdk::Key::F2 && view.begin_rename() {
             return glib::Propagation::Stop;
@@ -764,6 +907,14 @@ fn install_keyboard_navigation(
         }
         if view.filter_has_focus() && !control && !alt {
             return glib::Propagation::Proceed;
+        }
+        if !control && !alt && !modifiers.contains(gtk::gdk::ModifierType::SUPER_MASK)
+            && matches!(key, gtk::gdk::Key::f | gtk::gdk::Key::F)
+            && !gtk::prelude::RootExt::focus(&dialog_parent).is_some_and(|focus|
+                focus.is::<gtk::Editable>() || focus.is::<gtk::TextView>())
+            && preview.open_fullscreen()
+        {
+            return glib::Propagation::Stop;
         }
         if key == gtk::gdk::Key::BackSpace && !control && !alt {
             view.navigate_up();
@@ -994,6 +1145,13 @@ fn build_appearance_menu(
         .position(gtk::PositionType::Bottom)
         .build();
     popover.add_css_class("appearance-popover");
+    let mode_view = view.clone();
+    popover.connect_show(move |_| {
+        let mode = mode_view.view_mode();
+        list_check.set_visible(mode == BrowserMode::Columns);
+        grid_check.set_visible(mode == BrowserMode::Grid);
+        explorer_check.set_visible(mode == BrowserMode::Explorer);
+    });
     let button = gtk::MenuButton::builder()
         .tooltip_text("Appearance")
         .popover(&popover)
@@ -1133,13 +1291,13 @@ impl SidebarState {
             .filter(|(location, _)| !is_standard_place_location(location))
             .cloned()
             .collect::<Vec<_>>();
-        if !pinned.is_empty() {
-            self.append_separator();
-            self.append_heading("PINNED");
-            for (location, name) in pinned {
-                self.append_pinned_place(&name, location);
-            }
+        self.append_separator();
+        self.append_heading("PINNED");
+        for (location, name) in &pinned {
+            self.append_pin_insertion_zone(Some(location.clone()), false);
+            self.append_pinned_place(name, location.clone());
         }
+        self.append_pin_insertion_zone(None, pinned.is_empty());
 
         let volumes = self.volume_monitor.volumes();
         let mounts: Vec<_> = self
@@ -1170,18 +1328,131 @@ impl SidebarState {
     }
 
     fn pin_location(self: &Rc<Self>, location: Location, name: String) {
-        if is_standard_place_location(&location)
-            || self
+        self.pin_locations(vec![(location, name)]);
+    }
+
+    fn pin_locations(self: &Rc<Self>, folders: Vec<(Location, String)>) {
+        self.pin_locations_before(folders, None);
+    }
+
+    fn pin_locations_before(
+        self: &Rc<Self>,
+        folders: Vec<(Location, String)>,
+        before: Option<Location>,
+    ) {
+        let mut places = self.pinned_places.borrow_mut();
+        let folders = folders
+            .into_iter()
+            .filter(|(location, _)| !is_standard_place_location(location))
+            .collect();
+        if !insert_pinned_places(&mut places, folders, before.as_ref()) {
+            return;
+        }
+        save_pinned_places(places.clone());
+        drop(places);
+        self.rebuild();
+    }
+
+    fn append_pin_insertion_zone(self: &Rc<Self>, before: Option<Location>, empty: bool) {
+        let zone = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        if empty {
+            zone.add_css_class("sidebar-pin-drop-zone");
+            zone.set_size_request(-1, 56);
+            zone.append(&crate::assets::primary_icon(crate::assets::icons::PIN, 14));
+            let label = gtk::Label::new(Some("Drop folders here to pin"));
+            label.set_xalign(0.0);
+            label.set_wrap(true);
+            zone.append(&label);
+        } else {
+            zone.add_css_class("sidebar-pin-insertion-zone");
+            zone.set_size_request(-1, 10);
+        }
+        zone.set_tooltip_text(Some("Drop folders here to add or arrange pins"));
+        let drop = gtk::DropTarget::new(
+            gtk::gdk::FileList::static_type(),
+            gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE,
+        );
+        drop.connect_enter(|target, _, _| pin_drop_action(target));
+        drop.connect_motion(|target, _, _| pin_drop_action(target));
+        drop.connect_accept(|_, offered| {
+            tracing::info!(formats = %offered.formats().to_string(), actions = ?offered.actions(), "pin drop offered");
+            (offered.formats().contains_type(gtk::gdk::FileList::static_type())
+                || offered.formats().contain_mime_type("text/uri-list"))
+                && !preferred_pin_drop_action(offered.actions(), offered.drag().is_some()).is_empty()
+        });
+        let weak_state = Rc::downgrade(self);
+        let before_files = before.clone();
+        drop.connect_drop(move |_, value, _, _| {
+            let Some(sources) = super::browser::locations_from_file_list_value(value) else {
+                tracing::warn!("pin drop had no file locations");
+                return false;
+            };
+            tracing::info!(sources = ?sources, "pin drop received");
+            let weak_state = weak_state.clone();
+            let before = before_files.clone();
+            glib::MainContext::default().spawn_local(async move {
+                let folders = dropped_folder_bookmarks(sources).await;
+                tracing::info!(folders = ?folders, "pin drop folders resolved");
+                if let Some(state) = weak_state.upgrade() {
+                    state.pin_locations_before(folders, before);
+                }
+            });
+            true
+        });
+        zone.add_controller(drop);
+        let reorder = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+        reorder.connect_accept(|_, offered| sidebar_reorder_formats(&offered.formats()));
+        let weak_state = Rc::downgrade(self);
+        reorder.connect_drop(move |_, value, _, _| {
+            let Ok(source) = value.get::<String>() else {
+                return false;
+            };
+            let Some(uri) = source.strip_prefix("hermes-pin:") else {
+                return false;
+            };
+            let location = super::browser::location_for_gio_file(&gio::File::for_uri(uri));
+            let Some(state) = weak_state.upgrade() else {
+                return false;
+            };
+            let folder = state
                 .pinned_places
                 .borrow()
                 .iter()
-                .any(|(pinned, _)| pinned == &location)
-        {
-            return;
-        }
-        self.pinned_places.borrow_mut().push((location, name));
-        save_pinned_places(self.pinned_places.borrow().clone());
-        self.rebuild();
+                .find(|(pinned, _)| pinned == &location)
+                .cloned();
+            let Some(folder) = folder else {
+                return false;
+            };
+            state.pin_locations_before(vec![folder], before.clone());
+            true
+        });
+        zone.add_controller(reorder);
+        self.widget.append(&zone);
+    }
+
+    fn install_file_drop_target(&self, row: &gtk::Button, destination: Location) {
+        let actions = if destination.uri_value() == Some("trash:///") {
+            gtk::gdk::DragAction::MOVE
+        } else {
+            gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE
+        };
+        let drop = gtk::DropTarget::new(gtk::gdk::FileList::static_type(), actions);
+        let entered_destination = destination.clone();
+        drop.connect_enter(move |target, _, _| sidebar_drop_action(target, &entered_destination));
+        let hovered_destination = destination.clone();
+        drop.connect_motion(move |target, _, _| sidebar_drop_action(target, &hovered_destination));
+        let view = self.view.clone();
+        drop.connect_drop(move |target, value, _, _| {
+            let Some(sources) = super::browser::locations_from_file_list_value(value) else {
+                return false;
+            };
+            view.drop_sidebar_files(
+                destination.clone(),
+                sources,
+                sidebar_drop_action(target, &destination),
+            )
+        });
+        row.add_controller(drop);
     }
 
     fn unpin_location(self: &Rc<Self>, location: &Location) {
@@ -1218,6 +1489,7 @@ impl SidebarState {
         row.add_css_class("reorderable");
         row.set_cursor_from_name(Some("grab"));
         row.set_tooltip_text(Some("trash:///"));
+        self.install_file_drop_target(&row, location.clone());
         self.place_rows
             .borrow_mut()
             .push((location.clone(), row.clone()));
@@ -1305,6 +1577,7 @@ impl SidebarState {
         row.add_controller(drag);
 
         let drop = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+        drop.connect_accept(|_, offered| sidebar_reorder_formats(&offered.formats()));
         let weak_state = Rc::downgrade(self);
         let target_row = row.clone();
         drop.connect_drop(move |_, value, _, y| {
@@ -1313,6 +1586,9 @@ impl SidebarState {
             };
             let after = y >= f64::from(target_row.height()) / 2.0;
             if let Some(state) = weak_state.upgrade() {
+                if !state.place_order.borrow().contains(&source.as_str()) {
+                    return false;
+                }
                 state.reorder_place(&source, id, after);
                 return true;
             }
@@ -1332,6 +1608,7 @@ impl SidebarState {
         row.add_css_class("reorderable");
         row.set_cursor_from_name(Some("grab"));
         row.set_tooltip_text(Some(&location.display_path()));
+        self.install_file_drop_target(&row, location.clone());
         self.place_rows
             .borrow_mut()
             .push((location.clone(), row.clone()));
@@ -1398,6 +1675,7 @@ impl SidebarState {
                 .path()
                 .map(Location::local)
                 .unwrap_or_else(|| Location::uri(root.uri()));
+            self.install_file_drop_target(&row, location.clone());
             self.place_rows.borrow_mut().push((location, row.clone()));
         }
         let weak_browser = Rc::downgrade(&self.browser);
@@ -1570,6 +1848,18 @@ impl SidebarState {
 
     fn append_pinned_place(self: &Rc<Self>, name: &str, location: Location) {
         let row = self.append_place(crate::assets::icons::FOLDER, name, location.clone());
+        let drag = gtk::DragSource::builder()
+            .actions(gtk::gdk::DragAction::MOVE)
+            .build();
+        let uri = location
+            .native_path()
+            .map(gio::File::for_path)
+            .unwrap_or_else(|| gio::File::for_uri(location.uri_value().unwrap_or_default()))
+            .uri();
+        drag.connect_prepare(move |_, _, _| {
+            Some(gtk::gdk::ContentProvider::for_value(&format!("hermes-pin:{uri}").to_value()))
+        });
+        row.add_controller(drag);
         let menu = gtk::Box::new(gtk::Orientation::Vertical, 0);
         menu.add_css_class("folder-context-menu");
         let unpin = sidebar_context_option(crate::assets::icons::PIN, "Unpin", false);
@@ -1718,6 +2008,7 @@ impl SidebarState {
     fn append_place(&self, icon: &str, name: &str, location: Location) -> gtk::Button {
         let row = sidebar_button(icon, name);
         row.set_tooltip_text(Some(&location.display_path()));
+        self.install_file_drop_target(&row, location.clone());
         self.place_rows
             .borrow_mut()
             .push((location.clone(), row.clone()));
@@ -1733,6 +2024,91 @@ impl SidebarState {
         self.widget.append(&row);
         row
     }
+}
+
+fn sidebar_reorder_formats(formats: &gtk::gdk::ContentFormats) -> bool {
+    !formats.contains_type(gtk::gdk::FileList::static_type())
+        && !formats.contain_mime_type("text/uri-list")
+        && formats.contains_type(String::static_type())
+}
+
+fn pin_drop_action(target: &gtk::DropTarget) -> gtk::gdk::DragAction {
+    target
+        .current_drop()
+        .map_or(gtk::gdk::DragAction::empty(), |drop| {
+            preferred_pin_drop_action(drop.actions(), drop.drag().is_some())
+        })
+}
+
+fn preferred_pin_drop_action(actions: gtk::gdk::DragAction, local: bool) -> gtk::gdk::DragAction {
+    if actions.contains(gtk::gdk::DragAction::COPY) {
+        gtk::gdk::DragAction::COPY
+    } else if local && actions.contains(gtk::gdk::DragAction::MOVE) {
+        gtk::gdk::DragAction::MOVE
+    } else {
+        gtk::gdk::DragAction::empty()
+    }
+}
+
+fn sidebar_drop_action(target: &gtk::DropTarget, destination: &Location) -> gtk::gdk::DragAction {
+    let Some(drop) = target.current_drop() else {
+        return gtk::gdk::DragAction::empty();
+    };
+    preferred_sidebar_drop_action(
+        drop.actions(),
+        drop.drag().is_some(),
+        target.current_event_state(),
+        destination.uri_value() == Some("trash:///"),
+    )
+}
+
+fn preferred_sidebar_drop_action(
+    actions: gtk::gdk::DragAction,
+    local: bool,
+    modifiers: gtk::gdk::ModifierType,
+    trash: bool,
+) -> gtk::gdk::DragAction {
+    let requested = if modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK) {
+        Some(gtk::gdk::DragAction::COPY)
+    } else if trash || modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK) {
+        Some(gtk::gdk::DragAction::MOVE)
+    } else {
+        None
+    };
+    if let Some(action) = requested {
+        if actions.contains(action) && !(trash && action == gtk::gdk::DragAction::COPY) {
+            action
+        } else {
+            gtk::gdk::DragAction::empty()
+        }
+    } else {
+        super::browser::preferred_file_drop_action(actions, local)
+    }
+}
+
+async fn dropped_folder_bookmarks(sources: Vec<Location>) -> Vec<(Location, String)> {
+    let mut folders = Vec::new();
+    for location in sources {
+        let Some(path) = location.native_path() else {
+            continue;
+        };
+        if folders.iter().any(|(pinned, _)| pinned == &location) {
+            continue;
+        }
+        let file = gio::File::for_path(path);
+        if let Ok(info) = file
+            .query_info_future(
+                "standard::type,standard::display-name",
+                gio::FileQueryInfoFlags::NONE,
+                glib::Priority::DEFAULT,
+            )
+            .await
+            && info.file_type() == gio::FileType::Directory
+        {
+            folders.push((location, info.display_name().to_string()));
+        }
+    }
+    folders
 }
 
 fn select_sidebar_row(sidebar: &gtk::Box, selected: &gtk::Button) {
@@ -1762,6 +2138,35 @@ fn reorder_places(order: &mut Vec<&'static str>, source: &str, target: &str, aft
     true
 }
 
+fn insert_pinned_places(
+    places: &mut Vec<(Location, String)>,
+    folders: Vec<(Location, String)>,
+    before: Option<&Location>,
+) -> bool {
+    let original = places.clone();
+    let mut incoming = Vec::new();
+    for (location, name) in folders {
+        if incoming.iter().any(|(pinned, _)| pinned == &location) {
+            continue;
+        }
+        let name = places
+            .iter()
+            .find(|(pinned, _)| pinned == &location)
+            .map_or(name, |(_, existing)| existing.clone());
+        incoming.push((location, name));
+    }
+    let target = before
+        .and_then(|before| places.iter().position(|(pinned, _)| pinned == before))
+        .unwrap_or(places.len());
+    let removed_before = places[..target]
+        .iter()
+        .filter(|(pinned, _)| incoming.iter().any(|(location, _)| location == pinned))
+        .count();
+    places.retain(|(pinned, _)| !incoming.iter().any(|(location, _)| location == pinned));
+    places.splice(target - removed_before..target - removed_before, incoming);
+    *places != original
+}
+
 fn remove_pinned_place(places: &mut Vec<(Location, String)>, location: &Location) -> bool {
     let original_len = places.len();
     places.retain(|(pinned, _)| pinned != location);
@@ -1779,6 +2184,7 @@ fn is_standard_place_location(location: &Location) -> bool {
         glib::UserDirectory::Desktop,
         glib::UserDirectory::Documents,
         glib::UserDirectory::Downloads,
+        glib::UserDirectory::Music,
         glib::UserDirectory::Pictures,
         glib::UserDirectory::Videos,
     ]
@@ -1812,6 +2218,11 @@ fn standard_place(id: &str) -> Option<(&'static str, &'static str, glib::UserDir
             crate::assets::icons::PICTURES,
             "Pictures",
             glib::UserDirectory::Pictures,
+        )),
+        "music" => Some((
+            crate::assets::icons::MUSIC,
+            "Music",
+            glib::UserDirectory::Music,
         )),
         "videos" => Some((
             crate::assets::icons::VIDEOS,
@@ -1973,12 +2384,13 @@ fn place_order_path() -> PathBuf {
 }
 
 fn load_place_order() -> Vec<&'static str> {
-    const DEFAULT: [&str; 7] = [
+    const DEFAULT: [&str; 8] = [
         "home",
         "trash",
         "desktop",
         "documents",
         "downloads",
+        "music",
         "pictures",
         "videos",
     ];
@@ -1993,6 +2405,7 @@ fn load_place_order() -> Vec<&'static str> {
                     "desktop" => Some("desktop"),
                     "documents" => Some("documents"),
                     "downloads" => Some("downloads"),
+                    "music" => Some("music"),
                     "pictures" => Some("pictures"),
                     "videos" => Some("videos"),
                     _ => None,

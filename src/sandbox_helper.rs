@@ -11,7 +11,10 @@ use gdk_pixbuf::prelude::*;
 use gtk::gio;
 
 pub(crate) mod archive_cover;
+mod heif;
+mod jpeg;
 pub(crate) mod audio;
+pub(crate) mod waveform;
 pub(crate) mod geotiff;
 pub(crate) mod model;
 pub(crate) mod sniff;
@@ -38,6 +41,22 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         fs::write(output, text).map_err(|error| error.to_string())?;
         return Ok(());
     }
+    if operation == "preview-audio-metadata" {
+        let metadata = audio::read_audio_metadata(input)?;
+        fs::write(output, metadata).map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    if operation == "music-tags" {
+        let tags = audio::read_music_tags(input)?;
+        fs::write(output, tags).map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    if operation == "music-waveform" {
+        let peaks = waveform::analyze(input)?;
+        let json = serde_json::to_vec(&peaks).map_err(|error| error.to_string())?;
+        fs::write(output, json).map_err(|error| error.to_string())?;
+        return Ok(());
+    }
     if operation == "extract-spreadsheet-text" {
         let text = table::extract_spreadsheet_text(input, value.max(1) as usize)?;
         fs::write(output, text).map_err(|error| error.to_string())?;
@@ -56,7 +75,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
 
     let (png, metadata) = match operation.as_str() {
         "thumbnail-image" => (render_image(input, value.clamp(16, 256))?, None),
-        "thumbnail-heif" => (render_imagemagick(input, value.clamp(16, 256))?, None),
+        "thumbnail-heif" => (render_heif_thumbnail(input, value.clamp(16, 256))?, None),
         "thumbnail-raw" => (render_raw(input, value.clamp(16, 256))?, None),
         "thumbnail-pdf" => (render_pdf_thumbnail(input, value.clamp(16, 256))?, None),
         "thumbnail-video" => (render_media(input, value.clamp(16, 256))?, None),
@@ -71,6 +90,10 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         }
         "preview-media" => {
             render_media_preview(input, output)?;
+            return Ok(());
+        }
+        "preview-animation" => {
+            render_animation_preview(input, output)?;
             return Ok(());
         }
         "preview-audio" => {
@@ -109,9 +132,17 @@ fn render_pixbuf(path: &Path, size: i32) -> Result<Vec<u8>, String> {
 }
 
 pub(crate) fn render_image(path: &Path, size: i32) -> Result<Vec<u8>, String> {
+    if size <= 256 && let Some(png) = jpeg::thumbnail(path, size) {
+        return Ok(png);
+    }
     if let Some((width, height)) = sniff::image_dimensions(path) {
         if sniff::exceeds_decoded_frame_budget(width, height) {
-            if let Some(png) = sniff::read_exif_thumbnail(path, size) {
+            if u64::from(width) * u64::from(height) <= sniff::MAX_PIXELS_CEILING
+                && sniff::is_jpeg(path)
+            {
+                return render_imagemagick(path, size);
+            }
+            if !sniff::is_jpeg(path) && let Some(png) = sniff::read_exif_thumbnail(path, size) {
                 return Ok(png);
             }
             return Err("Image dimensions exceed the decoded frame budget".to_owned());
@@ -135,11 +166,26 @@ pub(crate) fn render_raw(path: &Path, size: i32) -> Result<Vec<u8>, String> {
 }
 
 fn render_imagemagick(path: &Path, size: i32) -> Result<Vec<u8>, String> {
+    let (width, height) = sniff::image_dimensions(path)
+        .map(|(width, height)| sniff::image_target_dimensions(width, height, size))
+        .unwrap_or((size.max(1) as u32, size.max(1) as u32));
     for executable in ["magick", "convert"] {
-        let output = Command::new(executable)
-            .arg(path)
+        let input = std::fs::File::open(path).map_err(|error| error.to_string())?;
+        let mut command = Command::new(executable);
+        if sniff::is_jpeg(path) {
+            command
+                .args([
+                    "-limit", "memory", "96MiB", "-limit", "map", "0", "-limit", "disk", "0",
+                ])
+                .arg("-define")
+                .arg(format!("jpeg:size={width}x{height}"));
+        }
+        let output = command
+            .arg("-")
+            .stdin(std::process::Stdio::from(input))
             .args(["-auto-orient", "-thumbnail"])
             .arg(format!("{size}x{size}"))
+            .args(["-define", "png:compression-level=1"])
             .arg("png:-")
             .output();
         if let Ok(output) = output
@@ -150,6 +196,14 @@ fn render_imagemagick(path: &Path, size: i32) -> Result<Vec<u8>, String> {
         }
     }
     Err("ImageMagick could not render this image".to_owned())
+}
+
+pub(crate) fn render_heif_thumbnail(path: &Path, size: i32) -> Result<Vec<u8>, String> {
+    heif::thumbnail(path, size).or_else(|_| render_imagemagick(path, size))
+}
+
+pub(crate) fn render_heif_preview(path: &Path) -> Result<Vec<u8>, String> {
+    render_imagemagick(path, 1400)
 }
 
 fn render_dcraw(path: &Path, size: i32) -> Result<Vec<u8>, String> {
@@ -430,8 +484,28 @@ fn render_pdf_surface(
 }
 
 fn render_media_preview(path: &Path, output: &Path) -> Result<(), String> {
+    let mut status = render_media_preview_attempt(path, output, false)?;
+    if media_preview_should_retry(status) {
+        status = render_media_preview_attempt(path, output, true)?;
+    }
+    status.success().then_some(())
+        .ok_or_else(|| format!("Unable to normalize media preview: ffmpeg {status}"))
+}
+
+fn media_preview_should_retry(status: std::process::ExitStatus) -> bool {
+    use std::os::unix::process::ExitStatusExt;
+    matches!(status.signal(), Some(9 | 24))
+}
+
+fn render_media_preview_attempt(path: &Path, output: &Path, compact: bool) -> Result<std::process::ExitStatus, String> {
+    let duration = if compact { compact_media_duration(path) } else { "30" };
+    let filter = if compact {
+        "fps=24,scale=w='min(640,iw)':h='min(480,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2"
+    } else {
+        "fps=30,scale=w='min(960,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2"
+    };
     let status = Command::new("ffmpeg")
-        .args(["-nostdin", "-v", "error", "-threads", "2", "-i"])
+        .args(["-nostdin", "-v", "error", "-threads", "2", "-filter_threads", "2", "-i"])
         .arg(path)
         .args([
             "-map",
@@ -441,9 +515,9 @@ fn render_media_preview(path: &Path, output: &Path) -> Result<(), String> {
             "-sn",
             "-dn",
             "-t",
-            "30",
+            duration,
             "-vf",
-            "scale=w='min(1280,iw)':h=-2:force_original_aspect_ratio=decrease",
+            filter,
             "-c:v",
             "libvpx",
             "-threads",
@@ -453,11 +527,11 @@ fn render_media_preview(path: &Path, output: &Path) -> Result<(), String> {
             "-cpu-used",
             "8",
             "-b:v",
-            "2M",
+            if compact { "1M" } else { "2M" },
             "-maxrate",
-            "3M",
+            if compact { "2M" } else { "3M" },
             "-bufsize",
-            "4M",
+            if compact { "2M" } else { "4M" },
             "-c:a",
             "libopus",
             "-b:a",
@@ -469,10 +543,7 @@ fn render_media_preview(path: &Path, output: &Path) -> Result<(), String> {
         .arg(output)
         .status()
         .map_err(|error| error.to_string())?;
-    status
-        .success()
-        .then_some(())
-        .ok_or_else(|| "Unable to normalize media preview".to_owned())
+    Ok(status)
 }
 
 fn render_audio_preview(path: &Path, output: &Path) -> Result<(), String> {
@@ -520,6 +591,41 @@ fn render_audio_preview(path: &Path, output: &Path) -> Result<(), String> {
         .success()
         .then_some(())
         .ok_or_else(|| "Unable to normalize audio preview".to_owned())
+}
+
+fn compact_media_duration(path: &Path) -> &'static str {
+    let probe = Command::new("ffprobe").args(["-v", "error", "-threads", "2",
+        "-probesize", "65536", "-analyzeduration", "0", "-select_streams", "v:0",
+        "-show_entries", "stream=codec_name,width,height,r_frame_rate", "-of", "json"])
+        .arg(path).output();
+    probe.ok().filter(|output| output.status.success() && output.stdout.len() <= 65536)
+        .map(|output| compact_duration_from_probe(&output.stdout)).unwrap_or("30")
+}
+
+fn compact_duration_from_probe(data: &[u8]) -> &'static str {
+    let Ok(probe) = serde_json::from_slice::<serde_json::Value>(data) else { return "30"; };
+    let Some(stream) = probe.get("streams").and_then(|streams| streams.get(0)) else { return "30"; };
+    let pixels = stream.get("width").and_then(|value| value.as_u64()).unwrap_or(0)
+        .saturating_mul(stream.get("height").and_then(|value| value.as_u64()).unwrap_or(0));
+    let frame_rate = stream.get("r_frame_rate").and_then(|value| value.as_str())
+        .and_then(|rate| rate.split_once('/')).and_then(|(numerator, denominator)| {
+            let numerator = numerator.parse::<f64>().ok()?;
+            let denominator = denominator.parse::<f64>().ok()?;
+            (denominator > 0.0).then_some(numerator / denominator)
+        }).unwrap_or(0.0);
+    if stream.get("codec_name").and_then(|value| value.as_str()) == Some("hevc")
+        && frame_rate.is_finite() && pixels as f64 * frame_rate > 60_000_000.0 { "10" } else { "30" }
+}
+
+fn render_animation_preview(path: &Path, output: &Path) -> Result<(), String> {
+    let status = Command::new("ffmpeg").args(["-nostdin", "-v", "error", "-threads", "2",
+        "-filter_threads", "2", "-ignore_loop", "1", "-i"])
+        .arg(path).args(["-map", "0:v:0", "-an", "-sn", "-dn", "-t", "30",
+            "-vf", "fps=30,scale=w='min(960,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuva420p",
+            "-c:v", "libvpx", "-threads", "2", "-deadline", "realtime", "-cpu-used", "8",
+            "-auto-alt-ref", "0", "-b:v", "2M", "-f", "webm", "-y"])
+        .arg(output).status().map_err(|error| error.to_string())?;
+    status.success().then_some(()).ok_or_else(|| format!("Unable to normalize animation preview: ffmpeg {status}"))
 }
 
 fn render_media(path: &Path, size: i32) -> Result<Vec<u8>, String> {

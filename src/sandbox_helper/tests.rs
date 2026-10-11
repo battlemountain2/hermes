@@ -3,6 +3,15 @@
 use super::office_xml_text;
 
 #[test]
+fn jpeg_decode_hints_fit_the_requested_box_without_upscaling() {
+    assert_eq!(image_target_dimensions(2268, 4032, 1400), (788, 1400));
+    assert_eq!(image_target_dimensions(3600, 3600, 256), (256, 256));
+    assert_eq!(image_target_dimensions(320, 200, 1400), (320, 200));
+    assert_eq!(image_target_dimensions(u32::MAX, u32::MAX, 1400), (1400, 1400));
+    assert_eq!(image_target_dimensions(0, 0, 0), (1, 1));
+}
+
+#[test]
 fn office_xml_is_reduced_to_readable_bounded_text() {
     let xml = r#"<w:document><w:p><w:r><w:t>Hello &amp; welcome</w:t></w:r></w:p><w:p><w:t>Hermes</w:t></w:p></w:document>"#;
     let text = office_xml_text(xml, 1024);
@@ -133,4 +142,22 @@ fn test_oversized_embedded_thumbnail_rejected() {
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("frame budget"));
 }
+#[test]
+fn media_preview_only_retries_resource_killed_conversions() {
+    use std::os::unix::process::ExitStatusExt;
+    assert!(super::media_preview_should_retry(std::process::ExitStatus::from_raw(9)));
+    assert!(super::media_preview_should_retry(std::process::ExitStatus::from_raw(24)));
+    assert!(!super::media_preview_should_retry(std::process::ExitStatus::from_raw(0)));
+    assert!(!super::media_preview_should_retry(std::process::ExitStatus::from_raw(256)));
+    assert!(!super::media_preview_should_retry(std::process::ExitStatus::from_raw(11)));
+}
 
+#[test]
+fn compact_preview_shortens_only_expensive_high_frame_rate_hevc() {
+    assert_eq!(super::compact_duration_from_probe(br#"{"streams":[{"codec_name":"hevc","width":3840,"height":2160,"r_frame_rate":"30/1"}]}"#), "10");
+    assert_eq!(super::compact_duration_from_probe(br#"{"streams":[{"codec_name":"hevc","width":888,"height":1514,"r_frame_rate":"58/1"}]}"#), "10");
+    assert_eq!(super::compact_duration_from_probe(br#"{"streams":[{"codec_name":"h264","width":1920,"height":1080,"r_frame_rate":"30/1"}]}"#), "30");
+    assert_eq!(super::compact_duration_from_probe(br#"{"streams":[{"codec_name":"hevc","width":320,"height":240,"r_frame_rate":"60/1"}]}"#), "30");
+    assert_eq!(super::compact_duration_from_probe(br#"{"streams":[{"codec_name":"hevc","width":1920,"height":1080,"r_frame_rate":"0/0"}]}"#), "30");
+    assert_eq!(super::compact_duration_from_probe(b"invalid"), "30");
+}

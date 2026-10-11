@@ -149,20 +149,19 @@ impl Trails {
         Ok(true)
     }
 
-    pub fn toggle_pinned(&self, id: &TrailId) -> io::Result<bool> {
+    pub fn move_relative(&self, moving: &TrailId, target: &TrailId, before: bool) -> io::Result<bool> {
+        if moving == target { return Ok(false); }
         let mut stored = self.stored.borrow_mut();
-        let Some(trail) = stored
-            .collection
-            .trails
-            .iter_mut()
-            .find(|trail| &trail.id == id)
-        else {
-            return Ok(false);
-        };
-        trail.pinned = !trail.pinned;
-        let pinned = trail.pinned;
+        let Some(source) = stored.collection.trails.iter().position(|trail| &trail.id == moving) else { return Ok(false); };
+        if !stored.collection.trails.iter().any(|trail| &trail.id == target) { return Ok(false); }
+        let original = stored.collection.trails.clone();
+        let trail = stored.collection.trails.remove(source);
+        let destination = stored.collection.trails.iter().position(|trail| &trail.id == target)
+            .expect("Target remains after removing a distinct tab");
+        stored.collection.trails.insert(destination + usize::from(!before), trail);
+        if stored.collection.trails == original { return Ok(false); }
         self.store.save(&stored)?;
-        Ok(pinned)
+        Ok(true)
     }
 
     pub fn close(&self, id: &TrailId) -> io::Result<Option<Trail>> {

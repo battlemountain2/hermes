@@ -5,6 +5,14 @@ use std::fs;
 use crate::services::{FormatFamily, classify_by_name};
 
 #[test]
+fn audio_preview_requests_metadata_instead_of_waveform_or_encoded_audio() {
+    assert_eq!(
+        super::preview_operation(crate::services::PreviewHandler::Audio),
+        Some(crate::sandbox::ParseOperation::PreviewAudioMetadata)
+    );
+}
+
+#[test]
 fn recognizes_heif_names_without_invoking_the_system_image_loader() {
     assert_eq!(
         classify_by_name(std::ffi::OsStr::new("photo.HEIC")),

@@ -17,6 +17,7 @@ use super::{
 };
 
 type ThemeCards = Rc<RefCell<Vec<(String, gtk::Button, gtk::Image)>>>;
+type ThemeFollows = [gtk::Switch; 2];
 
 pub fn build_layer(
     browser: &BrowserView,
@@ -501,8 +502,8 @@ fn theme_page(manager: Rc<ThemeManager>) -> gtk::Widget {
         .active(manager.follows_omarchy())
         .valign(gtk::Align::Center)
         .build();
+    append_heading(&content, "SYSTEM");
     if manager.is_omarchy_available() {
-        append_heading(&content, "SYSTEM");
         let system = gtk::Box::new(gtk::Orientation::Horizontal, 14);
         system.add_css_class("settings-option");
         let icon = crate::assets::primary_icon(icons::MONITOR, 22);
@@ -526,6 +527,16 @@ fn theme_page(manager: Rc<ThemeManager>) -> gtk::Widget {
         system.append(&follow);
         content.append(&system);
     }
+
+    let description = if manager.is_noctalia_available() {
+        "Follow Noctalia's exported GTK colors live. Noctalia settings are not changed."
+    } else {
+        "Enable GTK 4 in Noctalia's Templates settings to export colors. Until then, keep your selected theme."
+    };
+    let (noctalia_row, noctalia_follow) =
+        settings_option("Follow Noctalia", description, manager.follows_noctalia());
+    content.append(&noctalia_row);
+    let follows = [follow, noctalia_follow];
 
     append_heading(&content, "THEMES");
     let packaged = gtk::FlowBox::builder()
@@ -554,7 +565,7 @@ fn theme_page(manager: Rc<ThemeManager>) -> gtk::Widget {
     let cards: ThemeCards = Rc::new(RefCell::new(Vec::new()));
     for theme in manager.themes() {
         let flow = if theme.custom { &custom } else { &packaged };
-        append_theme_card(flow, theme, &manager, &follow, &cards);
+        append_theme_card(flow, theme, &manager, &follows, &cards);
     }
 
     let add = gtk::Button::new();
@@ -570,7 +581,7 @@ fn theme_page(manager: Rc<ThemeManager>) -> gtk::Widget {
     add.set_child(Some(&add_content));
     custom.insert(&add, -1);
 
-    let editor = theme_editor(manager.clone(), custom, follow.clone(), cards.clone());
+    let editor = theme_editor(manager.clone(), custom, follows.clone(), cards.clone());
     editor.set_reveal_child(false);
     content.append(&editor);
     let shown_editor = editor.clone();
@@ -581,29 +592,45 @@ fn theme_page(manager: Rc<ThemeManager>) -> gtk::Widget {
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vscrollbar_policy(gtk::PolicyType::Automatic)
         .build();
-    let manager_for_follow = manager;
-    follow.connect_active_notify(move |toggle| {
-        let active = toggle.is_active();
-        manager_for_follow.set_follow_omarchy(active);
-        let selected_id = manager_for_follow.selected_id();
-        for (id, card, check) in cards.borrow().iter() {
-            let selected = !active && id == &selected_id;
-            if selected {
-                card.add_css_class("selected");
+    for (index, follow) in follows.iter().enumerate() {
+        let manager = manager.clone();
+        let other_follow = follows[1 - index].downgrade();
+        let cards = cards.clone();
+        follow.connect_active_notify(move |toggle| {
+            let active = toggle.is_active();
+            if index == 0 {
+                manager.set_follow_omarchy(active);
             } else {
-                card.remove_css_class("selected");
+                manager.set_follow_noctalia(active);
             }
-            check.set_visible(selected);
-        }
-    });
+            if active && let Some(other_follow) = other_follow.upgrade() {
+                other_follow.set_active(false);
+            }
+            refresh_theme_cards(&manager, &cards);
+        });
+    }
     scroller.upcast()
+}
+
+fn refresh_theme_cards(manager: &ThemeManager, cards: &ThemeCards) {
+    let selected_id = manager.selected_id();
+    for (id, card, check) in cards.borrow().iter() {
+        let selected =
+            !manager.follows_omarchy() && !manager.follows_noctalia() && id == &selected_id;
+        if selected {
+            card.add_css_class("selected");
+        } else {
+            card.remove_css_class("selected");
+        }
+        check.set_visible(selected);
+    }
 }
 
 fn append_theme_card(
     flow: &gtk::FlowBox,
     theme: Theme,
     manager: &Rc<ThemeManager>,
-    follow: &gtk::Switch,
+    follows: &ThemeFollows,
     cards: &ThemeCards,
 ) {
     let card = gtk::Button::new();
@@ -623,7 +650,9 @@ fn append_theme_card(
     preview.add_overlay(&check);
     content.append(&preview);
     let label_row = gtk::Box::new(gtk::Orientation::Horizontal, 7);
-    let selected = !manager.follows_omarchy() && manager.selected_id() == theme.id;
+    let selected = !manager.follows_omarchy()
+        && !manager.follows_noctalia()
+        && manager.selected_id() == theme.id;
     check.set_visible(selected);
     if selected {
         card.add_css_class("selected");
@@ -640,20 +669,14 @@ fn append_theme_card(
 
     let theme_id = theme.id;
     let manager = manager.clone();
-    let follow = follow.clone();
+    let follows = follows.clone();
     let cards = cards.clone();
     card.connect_clicked(move |_| {
         manager.select_theme(&theme_id);
-        follow.set_active(false);
-        for (id, candidate, check) in cards.borrow().iter() {
-            let selected = id == &theme_id;
-            if selected {
-                candidate.add_css_class("selected");
-            } else {
-                candidate.remove_css_class("selected");
-            }
-            check.set_visible(selected);
+        for follow in &follows {
+            follow.set_active(false);
         }
+        refresh_theme_cards(&manager, &cards);
     });
     flow.insert(&card, -1);
 }
@@ -702,7 +725,7 @@ fn theme_preview(tokens: &ThemeTokens) -> gtk::DrawingArea {
 fn theme_editor(
     manager: Rc<ThemeManager>,
     custom: gtk::FlowBox,
-    follow: gtk::Switch,
+    follows: ThemeFollows,
     cards: ThemeCards,
 ) -> gtk::Revealer {
     let panel = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -802,9 +825,13 @@ fn theme_editor(
                         custom: true,
                     },
                     &manager,
-                    &follow,
+                    &follows,
                     &cards,
                 );
+                for follow in &follows {
+                    follow.set_active(false);
+                }
+                refresh_theme_cards(&manager, &cards);
                 hidden.set_reveal_child(false);
             }
             Err(message) => {

@@ -5,6 +5,50 @@ use std::path::Path;
 use super::{Cancellation, ParseOperation, parse, sandbox_command};
 
 #[test]
+fn audio_preview_metadata_is_json_with_unchanged_sandbox_limits() {
+    let operation = ParseOperation::PreviewAudioMetadata;
+    let command = sandbox_command(
+        Path::new("/tmp/strata"),
+        Path::new("/tmp/track.flac"),
+        Path::new("/tmp/output"),
+        operation,
+        0,
+    );
+    let arguments = command
+        .get_args()
+        .map(|value| value.to_string_lossy())
+        .collect::<Vec<_>>();
+    assert_eq!(operation.output_name(), "result.json");
+    for expected in [
+        "preview-audio-metadata",
+        "/output/result.json",
+        "--unshare-all",
+        "--as=1342177280",
+        "--cpu=10",
+        "--fsize=33554432",
+    ] {
+        assert!(
+            arguments.iter().any(|value| value == expected),
+            "Missing {expected}"
+        );
+    }
+}
+
+#[test]
+fn renderer_failures_include_bounded_decoder_details() {
+    use std::os::unix::process::ExitStatusExt;
+    let status = std::process::ExitStatus::from_raw(256);
+    let message =
+        super::renderer_failure_message(status, b"Invalid data found when processing input\n");
+    assert!(message.contains("exit status: 1"));
+    assert!(message.contains("Invalid data found"));
+    let message = super::renderer_failure_message(status, &vec![b'x'; 10000]);
+    assert!(message.len() < 2200);
+    assert!(super::renderer_failure_message(status, b"").contains("resource limit"));
+    assert!(!super::renderer_failure_message(status, b"bad\0data\x1b").contains('\0'));
+}
+
+#[test]
 fn sandbox_exposes_only_runtime_input_and_private_output() {
     let command = sandbox_command(
         Path::new("/tmp/strata"),

@@ -39,3 +39,12 @@ pub fn mark_batch_rendered(entries: usize, render_started: Instant) {
         );
     }
 }
+
+pub fn mark_directory_merge(existing_entries: usize, incoming_entries: usize, started: Instant) {
+    tracing::debug!(
+        existing_entries,
+        incoming_entries,
+        merge_micros = started.elapsed().as_micros() as u64,
+        "directory batch merged"
+    );
+}

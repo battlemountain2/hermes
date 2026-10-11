@@ -3,6 +3,433 @@
 use super::*;
 
 #[test]
+#[ignore = "Requires an isolated GTK display; generated navigation widget/model lifecycle fixture"]
+fn desktop_navigation_releases_discarded_presentations() {
+    use crate::ui::browser_modes::tests::{
+        LifecycleProbes, append_pane_probes, append_widget_probes,
+    };
+
+    struct GeneratedDirectory(PathBuf);
+    impl Drop for GeneratedDirectory {
+        fn drop(&mut self) {
+            let _removed = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn pump_until(context: &str, condition: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !condition() && Instant::now() < deadline {
+            glib::MainContext::default().iteration(false);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(condition(), "Generated lifecycle fixture timed out: {context}");
+    }
+
+    fn capture(view: &BrowserView) -> LifecycleProbes {
+        let mut probes = Vec::new();
+        for column in view.state.columns.borrow().iter() {
+            append_widget_probes(column.shell.upcast_ref(), "columns", &mut probes);
+            for object in [
+                column.model.upcast_ref::<glib::Object>(),
+                column.filtered_model.upcast_ref::<glib::Object>(),
+                column.selection.upcast_ref::<glib::Object>(),
+            ] {
+                probes.push((
+                    format!("columns {}", object.type_().name()),
+                    object.downgrade(),
+                ));
+            }
+            for bound in column.bound_rows.borrow().iter() {
+                if let Some(item) = bound.item.upgrade() {
+                    probes.push((
+                        "columns item".into(),
+                        item.upcast_ref::<glib::Object>().downgrade(),
+                    ));
+                }
+            }
+        }
+        append_pane_probes(&view.state.mode_views.borrow(), &mut probes);
+        probes
+    }
+
+    fn assert_released(probes: &LifecycleProbes) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while probes.iter().any(|(_, object)| object.upgrade().is_some())
+            && Instant::now() < deadline
+        {
+            glib::MainContext::default().iteration(false);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let retained: Vec<_> = probes
+            .iter()
+            .filter(|(_, object)| object.upgrade().is_some())
+            .map(|(label, _)| label.as_str())
+            .collect();
+        assert!(retained.is_empty(), "Discarded objects retained: {retained:?}");
+    }
+
+    gtk::init().expect("Isolated GTK display available");
+    crate::assets::prepare().expect("Fixture icons load");
+    let root = GeneratedDirectory(std::env::temp_dir().join(format!(
+        "hermes-navigation-lifecycle-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+    )));
+    let first = root.0.join("first");
+    let second = root.0.join("second");
+    for folder in [&first, &second] {
+        std::fs::create_dir_all(folder).unwrap();
+        for index in 0..1_000 {
+            std::fs::write(folder.join(format!("entry-{index:04}.txt")), b"fixture").unwrap();
+        }
+    }
+    let view = BrowserView::new(Rc::new(crate::adapters::LocalFileSource), PeekBehavior::default());
+    let browser = view.browser();
+    let window = gtk::Window::builder()
+        .default_width(1_000)
+        .default_height(700)
+        .child(&view.widget())
+        .build();
+    window.present();
+    let finished = Rc::new(Cell::new(false));
+    let finished_for_observer = finished.clone();
+    browser.observe(move |event| match event {
+        BrowserEvent::LoadFinished { depth: 0 } => finished_for_observer.set(true),
+        BrowserEvent::LoadFailed { message, .. } => panic!("{message}"),
+        _ => {}
+    });
+    let mut previous = Vec::new();
+    for (mode, presentation) in [
+        (BrowserMode::Columns, "columns"),
+        (BrowserMode::Grid, "grid"),
+        (BrowserMode::Explorer, "explorer"),
+    ] {
+        view.set_view_mode(mode);
+        let folders = if browser.active_location() == Some(Location::local(&first)) {
+            [&second, &first, &second]
+        } else {
+            [&first, &second, &first]
+        };
+        for folder in folders {
+            finished.set(false);
+            browser.navigate(Location::local(folder));
+            pump_until(&format!("load {presentation}: {}", folder.display()), || finished.get());
+            assert_eq!(browser.column_entries(0).unwrap().len(), 1_000);
+            assert_released(&previous);
+            pump_until(&format!("bound {presentation} items: {}", folder.display()), || {
+                capture(&view)
+                    .iter()
+                    .any(|(label, _)| label == &format!("{presentation} item"))
+            });
+            previous = capture(&view);
+            assert!(previous.iter().any(|(label, _)| label == "columns GtkStringList"));
+            assert_eq!(previous.iter().any(|(label, _)| label == "grid GtkStringList"), mode == BrowserMode::Grid);
+            assert_eq!(previous.iter().any(|(label, _)| label == "explorer GtkStringList"), mode == BrowserMode::Explorer);
+        }
+    }
+    let state = Rc::downgrade(&view.state);
+    let weak_browser = Rc::downgrade(&browser);
+    browser.clear_observer();
+    window.close();
+    window.set_child(gtk::Widget::NONE);
+    drop((view, browser, window));
+    assert_released(&previous);
+    pump_until("browser and view destruction", || state.upgrade().is_none() && weak_browser.upgrade().is_none());
+}
+
+#[derive(Default)]
+struct TransferFixtureOperations {
+    requests: RefCell<Vec<(crate::services::OperationRequestId, Rc<dyn Fn(crate::services::OperationEvent)>)>>,
+    cancellations: Rc<Cell<usize>>,
+}
+
+impl TransferFixtureOperations {
+    fn start(&self, id: crate::services::OperationRequestId, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+        self.requests.borrow_mut().push((id, emit));
+        let cancellations = self.cancellations.clone();
+        crate::services::LoadHandle::new(move || cancellations.set(cancellations.get() + 1))
+    }
+}
+
+impl OperationProvider for TransferFixtureOperations {
+    fn rename(&self, request: crate::services::RenameRequest, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+        self.start(request.id, emit)
+    }
+    fn create_directory(&self, request: crate::services::CreateDirectoryRequest, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+        self.start(request.id, emit)
+    }
+    fn create_file(&self, request: crate::services::CreateFileRequest, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+        self.start(request.id, emit)
+    }
+    fn paste(&self, request: crate::services::PasteRequest, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+        self.start(request.id, emit)
+    }
+    fn delete(&self, request: crate::services::DeleteRequest, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+        self.start(request.id, emit)
+    }
+    fn restore(&self, request: crate::services::RestoreRequest, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+        self.start(request.id, emit)
+    }
+    fn extract_archive(&self, request: crate::services::ExtractArchiveRequest, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+        self.start(request.id, emit)
+    }
+    fn compress_archive(&self, request: crate::services::CompressArchiveRequest, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+        self.start(request.id, emit)
+    }
+}
+
+#[test]
+#[ignore = "Requires an isolated desktop display; verifies generated transfer outcomes and clipboard ownership"]
+fn desktop_transfer_outcomes_preserve_cut_clipboard() {
+    use crate::services::{DirectoryEvent, DirectoryRequest, LoadHandle, OperationEvent};
+    struct GeneratedSource;
+    impl FileSource for GeneratedSource {
+        fn validate_location(&self, _: &Location) -> Result<(), crate::services::LocationValidationError> {
+            Ok(())
+        }
+        fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
+            emit(DirectoryEvent::Finished { request_id: request.id });
+            LoadHandle::new(|| {})
+        }
+    }
+    gtk::init().expect("Isolated desktop display available");
+    crate::assets::prepare().expect("Icons load");
+    let view = BrowserView::new(Rc::new(GeneratedSource), PeekBehavior::default());
+    let window = gtk::Window::builder().child(&view.state.overlay).build();
+    let provider = Rc::new(TransferFixtureOperations::default());
+    view.set_operation_provider(provider.clone());
+    let entry = |name: &str| FileEntry(Rc::new(crate::model::FileEntryInner {
+        location: Location::local(format!("/generated-transfer-fixture/{name}")),
+        native_name: name.into(), display_name: name.into(), kind: EntryKind::File,
+        size: crate::model::MetadataValue::Unknown,
+        modified_unix_seconds: crate::model::MetadataValue::Unknown, music_tags: None,
+    }));
+    let first = entry("first");
+    let second = entry("second");
+    let unrelated = entry("unrelated");
+    let destination = Location::local("/generated-transfer-fixture/destination");
+    let clipboard = gtk::gdk::Display::default().unwrap().clipboard();
+    let start = |sources: &[FileEntry], move_sources| {
+        view.state.start_transfer(destination.clone(), sources.iter().map(|entry| entry.location.clone()).collect(), move_sources);
+        provider.requests.borrow().last().unwrap().clone()
+    };
+    let complete = |request_id, emit: &Rc<dyn Fn(OperationEvent)>, source: &FileEntry, move_source| {
+        emit(OperationEvent::TransferItemCompleted { request_id, source: source.location.clone(), move_source });
+    };
+
+    view.state.cut_entries(&[first.clone(), second.clone()]);
+    let original = clipboard.content();
+    let (request_id, emit) = start(&[first.clone(), second.clone()], true);
+    assert_eq!(clipboard.content(), original);
+    assert_eq!(view.state.cut_locations.borrow().len(), 2);
+    let progress = view.state.delete_progress.borrow().as_ref().unwrap().layer.clone();
+    view.state.browser.create_directory(destination.clone(), "overlap".into());
+    assert_eq!(provider.requests.borrow().len(), 1);
+    assert_eq!(provider.cancellations.get(), 0);
+    assert_eq!(view.state.delete_progress.borrow().as_ref().unwrap().layer, progress);
+    complete(request_id, &emit, &first, false);
+    assert_eq!(view.state.cut_locations.borrow().len(), 2);
+    complete(request_id, &emit, &first, true);
+    assert_eq!(*view.state.cut_locations.borrow(), vec![second.location.clone()]);
+    assert_eq!(view.state.clipboard_indicator.label().as_deref(), Some("Cut second"));
+    assert_eq!(view.state.clipboard_list.first_child().unwrap().downcast::<gtk::Label>().unwrap().text(), "second");
+    assert!(view.state.clipboard_list.first_child().unwrap().next_sibling().is_none());
+    emit(OperationEvent::TransferCompletedWithErrors { request_id, message: "second failed".into() });
+    assert_eq!(*view.state.cut_locations.borrow(), vec![second.location.clone()]);
+    assert!(view.state.delete_progress.borrow().is_none());
+    let (request_id, emit) = start(std::slice::from_ref(&second), true);
+    complete(request_id, &emit, &second, true);
+    emit(OperationEvent::Pasted { request_id });
+    assert!(view.state.cut_locations.borrow().is_empty());
+    assert!(clipboard.content().is_none());
+    assert!(!view.state.clipboard_indicator.is_visible());
+
+    view.state.cut_entries(&[first.clone(), second.clone()]);
+    let (request_id, emit) = start(&[first.clone(), second.clone()], true);
+    complete(request_id, &emit, &first, true);
+    let remaining_content = clipboard.content();
+    view.state.browser.cancel_file_operation();
+    complete(request_id, &emit, &second, true);
+    assert_eq!(*view.state.cut_locations.borrow(), vec![second.location.clone()]);
+    assert_eq!(clipboard.content(), remaining_content);
+
+    view.state.cut_entries(std::slice::from_ref(&first));
+    let (request_id, emit) = start(std::slice::from_ref(&first), true);
+    view.state.copy_entries(std::slice::from_ref(&unrelated));
+    let copied = clipboard.content();
+    complete(request_id, &emit, &first, true);
+    emit(OperationEvent::Pasted { request_id });
+    assert_eq!(clipboard.content(), copied);
+    assert_eq!(view.state.clipboard_indicator.label().as_deref(), Some("Copied unrelated"));
+
+    view.state.cut_entries(std::slice::from_ref(&first));
+    let (request_id, emit) = start(std::slice::from_ref(&first), true);
+    view.state.cut_entries(std::slice::from_ref(&first));
+    let recut = clipboard.content();
+    complete(request_id, &emit, &first, true);
+    emit(OperationEvent::Pasted { request_id });
+    assert_eq!(*view.state.cut_locations.borrow(), vec![first.location.clone()]);
+    assert_eq!(clipboard.content(), recut);
+
+    let (request_id, emit) = start(std::slice::from_ref(&first), true);
+    clipboard.set_text("External clipboard content");
+    let external = clipboard.content();
+    complete(request_id, &emit, &first, true);
+    emit(OperationEvent::Pasted { request_id });
+    assert_eq!(clipboard.content(), external);
+
+    view.state.cut_entries(std::slice::from_ref(&first));
+    let cut = clipboard.content();
+    let (request_id, emit) = start(std::slice::from_ref(&first), false);
+    complete(request_id, &emit, &first, false);
+    emit(OperationEvent::Pasted { request_id });
+    assert_eq!(*view.state.cut_locations.borrow(), vec![first.location.clone()]);
+    assert_eq!(clipboard.content(), cut);
+
+    view.state.cut_entries(std::slice::from_ref(&first));
+    let (request_id, emit) = start(std::slice::from_ref(&first), true);
+    let unchanged = clipboard.content();
+    emit(OperationEvent::Failed { request_id, message: "failed before moving".into() });
+    assert_eq!(*view.state.cut_locations.borrow(), vec![first.location.clone()]);
+    assert_eq!(clipboard.content(), unchanged);
+
+    struct GeneratedDirectory(PathBuf);
+    impl Drop for GeneratedDirectory {
+        fn drop(&mut self) {
+            let _removed = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let root = GeneratedDirectory(std::env::temp_dir().join(format!(
+        "hermes-transfer-outcomes-{}-{}", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+    )));
+    std::fs::create_dir_all(root.0.join("destination")).unwrap();
+    std::fs::write(root.0.join("moved.txt"), b"Generated transfer fixture").unwrap();
+    let generated_entry = |name: &str| {
+        let mut generated = entry(name);
+        Rc::make_mut(&mut generated.0).location = Location::local(root.0.join(name));
+        generated
+    };
+    let moved = generated_entry("moved.txt");
+    let missing = generated_entry("missing.txt");
+    view.set_operation_provider(Rc::new(crate::adapters::LocalOperationProvider));
+    view.state.cut_entries(&[moved.clone(), missing.clone()]);
+    let finished = Rc::new(Cell::new(false));
+    let partial_error = Rc::new(Cell::new(false));
+    let observed_finished = finished.clone();
+    let observed_error = partial_error.clone();
+    view.browser().observe(move |event| {
+        if matches!(event, BrowserEvent::TransferFinished) {
+            observed_finished.set(true);
+        }
+        if matches!(event, BrowserEvent::OperationCompletedWithErrors { .. }) {
+            observed_error.set(true);
+        }
+    });
+    view.state.start_transfer(Location::local(root.0.join("destination")),
+        vec![moved.location.clone(), missing.location.clone()], true);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !finished.get() && Instant::now() < deadline {
+        for _ in 0..128 {
+            if !glib::MainContext::default().pending() || finished.get() {
+                break;
+            }
+            glib::MainContext::default().iteration(false);
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(finished.get(), "Generated provider transfer finishes");
+    assert!(partial_error.get(), "Missing generated source reports partial error");
+    assert!(!root.0.join("moved.txt").exists());
+    assert_eq!(std::fs::read(root.0.join("destination/moved.txt")).unwrap(), b"Generated transfer fixture");
+    assert_eq!(*view.state.cut_locations.borrow(), vec![missing.location.clone()]);
+    assert_eq!(view.state.clipboard_indicator.label().as_deref(), Some("Cut missing.txt"));
+    window.close();
+    view.browser().clear_observer();
+}
+
+#[test]
+#[ignore = "Requires a desktop display; verifies streaming result selection in all views"]
+fn desktop_search_snapshots_preserve_selection_in_every_view() {
+    use crate::services::{DirectoryEvent, DirectoryRequest, LoadHandle, RequestId};
+    struct SnapshotSource {
+        emit: Rc<RefCell<Option<Rc<dyn Fn(DirectoryEvent)>>>>,
+        request: Rc<Cell<RequestId>>,
+    }
+    impl FileSource for SnapshotSource {
+        fn validate_location(&self, _: &Location) -> Result<(), crate::services::LocationValidationError> { Ok(()) }
+        fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
+            self.request.set(request.id);
+            self.emit.replace(Some(emit));
+            LoadHandle::new(|| {})
+        }
+    }
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let captured = Rc::new(RefCell::new(None));
+    let request = Rc::new(Cell::new(RequestId(0)));
+    let view = BrowserView::new(Rc::new(SnapshotSource { emit: captured.clone(), request: request.clone() }), PeekBehavior::default());
+    let window = gtk::Window::builder().default_width(900).default_height(500).child(&view.widget()).build();
+    window.present();
+    let entry = |name: &str| FileEntry(Rc::new(crate::model::FileEntryInner {
+        location: Location::local(format!("/fixture/{name}")),
+        native_name: name.into(), display_name: name.into(), kind: EntryKind::File,
+        size: crate::model::MetadataValue::Unknown, modified_unix_seconds: crate::model::MetadataValue::Unknown, music_tags: None,
+    }));
+    for mode in [BrowserMode::Columns, BrowserMode::Explorer, BrowserMode::Grid] {
+        view.set_view_mode(mode);
+        view.browser().navigate(Location::local("/fixture"));
+        let emit = captured.borrow().as_ref().unwrap().clone();
+        emit(DirectoryEvent::Snapshot { request_id: request.get(), entries: vec![entry("a.txt"), entry("b.txt"), entry("c.txt")] });
+        view.browser().set_selection(0, &[0, 1], Some(1));
+        emit(DirectoryEvent::Snapshot { request_id: request.get(), entries: vec![entry("b.txt"), entry("d.txt")] });
+        let selected = view.browser().selected_entries();
+        assert_eq!(selected.len(), 1, "{mode:?}");
+        assert_eq!(selected[0].display_name, "b.txt", "{mode:?}");
+        assert_eq!(view.browser().column_snapshot(0).unwrap().selected_positions, vec![0], "{mode:?}");
+        emit(DirectoryEvent::Finished { request_id: request.get() });
+    }
+    window.close();
+    view.browser().clear_observer();
+    captured.borrow_mut().take();
+}
+
+#[test]
+#[ignore = "Requires a desktop display; verifies preview versus music activation routing"]
+fn desktop_song_activation_uses_the_registered_music_handler() {
+    struct SongSource;
+    impl FileSource for SongSource {
+        fn validate_location(&self, _: &Location) -> Result<(), crate::services::LocationValidationError> { Ok(()) }
+        fn enumerate(&self, request: crate::services::DirectoryRequest, emit: Rc<dyn Fn(crate::services::DirectoryEvent)>) -> crate::services::LoadHandle {
+            let entry = FileEntry(Rc::new(crate::model::FileEntryInner {
+                location: Location::local("/fixture/03.flac"),
+                native_name: "03.flac".into(), display_name: "03.flac".into(), kind: EntryKind::File,
+                size: crate::model::MetadataValue::Unknown, modified_unix_seconds: crate::model::MetadataValue::Unknown, music_tags: None,
+            }));
+            emit(crate::services::DirectoryEvent::Batch { request_id: request.id, entries: vec![entry] });
+            emit(crate::services::DirectoryEvent::Finished { request_id: request.id });
+            crate::services::LoadHandle::new(|| {})
+        }
+    }
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let view = BrowserView::new(Rc::new(SongSource), PeekBehavior::default());
+    let opened = Rc::new(RefCell::new(Vec::new()));
+    let captured = opened.clone();
+    view.set_open_handler(Rc::new(move |location| { captured.borrow_mut().push(location); true }));
+    view.browser().navigate(Location::local("/fixture"));
+    view.browser().preview(0, 0);
+    assert!(opened.borrow().is_empty(), "Single-click preview must not play a song");
+    view.browser().activate(0, 0);
+    view.browser().activate_focused();
+    assert_eq!(*opened.borrow(), vec![Location::local("/fixture/03.flac"); 2]);
+    view.browser().clear_observer();
+}
+
+#[test]
 fn file_sizes_use_compact_decimal_units() {
     assert_eq!(format_file_size(999), "999 B");
     assert_eq!(format_file_size(1_200), "1.2 kB");
@@ -20,14 +447,14 @@ fn inline_rename_selects_the_stem_but_keeps_the_extension() {
 
 #[test]
 fn delete_confirmation_labels_distinguish_files_and_folders() {
-    let file = crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: Location::local("/fixture/file.txt"),
+    let file = crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location: Location::local("/fixture/file.txt"),
         native_name: "file.txt".into(),
         display_name: "file.txt".into(),
         kind: crate::model::EntryKind::File,
         size: crate::model::MetadataValue::Known(10),
         modified_unix_seconds: crate::model::MetadataValue::Unknown,
     }));
-    let folder = crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: Location::local("/fixture/folder"),
+    let folder = crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location: Location::local("/fixture/folder"),
         native_name: "folder".into(),
         display_name: "folder".into(),
         kind: crate::model::EntryKind::Directory,
@@ -54,7 +481,7 @@ fn only_the_trash_root_uses_the_aggregate_properties_size() {
 
 #[test]
 fn quick_preview_is_offered_only_for_supported_files() {
-    let entry = |name: &str, kind| crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: Location::local(format!("/fixture/{name}")),
+    let entry = |name: &str, kind| crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location: Location::local(format!("/fixture/{name}")),
         native_name: name.into(),
         display_name: name.into(),
         kind,
@@ -129,7 +556,7 @@ fn local_file_drops_prefer_move_while_external_drops_prefer_copy() {
 
 #[test]
 fn multi_selection_summary_lists_at_most_three_names() {
-    let entry = |name: &str| crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: Location::local(format!("/fixture/{name}")),
+    let entry = |name: &str| crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location: Location::local(format!("/fixture/{name}")),
         native_name: name.into(),
         display_name: name.into(),
         kind: crate::model::EntryKind::File,
@@ -310,6 +737,26 @@ fn single_pane_modes_reserve_half_for_preview_sizing() {
 }
 
 #[test]
+fn music_context_actions_require_an_audio_only_selection() {
+    let entry = |name: &str, kind| FileEntry(Rc::new(crate::model::FileEntryInner {
+        location: Location::local(format!("/fixture/{name}")),
+        native_name: name.into(),
+        display_name: name.into(),
+        kind,
+        size: crate::model::MetadataValue::Unknown,
+        modified_unix_seconds: crate::model::MetadataValue::Unknown,
+        music_tags: None,
+    }));
+    let track = entry("track.flac", EntryKind::File);
+    let second = entry("song.mp3", EntryKind::FileSymbolicLink);
+    assert!(audio_context_actions_visible(std::slice::from_ref(&track)));
+    assert!(audio_context_actions_visible(&[track.clone(), second]));
+    assert!(!audio_context_actions_visible(&[]));
+    assert!(!audio_context_actions_visible(&[entry("album.flac", EntryKind::Directory)]));
+    assert!(!audio_context_actions_visible(&[track, entry("cover.jpg", EntryKind::File)]));
+}
+
+#[test]
 fn pane_resizing_preserves_the_initial_minimum_width() {
     assert_eq!(resized_column_width(COLUMN_WIDTH, -80.0), COLUMN_WIDTH);
     assert_eq!(resized_column_width(COLUMN_WIDTH, 75.0), 375);
@@ -338,4 +785,200 @@ fn reveal_target_can_scroll_back_to_an_earlier_column() {
         horizontal_reveal_target(600.0, 900.0, 0.0, 1_500.0, 300.0, 600.0),
         300.0
     );
+}
+
+#[test]
+#[ignore = "Requires a desktop display; run explicitly"]
+fn desktop_hover_peek_lifecycle() {
+    use crate::services::{DirectoryEvent, DirectoryRequest, LoadHandle, LocationValidationError};
+
+    struct GeneratedSource {
+        requests: Rc<RefCell<Vec<Location>>>,
+        cancellations: Rc<Cell<usize>>,
+    }
+    impl FileSource for GeneratedSource {
+        fn validate_location(&self, _: &Location) -> Result<(), LocationValidationError> {
+            Ok(())
+        }
+
+        fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
+            self.requests.borrow_mut().push(request.location.clone());
+            let entries = (0..3).map(|index| FileEntry(Rc::new(crate::model::FileEntryInner {
+                location: Location::local(format!("{}/folder-{index}", request.location.display_path())),
+                native_name: format!("folder-{index}").into(),
+                display_name: format!("folder-{index}"),
+                kind: EntryKind::Directory,
+                size: crate::model::MetadataValue::Unknown,
+                modified_unix_seconds: crate::model::MetadataValue::Unknown,
+                music_tags: None,
+            }))).collect();
+            emit(DirectoryEvent::Batch { request_id: request.id, entries });
+            emit(DirectoryEvent::Finished { request_id: request.id });
+            let cancellations = self.cancellations.clone();
+            LoadHandle::new(move || cancellations.set(cancellations.get() + 1))
+        }
+    }
+
+    gtk::init().expect("Desktop display available");
+    crate::assets::prepare().expect("Icons load");
+    let requests = Rc::new(RefCell::new(Vec::new()));
+    let cancellations = Rc::new(Cell::new(0));
+    let view = BrowserView::new(Rc::new(GeneratedSource {
+        requests: requests.clone(),
+        cancellations: cancellations.clone(),
+    }), PeekBehavior {
+        open_delay: Duration::from_millis(5),
+        close_delay: Duration::from_millis(5),
+        fade_duration: Duration::ZERO,
+        item_limit: 2,
+    });
+    let window = gtk::Window::builder().default_width(900).default_height(500)
+        .child(&view.state.overlay).build();
+    view.state.browser.navigate(Location::local("/generated"));
+    window.present();
+    let drain = || {
+        let until = Instant::now() + Duration::from_millis(100);
+        while Instant::now() < until {
+            while glib::MainContext::default().pending() {
+                glib::MainContext::default().iteration(false);
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    };
+    drain();
+    let anchor: gtk::Widget = view.state.columns.borrow()[0].shell.clone().upcast();
+    let first = Location::local("/generated/folder-0");
+    let second = Location::local("/generated/folder-1");
+    view.state.browser.begin_peek(0, first.clone());
+    assert_eq!(requests.borrow().len(), 1, "Missing anchors must not start a load");
+
+    view.state.schedule_peek(0, first.clone(), anchor.clone());
+    view.state.schedule_peek(0, second.clone(), anchor.clone());
+    drain();
+    assert_eq!(requests.borrow().len(), 2, "Only the newest timer opens");
+    assert_eq!(requests.borrow().last(), Some(&second));
+    let peek = view.state.peek.borrow().clone().expect("Valid anchor opens peek");
+    assert_eq!(peek.model.n_items(), 2);
+    assert_eq!(peek.entry_count.get(), 2);
+    assert!(view.state.pending_peek.borrow().is_none());
+    view.state.schedule_close_peek();
+    view.state.schedule_peek(0, second.clone(), anchor.clone());
+    drain();
+    assert_eq!(requests.borrow().len(), 2, "Reentering keeps the same peek");
+    assert!(view.state.pending_close.borrow().is_none());
+    view.state.schedule_close_peek();
+    drain();
+    assert!(view.state.peek.borrow().is_none());
+    assert!(view.state.pending_close.borrow().is_none());
+    assert_eq!(cancellations.get(), 1);
+    assert!(peek.revealer.parent().is_none());
+
+    view.state.schedule_peek(0, first.clone(), anchor.clone());
+    view.set_peek_enabled(false);
+    drain();
+    assert_eq!(requests.borrow().len(), 2);
+    assert!(view.state.pending_peek.borrow().is_none());
+    assert!(view.state.peek_anchor.borrow().is_none());
+    view.set_peek_enabled(true);
+
+    view.state.schedule_peek(0, first.clone(), anchor.clone());
+    view.set_view_mode(BrowserMode::Grid);
+    drain();
+    assert_eq!(requests.borrow().len(), 2, "Mode changes invalidate pending anchors");
+    view.set_view_mode(BrowserMode::Columns);
+    drain();
+
+    let column = view.state.columns.borrow()[0].clone();
+    let row = column.bound_rows.borrow().iter().find_map(|bound| {
+        let item = bound.item.upgrade()?;
+        (item.position() == 0).then(|| bound.row.upgrade()).flatten()
+    }).expect("Generated first row is bound");
+    view.state.schedule_peek(0, first.clone(), row.upcast());
+    let replacement = entry_model_value(&view.state.browser.entry_at(0, 1).unwrap());
+    column.model.splice(0, 1, &[&replacement]);
+    drain();
+    assert_eq!(requests.borrow().len(), 2, "Recycled rows cannot open their old folder");
+    view.state.handle(BrowserEvent::EntriesReplaced {
+        depth: 0,
+        entries: view.state.browser.column_entries(0).unwrap(),
+    });
+    drain();
+
+    view.state.schedule_peek(0, first.clone(), anchor.clone());
+    view.state.browser.navigate(Location::local("/replacement"));
+    drain();
+    assert_eq!(requests.borrow().len(), 3, "Navigation cancels the old hover timer");
+    assert!(view.state.peek.borrow().is_none());
+    assert!(view.state.peek_anchor.borrow().is_none());
+    view.state.schedule_peek(0, Location::local("/replacement/folder-0"), anchor);
+    drain();
+    assert_eq!(requests.borrow().len(), 3, "Detached anchors cannot reopen a peek");
+    view.state.browser.navigate(Location::local("/generated"));
+    drain();
+    let anchor: gtk::Widget = view.state.columns.borrow()[0].shell.clone().upcast();
+    for _ in 0..4 {
+        view.state.schedule_peek(0, first.clone(), anchor.clone());
+        drain();
+        view.state.schedule_close_peek();
+        drain();
+        assert!(view.state.pending_peek.borrow().is_none());
+        assert!(view.state.pending_close.borrow().is_none());
+    }
+
+    view.state.schedule_peek(0, first.clone(), anchor.clone());
+    drain();
+    let finished = view.state.peek.borrow().clone().unwrap();
+    finished.spinner.start();
+    let weak = Rc::downgrade(&view.state);
+    finished.spinner.connect_notify_local(Some("spinning"), move |_, _| {
+        weak.upgrade().unwrap().browser.close_peek();
+    });
+    view.state.handle(BrowserEvent::PeekFinished);
+    assert!(view.state.peek.borrow().is_none(), "Finishing may close synchronously");
+    drain();
+
+    view.state.schedule_peek(0, first.clone(), anchor.clone());
+    drain();
+    let failed = view.state.peek.borrow().clone().unwrap();
+    let weak = Rc::downgrade(&view.state);
+    failed.presentation.message.connect_notify_local(Some("label"), move |_, _| {
+        weak.upgrade().unwrap().browser.close_peek();
+    });
+    view.state.handle(BrowserEvent::PeekFailed { message: "Generated failure".into() });
+    assert!(view.state.peek.borrow().is_none(), "Errors may close synchronously");
+    drain();
+
+    let children = view.state.overlay.observe_children();
+    let weak = Rc::downgrade(&view.state);
+    let handler = children.connect_items_changed(move |_, _, _, _| {
+        weak.upgrade().unwrap().browser.close_peek();
+    });
+    let before = requests.borrow().len();
+    view.state.schedule_peek(0, first.clone(), anchor.clone());
+    drain();
+    assert!(view.state.peek.borrow().is_none(), "Reentrant overlay closure stays closed");
+    assert_eq!(requests.borrow().len(), before, "Closed overlays must not start loading");
+    children.disconnect(handler);
+
+    let connected = Rc::new(Cell::new(false));
+    let observed = connected.clone();
+    let weak = Rc::downgrade(&view.state);
+    view.state.browser.observe(move |event| {
+        if matches!(event, BrowserEvent::PeekStarted { .. }) {
+            let state = weak.upgrade().unwrap();
+            let model = state.peek.borrow().as_ref().expect("Peek attached").model.clone();
+            let weak = Rc::downgrade(&state);
+            model.connect_items_changed(move |_, _, _, _| {
+                weak.upgrade().unwrap().browser.close_peek();
+            });
+            observed.set(true);
+        }
+    });
+    view.state.schedule_peek(0, Location::local("/generated/folder-0"), anchor);
+    drain();
+    assert!(connected.get(), "Timer opened peek before synchronous enumeration");
+    assert!(view.state.peek.borrow().is_none());
+    drain();
+    view.state.browser.clear_observer();
+    window.close();
 }

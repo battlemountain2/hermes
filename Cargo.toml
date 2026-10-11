@@ -18,7 +18,11 @@ gdk-pixbuf = "0.21.5"
 geotiff-core = "0.8.1"
 gio = { version = "0.21.5", features = ["v2_72"] }
 gtk = { package = "gtk4", version = "0.10.3", features = ["v4_12"] }
+gstreamer = { version = "0.24", features = ["v1_20"] }
+gstreamer-app = { version = "0.24", features = ["v1_20"] }
+gstreamer-video = { version = "0.24", features = ["v1_20"] }
 ignore = "0.4.23"
+libheif-rs = { version = "2.7.0", default-features = false, features = ["v1_17"] }
 poppler = { package = "poppler-rs", version = "0.25.0" }
 quick-xml = "0.41.0"
 serde = { version = "1.0", features = ["derive"] }

@@ -10,9 +10,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use gtk::{gdk, gio, glib};
+use gtk::{gdk, gio, glib, glib::object::ObjectType};
 
 pub mod icons {
+    pub const PLAY: &str = "strata-play";
+    pub const PAUSE: &str = "strata-pause";
+    pub const VOLUME: &str = "strata-volume-2";
+    pub const MUTED: &str = "strata-volume-x";
+    pub const MAXIMIZE: &str = "strata-maximize";
+    pub const MINIMIZE: &str = "strata-minimize";
     pub const ARROW_DOWN: &str = "strata-arrow-down";
     pub const ARROW_DOWN_WIDE_NARROW: &str = "strata-arrow-down-wide-narrow";
     pub const ARROW_LEFT: &str = "strata-arrow-left";
@@ -49,10 +55,13 @@ pub mod icons {
     pub const PLUS: &str = "strata-plus";
     pub const PICTURES: &str = "strata-image";
     pub const ROWS: &str = "strata-rows";
+    pub const REPEAT: &str = "strata-repeat";
+    pub const REPEAT_ONE: &str = "strata-repeat-1";
     pub const SCISSORS: &str = "strata-scissors";
     pub const SEARCH: &str = "strata-search";
     pub const SETTINGS: &str = "strata-settings";
     pub const SETTINGS_2: &str = "strata-settings-2";
+    pub const SHUFFLE: &str = "strata-shuffle";
     pub const SLIDERS: &str = "strata-sliders-horizontal";
     pub const TERMINAL: &str = "strata-terminal";
     pub const TRASH: &str = "strata-trash";
@@ -70,13 +79,19 @@ struct PrimaryIcon {
     name: String,
 }
 
+#[derive(Default)]
+struct IconRegistry {
+    entries: HashMap<usize, PrimaryIcon>,
+    registrations_since_cleanup: usize,
+}
+
 thread_local! {
     static PRIMARY_ICON_COLOR: RefCell<String> = RefCell::new("#8bc9eb".to_owned());
-    static PRIMARY_ICONS: RefCell<Vec<PrimaryIcon>> = const { RefCell::new(Vec::new()) };
+    static PRIMARY_ICONS: RefCell<IconRegistry> = RefCell::new(IconRegistry::default());
     static TEXT_ICON_COLOR: RefCell<String> = RefCell::new("#c9deed".to_owned());
-    static TEXT_ICONS: RefCell<Vec<PrimaryIcon>> = const { RefCell::new(Vec::new()) };
+    static TEXT_ICONS: RefCell<IconRegistry> = RefCell::new(IconRegistry::default());
     static DANGER_ICON_COLOR: RefCell<String> = RefCell::new("#e5484d".to_owned());
-    static DANGER_ICONS: RefCell<Vec<PrimaryIcon>> = const { RefCell::new(Vec::new()) };
+    static DANGER_ICONS: RefCell<IconRegistry> = RefCell::new(IconRegistry::default());
     static ICON_TEXTURES: RefCell<HashMap<(String, String), gdk::Texture>> = RefCell::new(HashMap::new());
 }
 
@@ -114,23 +129,7 @@ pub fn primary_icon(name: &str, pixel_size: i32) -> gtk::Image {
 pub fn set_primary_icon(image: &gtk::Image, name: &str) {
     let color = PRIMARY_ICON_COLOR.with(|color| color.borrow().clone());
     apply_primary_icon(image, name, &color);
-    PRIMARY_ICONS.with(|icons| {
-        let mut icons = icons.borrow_mut();
-        icons.retain(|icon| icon.image.upgrade().is_some());
-        if let Some(icon) = icons
-            .iter_mut()
-            .find(|icon| icon.image.upgrade().as_ref() == Some(image))
-        {
-            icon.name = name.to_owned();
-            return;
-        }
-        let image_ref = glib::WeakRef::new();
-        image_ref.set(Some(image));
-        icons.push(PrimaryIcon {
-            image: image_ref,
-            name: name.to_owned(),
-        });
-    });
+    PRIMARY_ICONS.with(|icons| register_icon(icons, image, name));
 }
 
 pub fn set_primary_icon_color(color: &str) {
@@ -142,7 +141,8 @@ pub fn remove_primary_icon(image: &gtk::Image) {
     PRIMARY_ICONS.with(|icons| {
         icons
             .borrow_mut()
-            .retain(|icon| icon.image.upgrade().as_ref() != Some(image));
+            .entries
+            .remove(&(image.as_ptr() as usize));
     });
 }
 
@@ -150,8 +150,9 @@ pub fn has_primary_icon(image: &gtk::Image) -> bool {
     PRIMARY_ICONS.with(|icons| {
         icons
             .borrow()
-            .iter()
-            .any(|icon| icon.image.upgrade().as_ref() == Some(image))
+            .entries
+            .get(&(image.as_ptr() as usize))
+            .is_some_and(|icon| icon.image.upgrade().as_ref() == Some(image))
     })
 }
 
@@ -187,26 +188,28 @@ pub fn set_danger_icon_color(color: &str) {
     DANGER_ICONS.with(|icons| recolor_registered_icons(icons, color));
 }
 
-fn register_icon(icons: &RefCell<Vec<PrimaryIcon>>, image: &gtk::Image, name: &str) {
+fn register_icon(icons: &RefCell<IconRegistry>, image: &gtk::Image, name: &str) {
     let mut icons = icons.borrow_mut();
-    icons.retain(|icon| icon.image.upgrade().is_some());
-    if let Some(icon) = icons
-        .iter_mut()
-        .find(|icon| icon.image.upgrade().as_ref() == Some(image))
-    {
-        icon.name = name.to_owned();
-        return;
+    icons.registrations_since_cleanup += 1;
+    if icons.registrations_since_cleanup >= 256 {
+        icons
+            .entries
+            .retain(|_, icon| icon.image.upgrade().is_some());
+        icons.registrations_since_cleanup = 0;
     }
     let image_ref = glib::WeakRef::new();
     image_ref.set(Some(image));
-    icons.push(PrimaryIcon {
-        image: image_ref,
-        name: name.to_owned(),
-    });
+    icons.entries.insert(
+        image.as_ptr() as usize,
+        PrimaryIcon {
+            image: image_ref,
+            name: name.to_owned(),
+        },
+    );
 }
 
-fn recolor_registered_icons(icons: &RefCell<Vec<PrimaryIcon>>, color: &str) {
-    icons.borrow_mut().retain(|icon| {
+fn recolor_registered_icons(icons: &RefCell<IconRegistry>, color: &str) {
+    icons.borrow_mut().entries.retain(|_, icon| {
         let Some(image) = icon.image.upgrade() else {
             return false;
         };

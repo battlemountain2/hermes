@@ -143,6 +143,7 @@ pub enum SortKey {
     Type,
     Size,
     Modified,
+    Track,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -201,12 +202,26 @@ pub struct FileEntry(pub std::rc::Rc<FileEntryInner>);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FileEntryInner {
+    pub music_tags: Option<MusicTags>,
     pub location: Location,
     pub native_name: OsString,
     pub display_name: String,
     pub kind: EntryKind,
     pub size: MetadataValue<u64>,
     pub modified_unix_seconds: MetadataValue<i64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MusicTags {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub artist: Option<String>,
+    #[serde(default)]
+    pub album_artist: Option<String>,
+    pub album: Option<String>,
+    pub disc: Option<u32>,
+    pub track: Option<u32>,
 }
 
 impl std::ops::Deref for FileEntry {

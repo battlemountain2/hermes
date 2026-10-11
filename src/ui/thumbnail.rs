@@ -3,6 +3,7 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, VecDeque},
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -10,7 +11,7 @@ use std::{
 use gtk::{gdk, gio, glib, prelude::*};
 
 use crate::{
-    model::{FileEntry, MetadataValue},
+    model::FileEntry,
     sandbox::{Cancellation, ParseOperation},
     services::{FormatCapabilities, ThumbnailHandler, capabilities_by_name},
 };
@@ -34,9 +35,45 @@ struct ActiveRequest {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct ThumbnailKey {
     path: PathBuf,
-    modified: Option<i64>,
-    file_size: Option<u64>,
+    identity: SourceIdentity,
+    source_path: PathBuf,
+    source_identity: SourceIdentity,
     thumbnail_size: i32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct SourceIdentity {
+    device: u64,
+    inode: u64,
+    size: u64,
+    modified: (i64, i64),
+    changed: (i64, i64),
+}
+
+impl SourceIdentity {
+    fn read(path: &Path) -> Option<Self> {
+        let metadata = path.metadata().ok()?;
+        Some(Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            size: metadata.len(),
+            modified: (metadata.mtime(), metadata.mtime_nsec()),
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
+        })
+    }
+}
+
+struct ThumbnailSource {
+    key: ThumbnailKey,
+    operation: ParseOperation,
+}
+
+impl ThumbnailSource {
+    fn unchanged(&self) -> bool {
+        SourceIdentity::read(&self.key.path) == Some(self.key.identity)
+            && (self.key.source_path == self.key.path
+                || SourceIdentity::read(&self.key.source_path) == Some(self.key.source_identity))
+    }
 }
 
 #[derive(Default)]
@@ -47,6 +84,14 @@ struct ThumbnailCache {
 }
 
 impl ThumbnailCache {
+    fn candidate(&self, path: &Path, thumbnail_size: i32) -> Option<ThumbnailKey> {
+        self.recent
+            .iter()
+            .rev()
+            .find(|key| key.path == path && key.thumbnail_size == thumbnail_size)
+            .cloned()
+    }
+
     fn get(&mut self, key: &ThumbnailKey) -> Option<glib::Bytes> {
         let bytes = self.entries.get(key)?.clone();
         self.recent.retain(|candidate| candidate != key);
@@ -55,10 +100,15 @@ impl ThumbnailCache {
     }
 
     fn insert(&mut self, key: ThumbnailKey, bytes: glib::Bytes) {
-        if let Some(previous) = self.entries.remove(&key) {
-            self.byte_count = self.byte_count.saturating_sub(previous.len());
+        if bytes.len() > MAX_CACHE_BYTES {
+            return;
         }
-        self.recent.retain(|candidate| candidate != &key);
+        self.entries.retain(|candidate, _| {
+            candidate.path != key.path || candidate.thumbnail_size != key.thumbnail_size
+        });
+        self.byte_count = self.entries.values().map(|bytes| bytes.len()).sum();
+        self.recent
+            .retain(|candidate| self.entries.contains_key(candidate));
         self.byte_count = self.byte_count.saturating_add(bytes.len());
         self.recent.push_back(key.clone());
         self.entries.insert(key, bytes);
@@ -95,13 +145,23 @@ pub(super) fn set_thumbnail_or_icon(
         mark_nonempty_folder(image, image_id, request, path.clone());
     }
     if path.extension().and_then(std::ffi::OsStr::to_str) == Some("desktop") {
-        if let Some(app) = gio::DesktopAppInfo::from_filename(&path)
-            && let Some(icon) = app.icon()
-        {
-            crate::assets::remove_primary_icon(image);
-            image.set_from_gicon(&icon);
-            image.set_pixel_size(thumbnail_size.clamp(16, 256));
-        }
+        let weak_image = image.downgrade();
+        let worker_cancellation = cancellation.clone();
+        glib::MainContext::default().spawn_local(async move {
+            let Ok(Some(icon)) =
+                gio::spawn_blocking(move || desktop_icon(&path, &worker_cancellation)).await
+            else {
+                return;
+            };
+            if request_is_current(image_id, request, &cancellation)
+                && let Some(image) = weak_image.upgrade()
+                && let Ok(icon) = gio::Icon::for_string(&icon)
+            {
+                crate::assets::remove_primary_icon(&image);
+                image.set_from_gicon(&icon);
+                image.set_pixel_size(thumbnail_size.clamp(16, 256));
+            }
+        });
         return;
     }
     let kind = if entry.is_directory() {
@@ -116,46 +176,107 @@ pub(super) fn set_thumbnail_or_icon(
         return;
     };
     let thumbnail_size = thumbnail_size.clamp(16, 256);
-    let key = ThumbnailKey {
-        path: path.clone(),
-        modified: known_metadata(&entry.modified_unix_seconds),
-        file_size: known_metadata(&entry.size),
-        thumbnail_size,
-    };
-    if let Some(bytes) = THUMBNAIL_CACHE.with(|cache| cache.borrow_mut().get(&key)) {
-        apply_thumbnail(image, &bytes, thumbnail_size);
-        return;
-    }
+    let candidate = THUMBNAIL_CACHE.with(|cache| cache.borrow().candidate(&path, thumbnail_size));
 
     let weak_image = glib::WeakRef::new();
     weak_image.set(Some(image));
     glib::MainContext::default().spawn_local(async move {
-        let result = gio::spawn_blocking(move || {
-            render_thumbnail(&path, kind, thumbnail_size, &cancellation)
+        let worker_cancellation = cancellation.clone();
+        let Ok(Ok(source)) = gio::spawn_blocking(move || {
+            if worker_cancellation.is_cancelled() {
+                return Err("Thumbnail request was cancelled".to_owned());
+            }
+            let source = thumbnail_source(
+                &path,
+                kind,
+                thumbnail_size,
+                candidate.as_ref(),
+                folder_album_art,
+            )?;
+            if worker_cancellation.is_cancelled() || !source.unchanged() {
+                return Err("Thumbnail source changed".to_owned());
+            }
+            Ok(source)
         })
-        .await;
-        let Ok(Ok(png)) = result else {
+        .await
+        else {
             return;
         };
-        let bytes = glib::Bytes::from_owned(png);
-        THUMBNAIL_CACHE.with(|cache| cache.borrow_mut().insert(key, bytes.clone()));
-        let is_current = ACTIVE_REQUESTS.with(|requests| {
-            requests
-                .borrow()
-                .get(&image_id)
-                .is_some_and(|active| active.id == request)
-        });
-        if !is_current {
+        if !request_is_current(image_id, request, &cancellation) {
             return;
         }
-        let Some(image) = weak_image.upgrade() else {
+        if weak_image.upgrade().is_none() {
             ACTIVE_REQUESTS.with(|requests| {
                 requests.borrow_mut().remove(&image_id);
             });
             return;
+        }
+        let key = source.key.clone();
+        let cached = THUMBNAIL_CACHE.with(|cache| cache.borrow_mut().get(&key));
+        let bytes = if let Some(bytes) = cached {
+            bytes
+        } else {
+            let worker_cancellation = cancellation.clone();
+            let Ok(Ok(png)) = gio::spawn_blocking(move || {
+                render_thumbnail(
+                    &source,
+                    &worker_cancellation,
+                    |path, operation, size, cancellation| {
+                        crate::sandbox::parse(path, operation, size, cancellation)
+                            .map(|output| output.data)
+                    },
+                )
+            })
+            .await
+            else {
+                return;
+            };
+            glib::Bytes::from_owned(png)
         };
-        apply_thumbnail(&image, &bytes, thumbnail_size);
+        complete_thumbnail(image_id, request, &cancellation, key, bytes, |bytes| {
+            weak_image
+                .upgrade()
+                .is_some_and(|image| apply_thumbnail(&image, bytes, thumbnail_size))
+        });
     });
+}
+
+fn desktop_icon(path: &Path, cancellation: &Cancellation) -> Option<String> {
+    if cancellation.is_cancelled() {
+        return None;
+    }
+    let identity = SourceIdentity::read(path)?;
+    let icon = gio::DesktopAppInfo::from_filename(path)?
+        .icon()?
+        .to_string()?
+        .to_string();
+    (!cancellation.is_cancelled() && SourceIdentity::read(path) == Some(identity)).then_some(icon)
+}
+
+fn request_is_current(image_id: usize, request: u64, cancellation: &Cancellation) -> bool {
+    !cancellation.is_cancelled()
+        && ACTIVE_REQUESTS.with(|requests| {
+            requests
+                .borrow()
+                .get(&image_id)
+                .is_some_and(|active| active.id == request && !active.cancellation.is_cancelled())
+        })
+}
+
+fn complete_thumbnail(
+    image_id: usize,
+    request: u64,
+    cancellation: &Cancellation,
+    key: ThumbnailKey,
+    bytes: glib::Bytes,
+    apply: impl FnOnce(&glib::Bytes) -> bool,
+) {
+    if request_is_current(image_id, request, cancellation)
+        && apply(&bytes)
+        && request_is_current(image_id, request, cancellation)
+    {
+        THUMBNAIL_CACHE.with(|cache| cache.borrow_mut().insert(key, bytes));
+    }
 }
 
 fn thumbnail_operation(handler: ThumbnailHandler) -> ParseOperation {
@@ -202,25 +323,28 @@ fn mark_nonempty_folder(image: &gtk::Image, image_id: usize, request: u64, path:
     });
 }
 
-fn known_metadata<T: Copy>(value: &MetadataValue<T>) -> Option<T> {
-    match value {
-        MetadataValue::Known(value) => Some(*value),
-        MetadataValue::Unknown | MetadataValue::Unavailable => None,
-    }
-}
-
-fn apply_thumbnail(image: &gtk::Image, bytes: &glib::Bytes, thumbnail_size: i32) {
+fn apply_thumbnail(image: &gtk::Image, bytes: &glib::Bytes, thumbnail_size: i32) -> bool {
     if let Ok(texture) = gdk::Texture::from_bytes(bytes) {
         crate::assets::remove_primary_icon(image);
         image.set_pixel_size(thumbnail_size);
         image.set_size_request(thumbnail_size, thumbnail_size);
         image.set_paintable(Some(&texture));
         image.set_opacity(1.0);
+        return true;
     }
+    false
 }
 
 pub(super) fn show_fallback_icon(image: &gtk::Image, icon: &str, size: i32) {
     set_fallback_icon(image, icon, size);
+}
+
+pub(super) fn cancel_thumbnail(image: &gtk::Image) {
+    ACTIVE_REQUESTS.with(|requests| {
+        if let Some(request) = requests.borrow_mut().remove(&(image.as_ptr() as usize)) {
+            request.cancellation.cancel();
+        }
+    });
 }
 
 fn set_fallback_icon(image: &gtk::Image, icon: &str, size: i32) -> (usize, u64, Cancellation) {
@@ -231,7 +355,13 @@ fn set_fallback_icon(image: &gtk::Image, icon: &str, size: i32) -> (usize, u64, 
     let cancellation = Cancellation::default();
     ACTIVE_REQUESTS.with(|requests| {
         let mut requests = requests.borrow_mut();
-        requests.retain(|_, active| active.image.upgrade().is_some());
+        requests.retain(|_, active| {
+            let alive = active.image.upgrade().is_some();
+            if !alive {
+                active.cancellation.cancel();
+            }
+            alive
+        });
         if let Some(previous) = requests.insert(
             image_id,
             ActiveRequest {
@@ -249,23 +379,77 @@ fn set_fallback_icon(image: &gtk::Image, icon: &str, size: i32) -> (usize, u64, 
     (image_id, request, cancellation)
 }
 
-fn render_thumbnail(
+fn thumbnail_source(
     path: &Path,
     kind: ThumbnailKind,
     size: i32,
-    cancellation: &Cancellation,
-) -> Result<Vec<u8>, String> {
-    if let ThumbnailKind::FolderAlbum = kind {
-        let (art, operation) =
-            folder_album_art(path).ok_or_else(|| "No folder artwork was found".to_owned())?;
-        return crate::sandbox::parse(&art, operation, size.clamp(16, 256), cancellation)
-            .map(|output| output.data);
-    }
-    let ThumbnailKind::Sandboxed(operation) = kind else {
-        unreachable!();
+    candidate: Option<&ThumbnailKey>,
+    find_cover: impl FnOnce(&Path) -> Option<(PathBuf, ParseOperation)>,
+) -> Result<ThumbnailSource, String> {
+    let identity =
+        SourceIdentity::read(path).ok_or_else(|| "Thumbnail source is unavailable".to_owned())?;
+    let (source_path, operation) = match kind {
+        ThumbnailKind::Sandboxed(operation) => (path.to_path_buf(), operation),
+        ThumbnailKind::FolderAlbum => {
+            if let Some(candidate) = candidate
+                && candidate.path == path
+                && candidate.identity == identity
+                && let Some(source_identity) = SourceIdentity::read(&candidate.source_path)
+            {
+                let operation = if candidate
+                    .source_path
+                    .extension()
+                    .and_then(std::ffi::OsStr::to_str)
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("flac"))
+                {
+                    ParseOperation::ThumbnailVideo
+                } else {
+                    ParseOperation::ThumbnailImage
+                };
+                let mut key = candidate.clone();
+                key.source_identity = source_identity;
+                key.thumbnail_size = size;
+                return Ok(ThumbnailSource { key, operation });
+            }
+            find_cover(path).ok_or_else(|| "No folder artwork was found".to_owned())?
+        }
     };
-    crate::sandbox::parse(path, operation, size.clamp(16, 256), cancellation)
-        .map(|output| output.data)
+    let source_identity = if source_path == path {
+        identity
+    } else {
+        SourceIdentity::read(&source_path)
+            .ok_or_else(|| "Folder artwork is unavailable".to_owned())?
+    };
+    Ok(ThumbnailSource {
+        key: ThumbnailKey {
+            path: path.to_path_buf(),
+            identity,
+            source_path,
+            source_identity,
+            thumbnail_size: size,
+        },
+        operation,
+    })
+}
+
+fn render_thumbnail(
+    source: &ThumbnailSource,
+    cancellation: &Cancellation,
+    render: impl FnOnce(&Path, ParseOperation, i32, &Cancellation) -> Result<Vec<u8>, String>,
+) -> Result<Vec<u8>, String> {
+    if cancellation.is_cancelled() || !source.unchanged() {
+        return Err("Thumbnail source changed or request was cancelled".to_owned());
+    }
+    let png = render(
+        &source.key.source_path,
+        source.operation,
+        source.key.thumbnail_size,
+        cancellation,
+    )?;
+    if cancellation.is_cancelled() || !source.unchanged() {
+        return Err("Thumbnail source changed or request was cancelled".to_owned());
+    }
+    Ok(png)
 }
 
 pub(crate) fn folder_album_art(directory: &Path) -> Option<(std::path::PathBuf, ParseOperation)> {
@@ -280,7 +464,11 @@ pub(crate) fn folder_album_art(directory: &Path) -> Option<(std::path::PathBuf, 
             .extension()
             .and_then(std::ffi::OsStr::to_str)
             .map(str::to_ascii_lowercase);
-        if extension.as_deref() == Some("flac") && embedded.is_none() {
+        if extension.as_deref() == Some("flac")
+            && embedded
+                .as_ref()
+                .is_none_or(|(candidate, _)| &path < candidate)
+        {
             embedded = Some((path.clone(), ParseOperation::ThumbnailVideo));
         }
         if matches!(extension.as_deref(), Some("jpg" | "jpeg" | "png" | "webp")) {
@@ -301,7 +489,7 @@ pub(crate) fn folder_album_art(directory: &Path) -> Option<(std::path::PathBuf, 
             }
         }
     }
-    images.sort_by_key(|(rank, _)| *rank);
+    images.sort();
     images
         .into_iter()
         .next()

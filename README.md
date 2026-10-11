@@ -1,319 +1,250 @@
-# Strata
+# Hermes
 
-**Navigate every layer.**
+**An ultra-fast, keyboard-first file manager, media workspace, and music player for Linux.**
 
-Strata is an experimental, keyboard-first file manager for Linux. It is designed primarily for Omarchy while remaining portable to other modern Linux environments.
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Built with Rust](https://img.shields.io/badge/Language-Rust_2024-orange.svg)](https://www.rust-lang.org/)
+[![GTK4](https://img.shields.io/badge/UI-GTK4_&_Wayland-purple.svg)](https://gtk.org/)
 
-## Browser modes
+Hermes is an experimental, keyboard-centric file manager and media hub engineered for Wayland and modern Linux desktops (designed primarily for Omarchy). It pairs responsive Miller-column navigation with an integrated background music player, live waveform visualization, an isolated media preview pipeline, and zero-latency tab switching.
 
-### List
+> [!NOTE]
+> **Origins & Attribution**: Hermes is derived from **[Strata](https://github.com/LGSE/strata)**, originally conceived and built by **Pierre Bérubé** and the **[LGSE](https://github.com/LGSE)** team. Hermes builds upon Strata’s architectural foundation—its GTK4/Rust design, cancellable directory enumeration, and Bubblewrap sandboxing—expanding it into a full-featured daily-driver file and music experience with retained tabs, whole-library music indexing, MPRIS v2 desktop integration, and high-performance image/video pipelines.
 
-![Strata List mode showing Miller-column navigation, the places sidebar, and a source-code preview](docs/assets/strata-screenshot.png)
+<p align="center">
+  <img src="docs/assets/hermes-showcase.gif" alt="Hermes Interactive Showcase" width="100%" />
+</p>
+
+---
+
+## Browser Modes
+
+### List (Miller Columns)
+Navigate deep folder hierarchies with keyboard arrows or mouse, featuring instant, cancellable folder peeking on hover.
+
+![Hermes List mode showing Miller-column navigation, places sidebar, and code preview](docs/assets/strata-screenshot.png)
 
 ### Explorer
+Detailed, sortable table view for auditing file metadata, permissions, dates, and sizes.
 
-![Strata Explorer mode showing a detailed, sortable file listing](docs/assets/strata-explorer.png)
+![Hermes Explorer mode showing a detailed, sortable file listing](docs/assets/strata-explorer.png)
 
 ### Grid
+Responsive icon tiles with high-performance thumbnail caching.
 
-![Strata Grid mode showing files and folders as icon tiles](docs/assets/strata-grid.png)
+![Hermes Grid mode showing files and folders as icon tiles](docs/assets/strata-grid.png)
 
-## Vision
+---
 
-- Miller-column navigation
-- Folder peeking on hover
-- Ultra-fast search
-- Rich file previews
-- Collapsible sidebar
-- Compact and airy density modes
-- List, Explorer, and Grid views
-- Persistent tabs with independent browsing context
-- Omarchy and system theming
-- Complete keyboard navigation
+## Key Features
 
-## Documentation
+### ⚡ Navigation & Retained Native Tabs
+- **Miller-Column Navigation**: Fluid horizontal column reveal with stable layouts and hover peeking.
+- **Retained Tabs Engine**: Inactive tabs remain cached in memory by `TrailId` within a bounded budget (~64 MiB). Switching tabs is instant—no row reconstruction, layout churn, or lost scroll/selection state.
+- **Virtualized Lists**: Handles folders with 100,000+ entries effortlessly using GTK4 list models.
+- **Cancellable Off-Thread I/O**: Directory navigation streams bounded batches (first 32 entries visible immediately); rapid navigation cancels stale generation requests instantly.
+- **Safe, Atomic Operations**: File copies use private staging beside the target destination before publication; same-filesystem moves use atomic rename. An existing file is never deleted prior to a verified transfer.
 
-- [Product requirements](docs/prd.md) — product specification
-- [Roadmap](docs/roadmap.md) — milestone sequence and exit criteria
-- [Work breakdown](docs/todo.md) — actionable project checklist
-- [Architecture principles](docs/architecture.md) — boundaries and customization strategy
-- [Prototype design reference](docs/design-reference.md) — visual tokens, motion, and interaction baseline
-- [Themes](docs/themes.md) — custom theme schema and Omarchy Quattro integration
-- [Unsafe code policy](docs/unsafe-code.md) — exception requirements and current inventory
-- [Initial technical direction](docs/technical-direction.md) — original technical assessment
+### 🎵 Integrated Music Player & Library
+- **Dedicated Music View (<kbd>Ctrl</kbd>+<kbd>M</kbd>)**: Browse local audio by albums and tracks with disc-then-track metadata ordering.
+- **Live Playback Queue**:
+  - Reorder queued tracks (<kbd>Alt</kbd>+<kbd>Up</kbd> / <kbd>Down</kbd> or drag handle).
+  - Context menu actions on tracks and albums: **Play**, **Play next**, and **Add to queue** (<kbd>Shift</kbd>+<kbd>F10</kbd> or right-click).
+  - Queue additions never interrupt currently playing tracks.
+  - Automatically checkpointed to `$XDG_STATE_HOME/strata/music-queue-v1.json`—restarts restore your queue without annoying autoplay.
+- **Persistent Bottom Transport Bar**: Always accessible during playback, featuring album art, draggable scrub timeline, volume slider, shuffle, and repeat.
+- **Live Audio Waveforms**: Real-time waveform visualization in the Music view with a one-click visibility toggle.
+- **Desktop MPRIS v2 Bridge**: Exposes `org.mpris.MediaPlayer2.hermes` for native desktop widgets, lock screens, and hardware media keys (play/pause, skip, seek, volume, and cover art).
+- **Whole-Library Music Search (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd>)**: Instantly search song titles, artists, and albums across your entire music collection with live background metadata indexing.
 
-## Technology
+![Hermes Music Player and Library View](docs/assets/hermes-music.png)
 
-- Rust
-- GTK4
-- GIO
-- Native Wayland support
+### 🛡️ Sandboxed Media & Document Previews
+All untrusted file parsing runs inside a secure **[Bubblewrap (`bwrap`) sandbox](docs/preview-sandbox.md)** with tight CPU, memory, and output boundaries:
+- **Fast JPEG & HEIF/HEIC Loading**: Extracts embedded orientation-aware EXIF thumbnails for near-instant rendering (falling back to ImageMagick only when necessary).
+- **Streaming Video Previews**: Persistent GStreamer decoder with draggable scrub handles and 200 ms quick-start poster fallback. Press <kbd>F</kbd> for fullscreen playback.
+- **Camera RAW Support**: Decodes DNG, CR2/CR3, NEF, ARW, RAF, ORF, RW2, and more via host LibRaw or ImageMagick.
+- **Fullscreen PDF Reader**: Read multi-page PDFs with reading-position retention, zoom controls, and fullscreen toggle (<kbd>F</kbd>).
+- **Animated GIF Previews**: Sandboxed loopable playback with VP8 alpha-transparency retention.
+- **Rich Text & Syntax Highlighting**: View source code and formatted text via GtkSourceView 5 with selectable mono fonts.
 
-## Install a precompiled release
+### 🔍 Search & Custom Actions
+- **Fuzzy Search (<kbd>Ctrl</kbd>+<kbd>K</kbd>)**: Search current folder, whole filesystem, or music library with live result filtering and file-type badges.
+- **Content Search**: Opt-in, off-thread search inside documents (PDF, DOCX, ODT) and text files up to 1 MiB.
+- **Custom Context Actions**: Define custom, argument-based actions in `~/.config/hermes/actions.toml` without shell injection risks (see [Custom Actions](docs/custom-actions.md)).
 
-Strata is not yet available through Arch's package repositories. Download the archive and matching `.sha256` file for your CPU from the [latest release](https://github.com/LGSE/strata/releases/latest):
+![Hermes Universal Scoped Search](docs/assets/hermes-search.png)
 
-- `x86_64-unknown-linux-gnu` for Intel and AMD PCs
-- `aarch64-unknown-linux-gnu` for ARM64 PCs
+### 🎨 Theming & Modern Linux Integration
+- **Theming**: Native Wayland and X11 support, Noctalia theme styling, and Omarchy Quattro / Omarchy 3 integration.
+- **Square Tabs & Density**: Square tab surfaces with configurable airy and compact density modes.
+- **Selectable Fonts**: Built-in support for Maple Mono and JetBrains Mono fonts.
 
-Install the runtime libraries and optional video preview tools on Arch or Omarchy:
+---
 
-```bash
-sudo pacman -S --needed bubblewrap ffmpeg ffmpegthumbnailer fontconfig gst-plugins-good gtk4 gtksourceview5 libarchive poppler-glib
-```
+## Keyboard Shortcuts
 
-Then verify, extract, and install the downloaded archive (replace the filename with the release you downloaded). The `gh attestation` check verifies the archive's signed GitHub Actions provenance:
+| Shortcut | Action |
+| :--- | :--- |
+| <kbd>Left</kbd> / <kbd>Right</kbd> | Navigate parent / child column |
+| <kbd>Up</kbd> / <kbd>Down</kbd> | Move selection up / down |
+| <kbd>Space</kbd> | Toggle preview drawer |
+| <kbd>Ctrl</kbd> + <kbd>T</kbd> | Open new tab |
+| <kbd>Ctrl</kbd> + <kbd>W</kbd> | Close current tab |
+| <kbd>Ctrl</kbd> + <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> | Switch view mode: List / Explorer / Grid |
+| <kbd>Ctrl</kbd> + <kbd>M</kbd> | Open Music view |
+| <kbd>Ctrl</kbd> + <kbd>K</kbd> | Search current scope |
+| <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>K</kbd> | Search whole Music library |
+| <kbd>F</kbd> | Fullscreen active video, image, or PDF preview |
+| <kbd>Shift</kbd> + <kbd>F10</kbd> / <kbd>Menu</kbd> | Open context menu for selected item |
+| <kbd>Alt</kbd> + <kbd>Up</kbd> / <kbd>Down</kbd> | Reorder selected track in playback queue |
+| <kbd>Ctrl</kbd> + <kbd>H</kbd> | Toggle hidden files |
+| <kbd>Ctrl</kbd> + <kbd>R</kbd> | Refresh current folder / library |
 
-```bash
-cd ~/Downloads
-sha256sum --check strata-<version>-<target>.tar.gz.sha256
-gh attestation verify strata-<version>-<target>.tar.gz --repo LGSE/strata
-tar -xzf strata-<version>-<target>.tar.gz
-install -Dm755 strata-<version>-<target>/strata ~/.local/bin/strata
-```
+---
 
-Each archive also contains `SOURCE_COMMIT`, which records the exact commit used for the build.
+## Installation
 
-Ensure `~/.local/bin` is on `PATH`, then run `strata`. Image thumbnails work without `ffmpegthumbnailer`; when `ffmpegthumbnailer` or `ffmpeg` is unavailable, video files fall back to their video icon or an unavailable preview. Bubblewrap is required: preview parsing fails closed rather than running untrusted native parsers without a sandbox. See [Preview sandbox](docs/preview-sandbox.md) for the providers, permissions, and resource limits.
+### Prerequisites (Arch Linux / Omarchy)
 
-Media playback requires the GStreamer auto-detection elements provided by
-`gst-plugins-good`. Without them, GTK cannot select an audio output and media
-previews remain at `0:00`.
-
-FLAC files with embedded cover art display album thumbnails when `ffmpegthumbnailer` is installed.
-The preview drawer can play the first 30 seconds through the sandboxed `ffmpeg` media pipeline.
-
-#### Optional HEIC/HEIF and RAW photo previews
-
-HEIC and HEIF thumbnails and previews use an installed GDK Pixbuf loader when available, then
-fall back to ImageMagick. On Arch or Omarchy, install ImageMagick and its HEIF decoder:
-
-```bash
-sudo pacman -S --needed imagemagick libheif
-```
-
-Strata recognizes common camera RAW formats, including DNG, CR2/CR3, NEF, ARW, RAF, ORF, RW2, PEF, and X3F. RAW decoding is provided by tools already installed on the host rather than bundled into Strata. It tries, in order:
-
-1. an installed GDK Pixbuf loader;
-2. ImageMagick (`magick` or `convert`); and
-3. the LibRaw-compatible `dcraw_emu` or `dcraw` thumbnail extractor.
-
-On Arch or Omarchy, the recommended RAW setup is:
+Install the required system libraries, GTK4 runtime, GStreamer plugins, and preview tools:
 
 ```bash
-sudo pacman -S --needed imagemagick libraw
+sudo pacman -S --needed \
+    bubblewrap \
+    ffmpeg \
+    ffmpegthumbnailer \
+    fontconfig \
+    gst-plugins-base \
+    gst-plugins-good \
+    gst-plugins-bad \
+    gst-libav \
+    gtk4 \
+    gtksourceview5 \
+    gvfs \
+    libarchive \
+    libheif \
+    poppler-glib \
+    imagemagick \
+    libraw
 ```
 
-Available formats depend on how those host packages were built and on whether a particular camera model is supported. Unsupported or malformed RAW files continue to display the normal image icon.
+### Build from Source
 
-### Desktop integration
-
-Create a per-user desktop entry so launchers and `xdg-open` can discover Strata:
+Ensure you have a modern Rust toolchain installed (edition 2024 / Rust 1.85+):
 
 ```bash
-mkdir -p ~/.local/share/applications
-cat > ~/.local/share/applications/io.github.lgse.Strata.desktop <<EOF
-[Desktop Entry]
-Name=Strata
-Comment=Navigate every layer
-Exec=$HOME/.local/bin/strata %U
-Icon=system-file-manager
-Terminal=false
-Type=Application
-Categories=Utility;FileManager;
-MimeType=inode/directory;
-StartupNotify=true
-EOF
-update-desktop-database ~/.local/share/applications
-xdg-mime default io.github.lgse.Strata.desktop inode/directory
+# Clone the repository
+git clone https://github.com/battlemountain2/hermes.git
+cd hermes
+
+# Build release binary
+cargo build --release
+
+# Install to ~/.local/bin
+install -Dm755 target/release/strata ~/.local/bin/hermes
 ```
 
-Confirm the association with:
+*(Note: The internal binary identifier remains `strata` during active migration; copying it as `hermes` provides standard execution.)*
 
-```bash
-xdg-mime query default inode/directory
-```
+### Development Mode
 
-It should print `io.github.lgse.Strata.desktop`.
-
-### Make Strata the Omarchy file manager
-
-The XDG association above makes folders opened by desktop applications use Strata. To also replace Omarchy's <kbd>Super</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> shortcut, use the instructions for your Omarchy generation.
-
-#### Omarchy Quattro
-
-Add these overrides to `~/.config/hypr/bindings.lua`:
-
-```lua
-hl.unbind("SUPER + SHIFT + F")
-hl.unbind("SUPER + ALT + SHIFT + F")
-o.bind("SUPER + SHIFT + F", "File manager", "uwsm app -- strata")
-o.bind("SUPER + ALT + SHIFT + F", "File manager (cwd)",
-  "uwsm app -- strata \"$(omarchy-cmd-terminal-cwd)\"")
-```
-
-Apply and validate the configuration:
-
-```bash
-hyprctl reload
-hyprctl configerrors
-```
-
-#### Omarchy 3
-
-In `~/.config/hypr/bindings.conf`, replace the existing Nautilus file-manager binding with:
-
-```ini
-bindd = SUPER SHIFT, F, File manager, exec, uwsm app -- strata
-```
-
-Optionally add a shortcut that opens the active terminal's working directory:
-
-```ini
-bindd = SUPER SHIFT ALT, F, File manager (cwd), exec, uwsm app -- strata "$(omarchy-cmd-terminal-cwd)"
-```
-
-Then run `hyprctl reload` and `hyprctl configerrors`.
-
-## Technical highlights
-
-Strata is built around a small application model rather than placing filesystem logic in GTK widgets:
-
-- **Native paths stay native.** Invalid UTF-8 names retain their original Linux path bytes and are converted only for display.
-- **Navigation and peeking are separate.** Committed Miller columns participate in history; temporary hover peeks never mutate it.
-- **Filesystem work is cancellable.** Directory requests carry generations, stream bounded batches, and reject stale results after rapid navigation.
-- **Large directories stay virtualized.** Rows render through GTK list models and are exercised against deterministic fixtures containing up to 100,000 entries.
-- **Monitoring is incremental.** Coalesced create, remove, move, and metadata events update sorted columns in place while ambiguous events safely fall back to a rescan.
-- **Selection survives change.** Sorting, monitoring, and reloads preserve selection by native location rather than fragile row index.
-- **Motion avoids layout churn.** Columns reserve their final width before animating, and horizontal reveal targets remain stable during deep navigation.
-- **Failure is explicit.** Loading, empty, unavailable, and error states are distinct, with retry support that does not rewrite navigation history.
-
-The architectural boundaries and performance workflow are documented in [`docs/architecture.md`](docs/architecture.md) and [`docs/performance-baseline.md`](docs/performance-baseline.md).
-
-## Development
-
-### AI development handoff
-
-This checkout is the standalone, private **Hermes** project derived from Strata. The repository is
-`battlemountain2/hermes`, and active development currently happens on
-`feat/ui-updates`. The Rust package, executable, application ID, resource paths, cache paths,
-and some user-facing strings intentionally still use `strata`; perform that rename later as one
-coordinated release task rather than changing identifiers piecemeal.
-
-The current `feat/ui-updates` checkpoint is verified with:
-
-```bash
-cargo fmt --all
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test -q
-```
-
-The last completed baseline is **182 passing tests** with strict Clippy clean. To run the current development build rather
-than an older desktop-installed copy:
-
-```bash
-cd ~/Projects/hermes
-cargo build
-./target/debug/strata
-```
-
-Major completed Hermes work includes persistent tabs with a new-tab button, back/forward mouse
-buttons, drive mounting and styled eject confirmation, movable Trash/sidebar places, everyday file
-operations and Open With, clipboard status/details, folder-state and album-art thumbnails, trusted
-`.desktop` icons, optional Today/Yesterday views, recursive fuzzy search, reveal-in-context,
-structured and mouse-configurable search filters, opt-in bounded content search, broader text
-previews, and selectable Maple Mono/JetBrains Mono fonts. Search content reads run off the GTK
-thread, skip symlinks and binary-looking files, and cap direct text reads at 1 MiB.
-We also recently added an optional folder tree panel (configurable in Settings), image preview
-click-and-drag panning, and image auto-fit zoom scaling. The buggy list-row info buttons were
-removed to simplify the UI. Today/Yesterday sidebar searches now use a cancellable routed search
-source and publish an exact final result set after background indexing.
-
-The **Advanced Preview Registry** is complete in `src/services/formats.rs`. It centrally
-reports format family plus independent preview, thumbnail, and text-extractor capabilities. Local
-preview loading, quick-preview eligibility, thumbnails, preview labels/unavailable messages, and
-content-search eligibility now consume that registry. Sandbox operation selection remains outside
-the service layer. Opt-in content search supports PDF, DOCX, and ODT text through the Bubblewrap
-sandbox. Document work is cancellable and bounded to 32 documents per query, 32 MiB per input,
-and 1 MiB of extracted text; the search UI reports extraction or limit notices without blocking GTK.
-
-Archive support includes sandboxed content listings, ZIP and compressed TAR creation, and safe
-extract-here/extract-to workflows with progress and cancellation. Configurable, argument-based
-context-menu actions live in `~/.config/hermes/actions.toml`; Hermes never passes them through a
-shell. See [`docs/custom-actions.md`](docs/custom-actions.md).
-
-Preserve these decisions while continuing:
-
-- untrusted image, media, and PDF parsing remains sandboxed through Bubblewrap;
-- ImageMagick remains the first JPEG/image renderer while the glycin shared-memory crash workaround
-  is needed;
-- content search remains opt-in, cancellable, bounded, and off the GTK thread;
-- missing optional host tools degrade to icons or explicit unavailable states;
-- do not add dual-pane mode, an embedded terminal, or remote providers yet;
-- the optional folder-tree panel belongs in Settings, not permanently in the main layout;
-- preserve user changes in a dirty worktree and use `apply_patch` for source edits;
-- commit focused changes to `feat/ui-updates` (or branch as appropriate) and push to the private Hermes remote.
-
-Next: perform the coordinated Strata-to-Hermes application/package rename and release preparation.
-
-### Requirements
-
-- The latest stable Rust release
-- GTK 4.12 or newer
-- GtkSourceView 5
-- Poppler GLib
-- Fontconfig
-- A C toolchain and `pkg-config`
-
-On Arch Linux:
-
-```bash
-sudo pacman -S --needed base-devel rust bubblewrap fontconfig gtk4 gtksourceview5 libarchive poppler-glib
-```
-
-Run Strata:
-
-```bash
-cargo run
-```
-
-For development, run Strata in auto-reload mode. The app rebuilds and restarts
-when code or bundled assets change. On Arch, Debian/Ubuntu, and Fedora,
-`start-dev` installs missing native dependencies (prompting for `sudo`) and
-installs `cargo-watch` automatically when needed:
+For rapid iteration with automatic rebuilding and restarting on file changes:
 
 ```bash
 make start-dev
 ```
 
-Run the standard quality checks:
+To run development mode against release-optimized builds:
+
+```bash
+HERMES_DEV_RELEASE=1 make start-dev
+```
+
+Run test suites and quality linters:
 
 ```bash
 ./scripts/check.sh
 ```
 
-The script always runs formatting, compilation, Clippy, and tests. It also runs dependency-policy and spelling checks when `cargo-deny` and `typos` are installed. CI runs the complete suite on the latest stable Rust release.
+---
 
-## Creating a release
+## Desktop Integration
 
-Maintainers can run the **Release** workflow from GitHub's Actions tab on the default branch and choose a `patch`, `minor`, or `major` version bump. After both Linux targets build successfully, the workflow:
+### Desktop Entry
 
-- commits the new version to `Cargo.toml` and `Cargo.lock`;
-- creates an annotated `vX.Y.Z` tag; and
-- publishes x86-64 and ARM64 archives, SHA-256 checksum files, signed build-provenance attestations, and generated release notes.
+Create a user desktop entry so your application launcher and `xdg-open` recognize Hermes:
 
-The final publishing job uses the protected `release` GitHub environment and is the only job granted write permissions. Repository administrators must configure that environment with required reviewers; prevent self-review when a separate maintainer is available to approve releases. The release workflow stops without publishing if the default branch changes while binaries are building. Run it again from the new head in that case.
+```bash
+mkdir -p ~/.local/share/applications
+cat > ~/.local/share/applications/hermes.desktop <<EOF
+[Desktop Entry]
+Name=Hermes
+Comment=Ultra-fast keyboard-first file manager and media workspace
+Exec=$HOME/.local/bin/hermes %U
+Icon=system-file-manager
+Terminal=false
+Type=Application
+Categories=Utility;FileManager;AudioVideo;
+MimeType=inode/directory;
+StartupNotify=true
+EOF
 
-## Bundled assets
+update-desktop-database ~/.local/share/applications
+xdg-mime default hermes.desktop inode/directory
+```
 
-Strata/Hermes includes a curated Lucide icon subset plus the regular JetBrains Mono and Maple Mono
-Normal variable fonts. The interface font is selectable in Settings. See the bundled license files
-and [third-party notices](THIRD_PARTY_LICENSES.md) for attribution.
+### Omarchy / Hyprland Shortcut
 
-## Status
+To set Hermes as your primary file manager shortcut (<kbd>Super</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd>):
 
-Strata is at the technical-spike stage. The first objective is to validate responsive Miller columns, cancellable hover peeking, incremental directory enumeration, and previews in very large directories.
+#### Omarchy Quattro (`~/.config/hypr/bindings.lua`)
+```lua
+hl.unbind("SUPER + SHIFT + F")
+hl.unbind("SUPER + ALT + SHIFT + F")
+o.bind("SUPER + SHIFT + F", "File manager", "uwsm app -- hermes")
+o.bind("SUPER + ALT + SHIFT + F", "File manager (cwd)",
+  "uwsm app -- hermes \"$(omarchy-cmd-terminal-cwd)\"")
+```
+
+#### Omarchy 3 / Hyprland (`~/.config/hypr/bindings.conf`)
+```ini
+bindd = SUPER SHIFT, F, File manager, exec, uwsm app -- hermes
+bindd = SUPER SHIFT ALT, F, File manager (cwd), exec, uwsm app -- hermes "$(omarchy-cmd-terminal-cwd)"
+```
+
+Reload Hyprland:
+```bash
+hyprctl reload
+```
+
+---
+
+## Architecture & Principles
+
+- **Small Application Core**: Filesystem logic, navigation trails, and persistence are decoupled from GTK widgets.
+- **Strict Memory Safety**: Unsafe code is strictly audited and denied by default (`unsafe_code = "deny"`).
+- **Bubblewrap Sandbox Isolation**: Untrusted metadata, document, image, and media decoders execute in ephemeral Bubblewrap sandboxes with memory limits and no network access.
+- **Atomic File Transactions**: Staged publication prevents data loss during file copies and moves.
+- **Off-Thread Metadata Engine**: Tags, thumbnails, and waveforms load asynchronously without stuttering the GTK main thread.
+
+Refer to [`docs/architecture.md`](docs/architecture.md), [`docs/hermes-direction.md`](docs/hermes-direction.md), and [`docs/performance-baseline.md`](docs/performance-baseline.md) for detailed architectural blueprints and performance benchmarks.
+
+---
+
+## Credits & Acknowledgements
+
+Hermes is built upon open-source foundations and would not exist without the following projects:
+
+- **[Strata](https://github.com/LGSE/strata)**: Original project created by **Pierre Bérubé** and the **[LGSE](https://github.com/LGSE)** team. We are deeply grateful for their innovative vision, Miller-column design, and rock-solid Rust/GTK4 architectural base.
+- **[Lucide Icons](https://github.com/lucide-icons/lucide)**: Clean symbolic icons (ISC License).
+- **[JetBrains Mono](https://github.com/JetBrains/JetBrainsMono)** & **[Maple Mono](https://github.com/subframe7536/maple-font)**: Typographic font assets (SIL Open Font License 1.1).
+- The **GTK-rs**, **GStreamer**, and **Rust** communities for first-class desktop Linux developer tooling.
+
+Detailed third-party license notices are available in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
+
+---
 
 ## License
 
-Strata is licensed under the [GNU General Public License v3.0 or later](LICENSE).
+Hermes is free and open-source software licensed under the **[GNU General Public License v3.0 or later](LICENSE)** (GPL-3.0-or-later), continuing the copyleft heritage of Strata.

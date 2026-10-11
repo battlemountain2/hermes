@@ -12,6 +12,8 @@ use gtk::{gdk, gio, glib, prelude::*};
 use serde::{Deserialize, Serialize};
 use sourceview5::prelude::BufferExt as _;
 
+mod noctalia;
+
 thread_local! {
     static SHARED_MANAGER: RefCell<std::rc::Weak<ThemeManager>> = const { RefCell::new(std::rc::Weak::new()) };
     static SOURCE_STYLE_PATH_INSTALLED: Cell<bool> = const { Cell::new(false) };
@@ -133,9 +135,14 @@ pub struct ThemeManager {
     provider: gtk::CssProvider,
     themes: RefCell<Vec<Theme>>,
     preferences: RefCell<Preferences>,
+    applied_tokens: RefCell<Option<ThemeTokens>>,
     omarchy_available: bool,
     omarchy_monitor: RefCell<Option<gio::FileMonitor>>,
     pending_omarchy_refresh: RefCell<Option<glib::SourceId>>,
+    noctalia: RefCell<noctalia::Palette>,
+    noctalia_monitor: RefCell<Option<(PathBuf, gio::FileMonitor)>>,
+    pending_noctalia_refresh: RefCell<Option<glib::SourceId>>,
+    noctalia_poll: RefCell<Option<glib::SourceId>>,
     previewing: Cell<bool>,
 }
 
@@ -169,14 +176,23 @@ impl ThemeManager {
             provider: gtk::CssProvider::new(),
             themes: RefCell::new(themes),
             preferences: RefCell::new(preferences),
+            applied_tokens: RefCell::new(None),
             omarchy_available,
             omarchy_monitor: RefCell::new(None),
             pending_omarchy_refresh: RefCell::new(None),
+            noctalia: RefCell::new(noctalia::Palette::new(noctalia::palette_path(
+                &glib::user_config_dir(),
+            ))),
+            noctalia_monitor: RefCell::new(None),
+            pending_noctalia_refresh: RefCell::new(None),
+            noctalia_poll: RefCell::new(None),
             previewing: Cell::new(false),
         });
+        manager.noctalia.borrow_mut().refresh();
         manager.install_provider();
         manager.apply_selected();
         manager.monitor_omarchy();
+        manager.monitor_noctalia();
         manager
     }
 
@@ -190,6 +206,14 @@ impl ThemeManager {
 
     pub fn follows_omarchy(&self) -> bool {
         self.preferences.borrow().mode == "omarchy"
+    }
+
+    pub fn follows_noctalia(&self) -> bool {
+        self.preferences.borrow().mode == "noctalia"
+    }
+
+    pub fn is_noctalia_available(&self) -> bool {
+        self.noctalia.borrow().last_valid.is_some()
     }
 
     pub fn selected_id(&self) -> String {
@@ -321,11 +345,24 @@ impl ThemeManager {
         if enabled && !self.omarchy_available {
             return;
         }
-        self.preferences.borrow_mut().mode = if enabled {
-            "omarchy".to_owned()
-        } else {
-            "theme".to_owned()
-        };
+        self.set_follow_mode("omarchy", enabled);
+    }
+
+    pub fn set_follow_noctalia(&self, enabled: bool) {
+        self.set_follow_mode("noctalia", enabled);
+    }
+
+    fn set_follow_mode(&self, mode: &str, enabled: bool) {
+        {
+            let mut preferences = self.preferences.borrow_mut();
+            if enabled {
+                preferences.mode = mode.to_owned();
+            } else if preferences.mode == mode {
+                preferences.mode = "theme".to_owned();
+            } else {
+                return;
+            }
+        }
         self.previewing.set(false);
         self.apply_selected();
         self.save_preferences();
@@ -389,6 +426,15 @@ impl ThemeManager {
         self.current_tokens().unwrap_or_else(azure_tokens)
     }
 
+    pub fn waveform_colors(&self) -> Option<(gdk::RGBA, gdk::RGBA)> {
+        let tokens = self.applied_tokens.borrow();
+        let tokens = tokens.as_ref()?;
+        Some((
+            gdk::RGBA::parse(&tokens.accent).ok()?,
+            gdk::RGBA::parse(&tokens.muted).ok()?,
+        ))
+    }
+
     fn install_provider(&self) {
         if let Some(display) = gdk::Display::default() {
             gtk::style_context_add_provider_for_display(
@@ -400,6 +446,9 @@ impl ThemeManager {
     }
 
     fn apply_selected(&self) {
+        if self.follows_noctalia() {
+            self.noctalia.borrow_mut().refresh();
+        }
         if self.follows_omarchy() {
             if let Some(tokens) = load_omarchy_theme() {
                 self.apply_tokens(&tokens);
@@ -412,6 +461,11 @@ impl ThemeManager {
     }
 
     pub(crate) fn current_tokens(&self) -> Option<ThemeTokens> {
+        if self.follows_noctalia()
+            && let Some(tokens) = self.noctalia.borrow().last_valid.clone()
+        {
+            return Some(tokens);
+        }
         let id = self.preferences.borrow().theme.clone();
         self.themes
             .borrow()
@@ -423,6 +477,7 @@ impl ThemeManager {
     fn apply_tokens(&self, tokens: &ThemeTokens) {
         self.provider
             .load_from_string(&tokens_css(tokens, self.interface_font()));
+        self.applied_tokens.replace(Some(tokens.clone()));
         crate::assets::set_primary_icon_color(&tokens.accent);
         crate::assets::set_text_icon_color(&tokens.text);
         crate::assets::set_danger_icon_color(&tokens.danger);
@@ -482,6 +537,108 @@ impl ThemeManager {
             manager.pending_omarchy_refresh.replace(Some(refresh));
         });
         self.omarchy_monitor.replace(Some(monitor));
+    }
+
+    fn monitor_noctalia(self: &Rc<Self>) {
+        self.ensure_noctalia_monitor();
+        let weak = Rc::downgrade(self);
+        let poll = glib::timeout_add_local(Duration::from_secs(2), move || {
+            let Some(manager) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            manager.ensure_noctalia_monitor();
+            if manager.pending_noctalia_refresh.borrow().is_none() {
+                manager.refresh_noctalia();
+            }
+            glib::ControlFlow::Continue
+        });
+        self.noctalia_poll.replace(Some(poll));
+    }
+
+    fn ensure_noctalia_monitor(self: &Rc<Self>) {
+        let Some(directory) = noctalia::watch_directory(&self.noctalia.borrow().path) else {
+            return;
+        };
+        if self
+            .noctalia_monitor
+            .borrow()
+            .as_ref()
+            .is_some_and(|(path, monitor)| *path == directory && !monitor.is_cancelled())
+        {
+            return;
+        }
+        if let Some((_, monitor)) = self.noctalia_monitor.borrow_mut().take() {
+            monitor.cancel();
+        }
+        let Ok(monitor) = gio::File::for_path(&directory)
+            .monitor_directory(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE)
+        else {
+            return;
+        };
+        let weak = Rc::downgrade(self);
+        monitor.connect_changed(move |_, file, other, _| {
+            let Some(manager) = weak.upgrade() else {
+                return;
+            };
+            let path = manager.noctalia.borrow().path.clone();
+            if !file
+                .path()
+                .is_some_and(|changed| noctalia::relevant_event(&path, &changed))
+                && !other
+                    .and_then(gio::File::path)
+                    .is_some_and(|changed| noctalia::relevant_event(&path, &changed))
+            {
+                return;
+            }
+            if file
+                .path()
+                .is_some_and(|changed| changed != path && noctalia::relevant_event(&path, &changed))
+                && let Some((_, monitor)) = manager.noctalia_monitor.borrow_mut().take()
+            {
+                monitor.cancel();
+            }
+            if let Some(pending) = manager.pending_noctalia_refresh.borrow_mut().take() {
+                pending.remove();
+            }
+            let weak = weak.clone();
+            let refresh = glib::timeout_add_local_once(Duration::from_millis(150), move || {
+                let Some(manager) = weak.upgrade() else {
+                    return;
+                };
+                manager.pending_noctalia_refresh.borrow_mut().take();
+                manager.ensure_noctalia_monitor();
+                manager.refresh_noctalia();
+            });
+            manager.pending_noctalia_refresh.replace(Some(refresh));
+        });
+        self.noctalia_monitor.replace(Some((directory, monitor)));
+    }
+
+    fn refresh_noctalia(&self) {
+        let changed = self.noctalia.borrow_mut().refresh();
+        if changed && self.follows_noctalia() && !self.previewing.get() {
+            self.apply_selected();
+        }
+    }
+}
+
+impl Drop for ThemeManager {
+    fn drop(&mut self) {
+        for source in [
+            &self.pending_omarchy_refresh,
+            &self.pending_noctalia_refresh,
+            &self.noctalia_poll,
+        ] {
+            if let Some(source) = source.borrow_mut().take() {
+                source.remove();
+            }
+        }
+        if let Some((_, monitor)) = self.noctalia_monitor.borrow_mut().take() {
+            monitor.cancel();
+        }
+        if let Some(monitor) = self.omarchy_monitor.borrow_mut().take() {
+            monitor.cancel();
+        }
     }
 }
 

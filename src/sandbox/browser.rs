@@ -7,9 +7,8 @@ use std::{
     fs::File,
     io::{self, Read},
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
-    os::unix::fs::MetadataExt,
     os::unix::net::UnixStream,
-    path::{Path, PathBuf},
+    path::Path,
     process::{Child, Stdio},
     sync::{
         Condvar, Mutex, OnceLock,
@@ -21,7 +20,9 @@ use std::{
 use super::{Cancellation, ParseOperation};
 use wire::{Operation, Response};
 
+mod cache;
 mod process;
+use cache::{Cache, Identity};
 pub(crate) mod wire;
 mod worker;
 pub(crate) use worker::run;
@@ -152,16 +153,6 @@ fn terminate(child: &mut Child) {
     let _ = child.wait();
 }
 
-struct CacheEntry {
-    path: PathBuf,
-    mtime: u64,
-    size: u64,
-    operation: Operation,
-    data: Vec<u8>,
-    metadata: Option<Vec<u8>>,
-    timestamp: Instant,
-}
-
 struct PoolState {
     count: usize,
     idle: VecDeque<(Worker, Instant)>,
@@ -171,11 +162,15 @@ struct Pool {
     limit: AtomicUsize,
     state: Mutex<PoolState>,
     changed: Condvar,
-    cache: Mutex<Vec<CacheEntry>>,
+    cache: Mutex<Cache>,
 }
 
 impl Pool {
     fn new() -> Self {
+        Self::with_cache_budget(16 * 1024 * 1024)
+    }
+
+    fn with_cache_budget(budget: usize) -> Self {
         Self {
             limit: AtomicUsize::new(default_worker_limit()),
             state: Mutex::new(PoolState {
@@ -183,74 +178,43 @@ impl Pool {
                 idle: VecDeque::new(),
             }),
             changed: Condvar::new(),
-            cache: Mutex::new(Vec::with_capacity(CACHE_ENTRIES)),
+            cache: Mutex::new(Cache::new(budget)),
         }
     }
 
     fn check_cache(
         &self,
         path: &Path,
-        mtime: u64,
-        size: u64,
+        identity: Identity,
         operation: Operation,
     ) -> Option<Vec<u8>> {
-        self.check_cache_entry(path, mtime, size, operation)
+        self.check_cache_entry(path, identity, operation)
             .map(|(data, _)| data)
     }
 
     fn check_cache_entry(
         &self,
         path: &Path,
-        mtime: u64,
-        size: u64,
+        identity: Identity,
         operation: Operation,
     ) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
-        let mut cache = self.cache.lock().ok()?;
-        cache.retain(|entry| entry.timestamp.elapsed() < CACHE_TTL);
-        cache
-            .iter()
-            .find(|entry| {
-                entry.path == path
-                    && entry.mtime == mtime
-                    && entry.size == size
-                    && entry.operation == operation
-            })
-            .map(|entry| (entry.data.clone(), entry.metadata.clone()))
+        self.cache.lock().ok()?.get(path, identity, operation)
     }
 
-    fn put_cache(
-        &self,
-        path: &Path,
-        mtime: u64,
-        size: u64,
-        operation: Operation,
-        data: Vec<u8>,
-    ) {
-        self.put_cache_entry(path, mtime, size, operation, data, None);
+    fn put_cache(&self, path: &Path, identity: Identity, operation: Operation, data: Vec<u8>) {
+        self.put_cache_entry(path, identity, operation, data, None);
     }
 
     fn put_cache_entry(
         &self,
         path: &Path,
-        mtime: u64,
-        size: u64,
+        identity: Identity,
         operation: Operation,
         data: Vec<u8>,
         metadata: Option<Vec<u8>>,
     ) {
         if let Ok(mut cache) = self.cache.lock() {
-            if cache.len() >= CACHE_ENTRIES {
-                cache.remove(0);
-            }
-            cache.push(CacheEntry {
-                path: path.to_owned(),
-                mtime,
-                size,
-                operation,
-                data,
-                metadata,
-                timestamp: Instant::now(),
-            });
+            cache.insert(path, identity, operation, data, metadata);
         }
     }
 
@@ -404,7 +368,9 @@ fn execute_single(
         .map_err(|e| format!("Unable to read completion byte: {e}"))?;
 
     if status_byte[0] != 1 {
-        return Err("The sandboxed preview renderer failed".to_owned());
+        return Err(response
+            .error_message()
+            .unwrap_or_else(|| "The sandboxed preview renderer failed".to_owned()));
     }
 
     Ok(response)
@@ -430,7 +396,7 @@ fn pool() -> &'static Pool {
 
 fn preview_pool() -> &'static Pool {
     static PREVIEW_POOL: OnceLock<Pool> = OnceLock::new();
-    PREVIEW_POOL.get_or_init(Pool::new)
+    PREVIEW_POOL.get_or_init(|| Pool::with_cache_budget(64 * 1024 * 1024))
 }
 
 fn workers_supported() -> bool {
@@ -447,7 +413,7 @@ fn workers_supported() -> bool {
 
 fn spawn_worker() -> io::Result<Worker> {
     let (host_socket, worker_socket) = UnixStream::pair()?;
-    let executable = std::env::current_exe()?;
+    let executable = super::helper_executable()?;
 
     let mut command = std::process::Command::new("bwrap");
     command.args([
@@ -526,15 +492,18 @@ fn spawn_worker() -> io::Result<Worker> {
 
 fn map_preview_op(op: &ParseOperation) -> Option<Operation> {
     match op {
+        ParseOperation::MusicTags => Some(Operation::MusicTags),
+        ParseOperation::PreviewAudioMetadata => Some(Operation::PreviewAudioMetadata),
         ParseOperation::PreviewImage => Some(Operation::PreviewImage),
         ParseOperation::PreviewGeoTiff => Some(Operation::PreviewGeoTiff),
         ParseOperation::ThumbnailImage => Some(Operation::Image),
+        ParseOperation::ThumbnailHeif => Some(Operation::Heif),
+        ParseOperation::PreviewHeif => Some(Operation::PreviewHeif),
         ParseOperation::ThumbnailRaw => Some(Operation::Raw),
         ParseOperation::ThumbnailPdf => Some(Operation::Pdf),
         ParseOperation::PreviewModel => Some(Operation::PreviewModel),
         ParseOperation::PreviewArchiveCover => Some(Operation::PreviewArchiveCover),
         ParseOperation::PreviewSpreadsheet => Some(Operation::PreviewSpreadsheet),
-        ParseOperation::PreviewAudioWaveform => Some(Operation::PreviewAudioWaveform),
         _ => None,
     }
 }
@@ -548,11 +517,14 @@ pub(crate) fn preview(
         return None;
     }
     let wire_op = map_preview_op(operation)?;
-    let metadata = input.metadata().ok()?;
-    let mtime = metadata.mtime() as u64;
-    let size = metadata.size();
+    let identity = Identity::read(input)?;
+    if cancellation.is_cancelled() {
+        return Some(Err("Preview cancelled".into()));
+    }
 
-    if let Some(cached) = preview_pool().check_cache_entry(input, mtime, size, wire_op) {
+    if *operation != ParseOperation::MusicTags
+        && let Some(cached) = preview_pool().check_cache_entry(input, identity, wire_op)
+    {
         return Some(Ok(cached));
     }
 
@@ -560,19 +532,23 @@ pub(crate) fn preview(
     let result = lease.execute(input, wire_op, cancellation);
     match result {
         Ok(response) => {
+            if Identity::read(input) != Some(identity) || cancellation.is_cancelled() {
+                return Some(Err("Preview source changed or request cancelled".into()));
+            }
             let meta = if response.metadata.is_empty() {
                 None
             } else {
                 Some(response.metadata)
             };
-            preview_pool().put_cache_entry(
-                input,
-                mtime,
-                size,
-                wire_op,
-                response.png.clone(),
-                meta.clone(),
-            );
+            if *operation != ParseOperation::MusicTags {
+                preview_pool().put_cache_entry(
+                    input,
+                    identity,
+                    wire_op,
+                    response.png.clone(),
+                    meta.clone(),
+                );
+            }
             Some(Ok((response.png, meta)))
         }
         Err(err) => Some(Err(err)),
@@ -584,15 +560,19 @@ pub(crate) fn thumbnail_parse(
     operation: ParseOperation,
     cancellation: &Cancellation,
 ) -> Option<Result<Vec<u8>, String>> {
+    if operation == ParseOperation::MusicTags {
+        return None;
+    }
     if !workers_supported() {
         return None;
     }
     let wire_op = map_preview_op(&operation)?;
-    let metadata = input.metadata().ok()?;
-    let mtime = metadata.mtime() as u64;
-    let size = metadata.size();
+    let identity = Identity::read(input)?;
+    if cancellation.is_cancelled() {
+        return Some(Err("Preview cancelled".into()));
+    }
 
-    if let Some(cached_data) = pool().check_cache(input, mtime, size, wire_op) {
+    if let Some(cached_data) = pool().check_cache(input, identity, wire_op) {
         return Some(Ok(cached_data));
     }
 
@@ -600,7 +580,10 @@ pub(crate) fn thumbnail_parse(
     let result = lease.execute(input, wire_op, cancellation);
     match result {
         Ok(response) => {
-            pool().put_cache(input, mtime, size, wire_op, response.png.clone());
+            if Identity::read(input) != Some(identity) || cancellation.is_cancelled() {
+                return Some(Err("Preview source changed or request cancelled".into()));
+            }
+            pool().put_cache(input, identity, wire_op, response.png.clone());
             Some(Ok(response.png))
         }
         Err(err) => Some(Err(err)),
@@ -609,4 +592,3 @@ pub(crate) fn thumbnail_parse(
 
 #[cfg(test)]
 mod tests;
-

@@ -27,6 +27,22 @@ pub fn exceeds_decoded_frame_budget(width: u32, height: u32) -> bool {
     bytes > MAX_DECODED_FRAME_BUDGET_BYTES || pixels > MAX_PIXELS_CEILING
 }
 
+pub fn is_jpeg(path: &Path) -> bool {
+    let mut prefix = [0; 3];
+    fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut prefix))
+        .is_ok()
+        && prefix == [0xff, 0xd8, 0xff]
+}
+
+pub fn image_target_dimensions(width: u32, height: u32, size: i32) -> (u32, u32) {
+    let longest = u64::from(width.max(height).max(1));
+    let target = u64::try_from(size.max(1)).unwrap_or(1).min(longest);
+    let scaled_width = (u64::from(width) * target).div_ceil(longest).max(1);
+    let scaled_height = (u64::from(height) * target).div_ceil(longest).max(1);
+    (scaled_width as u32, scaled_height as u32)
+}
+
 /// Sniffs PNG dimensions from the IHDR chunk.
 pub fn sniff_png_dimensions(bytes: &[u8]) -> Option<ImageDimensions> {
     if bytes.len() < 24 || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
@@ -377,7 +393,7 @@ pub fn read_exif_thumbnail(path: &Path, size: i32) -> Option<Vec<u8>> {
 }
 
 /// Locates and returns the embedded JPEG thumbnail slice from an EXIF container.
-fn extract_exif_thumbnail_bytes(data: &[u8]) -> Option<&[u8]> {
+pub(super) fn extract_exif_thumbnail_bytes(data: &[u8]) -> Option<&[u8]> {
     // 1. In JPEG files, find APP1 marker (0xFFE1) with "Exif\0\0"
     if data.starts_with(&[0xFF, 0xD8]) {
         let mut i = 2;

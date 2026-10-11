@@ -28,35 +28,56 @@ pub struct PdfTextLayer {
     pub glyphs: Vec<[f32; 4]>,
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct AudioMetadata {
-    pub format: String,
-    pub duration_seconds: f64,
-    pub sample_rate: u32,
-    pub channels: u16,
-    pub bitrate: Option<u64>,
-}
+pub use crate::sandbox_helper::audio::AudioDetails as AudioMetadata;
 
 #[derive(Clone, Debug, PartialEq)]
 #[expect(dead_code, reason = "Preview content variants")]
 pub enum PreviewContent {
-    Text { content: String, truncated: bool },
+    Text {
+        content: String,
+        truncated: bool,
+    },
     Image,
     Media,
-    Rasterized { png: Vec<u8> },
-    SandboxedMedia { data: Vec<u8> },
+    Rasterized {
+        png: Vec<u8>,
+    },
+    SandboxedMedia {
+        data: Vec<u8>,
+    },
+    StreamingMedia {
+        path: std::path::PathBuf,
+    },
+    SandboxedAnimation {
+        data: Vec<u8>,
+    },
     Pdf {
         png: Vec<u8>,
         page: i32,
         pages: i32,
         text_layer: Option<std::sync::Arc<PdfTextLayer>>,
     },
-    Code { language: String, content: String },
-    Markdown { content: String },
-    Model3D { format: String, data: Vec<u8> },
-    GeoTiff { png: Vec<u8>, metadata: GeoTiffMetadata },
-    Spreadsheet { table: SpreadsheetData },
-    AudioWaveform { png: Vec<u8>, metadata: AudioMetadata },
+    Code {
+        language: String,
+        content: String,
+    },
+    Markdown {
+        content: String,
+    },
+    Model3D {
+        format: String,
+        data: Vec<u8>,
+    },
+    GeoTiff {
+        png: Vec<u8>,
+        metadata: GeoTiffMetadata,
+    },
+    Spreadsheet {
+        table: SpreadsheetData,
+    },
+    Audio {
+        metadata: AudioMetadata,
+    },
     Unsupported,
 }
 

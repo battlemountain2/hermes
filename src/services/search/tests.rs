@@ -56,6 +56,9 @@ fn item(path: &str) -> SearchItem {
         name,
         is_directory: false,
         modified_unix_seconds: None,
+        music_tags: None,
+        search_metadata: String::new(),
+        source_identity: None,
     }
 }
 
@@ -77,6 +80,20 @@ fn searches_relative_path_fragments_and_rejects_non_matches() {
     let candidate = item("/home/me/themes/azure/colors.toml");
     assert!(fuzzy_score(&candidate, "themes/azure", Path::new("/home/me")).is_some());
     assert!(fuzzy_score(&candidate, "definitely-missing", Path::new("/home/me")).is_none());
+}
+
+#[test]
+fn artist_and_title_terms_match_in_any_order_across_tag_fields() {
+    let mut candidate = item("/home/me/Music/Album/01.flac");
+    candidate.search_metadata = "nikes frank ocean blonde".into();
+    candidate.music_tags = Some(crate::model::MusicTags {
+        title: Some("Nikes".into()), artist: Some("Frank Ocean".into()), album: Some("Blonde".into()),
+        ..crate::model::MusicTags::default()
+    });
+    for query in ["Frank Ocean Nikes", "Nikes Ocean Frank", "Blonde Nikes Frank", "Frank Ocean 01.flac"] {
+        assert!(fuzzy_score(&candidate, query, Path::new("/home/me")).is_some(), "{query}");
+    }
+    assert!(fuzzy_score(&candidate, "Frank Ocean absent", Path::new("/home/me")).is_none());
 }
 
 #[test]

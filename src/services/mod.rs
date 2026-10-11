@@ -3,12 +3,14 @@
 mod custom_actions;
 mod file_source;
 mod formats;
+pub(crate) mod music_library;
 pub(crate) mod model_preview;
 mod operations;
 pub(crate) mod preview;
 mod search;
 pub(crate) mod table;
 mod trails;
+pub(crate) mod waveform;
 
 pub(crate) use custom_actions::{
     CustomAction, actions_path, create_custom_actions_template, load_custom_actions,
@@ -21,7 +23,7 @@ pub use file_source::{
 pub(crate) use formats::thumbnail_handler_for_name;
 pub(crate) use formats::{
     FormatCapabilities, FormatFamily, PreviewHandler, TextExtractor, ThumbnailHandler,
-    capabilities_by_name, classify_by_mime, classify_by_name,
+    capabilities_by_name, classify_by_mime, classify_by_name, is_gif_image,
 };
 pub use operations::{
     CompressArchiveRequest, CreateDirectoryRequest, CreateFileRequest, DeleteRequest,
@@ -33,7 +35,7 @@ pub use preview::{
     PreviewRequestId,
 };
 pub(crate) use search::{
-    SearchEvent, SearchFilterValues, SearchHandle, SearchItem, TextExtractionProvider, index_tree,
+    SearchEvent, SearchFilterValues, SearchHandle, SearchItem, SearchScope, ScopedSearch, TextExtractionProvider, index_tree,
     search_filter_values,
 };
 pub use trails::{StoredTrails, TRAIL_SCHEMA_VERSION, TrailStore};

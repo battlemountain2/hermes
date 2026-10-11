@@ -6,7 +6,7 @@ use super::*;
 use crate::model::{EntryKind, MetadataValue};
 
 fn entry() -> FileEntry {
-    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: Location::local("/home/project/child"),
+    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location: Location::local("/home/project/child"),
         native_name: OsString::from("child"),
         display_name: "child".into(),
         kind: EntryKind::Directory,

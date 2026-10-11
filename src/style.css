@@ -111,91 +111,128 @@ headerbar menubutton.header-action > button:focus-visible image {
 }
 
 .tab-strip {
-  min-height: 37px;
+  min-height: 40px;
   background: @theme_surface;
-  border-bottom: 1px solid alpha(@theme_border, 0.7);
+  border-bottom: 1px solid @theme_border;
 }
 
 .tab-strip-content {
-  padding: 4px 7px 0;
+  padding: 3px 8px;
+  background: @theme_surface;
 }
 
 .tab-strip-new {
-  min-width: 30px;
+  min-width: 28px;
   min-height: 30px;
-  margin: 0 0 0 3px;
+  margin: 0 0 0 4px;
   padding: 0;
-  border-radius: 0;
-  color: @theme_dim_text;
-  background: transparent;
-  border: 0;
+  border-radius: 5px;
+  color: @theme_text;
+  background: @theme_surface;
+  background-image: none;
+  border: 1px solid transparent;
   box-shadow: none;
+  transition: background-color 120ms ease, color 120ms ease;
 }
 
 .tab-strip-new:hover {
   color: @theme_accent;
-  background: alpha(@theme_muted, 0.7);
+  background: @theme_muted;
+  border-color: @theme_border;
 }
 
 .file-tab {
-  min-width: 128px;
-  min-height: 31px;
-  padding: 0 3px 0 5px;
+  min-height: 32px;
+  padding: 0 3px 0 7px;
   border-radius: 0;
   color: @theme_dim_text;
-  background: alpha(@theme_muted, 0.3);
+  background: @theme_surface;
   border: 1px solid transparent;
-  border-bottom: 0;
+  box-shadow: none;
+  transition: background-color 120ms ease, color 120ms ease;
 }
 
 .file-tab:hover {
   color: @theme_text;
-  background: alpha(@theme_muted, 0.62);
+  background: @theme_muted;
 }
 
 .file-tab.active {
   color: @theme_text;
   background: @theme_bg;
-  border-color: alpha(@theme_border, 0.85);
+  border-color: transparent;
   box-shadow: inset 0 2px @theme_accent;
 }
 
+.file-tab.dragging {
+  opacity: 0.55;
+}
+
+.file-tab.drop-before {
+  box-shadow: inset 2px 0 @theme_accent;
+}
+
+.file-tab.drop-after {
+  box-shadow: inset -2px 0 @theme_accent;
+}
+
 .file-tab-select,
-.file-tab-pin,
 .file-tab-close {
   color: inherit;
   background: transparent;
+  background-image: none;
   border: 0;
   box-shadow: none;
+  min-height: 28px;
+  transition: background-color 120ms ease;
 }
 
 .file-tab-select {
-  min-width: 92px;
-  padding: 0 7px;
+  min-width: 0;
+  padding: 0 5px;
+  border-radius: 0;
+  font-weight: 500;
 }
 
-.file-tab-pin,
+.file-tab.active .file-tab-select {
+  font-weight: 500;
+}
+
 .file-tab-close {
-  min-width: 24px;
-  min-height: 24px;
+  min-width: 28px;
+  min-height: 28px;
   padding: 0;
   border-radius: 5px;
 }
 
 .file-tab-close:hover {
   color: @theme_accent;
-  background: alpha(@theme_muted, 0.8);
+  background: @theme_muted;
 }
 
-.file-tab-pin:hover,
-.file-tab-pin.active {
-  color: @theme_accent;
+.file-tab-close image {
+  opacity: 0.6;
+}
+
+.file-tab-close:hover image {
+  opacity: 1;
+}
+
+.file-tab-close:disabled image {
+  opacity: 0.25;
+}
+
+.file-tab-select:focus-visible,
+.file-tab-close:focus-visible,
+.tab-strip-new:focus-visible {
+  outline: 2px solid @theme_accent;
+  outline-offset: -2px;
 }
 
 .file-tab-rename {
-  min-height: 24px;
-  margin: 2px;
-  padding: 0 6px;
+  min-height: 26px;
+  margin: 0;
+  padding: 0 5px;
   color: @theme_text;
   caret-color: @theme_accent;
   background: @theme_bg;
@@ -579,6 +616,24 @@ headerbar menubutton.header-action > button:focus-visible image {
 .search-result-path {
   color: @theme_dim_text;
   font-size: 0.84em;
+}
+
+.search-result-metadata {
+  color: @theme_text;
+  font-size: 0.9em;
+}
+
+.search-result-type {
+  color: @theme_accent;
+  background: alpha(@theme_highlight, 0.55);
+  border: 1px solid @theme_border;
+  border-radius: 6px;
+  padding: 4px 7px;
+  font-size: 0.8em;
+}
+
+.search-result-art {
+  color: @theme_accent;
 }
 
 .search-result:selected .search-result-path {
@@ -1020,10 +1075,41 @@ switch:checked slider {
   opacity: 0.52;
 }
 
-.sidebar-row.reorderable:drop(active) {
+.sidebar-row:drop(active) {
   background: alpha(@theme_highlight, 0.46);
   outline: 1px solid alpha(@theme_accent, 0.72);
   outline-offset: -1px;
+}
+
+.sidebar-pin-drop-zone {
+  color: @theme_dim_text;
+  background: alpha(@theme_muted, 0.16);
+  border: 1px dashed alpha(@theme_border, 0.6);
+  border-radius: 6px;
+  padding: 8px;
+  margin: 4px 0;
+  font-size: 11px;
+}
+
+.sidebar-pin-drop-zone image {
+  color: @theme_accent;
+}
+
+.sidebar-pin-insertion-zone {
+  border-radius: 3px;
+  background: transparent;
+}
+
+.sidebar-pin-insertion-zone:drop(active) {
+  background: alpha(@theme_accent, 0.65);
+  outline: 1px solid @theme_accent;
+  outline-offset: -1px;
+}
+
+.sidebar-pin-drop-zone:drop(active) {
+  color: @theme_text;
+  background: alpha(@theme_highlight, 0.46);
+  border-color: @theme_accent;
 }
 
 .sidebar-row:focus {
@@ -1155,6 +1241,80 @@ paned > separator {
   color: @theme_dim_text;
   font-size: 0.8em;
   padding: 6px 10px;
+}
+
+.hermes-media-player,
+.hermes-image-player {
+  background: @theme_bg;
+  color: @theme_text;
+}
+
+.hermes-media-controls {
+  background: @theme_surface;
+  color: @theme_text;
+  border-top: 1px solid @theme_border;
+  padding: 6px 10px;
+}
+
+.hermes-media-action {
+  background: transparent;
+  color: @theme_accent;
+  border: 1px solid transparent;
+  padding: 6px;
+}
+
+.hermes-image-zoom-label {
+  color: @theme_dim_text;
+  font-size: 0.8em;
+}
+
+.hermes-media-action:hover,
+.hermes-media-action:active {
+  background: alpha(@theme_accent, 0.14);
+  border-color: alpha(@theme_accent, 0.4);
+}
+
+.hermes-media-action:focus-visible {
+  outline: 2px solid @theme_accent;
+}
+
+.hermes-media-action:disabled {
+  color: @theme_dim_text;
+  opacity: 0.5;
+}
+
+.hermes-media-controls scale trough,
+.music-transport scale trough {
+  background: alpha(@theme_border, 0.45);
+  border: none;
+  box-shadow: none;
+}
+
+.hermes-media-controls scale highlight,
+.hermes-media-controls scale slider,
+.music-transport scale highlight,
+.music-transport scale slider {
+  background: @theme_accent;
+  border-color: @theme_accent;
+  box-shadow: none;
+}
+
+.hermes-media-controls scale:focus-visible,
+.music-transport scale:focus-visible {
+  outline: 2px solid @theme_accent;
+}
+
+.hermes-media-controls scale:disabled highlight,
+.hermes-media-controls scale:disabled slider,
+.music-transport scale:disabled highlight,
+.music-transport scale:disabled slider {
+  background: @theme_dim_text;
+  border-color: @theme_dim_text;
+}
+
+.hermes-media-time {
+  color: @theme_text;
+  font-variant-numeric: tabular-nums;
 }
 
 .preview-pdf-list,
@@ -2657,4 +2817,331 @@ menubutton.grid-thumbnail-menu > button:focus-visible {
   min-height: 38px;
   padding-bottom: 5px;
   padding-top: 5px;
+}
+.music-transport {
+  background: @theme_surface;
+  color: @theme_text;
+  border-top: 1px solid @theme_border;
+  padding: 10px 14px;
+ }
+
+button.music-cover-button {
+  color: @theme_text;
+  background: transparent;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  border-radius: 6px;
+  padding: 0;
+}
+
+.music-cover-button:hover,
+.music-cover-button:active {
+  color: @theme_accent;
+  background: @theme_highlight;
+}
+
+button.music-cover-button:focus-visible {
+  outline: none;
+  background: @theme_highlight;
+}
+
+.music-cover-button:hover image,
+.music-cover-button:active image {
+  opacity: 0.9;
+}
+
+.music-cover-button:focus-visible image {
+  opacity: 0.75;
+}
+
+.music-cover-button:disabled {
+  color: @theme_muted;
+}
+
+ .music-workspace {
+  background: @theme_bg;
+  color: @theme_text;
+  padding: 18px;
+ }
+
+ .music-heading {
+  color: @theme_accent;
+  font-size: 20px;
+  font-weight: 700;
+ }
+
+ .music-title {
+  color: @theme_text;
+  font-weight: 600;
+ }
+
+ .music-detail {
+  color: @theme_dim_text;
+  font-size: 11px;
+ }
+
+ .music-control {
+  color: @theme_text;
+  background: transparent;
+  border: none;
+  padding: 7px;
+  border-radius: 6px;
+ }
+
+ .music-control:hover {
+  color: @theme_accent;
+  background: @theme_highlight;
+ }
+
+ .music-control:active {
+  background: alpha(@theme_accent, 0.2);
+ }
+
+ .music-control:disabled {
+  color: @theme_muted;
+ }
+
+ .music-control:focus-visible {
+  outline: 2px solid @theme_accent;
+ }
+
+.music-control > button {
+  color: @theme_text;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+}
+
+.music-control > button:hover,
+.music-control > button:checked {
+  color: @theme_accent;
+  background: @theme_highlight;
+}
+
+.music-control > button:focus-visible {
+  outline: 2px solid @theme_accent;
+}
+
+.music-control > button:disabled {
+  color: @theme_muted;
+}
+
+.music-panel-toggle:checked {
+  color: @theme_accent;
+  background: @theme_highlight;
+}
+
+.music-actions {
+  padding-top: 4px;
+}
+
+.music-workspace entry {
+  color: @theme_text;
+  background: @theme_surface;
+  border: 1px solid @theme_border;
+  border-radius: 6px;
+  box-shadow: none;
+  padding: 6px 10px;
+}
+
+.music-workspace entry:focus,
+.music-workspace entry:focus-visible {
+  border-color: @theme_accent;
+}
+
+.music-workspace entry:disabled {
+  color: @theme_muted;
+}
+
+.music-workspace entry placeholder {
+  color: @theme_dim_text;
+}
+
+.music-workspace entry selection {
+  color: @theme_text;
+  background: @theme_highlight;
+}
+
+.music-action-primary {
+  color: @theme_accent;
+  background: alpha(@theme_accent, 0.12);
+  border: 1px solid @theme_border;
+  border-radius: 6px;
+  padding: 7px 12px;
+}
+
+.music-action-primary:hover {
+  background: @theme_highlight;
+}
+
+.music-action-primary:active {
+  background: alpha(@theme_accent, 0.2);
+}
+
+.music-action-primary:disabled {
+  color: @theme_muted;
+  background: transparent;
+}
+
+.music-action-primary:focus-visible {
+  outline: 2px solid @theme_accent;
+}
+
+.music-mode-control:checked,
+.music-mode-control.repeat-enabled {
+  color: @theme_accent;
+  background: @theme_highlight;
+}
+
+.music-selection-actions > button,
+.music-transport-more > button {
+  padding: 0 4px;
+}
+
+.music-actions-popover .music-control {
+  padding: 8px 12px;
+}
+
+.music-context-menu .music-heading {
+  font-size: 14px;
+}
+
+.music-transport-controls .music-control {
+  padding: 6px;
+}
+
+.preview-audio {
+  color: @theme_text;
+}
+
+.preview-audio-artwork {
+  color: @theme_accent;
+  background: @theme_surface;
+  border-radius: 8px;
+}
+
+.preview-audio-title {
+  color: @theme_text;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.preview-audio-heading {
+  color: @theme_dim_text;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.preview-audio-artwork-status,
+.preview-audio-status,
+.preview-audio-tag-name {
+  color: @theme_dim_text;
+  font-size: 11px;
+}
+
+.preview-audio-metadata {
+  color: @theme_text;
+  background: @theme_surface;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.preview-audio-tag-value {
+  color: @theme_text;
+}
+
+.preview-audio-tag-value:focus-visible,
+.preview-audio-title:focus-visible {
+  outline: 1px solid @theme_accent;
+}
+
+.preview-audio-tag-value selection,
+.preview-audio-title selection {
+  color: @theme_text;
+  background: @theme_highlight;
+}
+
+ .music-row {
+  color: @theme_text;
+  padding: 10px;
+ }
+
+ .music-workspace listview {
+  color: @theme_text;
+  background: @theme_surface;
+  border-radius: 8px;
+ }
+
+ .music-workspace listview row:hover {
+  background: @theme_highlight;
+ }
+
+ .music-workspace listview row:selected {
+  background: alpha(@theme_accent, 0.16);
+  color: @theme_accent;
+ }
+
+ .music-waveform {
+  background: @theme_surface;
+  border-radius: 8px;
+ }
+
+.music-queue contents {
+  background: @theme_surface;
+  color: @theme_text;
+  border: 1px solid @theme_border;
+  padding: 12px;
+}
+
+.music-queue listview {
+  background: @theme_surface;
+  color: @theme_text;
+}
+
+.music-queue listview row:hover {
+  background: @theme_highlight;
+}
+
+.music-queue listview row:active {
+  background: alpha(@theme_accent, 0.2);
+}
+
+.music-queue listview row:selected {
+  background: alpha(@theme_accent, 0.16);
+  color: @theme_accent;
+}
+
+.music-queue listview row:focus-visible {
+  outline: 2px solid @theme_accent;
+  outline-offset: -2px;
+}
+
+.music-queue-row {
+  color: @theme_text;
+  border-top: 2px solid transparent;
+  border-bottom: 2px solid transparent;
+  padding: 2px 4px;
+}
+
+.music-queue-row.queue-current {
+  background: @theme_highlight;
+  color: @theme_accent;
+}
+
+.music-queue-row.queue-current label {
+  color: @theme_accent;
+}
+
+.music-queue-row.queue-drop-before {
+  border-top-color: @theme_accent;
+}
+
+.music-queue-row.queue-drop-after {
+  border-bottom-color: @theme_accent;
+}
+
+.music-queue-action {
+  padding: 4px;
 }

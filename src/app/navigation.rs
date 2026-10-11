@@ -39,6 +39,9 @@ pub struct ColumnState {
     selection_target: Option<Location>,
     pub load_state: LoadState,
     preferences: ViewPreferences,
+    base_preferences: ViewPreferences,
+    sort_explicit: bool,
+    automatic_track: bool,
     request_id: RequestId,
 }
 
@@ -174,6 +177,9 @@ impl NavigationState {
                 selection_target: None,
                 load_state: LoadState::Loading,
                 preferences,
+                base_preferences: preferences,
+                sort_explicit: false,
+                automatic_track: false,
                 request_id,
             })
             .collect();
@@ -240,6 +246,9 @@ impl NavigationState {
             selection_target: None,
             load_state: LoadState::Loading,
             preferences: self.preferences,
+            base_preferences: self.preferences,
+            sort_explicit: false,
+            automatic_track: false,
             request_id,
         });
     }
@@ -255,8 +264,12 @@ impl NavigationState {
             .selected
             .and_then(|position| column.entries.get(position))
             .map(|entry| entry.location.clone());
+        let merge_started = std::time::Instant::now();
+        let existing_count = column.entries.len();
+        let incoming_count = entries.len();
         let (merged, insertions) =
             merge_entries(std::mem::take(&mut column.entries), entries, preferences);
+        crate::metrics::mark_directory_merge(existing_count, incoming_count, merge_started);
         column.entries = merged;
         if let Some(selected_location) =
             selected_location.or_else(|| column.selection_target.clone())
@@ -270,6 +283,39 @@ impl NavigationState {
             }
         }
         Some((depth, insertions))
+    }
+
+    pub fn apply_snapshot(
+        &mut self,
+        request_id: RequestId,
+        entries: Vec<FileEntry>,
+    ) -> Option<usize> {
+        let (depth, column) = self.column_for_request_mut(request_id)?;
+        let selected_location = column
+            .selected
+            .and_then(|position| column.entries.get(position))
+            .map(|entry| entry.location.clone())
+            .or_else(|| column.selection_target.clone());
+        column.entries = merge_entries(Vec::new(), entries, column.preferences).0;
+        column.selected = selected_location.and_then(|location| {
+            column.entries.iter().position(|entry| entry.location == location)
+        });
+        if column.selected.is_some() {
+            column.selection_target = None;
+        }
+        column.selected_locations.retain(|location| {
+            column.entries.iter().any(|entry| &entry.location == location)
+        });
+        if column.selection_anchor.as_ref().is_some_and(|location| {
+            !column.entries.iter().any(|entry| &entry.location == location)
+        }) {
+            column.selection_anchor = None;
+        }
+        Some(depth)
+    }
+
+    pub fn accepts_request(&self, depth: usize, request_id: RequestId) -> bool {
+        self.columns.get(depth).is_some_and(|column| column.request_id == request_id)
     }
 
     pub fn apply_directory_change(
@@ -363,12 +409,19 @@ impl NavigationState {
         column.selection_target = column
             .selected
             .and_then(|position| column.entries.get(position))
-            .map(|entry| entry.location.clone());
+            .map(|entry| entry.location.clone())
+            .or_else(|| column.selection_target.clone());
         column.entries.clear();
         column.selected = None;
         column.load_state = LoadState::Loading;
         column.request_id = request_id;
         Some(column.location.clone())
+    }
+
+    pub fn restart(&mut self, request_id: RequestId) -> Option<usize> {
+        let depth = self.columns.iter().position(|column| column.request_id == request_id)?;
+        self.reload_column(depth, request_id)?;
+        Some(depth)
     }
 
     pub fn set_show_hidden(&mut self, show_hidden: bool) {
@@ -389,6 +442,14 @@ impl NavigationState {
         self.columns.get(depth).map(|column| column.preferences)
     }
 
+    pub fn retained_preferences_match(&self, preferences: ViewPreferences) -> bool {
+        self.active_depth().and_then(|depth| self.columns.get(depth)).is_some_and(|column| {
+            column.preferences == preferences
+                || (column.automatic_track && !column.sort_explicit
+                    && column.base_preferences == preferences)
+        })
+    }
+
     pub fn set_column_preferences(
         &mut self,
         depth: usize,
@@ -406,6 +467,8 @@ impl NavigationState {
             .and_then(|position| column.entries.get(position))
             .map(|entry| entry.location.clone());
         column.preferences = preferences;
+        column.sort_explicit = true;
+        column.automatic_track = false;
         column
             .entries
             .sort_unstable_by(|left, right| compare_entries(left, right, preferences));
@@ -434,6 +497,58 @@ impl NavigationState {
         Some((depth, self.columns.get(depth)?.selected))
     }
 
+    pub fn apply_music_metadata(
+        &mut self,
+        request_id: RequestId,
+        entries: &[FileEntry],
+    ) -> Option<usize> {
+        let (depth, column) = self.column_for_request_mut(request_id)?;
+        let focused = column.selected
+            .and_then(|position| column.entries.get(position))
+            .map(|entry| entry.location.clone());
+        let changed = hydrate_music_tags(&mut column.entries, entries);
+        let previous_preferences = column.preferences;
+        if !column.sort_explicit && column.location.native_path().is_some() {
+            if super::music_order::is_album(&column.entries) {
+                column.preferences.sort_key = SortKey::Track;
+                column.preferences.sort_direction = SortDirection::Ascending;
+                column.automatic_track = true;
+            } else if column.automatic_track {
+                column.preferences = column.base_preferences;
+                column.automatic_track = false;
+            }
+        }
+        if !changed && previous_preferences == column.preferences {
+            return None;
+        }
+        column.entries.sort_unstable_by(|left, right| {
+            compare_entries(left, right, column.preferences)
+        });
+        column.selected = focused.and_then(|location| {
+            column.entries.iter().position(|entry| entry.location == location)
+        });
+        Some(depth)
+    }
+
+    pub fn peek_entries(&self) -> Vec<FileEntry> {
+        self.peek.as_ref()
+            .map(|peek| peek.entries.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn apply_peek_music_metadata(
+        &mut self,
+        request_id: RequestId,
+        entries: &[FileEntry],
+    ) -> bool {
+        let Some(peek) = self.peek.as_mut().filter(|peek| peek.accepts(request_id)) else {
+            return false;
+        };
+        hydrate_music_tags(&mut peek.entries, entries);
+        peek.sort();
+        true
+    }
+
     pub fn active_location(&self) -> Option<Location> {
         let depth = self.active_column?;
         Some(self.columns.get(depth)?.location.clone())
@@ -449,6 +564,11 @@ impl NavigationState {
 
     pub fn finish(&mut self, request_id: RequestId) -> Option<usize> {
         let (depth, column) = self.column_for_request_mut(request_id)?;
+        column.selection_target = None;
+        column.selected_locations.retain(|location| column.entries.iter().any(|entry| &entry.location == location));
+        if column.selection_anchor.as_ref().is_some_and(|location| !column.entries.iter().any(|entry| &entry.location == location)) {
+            column.selection_anchor = None;
+        }
         column.load_state = if column.entries.is_empty() {
             LoadState::Empty
         } else {
@@ -491,6 +611,14 @@ impl NavigationState {
             return false;
         };
         peek.append(entries);
+        true
+    }
+
+    pub fn restart_peek(&mut self, request_id: RequestId) -> bool {
+        let Some(peek) = self.peek.as_mut().filter(|peek| peek.accepts(request_id)) else {
+            return false;
+        };
+        peek.restart();
         true
     }
 
@@ -717,6 +845,9 @@ fn merge_entries(
     mut incoming: Vec<FileEntry>,
     preferences: ViewPreferences,
 ) -> (Vec<FileEntry>, Vec<EntryInsertion>) {
+    if incoming.is_empty() {
+        return (existing, Vec::new());
+    }
     incoming.sort_unstable_by(|left, right| compare_entries(left, right, preferences));
     if existing.is_empty() {
         let insertion = EntryInsertion {
@@ -724,6 +855,17 @@ fn merge_entries(
             entries: incoming.clone(),
         };
         return (incoming, vec![insertion]);
+    }
+
+    if existing.last().zip(incoming.first()).is_some_and(|(last, first)| {
+        compare_entries(last, first, preferences) == Ordering::Less
+    }) {
+        let insertion = EntryInsertion {
+            position: existing.len(),
+            entries: incoming.clone(),
+        };
+        existing.extend(incoming);
+        return (existing, vec![insertion]);
     }
 
     let mut merged = Vec::with_capacity(existing.len() + incoming.len());
@@ -797,7 +939,7 @@ fn insert_monitored_entry(
     });
 }
 
-fn compare_entries(left: &FileEntry, right: &FileEntry, preferences: ViewPreferences) -> Ordering {
+pub(super) fn compare_entries(left: &FileEntry, right: &FileEntry, preferences: ViewPreferences) -> Ordering {
     if preferences.folders_first {
         let directory_order = right.is_directory().cmp(&left.is_directory());
         if directory_order != Ordering::Equal {
@@ -805,8 +947,14 @@ fn compare_entries(left: &FileEntry, right: &FileEntry, preferences: ViewPrefere
         }
     }
 
+    if preferences.sort_key == SortKey::Track {
+        let audio_order = super::music_order::is_audio(right).cmp(&super::music_order::is_audio(left));
+        if audio_order != Ordering::Equal { return audio_order; }
+    }
+
     let ordering = match preferences.sort_key {
         SortKey::Name => left.display_name.cmp(&right.display_name),
+        SortKey::Track => super::music_order::compare_tracks(left, right),
         SortKey::Type => left.kind.cmp(&right.kind),
         SortKey::Size => compare_metadata(&left.size, &right.size),
         SortKey::Modified => {
@@ -831,6 +979,26 @@ fn compare_metadata<T: Ord>(left: &MetadataValue<T>, right: &MetadataValue<T>) -
         (MetadataValue::Unavailable, MetadataValue::Unknown) => Ordering::Greater,
         _ => Ordering::Equal,
     }
+}
+
+fn hydrate_music_tags(current: &mut [FileEntry], hydrated: &[FileEntry]) -> bool {
+    let mut changed = false;
+    for entry in hydrated {
+        if entry.music_tags.is_none() {
+            continue;
+        }
+        if let Some(current) = current.iter_mut().find(|current| {
+            current.location == entry.location && current.size == entry.size
+                && current.modified_unix_seconds == entry.modified_unix_seconds
+        })
+        {
+            if current.music_tags != entry.music_tags {
+                std::rc::Rc::make_mut(&mut current.0).music_tags = entry.music_tags.clone();
+                changed = true;
+            }
+        }
+    }
+    changed
 }
 
 #[cfg(test)]

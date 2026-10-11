@@ -20,9 +20,14 @@ use crate::{
     },
 };
 
+mod audio;
+mod image;
+mod media;
+mod pdf_fullscreen;
 #[cfg(test)]
 mod pdf_ranges_tests;
 mod pdf_text;
+pub(crate) mod stream;
 
 const DEFAULT_WIDTH: i32 = 520;
 const MIN_WIDTH: i32 = 280;
@@ -42,7 +47,11 @@ struct PreviewState {
     modified: gtk::Label,
     content_type: gtk::Label,
     content: gtk::Box,
-    media: RefCell<Option<gtk::Video>>,
+    media: RefCell<Option<media::MediaPreview>>,
+    audio: RefCell<Option<audio::AudioPreview>>,
+    audio_play_handler: RefCell<Option<Rc<dyn Fn()>>>,
+    image: RefCell<Option<image::ImagePreview>>,
+    pdf: RefCell<Option<pdf_fullscreen::PdfFullscreen>>,
     split: RefCell<Option<gtk::Paned>>,
     occupied_width: RefCell<Option<Rc<dyn Fn() -> i32>>>,
     current: RefCell<Option<FileEntry>>,
@@ -134,6 +143,10 @@ impl PreviewDrawer {
             content_type,
             content,
             media: RefCell::new(None),
+            audio: RefCell::new(None),
+            audio_play_handler: RefCell::new(None),
+            image: RefCell::new(None),
+            pdf: RefCell::new(None),
             split: RefCell::new(None),
             occupied_width: RefCell::new(None),
             current: RefCell::new(None),
@@ -157,11 +170,14 @@ impl PreviewDrawer {
                 .as_ref()
                 .map(|entry| entry.location.clone());
             if let Some(location) = location {
+                if let Some(preview) = state.audio.borrow().as_ref() {
+                    preview.stream.pause();
+                }
                 if let Some(stream) = state
                     .media
                     .borrow()
                     .as_ref()
-                    .and_then(gtk::Video::media_stream)
+                    .map(|preview| preview.stream.clone())
                 {
                     stream.set_playing(false);
                 }
@@ -207,8 +223,40 @@ impl PreviewDrawer {
         self.state.opened.get()
     }
 
+    pub fn open_fullscreen(&self) -> bool {
+        self.is_open()
+            && (self
+                .state
+                .media
+                .borrow()
+                .as_ref()
+                .is_some_and(media::MediaPreview::open_fullscreen)
+                || self
+                    .state
+                    .image
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(image::ImagePreview::open_fullscreen)
+                || self
+                    .state
+                    .pdf
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(pdf_fullscreen::PdfFullscreen::open_fullscreen))
+    }
+
     pub fn show(&self, entry: FileEntry) {
         self.state.show(entry);
+    }
+
+    pub fn set_audio_play_handler(&self, handler: Rc<dyn Fn()>) {
+        self.state.audio_play_handler.replace(Some(handler));
+    }
+
+    pub fn pause_audio_preview(&self) {
+        if let Some(preview) = self.state.audio.borrow().as_ref() {
+            preview.stream.pause();
+        }
     }
 
     pub fn close(&self) {
@@ -432,8 +480,9 @@ impl PreviewState {
                 let bytes = glib::Bytes::from_owned(png);
                 match gtk::gdk::Texture::from_bytes(&bytes) {
                     Ok(texture) => {
-                        let scroll = build_interactive_texture_view(&texture);
-                        self.content.append(&scroll);
+                        let image = image::ImagePreview::new(&texture);
+                        self.content.append(&image.widget);
+                        self.image.replace(Some(image));
                     }
                     Err(error) => self.show_message("Preview unavailable", &error.to_string()),
                 }
@@ -445,23 +494,23 @@ impl PreviewState {
                 let bytes = glib::Bytes::from_owned(data);
                 let stream = gio::MemoryInputStream::from_bytes(&bytes);
                 let media = gtk::MediaFile::for_input_stream(&stream);
-                let video = gtk::Video::for_media_stream(Some(&media));
-                video.add_css_class("preview-media");
-                video.set_autoplay(false);
-                video.set_loop(false);
-                video.set_hexpand(true);
-                video.set_vexpand(true);
-                self.media.replace(Some(video.clone()));
-                self.content.append(&video);
-                let media_kind = if is_audio { "audio" } else { "video" };
-                let notice = gtk::Label::new(Some(&format!(
-                    "Preview limited to the first 30 seconds. Open the file to play the full {media_kind}."
-                )));
-                notice.add_css_class("preview-note");
-                notice.set_justify(gtk::Justification::Center);
-                notice.set_wrap(true);
-                notice.set_xalign(0.5);
-                self.content.append(&notice);
+                let preview = media::MediaPreview::new(&media, is_audio);
+                self.content.append(&preview.widget);
+                self.media.replace(Some(preview));
+            }
+            PreviewContent::StreamingMedia { path } => {
+                let stream = stream::PlaybackStream::new(&path);
+                let preview = media::MediaPreview::new_full(&stream);
+                self.content.append(&preview.widget);
+                self.media.replace(Some(preview));
+            }
+            PreviewContent::SandboxedAnimation { data } => {
+                let bytes = glib::Bytes::from_owned(data);
+                let input = gio::MemoryInputStream::from_bytes(&bytes);
+                let media = gtk::MediaFile::for_input_stream(&input);
+                let preview = media::MediaPreview::new_animation(&media);
+                self.content.append(&preview.widget);
+                self.media.replace(Some(preview));
             }
             PreviewContent::Image | PreviewContent::Media => {
                 let hint = match family {
@@ -484,17 +533,23 @@ impl PreviewState {
                 let view = crate::ui::table_view::build_spreadsheet_view(&table);
                 self.content.append(&view);
             }
-            PreviewContent::AudioWaveform { png, metadata } => {
-                self.render_audio_waveform(png, &metadata);
+            PreviewContent::Audio { metadata } => {
+                self.render_audio(&preview.entry, &metadata);
             }
             PreviewContent::Code { language, .. } => {
-                self.show_message("Code Preview", &format!("SourceView5 placeholder for {}", language));
+                self.show_message(
+                    "Code Preview",
+                    &format!("SourceView5 placeholder for {}", language),
+                );
             }
             PreviewContent::Markdown { .. } => {
                 self.show_message("Markdown Render", "Rich markdown viewer placeholder");
             }
             PreviewContent::Model3D { format, .. } => {
-                self.show_message("3D Model Viewer", &format!("Canvas placeholder for {}", format));
+                self.show_message(
+                    "3D Model Viewer",
+                    &format!("Canvas placeholder for {}", format),
+                );
             }
             PreviewContent::Unsupported => {
                 self.show_message("No visual preview", family.unavailable_reason());
@@ -1031,70 +1086,49 @@ impl PreviewState {
             }
             glib::ControlFlow::Continue
         });
-        self.content.append(&scroll);
+        let pdf = pdf_fullscreen::PdfFullscreen::new(&scroll, &entry.display_name);
+        self.content.append(&pdf.widget);
+        self.pdf.replace(Some(pdf));
     }
 
-    fn render_audio_waveform(
-        &self,
-        png: Vec<u8>,
+    fn render_audio(
+        self: &Rc<Self>,
+        entry: &FileEntry,
         metadata: &crate::services::preview::AudioMetadata,
     ) {
-        let container = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        container.set_vexpand(true);
-        container.set_hexpand(true);
-        container.set_margin_start(16);
-        container.set_margin_end(16);
-        container.set_margin_top(16);
-        container.set_margin_bottom(16);
-
-        let meta_box = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        meta_box.set_halign(gtk::Align::Center);
-
-        let format_badge = gtk::Label::new(Some(&metadata.format));
-        format_badge.add_css_class("badge");
-        meta_box.append(&format_badge);
-
-        let duration_mins = (metadata.duration_seconds / 60.0).floor() as i64;
-        let duration_secs = (metadata.duration_seconds % 60.0).floor() as i64;
-        let dur_label = gtk::Label::new(Some(&format!("{duration_mins:02}:{duration_secs:02}")));
-        dur_label.add_css_class("dim-label");
-        meta_box.append(&dur_label);
-
-        let sr_khz = metadata.sample_rate as f64 / 1000.0;
-        let ch_str = if metadata.channels == 1 {
-            "Mono"
-        } else if metadata.channels == 2 {
-            "Stereo"
+        let weak = Rc::downgrade(self);
+        let on_play = Rc::new(move || {
+            if let Some(state) = weak.upgrade() {
+                let handler = state.audio_play_handler.borrow().clone();
+                if let Some(handler) = handler {
+                    handler();
+                }
+            }
+        });
+        if let Some(preview) = audio::AudioPreview::new(entry, metadata, on_play) {
+            self.content.append(&preview.widget);
+            self.audio.replace(Some(preview));
         } else {
-            "Multi-ch"
-        };
-        let info_label = gtk::Label::new(Some(&format!("{sr_khz:.1} kHz • {ch_str}")));
-        info_label.add_css_class("dim-label");
-        meta_box.append(&info_label);
-
-        container.append(&meta_box);
-
-        let bytes = glib::Bytes::from_owned(png);
-        if let Ok(texture) = gtk::gdk::Texture::from_bytes(&bytes) {
-            let picture = gtk::Picture::for_paintable(&texture);
-            picture.set_can_shrink(true);
-            picture.set_content_fit(gtk::ContentFit::Contain);
-            picture.set_hexpand(true);
-            picture.set_vexpand(true);
-            picture.set_halign(gtk::Align::Center);
-            picture.set_valign(gtk::Align::Center);
-            picture.set_size_request(-1, 240);
-            container.append(&picture);
+            self.show_message(
+                "Preview unavailable",
+                "Only local audio files can be played safely",
+            );
         }
-
-        self.content.append(&container);
     }
 
     fn clear_content(&self) {
-        if let Some(video) = self.media.borrow_mut().take()
-            && let Some(stream) = video.media_stream()
-        {
-            stream.set_playing(false);
+        if let Some(preview) = self.audio.borrow_mut().take() {
+            preview.stop();
+        }
+        let pdf = self.pdf.borrow_mut().take();
+        if let Some(pdf) = pdf {
+            pdf.stop();
+        }
+        if let Some(image) = self.image.borrow_mut().take() {
+            image.stop();
+        }
+        if let Some(preview) = self.media.borrow_mut().take() {
+            preview.stop();
         }
         clear_box(&self.content);
     }
@@ -1128,11 +1162,7 @@ impl PreviewState {
         self.content.append(&box_);
     }
 
-    fn render_geotiff_viewer(
-        self: &Rc<Self>,
-        png: Vec<u8>,
-        metadata: GeoTiffMetadata,
-    ) {
+    fn render_geotiff_viewer(self: &Rc<Self>, png: Vec<u8>, metadata: GeoTiffMetadata) {
         let bytes = glib::Bytes::from_owned(png);
         let texture = match gtk::gdk::Texture::from_bytes(&bytes) {
             Ok(texture) => texture,
@@ -1159,8 +1189,9 @@ impl PreviewState {
         header_box.append(&map_widget);
         self.content.append(&header_box);
 
-        let scroll = build_interactive_texture_view(&texture);
-        self.content.append(&scroll);
+        let image = image::ImagePreview::new(&texture);
+        self.content.append(&image.widget);
+        self.image.replace(Some(image));
     }
 }
 
@@ -1181,11 +1212,21 @@ fn create_gis_badges(metadata: &GeoTiffMetadata) -> gtk::Box {
     proj_val.set_text(&proj_text);
 
     let (res_group, res_val) = metadata_value("RESOLUTION");
-    res_val.set_text(&format!("{:.2} × {:.2}", metadata.resolution[0], metadata.resolution[1]));
+    res_val.set_text(&format!(
+        "{:.2} × {:.2}",
+        metadata.resolution[0], metadata.resolution[1]
+    ));
 
     let (type_group, type_val) = metadata_value("DATA TYPE");
-    let band_str = if metadata.band_count == 1 { "band" } else { "bands" };
-    type_val.set_text(&format!("{} ({} {})", metadata.data_type, metadata.band_count, band_str));
+    let band_str = if metadata.band_count == 1 {
+        "band"
+    } else {
+        "bands"
+    };
+    type_val.set_text(&format!(
+        "{} ({} {})",
+        metadata.data_type, metadata.band_count, band_str
+    ));
 
     row1.append(&proj_group);
     row1.append(&res_group);
@@ -1196,10 +1237,16 @@ fn create_gis_badges(metadata: &GeoTiffMetadata) -> gtk::Box {
 
     let (bounds_group, bounds_val) = metadata_value("BOUNDS");
     let b = metadata.bounds;
-    bounds_val.set_text(&format!("[{:.1}, {:.1}] – [{:.1}, {:.1}]", b[0], b[1], b[2], b[3]));
+    bounds_val.set_text(&format!(
+        "[{:.1}, {:.1}] – [{:.1}, {:.1}]",
+        b[0], b[1], b[2], b[3]
+    ));
 
     let (dims_group, dims_val) = metadata_value("DIMENSIONS");
-    dims_val.set_text(&format!("{} × {} px", metadata.dimensions[0], metadata.dimensions[1]));
+    dims_val.set_text(&format!(
+        "{} × {} px",
+        metadata.dimensions[0], metadata.dimensions[1]
+    ));
 
     let (elev_group, elev_val) = metadata_value("ELEVATION RANGE");
     match (metadata.elevation_min, metadata.elevation_max) {
@@ -1333,34 +1380,64 @@ fn draw_world_continents(
 
     // North America
     draw_poly(&[
-        (-165.0, 65.0), (-140.0, 70.0), (-90.0, 70.0), (-60.0, 60.0),
-        (-55.0, 45.0), (-80.0, 25.0), (-100.0, 20.0), (-110.0, 30.0),
-        (-125.0, 50.0), (-165.0, 65.0),
+        (-165.0, 65.0),
+        (-140.0, 70.0),
+        (-90.0, 70.0),
+        (-60.0, 60.0),
+        (-55.0, 45.0),
+        (-80.0, 25.0),
+        (-100.0, 20.0),
+        (-110.0, 30.0),
+        (-125.0, 50.0),
+        (-165.0, 65.0),
     ]);
 
     // South America
     draw_poly(&[
-        (-80.0, 10.0), (-35.0, -5.0), (-40.0, -22.0), (-55.0, -35.0),
-        (-65.0, -55.0), (-75.0, -45.0), (-80.0, 0.0),
+        (-80.0, 10.0),
+        (-35.0, -5.0),
+        (-40.0, -22.0),
+        (-55.0, -35.0),
+        (-65.0, -55.0),
+        (-75.0, -45.0),
+        (-80.0, 0.0),
     ]);
 
     // Eurasia
     draw_poly(&[
-        (-10.0, 36.0), (30.0, 36.0), (40.0, 30.0), (60.0, 25.0),
-        (100.0, 10.0), (120.0, 20.0), (140.0, 40.0), (170.0, 65.0),
-        (100.0, 75.0), (40.0, 70.0), (10.0, 55.0), (-10.0, 42.0),
+        (-10.0, 36.0),
+        (30.0, 36.0),
+        (40.0, 30.0),
+        (60.0, 25.0),
+        (100.0, 10.0),
+        (120.0, 20.0),
+        (140.0, 40.0),
+        (170.0, 65.0),
+        (100.0, 75.0),
+        (40.0, 70.0),
+        (10.0, 55.0),
+        (-10.0, 42.0),
     ]);
 
     // Africa
     draw_poly(&[
-        (-15.0, 35.0), (35.0, 30.0), (50.0, 12.0), (42.0, -10.0),
-        (30.0, -34.0), (18.0, -34.0), (10.0, 5.0), (-15.0, 15.0),
+        (-15.0, 35.0),
+        (35.0, 30.0),
+        (50.0, 12.0),
+        (42.0, -10.0),
+        (30.0, -34.0),
+        (18.0, -34.0),
+        (10.0, 5.0),
+        (-15.0, 15.0),
     ]);
 
     // Australia
     draw_poly(&[
-        (115.0, -20.0), (150.0, -15.0), (150.0, -35.0),
-        (135.0, -35.0), (115.0, -30.0),
+        (115.0, -20.0),
+        (150.0, -15.0),
+        (150.0, -35.0),
+        (135.0, -35.0),
+        (115.0, -30.0),
     ]);
 
     context.set_source_rgba(1.0, 1.0, 1.0, 0.12);
@@ -1382,8 +1459,16 @@ fn normalize_to_lon_lat(bounds: [f64; 4], epsg: Option<u32>) -> (f64, f64, f64, 
             let zone = if is_south { code - 32700 } else { code - 32600 };
             let central_lon = (zone as f64) * 6.0 - 183.0;
 
-            let northing_min = if is_south { y_min - 10_000_000.0 } else { y_min };
-            let northing_max = if is_south { y_max - 10_000_000.0 } else { y_max };
+            let northing_min = if is_south {
+                y_min - 10_000_000.0
+            } else {
+                y_min
+            };
+            let northing_max = if is_south {
+                y_max - 10_000_000.0
+            } else {
+                y_max
+            };
 
             let lat1 = northing_min / 111_319.5;
             let lat2 = northing_max / 111_319.5;
@@ -1408,7 +1493,12 @@ fn normalize_to_lon_lat(bounds: [f64; 4], epsg: Option<u32>) -> (f64, f64, f64, 
             if x_min >= -180.0 && x_max <= 180.0 && y_min >= -90.0 && y_max <= 90.0 {
                 (x_min, y_min, x_max, y_max)
             } else {
-                (x_min.clamp(-180.0, 180.0), y_min.clamp(-90.0, 90.0), x_max.clamp(-180.0, 180.0), y_max.clamp(-90.0, 90.0))
+                (
+                    x_min.clamp(-180.0, 180.0),
+                    y_min.clamp(-90.0, 90.0),
+                    x_max.clamp(-180.0, 180.0),
+                    y_max.clamp(-90.0, 90.0),
+                )
             }
         }
     };
@@ -1419,115 +1509,6 @@ fn normalize_to_lon_lat(bounds: [f64; 4], epsg: Option<u32>) -> (f64, f64, f64, 
     let max_lat = lat_min.max(lat_max).clamp(-90.0, 90.0);
 
     (min_lon, min_lat, max_lon, max_lat)
-}
-
-fn build_interactive_texture_view(texture: &gtk::gdk::Texture) -> gtk::ScrolledWindow {
-    let width = texture.width() as f64;
-    let height = texture.height() as f64;
-
-    let picture = gtk::Picture::for_paintable(texture);
-    picture.add_css_class("preview-image");
-    picture.set_can_shrink(true);
-    picture.set_content_fit(gtk::ContentFit::Fill);
-    picture.set_hexpand(true);
-    picture.set_vexpand(true);
-    picture.set_halign(gtk::Align::Center);
-    picture.set_valign(gtk::Align::Center);
-
-    let scroll = gtk::ScrolledWindow::builder()
-        .child(&picture)
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
-        .hexpand(true)
-        .vexpand(true)
-        .build();
-
-    let zoom_level = Rc::new(Cell::new(1.0f64));
-    let initial_fit_done = Rc::new(Cell::new(false));
-
-    let vadj = scroll.vadjustment();
-    let hadj = scroll.hadjustment();
-    let pic = picture.clone();
-    let zl = zoom_level.clone();
-    let fit_done = initial_fit_done.clone();
-
-    hadj.connect_notify_local(Some("page-size"), move |hadj, _| {
-        if !fit_done.get() {
-            let view_w = hadj.page_size();
-            let view_h = vadj.page_size();
-            if view_w > 0.0 && view_h > 0.0 {
-                fit_done.set(true);
-                let scale_w = view_w / width;
-                let scale_h = view_h / height;
-                let fit_scale = scale_w.min(scale_h).min(1.0);
-                zl.set(fit_scale);
-                pic.set_size_request(
-                    (width * fit_scale) as i32,
-                    (height * fit_scale) as i32,
-                );
-            }
-        }
-    });
-
-    let pointer_pos = Rc::new(Cell::new((0.0, 0.0)));
-    let motion = gtk::EventControllerMotion::new();
-    let pointer_pos_clone = pointer_pos.clone();
-    motion.connect_motion(move |_, x, y| {
-        pointer_pos_clone.set((x, y));
-    });
-    scroll.add_controller(motion);
-
-    let controller = gtk::EventControllerScroll::new(
-        gtk::EventControllerScrollFlags::VERTICAL,
-    );
-
-    let picture_ref = picture.clone();
-    let scroll_for_zoom = scroll.clone();
-    controller.connect_scroll(move |_, _dx, dy| {
-        let current = zoom_level.get();
-        let factor = 1.15f64.powf(-dy);
-        let new_zoom = (current * factor).clamp(0.1, 10.0);
-        let actual_factor = new_zoom / current;
-
-        zoom_level.set(new_zoom);
-
-        picture_ref.set_size_request(
-            (width * new_zoom) as i32,
-            (height * new_zoom) as i32,
-        );
-        picture_ref.set_can_shrink(true);
-
-        let (px, py) = pointer_pos.get();
-        preserve_view_pointer(&scroll_for_zoom, actual_factor, px, py);
-
-        gtk::glib::Propagation::Stop
-    });
-
-    scroll.add_controller(controller);
-
-    let drag = gtk::GestureDrag::new();
-    drag.set_button(1);
-    let scroll_for_drag1 = scroll.clone();
-    let start_x = Rc::new(Cell::new(0.0));
-    let start_y = Rc::new(Cell::new(0.0));
-    let start_x_clone = start_x.clone();
-    let start_y_clone = start_y.clone();
-    drag.connect_drag_begin(move |_, _, _| {
-        let hadj = scroll_for_drag1.hadjustment();
-        start_x_clone.set(hadj.value());
-        let vadj = scroll_for_drag1.vadjustment();
-        start_y_clone.set(vadj.value());
-    });
-    let scroll_for_drag2 = scroll.clone();
-    drag.connect_drag_update(move |_, dx, dy| {
-        let hadj = scroll_for_drag2.hadjustment();
-        hadj.set_value(start_x.get() - dx);
-        let vadj = scroll_for_drag2.vadjustment();
-        vadj.set_value(start_y.get() - dy);
-    });
-    scroll.add_controller(drag);
-
-    scroll
 }
 
 fn metadata_value(label: &str) -> (gtk::Box, gtk::Label) {
@@ -1603,27 +1584,6 @@ fn resize_pdf_page(overlay: &gtk::Overlay, picture: &gtk::Picture, target_width:
         let ratio = f64::from(texture_width) / f64::from(texture_height);
         overlay.set_size_request(width, (f64::from(width) / ratio).round() as i32);
     }
-}
-
-fn preserve_view_pointer(scroll: &gtk::ScrolledWindow, factor: f64, pointer_x: f64, pointer_y: f64) {
-    let horizontal = scroll.hadjustment();
-    let vertical = scroll.vadjustment();
-    let old_x = horizontal.value() + pointer_x;
-    let old_y = vertical.value() + pointer_y;
-    glib::idle_add_local_once(glib::clone!(
-        #[weak]
-        scroll,
-        move || {
-            set_adjustment_value(
-                &scroll.hadjustment(),
-                old_x * factor - pointer_x,
-            );
-            set_adjustment_value(
-                &scroll.vadjustment(),
-                old_y * factor - pointer_y,
-            );
-        }
-    ));
 }
 
 fn preserve_pdf_view_center(scroll: &gtk::ScrolledWindow, factor: f64) {

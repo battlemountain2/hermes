@@ -15,7 +15,10 @@ pub struct DirectoryRequest {
     pub include_hidden: bool,
 }
 
-#[expect(dead_code, reason = "Validation error variants for location validation")]
+#[expect(
+    dead_code,
+    reason = "Validation error variants for location validation"
+)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LocationValidationError {
     Empty,
@@ -53,6 +56,17 @@ pub enum DirectoryChange {
 
 #[derive(Clone, Debug)]
 pub enum DirectoryEvent {
+    Restarted {
+        request_id: RequestId,
+    },
+    Snapshot {
+        request_id: RequestId,
+        entries: Vec<FileEntry>,
+    },
+    MusicMetadata {
+        request_id: RequestId,
+        entries: Vec<FileEntry>,
+    },
     Batch {
         request_id: RequestId,
         entries: Vec<FileEntry>,
@@ -91,6 +105,16 @@ pub trait FileSource {
     fn validate_location(&self, location: &Location) -> Result<(), LocationValidationError>;
 
     fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle;
+
+    fn invalidate(&self, _location: &Location) {}
+
+    fn watch_invalidation(
+        &self,
+        _location: &Location,
+        _notify: Rc<dyn Fn()>,
+    ) -> Option<LoadHandle> {
+        None
+    }
 
     fn watch(
         &self,

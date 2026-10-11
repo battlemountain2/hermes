@@ -6,7 +6,13 @@ use wire::MAX_OUTPUT_BYTES;
 
 #[test]
 fn test_wire_operation_parse() {
+    assert_eq!(
+        Operation::parse(19).unwrap(),
+        Operation::PreviewAudioMetadata
+    );
     assert_eq!(Operation::parse(1).unwrap(), Operation::Image);
+    assert_eq!(Operation::parse(20).unwrap(), Operation::Heif);
+    assert_eq!(Operation::parse(21).unwrap(), Operation::PreviewHeif);
     assert_eq!(Operation::parse(2).unwrap(), Operation::Raw);
     assert_eq!(Operation::parse(3).unwrap(), Operation::Pdf);
     assert_eq!(Operation::parse(4).unwrap(), Operation::Video);
@@ -20,6 +26,59 @@ fn test_wire_operation_parse() {
     assert_eq!(Operation::parse(12).unwrap(), Operation::FreeCadThumbnail);
     assert!(Operation::parse(0).is_err());
     assert!(Operation::parse(99).is_err());
+}
+
+#[test]
+fn heif_thumbnails_and_full_previews_use_distinct_cached_operations() {
+    assert_eq!(map_preview_op(&ParseOperation::ThumbnailHeif), Some(Operation::Heif));
+    assert_eq!(map_preview_op(&ParseOperation::PreviewHeif), Some(Operation::PreviewHeif));
+    assert_ne!(map_preview_op(&ParseOperation::ThumbnailHeif), map_preview_op(&ParseOperation::PreviewHeif));
+}
+
+#[test]
+fn metadata_only_audio_uses_distinct_wire_operation_and_json_payload() {
+    assert_eq!(
+        map_preview_op(&ParseOperation::PreviewAudioMetadata),
+        Some(Operation::PreviewAudioMetadata)
+    );
+    let response = Response {
+        png: br#"{"title":"Example","properties":{},"embedded_tags":{}}"#.to_vec(),
+        metadata: Vec::new(),
+    };
+    let mut buffer = Vec::new();
+    response.write(&mut buffer).unwrap();
+    let decoded = Response::read(&mut &buffer[..]).unwrap();
+    assert!(decoded.metadata.is_empty());
+    assert!(!decoded.png.starts_with(b"\x89PNG"));
+    assert!(
+        serde_json::from_slice::<crate::services::preview::AudioMetadata>(&decoded.png).is_ok()
+    );
+}
+
+#[test]
+fn decoder_failures_have_bounded_framed_responses() {
+    let response = Response::failure("Image dimensions exceed the decoded frame budget");
+    let mut buffer = Vec::new();
+    response.write(&mut buffer).expect("write failure frame");
+    let decoded = Response::read(&mut &buffer[..]).expect("read failure frame");
+    assert_eq!(
+        decoded.error_message(),
+        Some("Image dimensions exceed the decoded frame budget".into())
+    );
+    let response = Response::failure(&"🦀".repeat(10000));
+    assert!(response.metadata.len() < 17000);
+    assert_eq!(
+        response.error_message().expect("error").chars().count(),
+        4096
+    );
+    assert_eq!(
+        Response {
+            png: vec![1],
+            metadata: response.metadata
+        }
+        .error_message(),
+        None
+    );
 }
 
 #[test]
@@ -136,19 +195,17 @@ fn test_pool_limit_configuration() {
 fn test_pool_cache_lifecycle() {
     let pool = Pool::new();
     let path = Path::new("/tmp/test_image.png");
-    let mtime = 123456789;
-    let size = 1024;
+    let identity =
+        Identity::from_metadata(&std::fs::metadata(std::env::current_exe().unwrap()).unwrap());
     let op = Operation::PreviewImage;
     let data = vec![1, 2, 3, 4];
 
-    assert!(pool.check_cache(path, mtime, size, op).is_none());
+    assert!(pool.check_cache(path, identity, op).is_none());
 
-    pool.put_cache(path, mtime, size, op, data.clone());
-    let cached = pool.check_cache(path, mtime, size, op).expect("cache hit");
+    pool.put_cache(path, identity, op, data.clone());
+    let cached = pool.check_cache(path, identity, op).expect("cache hit");
     assert_eq!(cached, data);
 
-    // Miss on different mtime
-    assert!(pool.check_cache(path, mtime + 1, size, op).is_none());
     // Miss on different op
-    assert!(pool.check_cache(path, mtime, size, Operation::Image).is_none());
+    assert!(pool.check_cache(path, identity, Operation::Image).is_none());
 }

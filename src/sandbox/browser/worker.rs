@@ -64,15 +64,48 @@ fn handle_request(operation: Operation, input_fd: OwnedFd, output_fd: OwnedFd) -
     }
 }
 
-fn execute_job(operation: Operation, input_fd: &OwnedFd, output_fd: &OwnedFd) -> Result<(), String> {
+fn execute_job(
+    operation: Operation,
+    input_fd: &OwnedFd,
+    output_fd: &OwnedFd,
+) -> Result<(), String> {
+    let (response, error) = match render_job(operation, input_fd) {
+        Ok(response) => (response, None),
+        Err(error) => (Response::failure(&error), Some(error)),
+    };
+    let mut writer = File::from(output_fd.try_clone().map_err(|error| error.to_string())?);
+    response
+        .write(&mut writer)
+        .map_err(|error| error.to_string())?;
+    error.map_or(Ok(()), Err)
+}
+
+fn render_job(operation: Operation, input_fd: &OwnedFd) -> Result<Response, String> {
     let input_path_str = format!("/proc/self/fd/{}", input_fd.as_raw_fd());
     let input_path = Path::new(&input_path_str);
 
     let (png, metadata) = match operation {
+        Operation::MusicTags => (
+            crate::sandbox_helper::audio::read_music_tags(input_path)?.into_bytes(),
+            None,
+        ),
+        Operation::PreviewAudioMetadata => (
+            crate::sandbox_helper::audio::read_audio_metadata(input_path)?.into_bytes(),
+            None,
+        ),
         Operation::Image => (crate::sandbox_helper::render_image(input_path, 256)?, None),
         Operation::PreviewImage => (crate::sandbox_helper::render_image(input_path, 1400)?, None),
+        Operation::Heif => (
+            crate::sandbox_helper::render_heif_thumbnail(input_path, 256)?,
+            None,
+        ),
+        Operation::PreviewHeif => (
+            crate::sandbox_helper::render_heif_preview(input_path)?,
+            None,
+        ),
         Operation::PreviewGeoTiff => {
-            let (png, meta_json) = crate::sandbox_helper::geotiff::render_geotiff(input_path, 1400)?;
+            let (png, meta_json) =
+                crate::sandbox_helper::geotiff::render_geotiff(input_path, 1400)?;
             (png, Some(meta_json.into_bytes()))
         }
         Operation::Raw => (crate::sandbox_helper::render_raw(input_path, 256)?, None),
@@ -93,26 +126,15 @@ fn execute_job(operation: Operation, input_fd: &OwnedFd, output_fd: &OwnedFd) ->
             (png, Some(json.into_bytes()))
         }
         Operation::PreviewAudioWaveform => {
-            let (png, meta_json) = crate::sandbox_helper::audio::render_waveform_and_meta(input_path)?;
+            let (png, meta_json) =
+                crate::sandbox_helper::audio::render_waveform_and_meta(input_path)?;
             (png, Some(meta_json.into_bytes()))
         }
         _ => (crate::sandbox_helper::render_image(input_path, 256)?, None),
     };
 
-    let response = Response {
+    Ok(Response {
         png,
         metadata: metadata.unwrap_or_default(),
-    };
-
-    #[expect(
-        unsafe_code,
-        reason = "Creates File from raw output pipe file descriptor to write response"
-    )]
-    // SAFETY: output_fd is a valid open file descriptor for writing responses
-    let mut writer = unsafe { File::from_raw_fd(output_fd.as_raw_fd()) };
-    response.write(&mut writer).map_err(|e| e.to_string())?;
-
-    // Forget writer so we don't double-close output_fd
-    std::mem::forget(writer);
-    Ok(())
+    })
 }

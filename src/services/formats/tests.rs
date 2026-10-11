@@ -7,6 +7,15 @@ use super::{
     classify_by_mime, classify_by_name, thumbnail_handler_for_name,
 };
 
+#[test]
+fn gif_animation_detection_keeps_image_thumbnail_classification() {
+    assert!(super::is_gif_image(OsStr::new("at the zoo.GIF"), "application/octet-stream"));
+    assert!(super::is_gif_image(OsStr::new("image"), "image/gif"));
+    assert!(!super::is_gif_image(OsStr::new("photo.png"), "image/png"));
+    assert_eq!(classify_by_name(OsStr::new("image.gif")), FormatFamily::Image);
+    assert_eq!(thumbnail_handler_for_name(OsStr::new("image.gif")), Some(ThumbnailHandler::Image));
+}
+
 // ---------------------------------------------------------------------------
 // classify_by_name — extension table
 // ---------------------------------------------------------------------------

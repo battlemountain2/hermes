@@ -75,24 +75,27 @@ fn recursive_copy_preserves_nested_directory_contents() -> Result<(), Box<dyn Er
     fs::write(source.join("top.txt"), b"top")?;
     fs::write(source.join("nested/child.txt"), b"child")?;
 
-    let result = glib::MainContext::default().block_on(copy_recursively(
-        gio::File::for_path(&source),
-        gio::File::for_path(&target),
-        false,
-    ));
+    let context = glib::MainContext::new();
+    let result = context.with_thread_default(|| {
+        context.block_on(copy_recursively(
+            gio::File::for_path(&source),
+            gio::File::for_path(&target),
+        ))
+    })?;
 
     assert!(result.is_ok());
     assert_eq!(fs::read(target.join("top.txt"))?, b"top");
     assert_eq!(fs::read(target.join("nested/child.txt"))?, b"child");
 
     fs::write(source.join("top.txt"), b"replacement")?;
-    let overwrite = glib::MainContext::default().block_on(copy_recursively(
-        gio::File::for_path(&source),
-        gio::File::for_path(&target),
-        true,
-    ));
-    assert!(overwrite.is_ok());
-    assert_eq!(fs::read(target.join("top.txt"))?, b"replacement");
+    let overwrite = context.with_thread_default(|| {
+        context.block_on(copy_recursively(
+            gio::File::for_path(&source),
+            gio::File::for_path(&target),
+        ))
+    })?;
+    assert!(overwrite.is_err());
+    assert_eq!(fs::read(target.join("top.txt"))?, b"top");
 
     fs::remove_dir_all(root)?;
     Ok(())

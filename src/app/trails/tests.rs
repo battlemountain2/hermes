@@ -32,7 +32,24 @@ fn manager() -> (Rc<Trails>, Rc<MemoryStore>) {
 }
 
 #[test]
-fn create_activate_rename_pin_and_close_round_trip() {
+fn reordering_tabs_preserves_the_active_tab_and_saved_order() {
+    let (trails, store) = manager();
+    let first = trails.all()[0].id.clone();
+    let second = trails.create("Music", Location::local("/home/example/Music"), TrailViewState::default()).expect("Create music tab");
+    let third = trails.create("Videos", Location::local("/home/example/Videos"), TrailViewState::default()).expect("Create video tab");
+    assert!(trails.move_relative(&third, &first, true).expect("Move before"));
+    assert_eq!(trails.all().iter().map(|trail| &trail.id).collect::<Vec<_>>(), vec![&third, &first, &second]);
+    assert_eq!(trails.active_id(), Some(third.clone()));
+    assert!(trails.move_relative(&third, &second, false).expect("Move after"));
+    assert_eq!(store.value.borrow().collection.trails.iter().map(|trail| &trail.id).collect::<Vec<_>>(), vec![&first, &second, &third]);
+    assert!(!trails.move_relative(&second, &second, true).expect("Self drop"));
+    assert!(!trails.move_relative(&third, &second, false).expect("Unchanged order"));
+    let missing = TrailId::new("missing").expect("Valid id");
+    assert!(!trails.move_relative(&missing, &second, true).expect("Missing source"));
+}
+
+#[test]
+fn create_activate_rename_and_close_round_trip() {
     let (trails, store) = manager();
     let created = trails
         .create(
@@ -44,9 +61,7 @@ fn create_activate_rename_pin_and_close_round_trip() {
     assert_eq!(trails.active_id(), Some(created.clone()));
 
     assert!(trails.rename(&created, "Photos").expect("rename Trail"));
-    assert!(trails.toggle_pinned(&created).expect("pin Trail"));
     assert_eq!(trails.all()[1].name, "Photos");
-    assert!(trails.all()[1].pinned);
 
     let default = trails.all()[0].id.clone();
     let location = trails.activate(&default).expect("activate Trail");

@@ -15,7 +15,7 @@ use gtk::{gio, glib, prelude::*};
 
 use crate::{
     app::{Browser, BrowserEvent},
-    model::{EntryKind, FileEntry, Location, SortDirection, SortKey},
+    model::{EntryKind, FileEntry, Location, SortDirection, SortKey, Trail, TrailId},
     services::{
         CustomAction, FileSource, FormatFamily, OperationProvider, classify_by_mime,
         classify_by_name, load_custom_actions, validate_basename,
@@ -31,6 +31,8 @@ use super::{
 const COLUMN_WIDTH: i32 = 300;
 const COLUMN_OFFSET: i32 = 24;
 const COLUMN_TRANSITION: Duration = Duration::from_millis(220);
+
+mod retained;
 
 #[derive(Clone)]
 struct LoadPresentation {
@@ -87,9 +89,11 @@ struct DeleteProgressView {
     status: gtk::Label,
 }
 
+#[derive(Clone)]
 struct PeekView {
     revealer: gtk::Revealer,
     location: Location,
+    anchor: glib::WeakRef<gtk::Widget>,
     presentation: LoadPresentation,
     model: gtk::StringList,
     entry_count: Rc<Cell<usize>>,
@@ -194,19 +198,26 @@ impl Default for PeekBehavior {
 }
 
 type PinHandler = Rc<dyn Fn(Location, String)>;
+type OpenHandler = Rc<dyn Fn(Location) -> bool>;
 
 pub(super) struct ViewState {
+    open_handler: RefCell<Option<OpenHandler>>,
     overlay: gtk::Overlay,
     location_stack: gtk::Stack,
     breadcrumbs: gtk::Box,
     location_entry: gtk::Entry,
     location_error: gtk::Label,
-    columns_widget: gtk::Box,
-    scroller: gtk::ScrolledWindow,
+    columns_widget: RefCell<gtk::Box>,
+    scroller: RefCell<gtk::ScrolledWindow>,
+    presentations: gtk::Stack,
     mode_views: RefCell<ModeViews>,
     columns: RefCell<Vec<ColumnView>>,
     hovered_column: Cell<Option<usize>>,
     cut_locations: RefCell<Vec<Location>>,
+    cut_clipboard: RefCell<Option<gtk::gdk::ContentProvider>>,
+    cut_generation: Cell<u64>,
+    pending_cut_generation: Cell<Option<u64>>,
+    transfer_cut_generation: Cell<Option<u64>>,
     clipboard_indicator: gtk::Button,
     clipboard_popover: gtk::Popover,
     clipboard_list: gtk::Box,
@@ -223,6 +234,8 @@ pub(super) struct ViewState {
     delete_progress: RefCell<Option<DeleteProgressView>>,
     pin_handler: RefCell<Option<PinHandler>>,
     browser: Rc<Browser>,
+    retained_tabs: RefCell<Vec<(TrailId, retained::Presentation)>>,
+    pending_tab_view: Cell<Option<(BrowserMode, BrowserDensity)>>,
 }
 
 #[derive(Clone)]
@@ -304,7 +317,10 @@ impl BrowserView {
 
         let browser = Browser::new(source);
         let mode_views = ModeViews::new(&scroller, browser.clone());
-        overlay.set_child(Some(&mode_views.widget()));
+        let presentations = gtk::Stack::builder().hexpand(true).vexpand(true)
+            .hhomogeneous(false).vhomogeneous(false).build();
+        presentations.add_child(&mode_views.widget());
+        overlay.set_child(Some(&presentations));
         let clipboard_indicator = gtk::Button::new();
         clipboard_indicator.add_css_class("clipboard-indicator");
         clipboard_indicator.set_halign(gtk::Align::Start);
@@ -330,22 +346,34 @@ impl BrowserView {
             .build();
         clipboard_popover.add_css_class("clipboard-popover");
         clipboard_popover.set_parent(&clipboard_indicator);
+        let destroyed_clipboard_popover = clipboard_popover.downgrade();
+        clipboard_indicator.connect_destroy(move |_| {
+            if let Some(popover) = destroyed_clipboard_popover.upgrade() {
+                popover.unparent();
+            }
+        });
         let clipboard_hover = gtk::EventControllerMotion::new();
         let shown_clipboard = clipboard_popover.clone();
         clipboard_hover.connect_enter(move |_, _, _| shown_clipboard.popup());
         clipboard_indicator.add_controller(clipboard_hover);
         let state = Rc::new(ViewState {
+            open_handler: RefCell::new(None),
             overlay,
             location_stack,
             breadcrumbs,
             location_entry,
             location_error,
-            columns_widget,
-            scroller,
+            columns_widget: RefCell::new(columns_widget),
+            scroller: RefCell::new(scroller),
+            presentations,
             mode_views: RefCell::new(mode_views),
             columns: RefCell::new(Vec::new()),
             hovered_column: Cell::new(None),
             cut_locations: RefCell::new(Vec::new()),
+            cut_clipboard: RefCell::new(None),
+            cut_generation: Cell::new(0),
+            pending_cut_generation: Cell::new(None),
+            transfer_cut_generation: Cell::new(None),
             clipboard_indicator,
             clipboard_popover,
             clipboard_list,
@@ -362,6 +390,8 @@ impl BrowserView {
             delete_progress: RefCell::new(None),
             pin_handler: RefCell::new(None),
             browser,
+            retained_tabs: RefCell::new(Vec::new()),
+            pending_tab_view: Cell::new(None),
         });
 
         let weak_state = Rc::downgrade(&state);
@@ -383,6 +413,17 @@ impl BrowserView {
         state
             .browser
             .observe(move |event| observer_state.handle(event));
+
+        let scroll_input = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
+        scroll_input.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let scroll_state = Rc::downgrade(&state);
+        scroll_input.connect_scroll(move |_, _, _| {
+            if let Some(state) = scroll_state.upgrade() {
+                state.horizontal_scroll_generation.set(state.horizontal_scroll_generation.get().wrapping_add(1));
+            }
+            glib::Propagation::Proceed
+        });
+        state.overlay.add_controller(scroll_input);
 
         let weak_state = Rc::downgrade(&state);
         state.location_entry.connect_activate(move |_| {
@@ -437,6 +478,10 @@ impl BrowserView {
         self.state.browser.clone()
     }
 
+    pub(super) fn set_open_handler(&self, handler: OpenHandler) {
+        self.state.open_handler.replace(Some(handler));
+    }
+
     pub(super) fn set_pin_handler(&self, handler: PinHandler) {
         self.state.pin_handler.replace(Some(handler));
     }
@@ -485,9 +530,24 @@ impl BrowserView {
 
     pub fn set_view_mode(&self, mode: BrowserMode) {
         let previous = self.state.mode_views.borrow().mode();
+        if mode != previous {
+            self.state.close_peek_visual();
+            self.state.peek_anchor.take();
+            self.state.browser.close_peek();
+        }
         self.state.mode_views.borrow_mut().set_mode(mode);
         if mode == BrowserMode::Columns && previous != BrowserMode::Columns {
             self.state.sync_column_models();
+        }
+        if let Some(action) = self
+            .state
+            .overlay
+            .root()
+            .and_downcast::<gtk::ApplicationWindow>()
+            .and_then(|window| window.lookup_action("view-mode"))
+            .and_downcast::<gio::SimpleAction>()
+        {
+            action.set_state(&mode.action_name().to_variant());
         }
     }
 
@@ -552,7 +612,8 @@ impl BrowserView {
     pub fn set_peek_enabled(&self, enabled: bool) {
         self.state.peek_enabled.set(enabled);
         if !enabled {
-            cancel_source(&self.state.pending_peek);
+            self.state.close_peek_visual();
+            self.state.peek_anchor.take();
             self.state.browser.close_peek();
         }
     }
@@ -598,6 +659,59 @@ impl BrowserView {
         if let Some(location) = depth.and_then(|depth| self.state.browser.location_at(depth)) {
             self.state.paste_into(location);
         }
+    }
+
+    pub(super) fn drop_sidebar_files(
+        &self,
+        destination: Location,
+        sources: Vec<Location>,
+        action: gtk::gdk::DragAction,
+    ) -> bool {
+        if sources.is_empty() || action.is_empty() {
+            return false;
+        }
+        if is_trash_root(&destination) {
+            if action != gtk::gdk::DragAction::MOVE || sources.iter().any(is_trash_location) {
+                return false;
+            }
+            let weak_state = Rc::downgrade(&self.state);
+            glib::MainContext::default().spawn_local(async move {
+                let mut entries = Vec::new();
+                for source in sources {
+                    let file = gio_file_for_location(&source);
+                    let result = file
+                        .query_info_future(
+                            "standard::name,standard::display-name,standard::type,standard::is-symlink,standard::size,time::modified",
+                            gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS,
+                            glib::Priority::DEFAULT,
+                        )
+                        .await;
+                    match result {
+                        Ok(info) => entries.push(trash_file_entry(file, &info)),
+                        Err(error) => {
+                            if let Some(state) = weak_state.upgrade() {
+                                show_error_dialog(
+                                    &state.overlay,
+                                    "Unable to move items to Trash",
+                                    &error.to_string(),
+                                );
+                            }
+                            return;
+                        }
+                    }
+                }
+                if let Some(state) = weak_state.upgrade() {
+                    state.show_delete_confirmation(entries, false);
+                }
+            });
+        } else {
+            self.state.start_transfer(
+                destination,
+                sources,
+                action == gtk::gdk::DragAction::MOVE,
+            );
+        }
+        true
     }
 
     pub fn copy_selection(&self) -> bool {
@@ -796,7 +910,9 @@ impl ViewState {
         sources: Vec<Location>,
         move_sources: bool,
     ) {
-        let clear_cut = move_sources && same_locations(&sources, &self.cut_locations.borrow());
+        let cut_generation = (move_sources && self.owns_cut_clipboard()
+            && sources.iter().any(|source| self.cut_locations.borrow().contains(source)))
+            .then(|| self.cut_generation.get());
         let mut accepted = Vec::new();
         let mut collisions = Vec::new();
         for source in sources {
@@ -812,7 +928,7 @@ impl ViewState {
             accepted,
             move_sources,
             false,
-            clear_cut,
+            cut_generation,
         );
     }
 
@@ -823,14 +939,13 @@ impl ViewState {
         accepted: Vec<Location>,
         move_sources: bool,
         overwrite_existing: bool,
-        clear_cut: bool,
+        cut_generation: Option<u64>,
     ) {
         if collisions.is_empty() {
-            if clear_cut {
-                self.complete_cut_transfer(&accepted);
-            }
+            let previous = self.pending_cut_generation.replace(cut_generation);
             self.browser
                 .transfer(destination, accepted, move_sources, overwrite_existing);
+            self.pending_cut_generation.set(previous);
             return;
         }
         let source = collisions.remove(0);
@@ -941,7 +1056,7 @@ impl ViewState {
                 skipped_accepted.clone(),
                 move_sources,
                 overwrite_existing,
-                clear_cut,
+                cut_generation,
             );
         });
 
@@ -966,7 +1081,7 @@ impl ViewState {
                 accepted,
                 move_sources,
                 true,
-                clear_cut,
+                cut_generation,
             );
         });
 
@@ -995,6 +1110,9 @@ impl ViewState {
 
     fn cut_entries(&self, entries: &[FileEntry]) {
         if set_files_clipboard(entries) {
+            self.cut_generation.set(self.cut_generation.get().wrapping_add(1));
+            self.cut_clipboard.replace(gtk::gdk::Display::default()
+                .and_then(|display| display.clipboard().content()));
             self.cut_locations
                 .replace(entries.iter().map(|entry| entry.location.clone()).collect());
             self.refresh_cut_rows();
@@ -1003,26 +1121,33 @@ impl ViewState {
     }
 
     fn show_clipboard_indicator(&self, entries: &[FileEntry], cut: bool) {
+        let items = entries.iter()
+            .map(|entry| (entry.location.clone(), entry.display_name.clone()))
+            .collect::<Vec<_>>();
+        self.show_clipboard_items(&items, cut);
+    }
+
+    fn show_clipboard_items(&self, items: &[(Location, String)], cut: bool) {
         let action = if cut { "Cut" } else { "Copied" };
-        let label = match entries {
-            [entry] => format!("{action} {}", entry.display_name),
-            _ => format!("{action} {} items", entries.len()),
+        let label = match items {
+            [(_, name)] => format!("{action} {name}"),
+            _ => format!("{action} {} items", items.len()),
         };
         self.clipboard_indicator.set_label(&label);
         while let Some(child) = self.clipboard_list.first_child() {
             self.clipboard_list.remove(&child);
         }
-        for entry in entries {
-            let item = gtk::Label::new(Some(&entry.display_name));
+        for (location, name) in items {
+            let item = gtk::Label::new(Some(name));
             item.add_css_class("clipboard-list-item");
             item.set_xalign(0.0);
             item.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-            item.set_tooltip_text(Some(&entry.location.display_path()));
+            item.set_tooltip_text(Some(&location.display_path()));
             self.clipboard_list.append(&item);
         }
-        let details = entries
+        let details = items
             .iter()
-            .map(|entry| entry.display_name.as_str())
+            .map(|(_, name)| name.as_str())
             .collect::<Vec<_>>()
             .join("\n");
         self.clipboard_indicator.set_tooltip_text(Some(&details));
@@ -1030,6 +1155,8 @@ impl ViewState {
     }
 
     fn clear_cut(&self) {
+        self.cut_generation.set(self.cut_generation.get().wrapping_add(1));
+        self.cut_clipboard.borrow_mut().take();
         if self.cut_locations.borrow().is_empty() {
             return;
         }
@@ -1038,6 +1165,12 @@ impl ViewState {
     }
 
     fn complete_cut_transfer(&self, transferred: &[Location]) {
+        if self.transfer_cut_generation.get() != Some(self.cut_generation.get())
+            || !self.owns_cut_clipboard()
+            || !transferred.iter().any(|location| self.cut_locations.borrow().contains(location))
+        {
+            return;
+        }
         self.cut_locations
             .borrow_mut()
             .retain(|location| !transferred.contains(location));
@@ -1050,10 +1183,30 @@ impl ViewState {
             }
             self.clipboard_indicator.set_visible(false);
             self.clipboard_popover.popdown();
+            self.cut_clipboard.borrow_mut().take();
         } else {
-            let _set = set_location_files_clipboard(&remaining);
+            if set_location_files_clipboard(&remaining) {
+                self.cut_clipboard.replace(gtk::gdk::Display::default()
+                    .and_then(|display| display.clipboard().content()));
+            }
+            let items = remaining.iter().map(|location| {
+                let name = gio_file_for_location(location).basename()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| location.display_path());
+                (location.clone(), name)
+            }).collect::<Vec<_>>();
+            self.show_clipboard_items(&items, true);
         }
         self.refresh_cut_rows();
+    }
+
+    fn owns_cut_clipboard(&self) -> bool {
+        let owned = self.cut_clipboard.borrow();
+        owned.as_ref().is_some_and(|provider| {
+            gtk::gdk::Display::default()
+                .and_then(|display| display.clipboard().content())
+                .as_ref() == Some(provider)
+        })
     }
 
     fn refresh_cut_rows(&self) {
@@ -1082,6 +1235,8 @@ impl ViewState {
             return;
         };
         let clipboard = display.clipboard();
+        let content = clipboard.content();
+        let cut_generation = self.cut_generation.get();
         let weak = Rc::downgrade(self);
         glib::MainContext::default().spawn_local(async move {
             let result = clipboard
@@ -1103,7 +1258,12 @@ impl ViewState {
                 })
                 .collect::<Vec<_>>();
             if let Some(state) = weak.upgrade() {
-                let move_sources = same_locations(&sources, &state.cut_locations.borrow());
+                if clipboard.content() != content {
+                    return;
+                }
+                let move_sources = cut_generation == state.cut_generation.get()
+                    && state.owns_cut_clipboard()
+                    && same_locations(&sources, &state.cut_locations.borrow());
                 state.start_transfer(destination, sources, move_sources);
             }
         });
@@ -2321,11 +2481,42 @@ impl ViewState {
     }
 
     fn handle(self: &Rc<Self>, event: BrowserEvent) {
-        self.mode_views.borrow_mut().handle(&event);
+        match &event {
+            BrowserEvent::TabStored { id } => {
+                self.store_presentation(id.clone());
+                return;
+            }
+            BrowserEvent::TabRestored { id } => {
+                self.restore_presentation(id);
+                return;
+            }
+            BrowserEvent::TabDiscarded { id } => {
+                self.discard_presentation(id);
+                return;
+            }
+            _ => {}
+        }
+        if matches!(&event, BrowserEvent::Reset | BrowserEvent::ColumnsTruncated { .. }
+            | BrowserEvent::ColumnReloaded { .. } | BrowserEvent::EntriesInserted { .. }
+            | BrowserEvent::EntriesReplaced { .. } | BrowserEvent::EntriesSpliced { .. })
+        {
+            cancel_source(&self.pending_peek);
+            self.peek_anchor.take();
+        }
+        if !matches!(&event, BrowserEvent::PeekStarted { .. } | BrowserEvent::PeekEntriesReplaced { .. }
+            | BrowserEvent::PeekFinished | BrowserEvent::PeekFailed { .. } | BrowserEvent::PeekClosed)
+        {
+            self.mode_views.borrow_mut().handle(&event);
+        }
         match event {
+            BrowserEvent::TabStored { .. } | BrowserEvent::TabRestored { .. }
+            | BrowserEvent::TabDiscarded { .. } => {}
             BrowserEvent::Reset => {
                 self.truncate(0);
                 self.clear_location_error();
+                if let Some((mode, density)) = self.pending_tab_view.get() {
+                    self.mode_views.borrow_mut().configure_empty(mode, density);
+                }
             }
             BrowserEvent::ColumnsTruncated { len } => {
                 self.truncate(len);
@@ -2362,12 +2553,15 @@ impl ViewState {
                 if self.mode_views.borrow().mode() == BrowserMode::Columns
                     && let Some(column) = self.columns.borrow().get(depth).cloned()
                 {
+                    sync_sort_direction_header(&column.shell, &self.browser, depth);
                     if !entries.is_empty() {
                         column.presentation.show_content();
                     }
                     let labels: Vec<_> = entries.iter().map(entry_model_value).collect();
                     let labels: Vec<_> = labels.iter().map(String::as_str).collect();
+                    let syncing = column.syncing_selection.replace(true);
                     column.model.splice(0, column.model.n_items(), &labels);
+                    column.syncing_selection.set(syncing);
                     column.entry_count.set(entries.len());
                     set_filter_placeholder(&column, entries.len());
                 }
@@ -2451,21 +2645,22 @@ impl ViewState {
                 }
             }
             BrowserEvent::PeekStarted { location } => self.append_peek(&location),
-            BrowserEvent::PeekEntriesAdded { entries } => {
-                if let Some(peek) = self.peek.borrow().as_ref() {
+            BrowserEvent::PeekEntriesReplaced { entries } => {
+                let peek = self.peek.borrow().clone();
+                if let Some(peek) = peek {
+                    let labels: Vec<_> = entries.iter().take(self.peek_behavior.item_limit.max(1))
+                        .map(entry_model_value).collect();
+                    let labels: Vec<_> = labels.iter().map(String::as_str).collect();
+                    peek.entry_count.set(labels.len());
+                    peek.model.splice(0, peek.model.n_items(), &labels);
                     if !entries.is_empty() {
                         peek.presentation.show_content();
                     }
-                    append_entries(
-                        &peek.model,
-                        &peek.entry_count,
-                        entries,
-                        Some(self.peek_behavior.item_limit),
-                    );
                 }
             }
             BrowserEvent::PeekFinished => {
-                if let Some(peek) = self.peek.borrow().as_ref() {
+                let peek = self.peek.borrow().clone();
+                if let Some(peek) = peek {
                     peek.spinner.stop();
                     peek.spinner.set_visible(false);
                     if peek.entry_count.get() == 0 {
@@ -2476,7 +2671,8 @@ impl ViewState {
                 }
             }
             BrowserEvent::PeekFailed { message } => {
-                if let Some(peek) = self.peek.borrow().as_ref() {
+                let peek = self.peek.borrow().clone();
+                if let Some(peek) = peek {
                     peek.spinner.stop();
                     peek.spinner.set_visible(false);
                     peek.presentation
@@ -2522,7 +2718,10 @@ impl ViewState {
             }
             BrowserEvent::PreviewRequested { .. } => {}
             BrowserEvent::OpenRequested { location } => {
-                open_location(&location, &self.overlay);
+                let handler = self.open_handler.borrow().clone();
+                if !handler.is_some_and(|handler| handler(location.clone())) {
+                    open_location(&location, &self.overlay);
+                }
             }
             BrowserEvent::RenameCompleted => {
                 self.cancel_rename();
@@ -2556,16 +2755,27 @@ impl ViewState {
                 self.update_delete_progress(completed, total);
             }
             BrowserEvent::RestorationFinished => self.dismiss_delete_progress(),
-            BrowserEvent::TransferStarted { total } => self.show_file_operation_progress(
-                total,
-                crate::assets::icons::COPY,
-                "Transferring items",
-                "Copying or moving files",
-            ),
+            BrowserEvent::TransferStarted { total } => {
+                self.transfer_cut_generation.set(self.pending_cut_generation.get());
+                self.show_file_operation_progress(
+                    total,
+                    crate::assets::icons::COPY,
+                    "Transferring items",
+                    "Copying or moving files",
+                );
+            }
             BrowserEvent::TransferProgress { completed, total } => {
                 self.update_delete_progress(completed, total);
             }
-            BrowserEvent::TransferFinished => self.dismiss_delete_progress(),
+            BrowserEvent::TransferItemCompleted { source, move_source } => {
+                if move_source {
+                    self.complete_cut_transfer(std::slice::from_ref(&source));
+                }
+            }
+            BrowserEvent::TransferFinished => {
+                self.transfer_cut_generation.set(None);
+                self.dismiss_delete_progress();
+            }
             BrowserEvent::ArchiveStarted { title } => self.show_file_operation_progress(
                 1,
                 crate::assets::icons::FILE_ARCHIVE,
@@ -2577,8 +2787,10 @@ impl ViewState {
             }
             BrowserEvent::ArchiveFinished => self.dismiss_delete_progress(),
             BrowserEvent::OperationFailed { message } => {
-                self.dismiss_delete_progress();
                 show_error_dialog(&self.overlay, "Unable to complete operation", &message);
+            }
+            BrowserEvent::OperationRejected { message } => {
+                show_error_dialog(&self.overlay, "Operation already running", &message);
             }
             BrowserEvent::OperationCompletedWithErrors { message } => {
                 show_error_dialog(&self.overlay, "Completed with errors", &message);
@@ -2663,6 +2875,7 @@ impl ViewState {
         header.append(&spinner);
         let header_actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         header_actions.add_css_class("column-header-actions");
+        header_actions.append(&super::browser_modes::view_options_button());
         header_actions.append(&column_sort_direction_toggle(&self.browser, depth));
         header_actions.append(&column_sort_menu(&self.browser, depth));
 
@@ -2841,12 +3054,14 @@ impl ViewState {
             row.append(&size);
             row.append(&chevron);
             let motion = gtk::EventControllerMotion::new();
-            let list_item = item.clone();
-            let anchor: gtk::Widget = row.clone().upcast();
+            let list_item = item.downgrade();
             let weak_state_for_enter = weak_state.clone();
             let source_for_enter = source_for_hover.clone();
             let filtered_for_enter = filtered_for_hover.clone();
-            motion.connect_enter(move |_, _, _| {
+            motion.connect_enter(move |motion, _, _| {
+                let (Some(list_item), Some(anchor)) = (list_item.upgrade(), motion.widget()) else {
+                    return;
+                };
                 if let Some(state) = weak_state_for_enter.upgrade() {
                     let source_position = source_position_for_filtered(
                         &source_for_enter,
@@ -2877,10 +3092,11 @@ impl ViewState {
                 .actions(gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE)
                 .build();
             let weak_state_for_drag = weak_state.clone();
-            let dragged_item = item.clone();
+            let dragged_item = item.downgrade();
             let source_for_drag = source_for_hover.clone();
             let filtered_for_drag = filtered_for_hover.clone();
             drag.connect_prepare(move |source, x, y| {
+                let dragged_item = dragged_item.upgrade()?;
                 let state = weak_state_for_drag.upgrade()?;
                 let source_position = source_position_for_filtered(
                     &source_for_drag,
@@ -2901,10 +3117,16 @@ impl ViewState {
                 source.set_icon(Some(&paintable), x.round() as i32, y.round() as i32);
                 file_drag_content(&entries)
             });
-            let dragged_row = row.clone();
-            drag.connect_drag_begin(move |_, _| dragged_row.add_css_class("dragging"));
-            let dragged_row = row.clone();
-            drag.connect_drag_end(move |_, _, _| dragged_row.remove_css_class("dragging"));
+            drag.connect_drag_begin(|source, _| {
+                if let Some(row) = source.widget() {
+                    row.add_css_class("dragging");
+                }
+            });
+            drag.connect_drag_end(|source, _, _| {
+                if let Some(row) = source.widget() {
+                    row.remove_css_class("dragging");
+                }
+            });
             row.add_controller(drag);
 
             let drop = gtk::DropTarget::new(
@@ -2914,10 +3136,13 @@ impl ViewState {
             drop.connect_enter(|target, _, _| file_drop_action(target));
             drop.connect_motion(|target, _, _| file_drop_action(target));
             let weak_state_for_accept = weak_state.clone();
-            let accepted_item = item.clone();
+            let accepted_item = item.downgrade();
             let source_for_accept = source_for_hover.clone();
             let filtered_for_accept = filtered_for_hover.clone();
             drop.connect_accept(move |_, offered| {
+                let Some(accepted_item) = accepted_item.upgrade() else {
+                    return false;
+                };
                 let Some(state) = weak_state_for_accept.upgrade() else {
                     return false;
                 };
@@ -2935,10 +3160,13 @@ impl ViewState {
                 })
             });
             let weak_state_for_drop = weak_state.clone();
-            let dropped_item = item.clone();
+            let dropped_item = item.downgrade();
             let source_for_drop = source_for_hover.clone();
             let filtered_for_drop = filtered_for_hover.clone();
             drop.connect_drop(move |target, value, _, _| {
+                let Some(dropped_item) = dropped_item.upgrade() else {
+                    return false;
+                };
                 let Some(state) = weak_state_for_drop.upgrade() else {
                     return false;
                 };
@@ -2959,7 +3187,7 @@ impl ViewState {
             let selection_click = gtk::GestureClick::new();
             selection_click.set_button(1);
             selection_click.set_propagation_phase(gtk::PropagationPhase::Bubble);
-            let clicked_item = item.clone();
+            let clicked_item = item.downgrade();
             let selection_for_click = selection_for_rows.clone();
             let selection_anchor_for_click = mouse_selection_anchor.clone();
             let modified_for_click = modified_selection_for_rows.clone();
@@ -2967,6 +3195,9 @@ impl ViewState {
             let source_for_click = source_for_hover.clone();
             let filtered_for_click = filtered_for_hover.clone();
             selection_click.connect_pressed(move |gesture, press_count, _, _| {
+                let Some(clicked_item) = clicked_item.upgrade() else {
+                    return;
+                };
                 let position = clicked_item.position();
                 if position == gtk::INVALID_LIST_POSITION {
                     return;
@@ -3164,13 +3395,17 @@ impl ViewState {
         let modifiers_for_update = marquee_modifiers.clone();
         let selection_for_marquee = selection.clone();
         let rows_for_marquee = bound_rows.clone();
-        let list_for_marquee = list.clone();
-        let overlay_for_marquee = self.overlay.clone();
+        let overlay_for_marquee = self.overlay.downgrade();
         let marquee_box_for_update = marquee_box.clone();
-        marquee.connect_drag_update(move |_, offset_x, offset_y| {
+        marquee.connect_drag_update(move |gesture, offset_x, offset_y| {
             if !active_for_update.get() {
                 return;
             }
+            let (Some(list_for_marquee), Some(overlay_for_marquee)) =
+                (gesture.widget(), overlay_for_marquee.upgrade())
+            else {
+                return;
+            };
             let (origin_x, origin_y) = origin_for_update.get();
             let current_x = origin_x + offset_x;
             let current_y = origin_y + offset_y;
@@ -3313,8 +3548,10 @@ impl ViewState {
         });
         let new_folder_focus = gtk::EventControllerFocus::new();
         let weak_state = Rc::downgrade(self);
-        let field = new_folder_entry.clone();
-        new_folder_focus.connect_leave(move |_| {
+        new_folder_focus.connect_leave(move |focus| {
+            let Some(field) = focus.widget().and_downcast::<gtk::Entry>() else {
+                return;
+            };
             if let Some(state) = weak_state.upgrade() {
                 state.submit_new_folder(&field);
             }
@@ -3373,10 +3610,13 @@ impl ViewState {
         resize.set_button(1);
         let resize_start = Rc::new(Cell::new(COLUMN_WIDTH));
         let pointer_start = Rc::new(Cell::new(None));
-        let shell_for_resize_start = shell.clone();
+        let shell_for_resize_start = shell.downgrade();
         let resize_start_for_begin = resize_start.clone();
         let pointer_start_for_begin = pointer_start.clone();
         resize.connect_drag_begin(move |gesture, _, _| {
+            let Some(shell_for_resize_start) = shell_for_resize_start.upgrade() else {
+                return;
+            };
             resize_start_for_begin.set(shell_for_resize_start.width().max(COLUMN_WIDTH));
             if let Some((pointer_x, _)) = gesture.current_event().and_then(|event| event.position())
             {
@@ -3384,8 +3624,11 @@ impl ViewState {
             }
             gesture.set_state(gtk::EventSequenceState::Claimed);
         });
-        let shell_for_resize = shell.clone();
+        let shell_for_resize = shell.downgrade();
         resize.connect_drag_update(move |gesture, fallback_offset_x, _| {
+            let Some(shell_for_resize) = shell_for_resize.upgrade() else {
+                return;
+            };
             let pointer_x = gesture
                 .current_event()
                 .and_then(|event| event.position())
@@ -3406,7 +3649,7 @@ impl ViewState {
             .checked_sub(1)
             .and_then(|previous| self.columns.borrow().get(previous).cloned())
             .map(|column| column.shell);
-        self.columns_widget
+        self.columns_widget.borrow()
             .insert_child_after(&shell, previous.as_ref());
         self.columns.borrow_mut().push(ColumnView {
             shell: shell.clone(),
@@ -3435,9 +3678,15 @@ impl ViewState {
     fn reveal_column(self: &Rc<Self>, shell: gtk::Box) {
         let animation_id = self.horizontal_scroll_generation.get().saturating_add(1);
         self.horizontal_scroll_generation.set(animation_id);
+        if !self.scroller.borrow().is_mapped() {
+            return;
+        }
         let weak = Rc::downgrade(self);
-        let measured_shell = shell;
-        let _tick = self.scroller.add_tick_callback(move |_, _| {
+        let measured_shell = shell.downgrade();
+        let _tick = self.scroller.borrow().add_tick_callback(move |_, _| {
+            let Some(measured_shell) = measured_shell.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
             let Some(state) = weak.upgrade() else {
                 return glib::ControlFlow::Break;
             };
@@ -3446,11 +3695,11 @@ impl ViewState {
             {
                 return glib::ControlFlow::Break;
             }
-            let adjustment = state.scroller.hadjustment();
+            let adjustment = state.scroller.borrow().hadjustment();
             if measured_shell.width() <= 0 || adjustment.page_size() <= 0.0 {
                 return glib::ControlFlow::Continue;
             }
-            let Some(bounds) = measured_shell.compute_bounds(&state.columns_widget) else {
+            let Some(bounds) = measured_shell.compute_bounds(&*state.columns_widget.borrow()) else {
                 return glib::ControlFlow::Continue;
             };
             let target = horizontal_reveal_target(
@@ -3462,7 +3711,7 @@ impl ViewState {
                 f64::from(bounds.x() + bounds.width()),
             );
             animate_horizontal_scroll(
-                &state.scroller,
+                &state.scroller.borrow(),
                 &adjustment,
                 target,
                 &state.horizontal_scroll_generation,
@@ -3483,21 +3732,46 @@ impl ViewState {
         }
         cancel_source(&self.pending_peek);
         cancel_source(&self.pending_close);
+        self.peek_anchor.take();
         if self
             .peek
             .borrow()
             .as_ref()
-            .is_some_and(|peek| peek.location == location)
+            .is_some_and(|peek| peek.location == location && peek.anchor.upgrade().as_ref() == Some(&anchor))
         {
             return;
         }
-        self.peek_anchor.replace(Some(anchor));
-
+        let origin = self.browser.location_at(origin_depth);
+        let weak_anchor = glib::WeakRef::new();
+        weak_anchor.set(Some(&anchor));
+        let column = self.columns.borrow().get(origin_depth).cloned();
+        let bound_item = column.as_ref().and_then(|column| {
+            column.bound_rows.borrow().iter().find_map(|bound| {
+                (bound.row.upgrade().map(|row| row.upcast::<gtk::Widget>()).as_ref() == Some(&anchor))
+                    .then(|| bound.item.upgrade()).flatten()
+            })
+        });
+        let bound_value = bound_item.as_ref().and_then(|item| item.item());
         let weak_state = Rc::downgrade(self);
         let source = glib::timeout_add_local_once(self.peek_behavior.open_delay, move || {
             if let Some(state) = weak_state.upgrade() {
                 state.pending_peek.take();
+                let Some(anchor) = weak_anchor.upgrade() else {
+                    return;
+                };
+                if !state.peek_enabled.get() || !anchor.is_mapped()
+                    || !anchor.is_ancestor(&state.overlay)
+                    || state.browser.location_at(origin_depth) != origin
+                    || bound_item.as_ref().is_some_and(|item| item.item() != bound_value)
+                    || !state.browser.column_entries(origin_depth).is_some_and(|entries| {
+                        entries.iter().any(|entry| entry.location == location && entry.is_directory())
+                    })
+                {
+                    return;
+                }
+                state.peek_anchor.replace(Some(anchor));
                 state.browser.begin_peek(origin_depth, location);
+                state.peek_anchor.take();
             }
         });
         self.pending_peek.replace(Some(source));
@@ -3506,6 +3780,7 @@ impl ViewState {
     pub(super) fn schedule_close_peek(self: &Rc<Self>) {
         cancel_source(&self.pending_peek);
         cancel_source(&self.pending_close);
+        self.peek_anchor.take();
 
         let weak_state = Rc::downgrade(self);
         let source = glib::timeout_add_local_once(self.peek_behavior.close_delay, move || {
@@ -3614,16 +3889,25 @@ impl ViewState {
             .margin_start(x.round() as i32)
             .margin_top(bounds.y().round().max(0.0) as i32)
             .build();
-        self.overlay.add_overlay(&revealer);
         self.peek.replace(Some(PeekView {
             revealer: revealer.clone(),
             location: location.clone(),
+            anchor: anchor.downgrade(),
             presentation,
             model,
             entry_count,
             spinner,
         }));
-        glib::idle_add_local_once(move || revealer.set_reveal_child(true));
+        self.overlay.add_overlay(&revealer);
+        let weak_state = Rc::downgrade(self);
+        glib::idle_add_local_once(move || {
+            let active = weak_state.upgrade().is_some_and(|state| {
+                state.peek.borrow().as_ref().is_some_and(|peek| peek.revealer == revealer)
+            });
+            if active {
+                revealer.set_reveal_child(true);
+            }
+        });
     }
 
     fn close_peek_visual(&self) {
@@ -3641,6 +3925,7 @@ impl ViewState {
 
     fn truncate(self: &Rc<Self>, len: usize) {
         self.close_peek_visual();
+        self.peek_anchor.take();
         if self.hovered_column.get().is_some_and(|depth| depth >= len) {
             self.hovered_column.set(None);
         }
@@ -3655,7 +3940,7 @@ impl ViewState {
             column
                 .animation_generation
                 .set(column.animation_generation.get().saturating_add(1));
-            self.columns_widget.remove(&column.shell);
+            self.columns_widget.borrow().remove(&column.shell);
             self.overlay.remove_overlay(&column.marquee);
         }
         let retained = self
@@ -3846,7 +4131,7 @@ pub(super) fn install_folder_context_menu(
     let weak = Rc::downgrade(state);
     let file_folder = location.clone();
     let file_popover = popover.downgrade();
-    let file_parent_widget = parent.clone();
+    let file_parent_widget = parent.downgrade();
     new_file.connect_clicked(move |_| {
         if let Some(popover) = file_popover.upgrade() {
             popover.popdown();
@@ -3854,7 +4139,8 @@ pub(super) fn install_folder_context_menu(
         let Some(state) = weak.upgrade() else {
             return;
         };
-        let Some(window) = file_parent_widget.root().and_downcast::<gtk::Window>() else {
+        let Some(window) = file_parent_widget.upgrade()
+            .and_then(|parent| parent.root()).and_downcast::<gtk::Window>() else {
             return;
         };
         let dialog = gtk::Dialog::builder()
@@ -4028,6 +4314,14 @@ pub(super) fn install_item_context_menu(
     content.append(&header);
     content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
 
+    let music_actions = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let play_music = item_context_option(crate::assets::icons::PLAY, "Play in Hermes", "Ctrl+Enter");
+    let queue_music = item_context_option(crate::assets::icons::PLUS, "Add to music queue", "");
+    music_actions.append(&play_music);
+    music_actions.append(&queue_music);
+    music_actions.set_visible(false);
+    content.append(&music_actions);
+
     let single = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let open = item_context_option(crate::assets::icons::EXTERNAL_LINK, "Open", "↵");
     let open_with = item_context_option(crate::assets::icons::EXTERNAL_LINK, "Open With…", "");
@@ -4125,6 +4419,30 @@ pub(super) fn install_item_context_menu(
         .build();
     popover.add_css_class("folder-context-popover");
     popover.set_parent(widget);
+    let popover_for_destroy = popover.downgrade();
+    widget.connect_destroy(move |_| {
+        if let Some(popover) = popover_for_destroy.upgrade() {
+            popover.unparent();
+        }
+    });
+
+    for (button, action) in [
+        (&play_music, "win.play-music-selection"),
+        (&queue_music, "win.queue-music-selection"),
+    ] {
+        let parent = widget.downgrade();
+        let popover = popover.downgrade();
+        button.connect_clicked(move |_| {
+            if let Some(popover) = popover.upgrade() {
+                popover.popdown();
+            }
+            if let Some(parent) = parent.upgrade()
+                && let Err(error) = parent.activate_action(action, None)
+            {
+                tracing::warn!(%error, action, "unable to activate music selection action");
+            }
+        });
+    }
 
     let target = Rc::new(RefCell::new(None::<(usize, FileEntry)>));
     for (action, button) in &custom_buttons {
@@ -4150,7 +4468,7 @@ pub(super) fn install_item_context_menu(
     });
     let open_with_target = target.clone();
     let open_with_popover = popover.downgrade();
-    let chooser_parent_widget = widget.clone();
+    let chooser_parent_widget = widget.downgrade();
     open_with.connect_clicked(move |_| {
         if let Some(popover) = open_with_popover.upgrade() {
             popover.popdown();
@@ -4163,7 +4481,8 @@ pub(super) fn install_item_context_menu(
         };
         let file = gio::File::for_path(path);
         let content_type = gio::content_type_guess(Some(path), None::<&[u8]>).0;
-        let Some(window) = chooser_parent_widget.root().and_downcast::<gtk::Window>() else {
+        let Some(window) = chooser_parent_widget.upgrade()
+            .and_then(|parent| parent.root()).and_downcast::<gtk::Window>() else {
             return;
         };
         let dialog = gtk::AppChooserDialog::new(Some(&window), gtk::DialogFlags::MODAL, &file);
@@ -4334,6 +4653,7 @@ pub(super) fn install_item_context_menu(
             .set_selection(depth, &selected_positions, Some(resolved_position));
         target.replace(Some((resolved_position, entry.clone())));
         let entries = state.browser.selected_entries();
+        music_actions.set_visible(audio_context_actions_visible(&entries));
         let custom_paths = entries
             .iter()
             .filter_map(|entry| entry.location.native_path().map(Path::to_path_buf))
@@ -4382,6 +4702,10 @@ pub(super) fn install_item_context_menu(
 
 fn entry_responds_to_single_click(entry: &FileEntry, previews_enabled: bool) -> bool {
     entry.is_directory() || (previews_enabled && entry_supports_quick_preview(entry))
+}
+
+fn audio_context_actions_visible(entries: &[FileEntry]) -> bool {
+    !entries.is_empty() && entries.iter().all(crate::app::music_order::is_audio)
 }
 
 pub(super) fn entry_supports_quick_preview(entry: &FileEntry) -> bool {
@@ -4489,7 +4813,7 @@ fn trash_file_entry(file: gio::File, info: &gio::FileInfo) -> FileEntry {
         (gio::FileType::SymbolicLink, _) => EntryKind::SymbolicLink,
         _ => EntryKind::Other,
     };
-    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { location: location_for_gio_file(&file),
+    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location: location_for_gio_file(&file),
         native_name: info.name().into_os_string(),
         display_name: info.display_name().to_string(),
         kind,
@@ -4545,7 +4869,7 @@ fn connect_custom_action(
     let weak = Rc::downgrade(state);
     let target = target.clone();
     let popover = popover.downgrade();
-    let parent = parent.clone();
+    let parent = parent.downgrade();
     button.connect_clicked(move |_| {
         if let Some(popover) = popover.upgrade() {
             popover.popdown();
@@ -4557,7 +4881,9 @@ fn connect_custom_action(
             .iter()
             .filter_map(|entry| entry.location.native_path().map(Path::to_path_buf))
             .collect::<Vec<_>>();
-        request_custom_action(&parent, action.clone(), paths);
+        if let Some(parent) = parent.upgrade() {
+            request_custom_action(&parent, action.clone(), paths);
+        }
     });
 }
 
@@ -4721,7 +5047,7 @@ fn connect_extract_to(
     let weak = Rc::downgrade(state);
     let target = target.clone();
     let popover = popover.downgrade();
-    let parent = parent.clone();
+    let parent = parent.downgrade();
     button.connect_clicked(move |_| {
         if let Some(popover) = popover.upgrade() {
             popover.popdown();
@@ -4735,7 +5061,8 @@ fn connect_extract_to(
         let Some(archive_path) = entry.location.native_path() else {
             return;
         };
-        let Some(window) = parent.root().and_downcast::<gtk::Window>() else {
+        let Some(window) = parent.upgrade()
+            .and_then(|parent| parent.root()).and_downcast::<gtk::Window>() else {
             return;
         };
         let chooser = gtk::FileChooserNative::builder()
@@ -4774,7 +5101,7 @@ fn connect_compress(
     let weak = Rc::downgrade(state);
     let target = target.clone();
     let popover = popover.downgrade();
-    let parent = parent.clone();
+    let parent = parent.downgrade();
     button.connect_clicked(move |_| {
         if let Some(popover) = popover.upgrade() {
             popover.popdown();
@@ -4783,7 +5110,9 @@ fn connect_compress(
             return;
         };
         let entries = context_entries(&state, &target);
-        show_compress_dialog(&state, entries, &parent);
+        if let Some(parent) = parent.upgrade() {
+            show_compress_dialog(&state, entries, &parent);
+        }
     });
 }
 
@@ -5118,7 +5447,10 @@ pub(super) fn file_drop_action(target: &gtk::DropTarget) -> gtk::gdk::DragAction
     preferred_file_drop_action(drop.actions(), drop.drag().is_some())
 }
 
-fn preferred_file_drop_action(actions: gtk::gdk::DragAction, local: bool) -> gtk::gdk::DragAction {
+pub(super) fn preferred_file_drop_action(
+    actions: gtk::gdk::DragAction,
+    local: bool,
+) -> gtk::gdk::DragAction {
     if actions.contains(gtk::gdk::DragAction::MOVE)
         && (local || !actions.contains(gtk::gdk::DragAction::COPY))
     {
@@ -5296,8 +5628,12 @@ pub(super) fn column_sort_menu(browser: &Rc<Browser>, depth: usize) -> gtk::Menu
         ("Size", SortKey::Size),
         ("Modified", SortKey::Modified),
         ("Type", SortKey::Type),
+        ("Album track", SortKey::Track),
     ] {
         let (option, check) = column_menu_option(label, preferences.sort_key == key);
+        if key == SortKey::Track {
+            option.set_tooltip_text(Some("Disc then track metadata; numbered filenames when tags are missing"));
+        }
         selected_checks.borrow_mut().push((key, check));
         let checks = selected_checks.clone();
         let weak_browser = Rc::downgrade(browser);
@@ -5378,6 +5714,7 @@ pub(super) fn column_sort_direction_toggle(
     button.set_child(Some(&icon));
     button.add_css_class("column-header-action");
     sync_sort_direction_toggle(&button, &icon, direction);
+    button.set_widget_name("hermes-sort-direction");
 
     let weak_browser = Rc::downgrade(browser);
     let icon_for_map = icon.clone();
@@ -5407,6 +5744,32 @@ pub(super) fn column_sort_direction_toggle(
         browser.set_sort_direction(depth, direction);
     });
     button
+}
+
+pub(super) fn sync_sort_direction_header(
+    root: &impl IsA<gtk::Widget>,
+    browser: &Browser,
+    depth: usize,
+) {
+    let Some(preferences) = browser.column_preferences(depth) else { return; };
+    let mut widgets = std::collections::VecDeque::from([root.as_ref().clone()]);
+    for _ in 0..64 {
+        let Some(widget) = widgets.pop_front() else { break; };
+        if widget.widget_name() == "hermes-sort-direction" {
+            if let Some(button) = widget.downcast_ref::<gtk::ToggleButton>()
+                && let Some(icon) = button.child().and_downcast::<gtk::Image>()
+            {
+                sync_sort_direction_toggle(button, &icon, preferences.sort_direction);
+            }
+            break;
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            child = current.next_sibling();
+            widgets.push_back(current);
+            if widgets.len() >= 64 { break; }
+        }
+    }
 }
 
 fn sync_sort_direction_toggle(
@@ -5577,23 +5940,6 @@ fn icon_for_name(name: &str) -> &'static str {
     }
 }
 
-fn append_entries(
-    model: &gtk::StringList,
-    stored_count: &Rc<Cell<usize>>,
-    entries: Vec<FileEntry>,
-    limit: Option<usize>,
-) {
-    let remaining = limit
-        .map(|limit| limit.max(1).saturating_sub(stored_count.get()))
-        .unwrap_or(entries.len());
-    let mut appended = 0;
-    for entry in entries.into_iter().take(remaining) {
-        model.append(&entry_model_value(&entry));
-        appended += 1;
-    }
-    stored_count.set(stored_count.get() + appended);
-}
-
 fn cancel_source(source: &RefCell<Option<glib::SourceId>>) {
     if let Some(source) = source.take() {
         source.remove();
@@ -5603,7 +5949,7 @@ fn cancel_source(source: &RefCell<Option<glib::SourceId>>) {
 fn animate_column_entry(shell: &gtk::Box, column: &gtk::Box, generation: &Rc<Cell<u64>>) {
     let animation_id = generation.get().saturating_add(1);
     generation.set(animation_id);
-    if !animations_enabled() {
+    if !animations_enabled() || !shell.is_mapped() {
         column.set_opacity(1.0);
         column.set_margin_start(0);
         return;
@@ -5613,9 +5959,12 @@ fn animate_column_entry(shell: &gtk::Box, column: &gtk::Box, generation: &Rc<Cel
     column.set_margin_start(COLUMN_OFFSET);
     let started = Instant::now();
     let shell = shell.clone();
-    let column = column.clone();
+    let column = column.downgrade();
     let generation = generation.clone();
     let _tick = shell.add_tick_callback(move |_, _| {
+        let Some(column) = column.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
         if generation.get() != animation_id {
             return glib::ControlFlow::Break;
         }

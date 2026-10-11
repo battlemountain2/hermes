@@ -99,6 +99,15 @@ pub enum OperationEvent {
         completed: usize,
         total: usize,
     },
+    TransferItemCompleted {
+        request_id: OperationRequestId,
+        source: Location,
+        move_source: bool,
+    },
+    TransferCompletedWithErrors {
+        request_id: OperationRequestId,
+        message: String,
+    },
     DeleteProgress {
         request_id: OperationRequestId,
         completed: usize,

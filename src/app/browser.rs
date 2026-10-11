@@ -9,7 +9,7 @@ use std::{
 
 use crate::{
     app::navigation::{EntryInsertion, EntrySplice, NavigationPath, NavigationState},
-    model::{FileEntry, Location, SortDirection, SortKey, ViewPreferences},
+    model::{FileEntry, Location, SortDirection, SortKey, TrailId, ViewPreferences},
     services::{
         CompressArchiveRequest, CreateDirectoryRequest, CreateFileRequest, DeleteRequest,
         DirectoryChange, DirectoryEvent, DirectoryRequest, ExtractArchiveRequest, FileSource,
@@ -17,6 +17,8 @@ use crate::{
         PasteRequest, RenameRequest, RequestId, RestoreRequest, validate_basename,
     },
 };
+
+mod retained;
 
 #[derive(Clone, Debug)]
 pub struct BrowserColumnSnapshot {
@@ -29,6 +31,9 @@ pub struct BrowserColumnSnapshot {
 #[derive(Clone, Debug)]
 pub enum BrowserEvent {
     Reset,
+    TabStored { id: TrailId },
+    TabRestored { id: TrailId },
+    TabDiscarded { id: TrailId },
     ColumnsTruncated {
         len: usize,
     },
@@ -68,7 +73,7 @@ pub enum BrowserEvent {
     PeekStarted {
         location: Location,
     },
-    PeekEntriesAdded {
+    PeekEntriesReplaced {
         entries: Vec<FileEntry>,
     },
     PeekFinished,
@@ -118,6 +123,10 @@ pub enum BrowserEvent {
         completed: usize,
         total: usize,
     },
+    TransferItemCompleted {
+        source: Location,
+        move_source: bool,
+    },
     TransferFinished,
     ArchiveStarted {
         title: String,
@@ -128,6 +137,9 @@ pub enum BrowserEvent {
     },
     ArchiveFinished,
     OperationFailed {
+        message: String,
+    },
+    OperationRejected {
         message: String,
     },
     OperationCompletedWithErrors {
@@ -146,17 +158,23 @@ pub struct Browser {
     loads: RefCell<Vec<LoadHandle>>,
     monitors: RefCell<Vec<Option<LoadHandle>>>,
     peek_load: RefCell<Option<LoadHandle>>,
+    peek_request: Cell<Option<RequestId>>,
     operation_provider: RefCell<Option<Rc<dyn OperationProvider>>>,
     operation_load: RefCell<Option<LoadHandle>>,
     current_operation: Cell<Option<OperationRequestId>>,
     deletion_operation: Cell<bool>,
     restoration_operation: Cell<bool>,
     transfer_operation: Cell<bool>,
+    transfer_sources: RefCell<Vec<Location>>,
+    transfer_move_sources: Cell<bool>,
     archive_operation: Cell<bool>,
     next_request: Cell<u64>,
     pending_sort: Cell<Option<(u64, usize)>>,
     preferences: Cell<ViewPreferences>,
     observers: RefCell<Vec<Observer>>,
+    active_tab: RefCell<Option<TrailId>>,
+    retained_tabs: RefCell<Vec<retained::RetainedTab>>,
+    monitor_epoch: Cell<u64>,
 }
 
 impl Browser {
@@ -167,17 +185,23 @@ impl Browser {
             loads: RefCell::new(Vec::new()),
             monitors: RefCell::new(Vec::new()),
             peek_load: RefCell::new(None),
+            peek_request: Cell::new(None),
             operation_provider: RefCell::new(None),
             operation_load: RefCell::new(None),
             current_operation: Cell::new(None),
             deletion_operation: Cell::new(false),
             restoration_operation: Cell::new(false),
             transfer_operation: Cell::new(false),
+            transfer_sources: RefCell::new(Vec::new()),
+            transfer_move_sources: Cell::new(false),
             archive_operation: Cell::new(false),
             next_request: Cell::new(1),
             pending_sort: Cell::new(None),
             preferences: Cell::new(ViewPreferences::default()),
             observers: RefCell::new(Vec::new()),
+            active_tab: RefCell::new(None),
+            retained_tabs: RefCell::new(Vec::new()),
+            monitor_epoch: Cell::new(0),
         })
     }
 
@@ -342,7 +366,11 @@ impl Browser {
     }
 
     pub fn begin_peek(self: &Rc<Self>, origin_depth: usize, location: Location) {
+        let origin = self.location_at(origin_depth);
         self.close_peek();
+        if self.peek_request.get().is_some() || self.location_at(origin_depth) != origin {
+            return;
+        }
         let request_id = self.new_request_id();
         if !self
             .state
@@ -352,9 +380,13 @@ impl Browser {
             return;
         }
 
+        self.peek_request.set(Some(request_id));
         self.emit(BrowserEvent::PeekStarted {
             location: location.clone(),
         });
+        if self.peek_request.get() != Some(request_id) {
+            return;
+        }
         let weak: Weak<Self> = Rc::downgrade(self);
         let emit = Rc::new(move |event| {
             if let Some(browser) = weak.upgrade() {
@@ -370,15 +402,20 @@ impl Browser {
             },
             emit,
         );
-        self.peek_load.replace(Some(handle));
+        if self.peek_request.get() == Some(request_id) {
+            let previous = self.peek_load.replace(Some(handle));
+            drop(previous);
+        }
     }
 
     pub fn close_peek(&self) -> bool {
-        self.peek_load.take();
+        self.peek_request.set(None);
         let closed = self.state.borrow_mut().clear_peek();
+        let handle = self.peek_load.take();
         if closed {
             self.emit(BrowserEvent::PeekClosed);
         }
+        drop(handle);
         closed
     }
 
@@ -488,12 +525,14 @@ impl Browser {
             });
         }
         self.emit(BrowserEvent::SortingStarted { depth });
+        let epoch = self.monitor_epoch.get();
         let weak = Rc::downgrade(self);
         gio::glib::timeout_add_local_once(Duration::from_millis(16), move || {
             let Some(browser) = weak.upgrade() else {
                 return;
             };
-            if browser.pending_sort.get() != Some((generation, depth)) {
+            if browser.monitor_epoch.get() != epoch
+                || browser.pending_sort.get() != Some((generation, depth)) {
                 return;
             }
             let result = {
@@ -669,7 +708,9 @@ impl Browser {
             });
             return;
         };
-        let request_id = self.begin_operation();
+        let Some(request_id) = self.begin_operation(true) else {
+            return;
+        };
         let emit = self.operation_callback(request_id, true);
         let load = provider.rename(
             RenameRequest {
@@ -679,7 +720,7 @@ impl Browser {
             },
             emit,
         );
-        self.operation_load.replace(Some(load));
+        self.attach_operation_load(request_id, load);
     }
 
     pub fn create_directory(self: &Rc<Self>, parent: Location, name: String) {
@@ -695,7 +736,9 @@ impl Browser {
             });
             return;
         };
-        let request_id = self.begin_operation();
+        let Some(request_id) = self.begin_operation(false) else {
+            return;
+        };
         let load = provider.create_directory(
             CreateDirectoryRequest {
                 id: request_id,
@@ -704,7 +747,7 @@ impl Browser {
             },
             self.operation_callback(request_id, false),
         );
-        self.operation_load.replace(Some(load));
+        self.attach_operation_load(request_id, load);
     }
 
     pub fn create_file(self: &Rc<Self>, parent: Location, name: String) {
@@ -720,7 +763,9 @@ impl Browser {
             });
             return;
         };
-        let request_id = self.begin_operation();
+        let Some(request_id) = self.begin_operation(false) else {
+            return;
+        };
         let load = provider.create_file(
             CreateFileRequest {
                 id: request_id,
@@ -729,7 +774,7 @@ impl Browser {
             },
             self.operation_callback(request_id, false),
         );
-        self.operation_load.replace(Some(load));
+        self.attach_operation_load(request_id, load);
     }
 
     pub fn transfer(
@@ -748,11 +793,18 @@ impl Browser {
             });
             return;
         };
-        let request_id = self.begin_operation();
+        let Some(request_id) = self.begin_operation(false) else {
+            return;
+        };
         self.transfer_operation.set(true);
+        self.transfer_sources.replace(sources.clone());
+        self.transfer_move_sources.set(move_sources);
         self.emit(BrowserEvent::TransferStarted {
             total: sources.len(),
         });
+        if self.current_operation.get() != Some(request_id) {
+            return;
+        }
         let load = provider.paste(
             PasteRequest {
                 id: request_id,
@@ -763,7 +815,7 @@ impl Browser {
             },
             self.operation_callback(request_id, false),
         );
-        self.operation_load.replace(Some(load));
+        self.attach_operation_load(request_id, load);
     }
 
     pub fn delete(self: &Rc<Self>, entries: Vec<FileEntry>, permanent: bool) {
@@ -777,10 +829,15 @@ impl Browser {
             return;
         };
         let total = entries.len();
-        let request_id = self.begin_operation();
+        let Some(request_id) = self.begin_operation(false) else {
+            return;
+        };
         self.deletion_operation.set(true);
         if total > 1 {
             self.emit(BrowserEvent::DeletionStarted { total });
+        }
+        if self.current_operation.get() != Some(request_id) {
+            return;
         }
         let load = provider.delete(
             DeleteRequest {
@@ -790,7 +847,7 @@ impl Browser {
             },
             self.operation_callback(request_id, false),
         );
-        self.operation_load.replace(Some(load));
+        self.attach_operation_load(request_id, load);
     }
 
     pub fn restore(self: &Rc<Self>, entries: Vec<FileEntry>) {
@@ -804,10 +861,15 @@ impl Browser {
             return;
         };
         let total = entries.len();
-        let request_id = self.begin_operation();
+        let Some(request_id) = self.begin_operation(false) else {
+            return;
+        };
         self.restoration_operation.set(true);
         if total > 1 {
             self.emit(BrowserEvent::RestorationStarted { total });
+        }
+        if self.current_operation.get() != Some(request_id) {
+            return;
         }
         let load = provider.restore(
             RestoreRequest {
@@ -816,7 +878,7 @@ impl Browser {
             },
             self.operation_callback(request_id, false),
         );
-        self.operation_load.replace(Some(load));
+        self.attach_operation_load(request_id, load);
     }
 
     pub fn extract_archive(self: &Rc<Self>, archive: Location, destination: Location) {
@@ -826,11 +888,16 @@ impl Browser {
             });
             return;
         };
-        let request_id = self.begin_operation();
+        let Some(request_id) = self.begin_operation(false) else {
+            return;
+        };
         self.archive_operation.set(true);
         self.emit(BrowserEvent::ArchiveStarted {
             title: "Extracting archive".to_owned(),
         });
+        if self.current_operation.get() != Some(request_id) {
+            return;
+        }
         let load = provider.extract_archive(
             ExtractArchiveRequest {
                 id: request_id,
@@ -839,7 +906,7 @@ impl Browser {
             },
             self.operation_callback(request_id, false),
         );
-        self.operation_load.replace(Some(load));
+        self.attach_operation_load(request_id, load);
     }
 
     pub fn compress_archive(self: &Rc<Self>, sources: Vec<Location>, output: Location) {
@@ -852,11 +919,16 @@ impl Browser {
             });
             return;
         };
-        let request_id = self.begin_operation();
+        let Some(request_id) = self.begin_operation(false) else {
+            return;
+        };
         self.archive_operation.set(true);
         self.emit(BrowserEvent::ArchiveStarted {
             title: "Creating archive".to_owned(),
         });
+        if self.current_operation.get() != Some(request_id) {
+            return;
+        }
         let load = provider.compress_archive(
             CompressArchiveRequest {
                 id: request_id,
@@ -865,19 +937,22 @@ impl Browser {
             },
             self.operation_callback(request_id, false),
         );
-        self.operation_load.replace(Some(load));
+        self.attach_operation_load(request_id, load);
     }
 
     pub fn cancel_file_operation(&self) {
+        self.finish_operation();
+    }
+
+    fn finish_operation(&self) {
+        self.current_operation.set(None);
         let deleting = self.deletion_operation.replace(false);
         let restoring = self.restoration_operation.replace(false);
         let transferring = self.transfer_operation.replace(false);
         let archiving = self.archive_operation.replace(false);
-        if !deleting && !restoring && !transferring && !archiving {
-            return;
-        }
-        self.current_operation.set(None);
-        self.operation_load.borrow_mut().take();
+        self.transfer_sources.borrow_mut().clear();
+        let load = self.operation_load.borrow_mut().take();
+        drop(load);
         if deleting {
             self.emit(BrowserEvent::DeletionFinished);
         }
@@ -892,17 +967,27 @@ impl Browser {
         }
     }
 
-    fn begin_operation(&self) -> OperationRequestId {
-        self.operation_load.borrow_mut().take();
-        self.deletion_operation.set(false);
-        self.restoration_operation.set(false);
-        self.transfer_operation.set(false);
-        self.archive_operation.set(false);
+    fn begin_operation(&self, rename: bool) -> Option<OperationRequestId> {
+        if self.current_operation.get().is_some() {
+            let message = "Another file operation is still running. Wait for it to finish or cancel it first.".to_owned();
+            self.emit(if rename {
+                BrowserEvent::RenameFailed { message }
+            } else {
+                BrowserEvent::OperationRejected { message }
+            });
+            return None;
+        }
         let request_id = OperationRequestId(self.next_request.get());
         self.next_request
             .set(self.next_request.get().saturating_add(1));
         self.current_operation.set(Some(request_id));
-        request_id
+        Some(request_id)
+    }
+
+    fn attach_operation_load(&self, request_id: OperationRequestId, load: LoadHandle) {
+        if self.current_operation.get() == Some(request_id) {
+            self.operation_load.replace(Some(load));
+        }
     }
 
     fn operation_callback(
@@ -920,6 +1005,8 @@ impl Browser {
                 | OperationEvent::Created { request_id }
                 | OperationEvent::Pasted { request_id }
                 | OperationEvent::TransferProgress { request_id, .. }
+                | OperationEvent::TransferItemCompleted { request_id, .. }
+                | OperationEvent::TransferCompletedWithErrors { request_id, .. }
                 | OperationEvent::DeleteProgress { request_id, .. }
                 | OperationEvent::RestoreProgress { request_id, .. }
                 | OperationEvent::ArchiveProgress { request_id, .. }
@@ -931,6 +1018,24 @@ impl Browser {
                 | OperationEvent::Failed { request_id, .. } => *request_id,
             };
             if event_id != request_id || browser.current_operation.get() != Some(event_id) {
+                return;
+            }
+            if let OperationEvent::TransferItemCompleted { source, move_source, .. } = &event {
+                if !browser.transfer_operation.get()
+                    || *move_source != browser.transfer_move_sources.get()
+                {
+                    return;
+                }
+                let mut sources = browser.transfer_sources.borrow_mut();
+                if !sources.contains(source) {
+                    return;
+                }
+                sources.retain(|location| location != source);
+                drop(sources);
+                browser.emit(BrowserEvent::TransferItemCompleted {
+                    source: source.clone(),
+                    move_source: *move_source,
+                });
                 return;
             }
             if let OperationEvent::DeleteProgress {
@@ -989,20 +1094,7 @@ impl Browser {
                 });
                 return;
             }
-            browser.current_operation.set(None);
-            if browser.deletion_operation.replace(false) {
-                browser.emit(BrowserEvent::DeletionFinished);
-            }
-            if browser.restoration_operation.replace(false) {
-                browser.emit(BrowserEvent::RestorationFinished);
-            }
-            if browser.transfer_operation.replace(false) {
-                browser.emit(BrowserEvent::TransferFinished);
-            }
-            if browser.archive_operation.replace(false) {
-                browser.emit(BrowserEvent::ArchiveFinished);
-            }
-            browser.operation_load.borrow_mut().take();
+            browser.finish_operation();
             match event {
                 OperationEvent::Failed { message, .. } if rename => {
                     browser.emit(BrowserEvent::RenameFailed { message });
@@ -1031,6 +1123,9 @@ impl Browser {
                     browser.emit(BrowserEvent::OperationCompletedWithErrors { message });
                 }
                 OperationEvent::Renamed { .. } => browser.emit(BrowserEvent::RenameCompleted),
+                OperationEvent::TransferCompletedWithErrors { message, .. } => {
+                    browser.emit(BrowserEvent::OperationCompletedWithErrors { message });
+                }
                 OperationEvent::Created { .. } => {
                     if let Some(depth) = browser.active_depth() {
                         browser.refresh_column(depth);
@@ -1042,6 +1137,7 @@ impl Browser {
                 }
                 OperationEvent::DeleteProgress { .. }
                 | OperationEvent::RestoreProgress { .. }
+                | OperationEvent::TransferItemCompleted { .. }
                 | OperationEvent::TransferProgress { .. } => {}
                 OperationEvent::ArchiveProgress { .. } => {}
             }
@@ -1198,8 +1294,12 @@ impl Browser {
     fn install_monitor(self: &Rc<Self>, depth: usize, location: Location) -> Option<LoadHandle> {
         let weak: Weak<Self> = Rc::downgrade(self);
         let watched = location.clone();
+        let epoch = self.monitor_epoch.get();
         let notify = Rc::new(move |change| {
-            if let Some(browser) = weak.upgrade() {
+            if let Some(browser) = weak.upgrade()
+                && browser.monitor_epoch.get() == epoch
+                && browser.location_at(depth).as_ref() == Some(&watched)
+            {
                 browser.handle_directory_change(depth, &watched, change);
             }
         });
@@ -1263,6 +1363,7 @@ impl Browser {
             return;
         };
         self.emit(BrowserEvent::ColumnReloaded { depth });
+        self.source.invalidate(&location);
         let handle = self.request_directory(location, request_id);
         if let Some(load) = self.loads.borrow_mut().get_mut(depth) {
             *load = handle;
@@ -1328,7 +1429,45 @@ impl Browser {
     }
 
     fn handle_directory_event(&self, event: DirectoryEvent) {
+        if self.invalidate_retained_request(&event) {
+            return;
+        }
         match event {
+            DirectoryEvent::Restarted { request_id } => {
+                let mut state = self.state.borrow_mut();
+                if let Some(depth) = state.restart(request_id) {
+                    drop(state);
+                    self.emit(BrowserEvent::ColumnReloaded { depth });
+                } else if state.restart_peek(request_id) {
+                    drop(state);
+                    self.emit(BrowserEvent::PeekEntriesReplaced { entries: Vec::new() });
+                }
+            }
+            DirectoryEvent::Snapshot {
+                request_id,
+                entries,
+            } => {
+                let mut state = self.state.borrow_mut();
+                if let Some(depth) = state.apply_snapshot(request_id, entries) {
+                    let entries = state.columns[depth].entries.clone();
+                    let selected = state.columns[depth].selected;
+                    let positions = state.selected_positions(depth);
+                    drop(state);
+                    self.emit(BrowserEvent::EntriesReplaced { depth, entries });
+                    let state = self.state.borrow();
+                    let still_current = state.accepts_request(depth, request_id)
+                        && state.columns[depth].selected == selected
+                        && state.selected_positions(depth) == positions;
+                    drop(state);
+                    if still_current && let Some(focused) = selected {
+                        self.emit(BrowserEvent::SelectionSetChanged {
+                            depth,
+                            positions,
+                            focused,
+                        });
+                    }
+                }
+            }
             DirectoryEvent::Batch {
                 request_id,
                 entries,
@@ -1354,11 +1493,16 @@ impl Browser {
                         });
                     }
                 } else if state.apply_peek_batch(request_id, &entries) {
+                    let entries = state.peek_entries();
                     drop(state);
-                    self.emit(BrowserEvent::PeekEntriesAdded { entries });
+                    self.emit(BrowserEvent::PeekEntriesReplaced { entries });
                 }
             }
+            DirectoryEvent::MusicMetadata { request_id, entries } => {
+                self.refresh_music_order(request_id, &entries);
+            }
             DirectoryEvent::Finished { request_id } => {
+                self.refresh_music_order(request_id, &[]);
                 let mut state = self.state.borrow_mut();
                 if let Some(depth) = state.finish(request_id) {
                     drop(state);
@@ -1395,6 +1539,28 @@ impl Browser {
         let id = self.next_request.get();
         self.next_request.set(id.saturating_add(1));
         RequestId(id)
+    }
+
+    fn refresh_music_order(&self, request_id: RequestId, hydrated: &[FileEntry]) {
+        let mut state = self.state.borrow_mut();
+        if let Some(depth) = state.apply_music_metadata(request_id, hydrated) {
+            let entries = state.columns[depth].entries.clone();
+            let focused = state.columns[depth].selected;
+            let positions = state.selected_positions(depth);
+            drop(state);
+            self.emit(BrowserEvent::EntriesReplaced { depth, entries });
+            if let Some(focused) = focused {
+                self.emit(BrowserEvent::SelectionSetChanged {
+                    depth,
+                    positions,
+                    focused,
+                });
+            }
+        } else if state.apply_peek_music_metadata(request_id, hydrated) {
+            let entries = state.peek_entries();
+            drop(state);
+            self.emit(BrowserEvent::PeekEntriesReplaced { entries });
+        }
     }
 }
 

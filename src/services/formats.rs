@@ -169,6 +169,11 @@ pub fn capabilities_by_name(name: &OsStr) -> FormatCapabilities {
     }
 }
 
+pub fn is_gif_image(name: &OsStr, content_type: &str) -> bool {
+    content_type == "image/gif" || Path::new(name).extension()
+        .and_then(OsStr::to_str).is_some_and(|extension| extension.eq_ignore_ascii_case("gif"))
+}
+
 // ---------------------------------------------------------------------------
 // Classification by MIME content-type
 // ---------------------------------------------------------------------------

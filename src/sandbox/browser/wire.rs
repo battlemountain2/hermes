@@ -30,6 +30,10 @@ pub(crate) enum Operation {
     PreviewArchiveCover = 15,
     PreviewSpreadsheet = 16,
     PreviewAudioWaveform = 17,
+    MusicTags = 18,
+    PreviewAudioMetadata = 19,
+    Heif = 20,
+    PreviewHeif = 21,
 }
 
 impl Operation {
@@ -52,6 +56,10 @@ impl Operation {
             15 => Ok(Self::PreviewArchiveCover),
             16 => Ok(Self::PreviewSpreadsheet),
             17 => Ok(Self::PreviewAudioWaveform),
+            18 => Ok(Self::MusicTags),
+            19 => Ok(Self::PreviewAudioMetadata),
+            20 => Ok(Self::Heif),
+            21 => Ok(Self::PreviewHeif),
             _ => Err(io::Error::other("Unknown browser operation")),
         }
     }
@@ -143,6 +151,24 @@ pub(crate) struct Response {
 }
 
 impl Response {
+    pub(crate) fn failure(error: &str) -> Self {
+        let mut metadata = b"STRATA_ERROR\0".to_vec();
+        metadata.extend(error.chars().take(4096).collect::<String>().as_bytes());
+        Self {
+            png: Vec::new(),
+            metadata,
+        }
+    }
+
+    pub(crate) fn error_message(&self) -> Option<String> {
+        if !self.png.is_empty() {
+            return None;
+        }
+        self.metadata
+            .strip_prefix(b"STRATA_ERROR\0")
+            .map(|message| String::from_utf8_lossy(message).into_owned())
+    }
+
     pub(crate) fn read(reader: &mut impl Read) -> io::Result<Self> {
         let (png, metadata) = read_framed_message(reader).map_err(|err| match err {
             WireError::IncompleteHeader => {
@@ -342,9 +368,15 @@ mod tests {
     #[test]
     fn test_wire_m4_operations_parsing() {
         assert_eq!(Operation::parse(14).unwrap(), Operation::PreviewModel);
-        assert_eq!(Operation::parse(15).unwrap(), Operation::PreviewArchiveCover);
+        assert_eq!(
+            Operation::parse(15).unwrap(),
+            Operation::PreviewArchiveCover
+        );
         assert_eq!(Operation::parse(16).unwrap(), Operation::PreviewSpreadsheet);
-        assert_eq!(Operation::parse(17).unwrap(), Operation::PreviewAudioWaveform);
+        assert_eq!(
+            Operation::parse(17).unwrap(),
+            Operation::PreviewAudioWaveform
+        );
     }
 
     #[test]
@@ -354,7 +386,9 @@ mod tests {
 
         send(&sock1, &read_pipe, &write_pipe, Operation::Image).expect("send descriptors");
 
-        let (op, in_fd, out_fd) = receive(&sock2).expect("recv descriptors").expect("received");
+        let (op, in_fd, out_fd) = receive(&sock2)
+            .expect("recv descriptors")
+            .expect("received");
         assert_eq!(op, Operation::Image);
         assert!(in_fd.as_raw_fd() >= 0);
         assert!(out_fd.as_raw_fd() >= 0);
