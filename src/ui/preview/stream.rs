@@ -126,6 +126,7 @@ impl PlaybackStream {
             }
             match result {
                 Ok(Ok(session)) => {
+                    session.set_volume(stream.is_muted(), stream.volume());
                     stream.imp().session.replace(Some(session));
                 }
                 Ok(Err(message)) => {
@@ -138,6 +139,7 @@ impl PlaybackStream {
             }
         });
         if with_poster {
+            stream.reuse_cached_poster(path);
             let weak = stream.downgrade();
             let poster_path = path.to_owned();
             let cancellation = stream.imp().poster_cancellation.clone();
@@ -158,7 +160,7 @@ impl PlaybackStream {
                 let Some(stream) = weak.upgrade() else {
                     return;
                 };
-                if stream.imp().stopped.get() || stream.imp().texture.borrow().is_some() {
+                if !stream.needs_poster() {
                     return;
                 }
                 if let Ok(Ok(output)) = result
@@ -236,8 +238,34 @@ impl PlaybackStream {
     fn needs_poster(&self) -> bool {
         !self.imp().stopped.get()
             && self.imp().texture.borrow().is_none()
+            && self.imp().poster.borrow().is_none()
             && self.error().is_none()
             && !self.imp().poster_cancellation.is_cancelled()
+    }
+
+    fn reuse_cached_poster(&self, path: &Path) {
+        let path = path.to_owned();
+        let stream = self.downgrade();
+        glib::MainContext::default().spawn_local(async move {
+            let Some(bytes) = crate::ui::thumbnail::cached_preview_bytes(&path).await else { return; };
+            let Some(stream) = stream.upgrade().filter(Self::needs_poster) else { return; };
+            if let Ok(texture) = gtk::gdk::Texture::from_bytes(&bytes) {
+                stream.imp().poster_cancellation.cancel();
+                stream.imp().poster.replace(Some(texture));
+                stream.invalidate_size();
+                stream.invalidate_contents();
+            }
+        });
+    }
+
+    pub fn spectrum_bands(&self) -> [f32; crate::playback::SPECTRUM_BANDS] {
+        self.imp()
+            .session
+            .borrow()
+            .as_ref()
+            .map_or([0.0; crate::playback::SPECTRUM_BANDS], |session| {
+                session.spectrum_bands()
+            })
     }
 
     pub fn stop(&self) {

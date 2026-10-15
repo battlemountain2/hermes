@@ -1,5 +1,36 @@
 # Hermes music player and desktop integration plan
 
+## Implemented collections and playlist editor — 2026-10-11
+
+Albums, Artists, Songs, Favorites and Playlists are now dedicated Music sections. Heart buttons
+and track/album menus manage local favorites and playlist membership. The user chose a separate
+playlist editor: create/rename/delete, find and add songs from the library, remove membership,
+and reorder by drag handle or keyboard/up/down controls. Playback respects playlist order and
+starts at the activated song; unavailable paths remain visible/saved and are skipped for playback.
+Editing and browsing never autoplay or change the current queue, nor rewrite audio tags.
+
+Recently added records when Hermes first indexes each path; it cannot infer historical arrival
+dates. Most played counts meaningful main-player listening once per playback instance (30 seconds
+or half of a shorter track), excluding previews, pause time and seeking. Collections use bounded
+off-thread local persistence with private atomic writes, retry/backoff and graceful-shutdown flush.
+Other instances cannot overwrite the active writer; external file changes are preserved and
+reported. Missing/renamed paths are retained, not automatically relinked. Unchanged playlist/group
+models are not rebuilt on unrelated collection updates; queued index observations retry.
+
+These features supersede the historical approved plans below. Gapless and column sizing remain
+later work. Do not add Save queue as playlist or bump to 1.0 without user approval.
+
+Priority clarification, 2026-10-11: settings/search/layout work is followed by the user's requested
+MOV/JPG loading, artwork and context-menu pass. Pooled media thumbnails, separate selected-preview
+workers and lossless JPEG output improvements are implemented; native cold-start decoding still
+needs profiling. Audio thumbnails now support all recognized formats, trying embedded art then
+an adjacent album cover. Clipboard Copy/Cut/Paste and core Copy location are available alongside
+relevant music actions. Settings controls optional file-menu actions without requiring tab reloads;
+Terminal is omitted from new custom-command templates, not removed from existing configurations.
+Favorites, cleaner navigation, manual playlists and smart collections are implemented in the
+follow-up above. No Save queue as playlist, no gapless in this pass, and no 1.0 release until
+explicit user approval. See NEXT_AGENT.md and performance-baseline.md for validation and limits.
+
 ## Approved next library features — 2026-10-10
 
 After retained-tab performance work, simplify library navigation into Albums, Artists, Songs,
@@ -8,7 +39,7 @@ and album context-menu actions. Include automatic Most played and Recently added
 Do not add Save queue as playlist; queue restart persistence remains a separate existing feature.
 Gapless playback is explicitly a later feature, not part of this pass.
 
-These library features are approved plans, not implemented controls. Store favorites, playlist
+Historical implementation guidance (now implemented above): store favorites, playlist
 membership and listening history locally without editing audio files. Recently added should use
 when Hermes first indexed a track, not the file's modification time; the first import cannot know
 historical arrival dates. Most played should count meaningful main-player listening, not preview

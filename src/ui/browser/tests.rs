@@ -3,6 +3,172 @@
 use super::*;
 
 #[test]
+#[ignore = "Requires private GTK display; compact clipboard feedback fixture"]
+fn desktop_clipboard_feedback_is_compact_explicit_and_clears_on_replacement() {
+    use crate::services::{DirectoryEvent, DirectoryRequest, LoadHandle};
+    struct EmptySource;
+    impl FileSource for EmptySource {
+        fn validate_location(&self, _: &Location) -> Result<(), crate::services::LocationValidationError> { Ok(()) }
+        fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
+            emit(DirectoryEvent::Finished { request_id: request.id });
+            LoadHandle::new(|| {})
+        }
+    }
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let view = BrowserView::new(Rc::new(EmptySource), PeekBehavior::default());
+    let window = gtk::Window::builder().child(&view.widget()).default_width(600).default_height(400).build();
+    window.present();
+    let entry = FileEntry(Rc::new(crate::model::FileEntryInner {
+        location: Location::local("/generated-clipboard/a-very-long-song-name-for-feedback.mp3"),
+        native_name: "a-very-long-song-name-for-feedback.mp3".into(),
+        display_name: "a-very-long-song-name-for-feedback.mp3".into(), kind: EntryKind::File,
+        size: crate::model::MetadataValue::Unknown, modified_unix_seconds: crate::model::MetadataValue::Unknown, music_tags: None,
+    }));
+    view.state.copy_entries(std::slice::from_ref(&entry));
+    assert_eq!(view.state.clipboard_indicator.label().as_deref(), Some("Copied · 1"));
+    assert!(!view.state.clipboard_indicator.tooltip_text().unwrap().contains(&entry.display_name));
+    assert!(view.state.clipboard_indicator.get_visible());
+    assert!(!view.state.clipboard_popover.get_visible());
+    let controllers = view.state.clipboard_indicator.observe_controllers();
+    for index in 0..controllers.n_items() {
+        if let Ok(motion) = controllers.item(index).unwrap().downcast::<gtk::EventControllerMotion>() {
+            motion.emit_by_name::<()>("enter", &[&0.0_f64, &0.0_f64]);
+        }
+    }
+    assert!(!view.state.clipboard_popover.get_visible());
+    view.state.clipboard_indicator.emit_clicked();
+    assert!(view.state.clipboard_popover.get_visible());
+    view.state.clipboard_indicator.emit_clicked();
+    assert!(!view.state.clipboard_popover.get_visible());
+    let item = view.state.clipboard_list.first_child().unwrap().downcast::<gtk::Label>().unwrap();
+    assert_eq!(item.text(), entry.display_name);
+    assert_eq!(item.max_width_chars(), 30);
+    gtk::gdk::Display::default().unwrap().clipboard().set_text("External clipboard replacement");
+    assert!(!view.state.clipboard_indicator.get_visible());
+    assert!(!view.state.clipboard_popover.get_visible());
+    assert!(view.state.indicated_clipboard.borrow().is_none());
+    window.close();
+}
+
+#[test]
+#[ignore = "Requires private GTK display; generated context menu and clipboard fixture"]
+fn desktop_context_menu_copies_single_and_multiple_files_to_clipboard() {
+    use crate::services::{DirectoryEvent, DirectoryRequest, LoadHandle};
+    let actions = crate::services::actions_path();
+    assert!(actions.starts_with(std::env::temp_dir()) && !actions.exists(), "Use a private, empty XDG config directory for this fixture");
+    struct GeneratedSource;
+    impl FileSource for GeneratedSource {
+        fn validate_location(&self, _: &Location) -> Result<(), crate::services::LocationValidationError> { Ok(()) }
+        fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
+            let entries = ["first.bin", "second.bin"].into_iter().map(|name| FileEntry(Rc::new(crate::model::FileEntryInner {
+                location: Location::local(format!("/generated-menu/{name}")), native_name: name.into(), display_name: name.into(), kind: EntryKind::File,
+                size: crate::model::MetadataValue::Unknown, modified_unix_seconds: crate::model::MetadataValue::Unknown, music_tags: None,
+            }))).collect();
+            emit(DirectoryEvent::Batch { request_id: request.id, entries });
+            emit(DirectoryEvent::Finished { request_id: request.id });
+            LoadHandle::new(|| {})
+        }
+    }
+    fn pump() {
+        let deadline = Instant::now() + Duration::from_millis(180);
+        while Instant::now() < deadline {
+            for _ in 0..64 { if !glib::MainContext::default().iteration(false) { break; } }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+    fn menu_button(widget: &gtk::Widget, label: &str) -> Option<gtk::Button> {
+        if let Some(button) = widget.downcast_ref::<gtk::Button>()
+            && button.child().and_then(|row| row.first_child())
+                .and_then(|icon| icon.next_sibling()).and_downcast::<gtk::Label>()
+                .is_some_and(|title| title.text() == label)
+        { return Some(button.clone()); }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            child = current.next_sibling();
+            if let Some(button) = menu_button(&current, label) { return Some(button); }
+        }
+        None
+    }
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let manager = super::super::theme::ThemeManager::shared();
+    manager.set_context_menu_options(super::super::context_menu::Options::default());
+    let view = BrowserView::new(Rc::new(GeneratedSource), PeekBehavior::default());
+    view.browser().navigate(Location::local("/generated-menu"));
+    pump();
+    let parent = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    parent.append(&gtk::Label::new(Some("Generated file target")));
+    let model = gtk::StringList::new(&["first.bin", "second.bin"]);
+    let selection = gtk::MultiSelection::new(Some(model));
+    install_item_context_menu(&view.state, parent.upcast_ref(), &selection, Rc::new(|_| Some(0)), Rc::new(|position| Some(position as usize)), 0);
+    let window = gtk::Window::builder().default_width(500).default_height(300).child(&parent).build();
+    window.present();
+    pump();
+    let controllers = parent.observe_controllers();
+    let click = (0..controllers.n_items()).filter_map(|position| controllers.item(position).and_downcast::<gtk::GestureClick>()).next().unwrap();
+    click.emit_by_name::<()>("pressed", &[&1i32, &12.0f64, &12.0f64]);
+    pump();
+    let copy = menu_button(parent.upcast_ref(), "Copy").expect("Clipboard Copy action");
+    assert!(copy.is_visible());
+    assert!(!menu_button(parent.upcast_ref(), "Copy to…").unwrap().is_visible());
+    copy.emit_clicked();
+    let clipboard = gtk::gdk::Display::default().unwrap().clipboard();
+    let files = glib::MainContext::default().block_on(clipboard.read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT)).unwrap().get::<gtk::gdk::FileList>().unwrap().files();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path().unwrap(), PathBuf::from("/generated-menu/first.bin"));
+    let (stream, mime) = glib::MainContext::default().block_on(clipboard.read_future(&["text/uri-list"], glib::Priority::DEFAULT)).unwrap();
+    assert_eq!(mime, "text/uri-list");
+    let encoded = glib::MainContext::default().block_on(stream.read_bytes_future(4096, glib::Priority::DEFAULT)).unwrap();
+    assert!(String::from_utf8_lossy(&encoded).contains("file:///generated-menu/first.bin"));
+    clipboard.set_content(Some(&gtk::gdk::ContentProvider::for_bytes("text/uri-list", &glib::Bytes::from_static(b"file:///generated-menu/from-another-app.bin\r\n")))).unwrap();
+    assert!(clipboard_has_files());
+    let external = glib::MainContext::default().block_on(clipboard.read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT)).unwrap().get::<gtk::gdk::FileList>().unwrap().files();
+    assert_eq!(external[0].path().unwrap(), PathBuf::from("/generated-menu/from-another-app.bin"));
+    selection.select_all();
+    click.emit_by_name::<()>("pressed", &[&1i32, &12.0f64, &12.0f64]);
+    pump();
+    let mut child = parent.first_child();
+    let mut visible_copy = None;
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if let Some(menu) = widget.downcast_ref::<gtk::Popover>() {
+            let content = menu.child().unwrap();
+            let mut section = content.first_child();
+            while let Some(widget) = section {
+                section = widget.next_sibling();
+                if widget.is_visible() && let Some(button) = menu_button(&widget, "Copy") {
+                    visible_copy = Some(button);
+                }
+            }
+        }
+    }
+    visible_copy.unwrap().emit_clicked();
+    let files = glib::MainContext::default().block_on(clipboard.read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT)).unwrap().get::<gtk::gdk::FileList>().unwrap().files();
+    assert_eq!(files.len(), 2);
+    assert!(view.state.cut_locations.borrow().is_empty());
+    std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
+    std::fs::write(&actions, "[[actions]]\nname = 'Generated context action'\ncommand = ['/bin/false']\nextensions = ['bin']\n").unwrap();
+    let mut options = manager.context_menu_options();
+    options.transfer_destinations = true;
+    manager.set_context_menu_options(options);
+    selection.select_item(0, true);
+    click.emit_by_name::<()>("pressed", &[&1i32, &12.0f64, &12.0f64]);
+    pump();
+    assert!(menu_button(parent.upcast_ref(), "Copy to…").unwrap().get_visible());
+    assert!(menu_button(parent.upcast_ref(), "Generated context action").is_some());
+    let mut options = manager.context_menu_options();
+    options.custom_actions = false;
+    manager.set_context_menu_options(options);
+    click.emit_by_name::<()>("pressed", &[&1i32, &12.0f64, &12.0f64]);
+    pump();
+    assert!(menu_button(parent.upcast_ref(), "Generated context action").is_none());
+    std::fs::remove_file(actions).unwrap();
+    manager.set_context_menu_options(super::super::context_menu::Options::default());
+    window.close();
+}
+
+#[test]
 #[ignore = "Requires an isolated GTK display; generated navigation widget/model lifecycle fixture"]
 fn desktop_navigation_releases_discarded_presentations() {
     use crate::ui::browser_modes::tests::{
@@ -234,7 +400,7 @@ fn desktop_transfer_outcomes_preserve_cut_clipboard() {
     assert_eq!(view.state.cut_locations.borrow().len(), 2);
     complete(request_id, &emit, &first, true);
     assert_eq!(*view.state.cut_locations.borrow(), vec![second.location.clone()]);
-    assert_eq!(view.state.clipboard_indicator.label().as_deref(), Some("Cut second"));
+    assert_eq!(view.state.clipboard_indicator.label().as_deref(), Some("Cut · 1"));
     assert_eq!(view.state.clipboard_list.first_child().unwrap().downcast::<gtk::Label>().unwrap().text(), "second");
     assert!(view.state.clipboard_list.first_child().unwrap().next_sibling().is_none());
     emit(OperationEvent::TransferCompletedWithErrors { request_id, message: "second failed".into() });
@@ -263,7 +429,7 @@ fn desktop_transfer_outcomes_preserve_cut_clipboard() {
     complete(request_id, &emit, &first, true);
     emit(OperationEvent::Pasted { request_id });
     assert_eq!(clipboard.content(), copied);
-    assert_eq!(view.state.clipboard_indicator.label().as_deref(), Some("Copied unrelated"));
+    assert_eq!(view.state.clipboard_indicator.label().as_deref(), Some("Copied · 1"));
 
     view.state.cut_entries(std::slice::from_ref(&first));
     let (request_id, emit) = start(std::slice::from_ref(&first), true);
@@ -346,7 +512,7 @@ fn desktop_transfer_outcomes_preserve_cut_clipboard() {
     assert!(!root.0.join("moved.txt").exists());
     assert_eq!(std::fs::read(root.0.join("destination/moved.txt")).unwrap(), b"Generated transfer fixture");
     assert_eq!(*view.state.cut_locations.borrow(), vec![missing.location.clone()]);
-    assert_eq!(view.state.clipboard_indicator.label().as_deref(), Some("Cut missing.txt"));
+    assert_eq!(view.state.clipboard_indicator.label().as_deref(), Some("Cut · 1"));
     window.close();
     view.browser().clear_observer();
 }
@@ -355,6 +521,19 @@ fn desktop_transfer_outcomes_preserve_cut_clipboard() {
 #[ignore = "Requires a desktop display; verifies streaming result selection in all views"]
 fn desktop_search_snapshots_preserve_selection_in_every_view() {
     use crate::services::{DirectoryEvent, DirectoryRequest, LoadHandle, RequestId};
+    fn mapped_notice(widget: &gtk::Widget) -> Option<gtk::Label> {
+        if widget.has_css_class("search-coverage-notice") && widget.is_mapped() {
+            return widget.clone().downcast::<gtk::Label>().ok();
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            if let Some(label) = mapped_notice(&current) {
+                return Some(label);
+            }
+            child = current.next_sibling();
+        }
+        None
+    }
     struct SnapshotSource {
         emit: Rc<RefCell<Option<Rc<dyn Fn(DirectoryEvent)>>>>,
         request: Rc<Cell<RequestId>>,
@@ -391,6 +570,28 @@ fn desktop_search_snapshots_preserve_selection_in_every_view() {
         assert_eq!(selected[0].display_name, "b.txt", "{mode:?}");
         assert_eq!(view.browser().column_snapshot(0).unwrap().selected_positions, vec![0], "{mode:?}");
         emit(DirectoryEvent::Finished { request_id: request.get() });
+        emit(DirectoryEvent::Notice { request_id: request.get(), message: Some("Partial search coverage".into()) });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while mapped_notice(&view.widget().upcast()).is_none() && std::time::Instant::now() < deadline {
+            glib::MainContext::default().iteration(false);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let notice = mapped_notice(&view.widget().upcast()).expect("Active view displays search notice");
+        assert_eq!(notice.text(), "Partial search coverage", "{mode:?}");
+        assert!(view.browser().column_snapshot(0).unwrap().notice.is_some());
+        assert_eq!(view.browser().selected_entries()[0].display_name, "b.txt");
+        for switched_mode in [BrowserMode::Columns, BrowserMode::Grid, BrowserMode::Explorer] {
+            view.set_view_mode(switched_mode);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            while mapped_notice(&view.widget().upcast()).is_none() && std::time::Instant::now() < deadline {
+                glib::MainContext::default().iteration(false);
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            assert_eq!(mapped_notice(&view.widget().upcast()).unwrap().text(), "Partial search coverage", "{switched_mode:?}");
+        }
+        let notice = mapped_notice(&view.widget().upcast()).unwrap();
+        emit(DirectoryEvent::Notice { request_id: request.get(), message: None });
+        assert!(!notice.is_visible(), "{mode:?}");
     }
     window.close();
     view.browser().clear_observer();

@@ -20,7 +20,7 @@ thread_local! {
     static SOURCE_BUFFERS: RefCell<Vec<glib::WeakRef<sourceview5::Buffer>>> = const { RefCell::new(Vec::new()) };
 }
 
-const BUILTIN_THEMES: [(&str, &str); 6] = [
+const BUILTIN_THEMES: [(&str, &str); 8] = [
     (
         "azure-glow",
         include_str!("../../data/themes/azure-glow.toml"),
@@ -41,10 +41,9 @@ const BUILTIN_THEMES: [(&str, &str); 6] = [
         "rose-pine",
         include_str!("../../data/themes/rose-pine.toml"),
     ),
-    (
-        "omarchy-light",
-        include_str!("../../data/themes/omarchy-light.toml"),
-    ),
+    ("graphite", include_str!("../../data/themes/graphite.toml")),
+    ("paper", include_str!("../../data/themes/paper.toml")),
+    ("midnight", include_str!("../../data/themes/midnight.toml")),
 ];
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -83,6 +82,8 @@ struct Preferences {
     show_recent_folders: bool,
     #[serde(default)]
     show_folder_tree: bool,
+    #[serde(default)]
+    show_smart_folders: bool,
     #[serde(default = "default_recent_folders_limit")]
     recent_folders_limit: u32,
     #[serde(default = "default_browser_mode")]
@@ -91,6 +92,10 @@ struct Preferences {
     browser_density: String,
     #[serde(default = "default_interface_font")]
     interface_font: String,
+    #[serde(default = "default_font_size")]
+    interface_font_size: u32,
+    #[serde(default)]
+    context_menu: super::context_menu::Options,
 }
 
 impl Default for Preferences {
@@ -103,10 +108,13 @@ impl Default for Preferences {
             show_recent_files: false,
             show_recent_folders: true,
             show_folder_tree: false,
+            show_smart_folders: false,
             recent_folders_limit: default_recent_folders_limit(),
             browser_mode: default_browser_mode(),
             browser_density: default_browser_density(),
             interface_font: default_interface_font(),
+            interface_font_size: default_font_size(),
+            context_menu: super::context_menu::Options::default(),
         }
     }
 }
@@ -129,6 +137,28 @@ fn default_browser_density() -> String {
 
 fn default_interface_font() -> String {
     "maple".to_owned()
+}
+
+fn default_font_size() -> u32 {
+    13
+}
+
+pub(super) const INTERFACE_FONTS: [(&str, &str); 4] = [
+    ("maple", "Maple Mono"),
+    ("jetbrains", "JetBrains Mono"),
+    ("sans", "System sans-serif"),
+    ("mono", "System monospace"),
+];
+
+fn normalized_font(font: &str) -> &'static str {
+    INTERFACE_FONTS
+        .iter()
+        .find(|(id, _)| *id == font)
+        .map_or("maple", |(id, _)| id)
+}
+
+fn migrate_theme_id(id: &str) -> &str {
+    if id == "omarchy-light" { "paper" } else { id }
 }
 
 pub struct ThemeManager {
@@ -163,6 +193,9 @@ impl ThemeManager {
         themes.extend(load_custom_themes());
         let omarchy_available = load_omarchy_theme().is_some();
         let mut preferences = read_preferences().unwrap_or_default();
+        if !themes.iter().any(|theme| theme.id == preferences.theme) {
+            preferences.theme = migrate_theme_id(&preferences.theme).to_owned();
+        }
         if !themes.iter().any(|theme| theme.id == preferences.theme) {
             preferences.theme = "azure-glow".to_owned();
         }
@@ -242,6 +275,15 @@ impl ThemeManager {
         self.preferences.borrow().show_recent_files
     }
 
+    pub(super) fn context_menu_options(&self) -> super::context_menu::Options {
+        self.preferences.borrow().context_menu.clone()
+    }
+
+    pub(super) fn set_context_menu_options(&self, options: super::context_menu::Options) {
+        self.preferences.borrow_mut().context_menu = options;
+        self.save_preferences();
+    }
+
     pub fn set_show_recent_files(&self, enabled: bool) {
         self.preferences.borrow_mut().show_recent_files = enabled;
         self.save_preferences();
@@ -265,6 +307,16 @@ impl ThemeManager {
         self.save_preferences();
     }
 
+    pub fn show_smart_folders(&self) -> bool {
+        self.preferences.borrow().show_smart_folders
+    }
+
+    #[cfg_attr(not(test), expect(dead_code, reason = "Saved search visibility toggle and test helper"))]
+    pub fn set_show_smart_folders(&self, show: bool) {
+        self.preferences.borrow_mut().show_smart_folders = show;
+        self.save_preferences();
+    }
+
     pub fn recent_folders_limit(&self) -> u32 {
         self.preferences.borrow().recent_folders_limit
     }
@@ -275,20 +327,22 @@ impl ThemeManager {
     }
 
     pub fn interface_font(&self) -> &str {
-        if self.preferences.borrow().interface_font == "jetbrains" {
-            "jetbrains"
-        } else {
-            "maple"
-        }
+        normalized_font(&self.preferences.borrow().interface_font)
     }
 
     pub fn set_interface_font(&self, font: &str) {
-        let font = if font == "jetbrains" {
-            "jetbrains"
-        } else {
-            "maple"
-        };
+        let font = normalized_font(font);
         self.preferences.borrow_mut().interface_font = font.to_owned();
+        self.apply_selected();
+        self.save_preferences();
+    }
+
+    pub fn interface_font_size(&self) -> u32 {
+        self.preferences.borrow().interface_font_size.clamp(10, 22)
+    }
+
+    pub fn set_interface_font_size(&self, size: u32) {
+        self.preferences.borrow_mut().interface_font_size = size.clamp(10, 22);
         self.apply_selected();
         self.save_preferences();
     }
@@ -435,6 +489,10 @@ impl ThemeManager {
         ))
     }
 
+    pub fn applied_tokens(&self) -> Option<ThemeTokens> {
+        self.applied_tokens.borrow().clone()
+    }
+
     fn install_provider(&self) {
         if let Some(display) = gdk::Display::default() {
             gtk::style_context_add_provider_for_display(
@@ -475,8 +533,11 @@ impl ThemeManager {
     }
 
     fn apply_tokens(&self, tokens: &ThemeTokens) {
-        self.provider
-            .load_from_string(&tokens_css(tokens, self.interface_font()));
+        self.provider.load_from_string(&format!(
+            "{}\nwindow, popover, .search-dialog, .search-filter-popover, .search-filter-panel, .app-modal-layer {{ font-size: {}px; }}\n",
+            tokens_css(tokens, self.interface_font()),
+            self.interface_font_size()
+        ));
         self.applied_tokens.replace(Some(tokens.clone()));
         crate::assets::set_primary_icon_color(&tokens.accent);
         crate::assets::set_text_icon_color(&tokens.text);
@@ -863,13 +924,14 @@ fn source_style_scheme_xml(tokens: &ThemeTokens) -> String {
 }
 
 fn tokens_css(tokens: &ThemeTokens, interface_font: &str) -> String {
-    let font_family = if interface_font == "jetbrains" {
-        r#""JetBrains Mono", "JetBrainsMono Nerd Font", monospace"#
-    } else {
-        r#""Maple Mono Normal", "JetBrains Mono", monospace"#
+    let font_family = match normalized_font(interface_font) {
+        "jetbrains" => r#""JetBrains Mono", "JetBrainsMono Nerd Font", monospace"#,
+        "sans" => "sans-serif",
+        "mono" => "monospace",
+        _ => r#""Maple Mono Normal", "JetBrains Mono", monospace"#,
     };
     format!(
-        "@define-color theme_bg {};\n@define-color theme_surface {};\n@define-color theme_text {};\n@define-color theme_accent {};\n@define-color theme_danger {};\n@define-color theme_muted {};\n@define-color theme_highlight {};\n@define-color theme_border {};\n@define-color theme_dim_text {};\nwindow, .preview-text, .preview-text text, .monospace, .search-filter-shortcut, .grid-thumbnail-value {{ font-family: {}; }}\n",
+        "@define-color theme_bg {};\n@define-color theme_surface {};\n@define-color theme_text {};\n@define-color theme_accent {};\n@define-color theme_danger {};\n@define-color theme_muted {};\n@define-color theme_highlight {};\n@define-color theme_border {};\n@define-color theme_dim_text {};\nwindow, popover, .search-dialog, .search-filter-popover, .search-filter-panel, .app-modal-layer, .preview-text, .preview-text text, .monospace, .search-filter-shortcut, .grid-thumbnail-value {{ font-family: {}; }}\n",
         tokens.background,
         tokens.surface,
         tokens.text,

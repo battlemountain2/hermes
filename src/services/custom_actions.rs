@@ -134,11 +134,6 @@ const TEMPLATE: &str = r#"# Hermes custom actions
 # Placeholders: {path}, {paths}, {parent}, and {name}.
 
 [[actions]]
-name = "Open terminal here"
-command = ["foot", "--working-directory", "{path}"]
-directories = true
-
-[[actions]]
 name = "Edit with Kate"
 command = ["kate", "{paths}"]
 extensions = ["txt", "md", "toml", "rs"]

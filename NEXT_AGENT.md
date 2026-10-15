@@ -1,5 +1,808 @@
 # Next agent: Hermes performance, file features and media polish
 
+## Music preview polish and live visualizer — 2026-10-15
+
+Successfully implemented **Milestone 2: Music Preview Polish & Live Visualizer** from `docs/1.0-roadmap.md`, incorporating the user-selected **Hi-Fi Micro-Segment Meter**:
+
+1. **Real PCM Audio Analysis Engine** (`src/playback/spectrum.rs`, `src/playback.rs`):
+   - Zero duplicate decode: Directly taps running decoded stereo F32LE 48 kHz PCM buffers from `Event::Audio` in `src/playback.rs` without secondary decoders or file I/O.
+   - Bounded ring buffer: 1,024 mono downmixed samples.
+   - Logarithmic 32-band Goertzel filter bank spanning $50\text{ Hz}$ to $16\text{ kHz}$ with precomputed coefficients and Hann windowing.
+   - Spectral compensation: Equal-loudness curve offsetting natural $1/f$ pink-noise drop, ensuring balanced musical activity across sub-bass, mid-range, and treble.
+   - Temporal dynamics: Instant attack, smooth 0.82 gravity release, and clean decay to zero on pause/silence.
+   - Fully safe, allocation-free, and re-entrant. Exposed via `Session::spectrum_bands(&self) -> [f32; 32]`.
+
+2. **Stream Integration** (`src/ui/preview/stream.rs`):
+   - Added `PlaybackStream::spectrum_bands(&self) -> [f32; 32]` providing lock-free access to current spectrum magnitudes on the GTK main loop.
+
+3. **Hi-Fi Micro-Segment Meter** (`src/ui/preview/audio/visualizer.rs`):
+   - Discrete studio hardware aesthetic: 32 vertical columns with 14 rectangular LED micro-segments per column, $2\text{px}$ height, $1\text{px}$ gap, and strictly zero border-radius matching Hermes's rectangular design language.
+   - Multi-tier theme lighting:
+     - Unlit background grid: Faint opacity ($\approx 0.12$ of `@theme_dim_text`) maintaining the hardware meter frame.
+     - Lower / Mid energy ($0\% - 70\%$): Primary `@theme_accent`.
+     - Upper tier ($70\% - 85\%$): Warm amber `@theme_highlight`.
+     - Peak tier ($85\% - 100\%$): High-contrast `@theme_danger`.
+   - Peak hold indicator: Tracks highest reached segment per band with a 10-frame hold and smooth 0.92 falloff.
+   - Dynamic lifecycle: Driven by GTK tick callbacks only when mapped and playing; smoothly drops to zero on pause and halts ticks to guarantee zero idle CPU.
+
+4. **Spinning Vinyl Disc Hero** (`src/ui/preview/audio/vinyl.rs`):
+   - Authentic vinyl geometry: Deep charcoal disc body, concentric micro-grooves with variable track spacing, opposing anisotropic butterfly light sheen lobes, and center label with stylized track lines and spindle hole.
+   - Rotational physics: Smoothly accelerates to $33\frac{1}{3}\text{ RPM}$ ($\approx 3.49\text{ rad/s}$) on playback and decelerates to rest over $\approx 400\text{ms}$ on pause. Stops tick callbacks when at rest.
+   - Respects `prefers-reduced-motion` and GTK `enable-animations` setting.
+
+5. **Audio Preview Layout & Transport Controls** (`src/ui/preview/audio.rs`):
+   - Composite Hero Overlay: Square album art sleeve with the vinyl disc sliding out to the right by $\approx 50\text{px}$, rotating visibly from behind the cover.
+   - Track Header: Shows `Track X of Y`, bold song title, and `Artist — Album` subtitle.
+   - Scrub Bar: Draggable `gtk::Scale` with elapsed time (`0:11`) and total duration (`2:44`), synchronized via `SeekControl`.
+   - Transport Controls: Previous track / Replay (`strata-arrow-left`), prominent Play/Pause button (`strata-play` / `strata-pause`), Next track (`strata-arrow-right`), and volume control with mute toggle and volume slider.
+   - Responsive Layout: Automatically switches between side-by-side (Hero left, Controls right) on wide panes ($\ge 500\text{px}$) and stacked on narrow panes ($< 500\text{px}$), keeping metadata reachable.
+   - Read-only embedded metadata grid and expandable additional tags preserved with 100% fidelity.
+
+6. **Theming & Verification**:
+   - CSS rules in `src/style.css` using semantic `@theme_*` variables only (`@theme_accent`, `@theme_surface`, `@theme_highlight`, `@theme_danger`, `@theme_border`, `@theme_text`, `@theme_dim_text`).
+   - All 746 unit tests in `cargo test --bin strata` pass cleanly (including new tests for spectrum analysis, vinyl RPM constants, track number parsing, and subtitle formatting).
+   - Zero compiler warnings in project code.
+   - User's running Hermes window was never moved or restarted; working tree has 0 direct commits or pushes.
+
+## Built-in smart search and Hermes-consistent UI — 2026-10-14
+
+Successfully implemented the approved built-in smart search and Hermes-consistent UI plan and refined typography and layout gaps:
+
+1. **Smart Matching & Ranking**:
+   - Accented/diacritic folding (`fold_diacritics`) allows free search terms like `bjork`, `cafe`, `beyonce`, `heritage` to match `Björk`, `Café`, `Beyoncé`, `L'Héritage`.
+   - Bounded typo tolerance (`edit_distance_at_most_1`) for free words $\ge 4$ characters matching word tokens in filenames and metadata tags without false-positive path substring hits.
+   - Multi-term scoring priority rewrite ensures exact and reordered name/tag matches (+8,500 to +45,000) rank strictly above incidental directory path hits (+4,000).
+
+2. **Bounded Phrase Interpretation**:
+   - Automatically extracts natural language patterns: `Beach House songs` (inferred Audio), `PDFs in Downloads` (inferred PDF format + Downloads location), `videos from last week` (inferred Video + calendar last week), and `FLAC songs by Cameron Winter` (inferred FLAC format + Audio + Cameron Winter artist).
+   - Timezone-aware date bounds: `modified:last-week` spans the previous local calendar week (Monday 00:00:00 to this Monday 00:00:00), while `modified:past-7-days` spans a rolling 7-day window.
+   - Protected literals: Quoted strings (`"Yesterday"`, `"Songs for the Deaf"`) remain verbatim terms and are never extracted or typo-expanded.
+
+3. **Hermes-Consistent UI & Typography Refinement**:
+   - Fixed font inconsistencies: Added `popover`, `.search-dialog`, `.search-filter-popover`, `.search-filter-panel`, and `.app-modal-layer` to both `tokens_css` (`font-family`) and `apply_tokens` (`font-size`) in `src/ui/theme.rs`, and enforced `font-family: inherit` across dialog entries, dropdowns, and buttons in `src/style.css` so they inherit interface font and scaling settings live instead of falling back to system GTK fonts.
+   - Eliminated UI gaps:
+     - `interpretation_slot`: Initialized with `set_visible(false)`; toggles visibility dynamically only when inferred chips exist, removing blank 32px gap below search input.
+     - `notice_slot`: Managed in `SearchState` and hidden by default; toggles visibility only when notices/counts are active, removing blank 32px gap above search results.
+     - `scope_bar`: Replaced bloated `.search-bar` (58px) with dedicated `.search-scope-bar` (38px compact secondary header).
+     - `search-field`: Seamlessly spans search bar (`min-height: 38px`, transparent background, no boxed borders) with 1.15em interface font.
+     - Filter dropdowns (`file_type`, `modified`): Set `hexpand(true)` to align evenly with entry controls.
+     - Group category headings: Replaced accidental `.search-result-type` badge styling on list headers with dedicated `.search-group-header` (transparent background, borderless, subtle letter-spaced uppercase heading), removing the bordered rectangular "Files" strip.
+   - Smart Folders in sidebar and `Save search` button hidden by default via `show_smart_folders: bool` preference defaulting to `false`, preserving all backend definitions and storage.
+
+4. **Validation**:
+   - All 107 `services::search::` unit tests pass.
+   - `desktop_interpretation_slot_and_filter_sections` passes, verifying dynamic visibility toggling of `interpretation_slot` and `notice_slot`.
+   - All 739 unit tests in the `strata` binary pass cleanly (`cargo test --bin strata --jobs 2 -- --test-threads=2`).
+   - `cargo check --all-targets` passes cleanly with 0 errors.
+   - User's running Hermes window was never restarted or moved; working tree has 0 direct commits/pushes.
+
+## Saved searches and sidebar Smart Folders — 2026-10-14
+
+User authorized implementation after the zero-volume fix. Implemented the full first increment:
+Search has a reserved Save search action; it keeps scope/root/query, physical All/Files/Songs and
+drilled album/artist song membership. Albums/Artists save is guarded until drilling into Songs.
+The editor names/edits queries and scopes, confirms deletion/context removal, opens committed
+matches, and preserves stale/failed editor fields. Sidebar SMART FOLDERS opens current results
+through the existing live SearchFileSource, with Manage searches… for the editor. No file copying,
+new indexing backend, version bump, commits, branches or original-file/tag edits.
+
+Delegated only new storage and editor modules to Schrodinger/Tesla, integrated/reviewed both and
+closed agents. Parent owns search/window wiring, lifecycle, validation refinement and end-to-end
+tests. New services/saved_searches{.rs,/disk.rs,/tests.rs}: version1 authoritative JSON under
+$XDG_DATA_HOME/strata/saved-searches/queries-v1.json, separate from rebuildable search catalogs.
+Bound128 entries/1MiB/80-character case-fold-unique names/4KiB queries and roots/bounded request
+queue. Worker performs all filesystem operations; private0700/0600 storage, advisory ownership,
+expected bytes, atomic/synced publication, exact prior-entry edit/delete preconditions. Corrupt,
+future or externally changed data is preserved and requires Reload; missing roots never pruned.
+No kernel CAS guarantee against non-cooperating writers racing between check and replacement.
+
+Snapshots include ready/writable/error and a revision acknowledging EVERY completed command,
+including no-ops/repeated errors. Parent separated validation errors from blocked disk storage,
+allowing correction without mandatory reload. Manager/sidebar poll only a cheap revision while
+idle, clone changed snapshots; hidden/unmapped editor stops its source, sidebar disconnects on
+destroy. Startup registers one shared store and shutdown waits at most1s for pending commands;
+successful saves have already committed. No per-change blocking disk work on GTK.
+
+Manager uses existing semantic settings/search styles, square800x600 frame, scrollable panels,
+reserved status/confirmation/footer geometry, focus/keyboard controls. Relative path input now
+rejects BEFORE gio::File::for_path can silently absolutize it. Search URIs are filtered from recent
+folder history (including old loaded entries), avoiding duplicate encoded sidebar names and false
+file-drop destinations; real local/remote folders remain. Smart Folder rows have no file drops.
+Opening results reuses normal relevance/album track ordering and incomplete-coverage notices;
+coverage40k/32MiB, compound-rule builder and per-folder preferences remain unchanged/unimplemented.
+
+733 normal binary tests pass/104 ignored; eight isolated checks pass (manager durable ack/stale
+fields/no-op/reload/delete/scope validation; Save guards/query preservation/fixed panel size;
+sidebar rename/delete/active state/no drops; persisted query reopening/live file rename; modal
+handoff/dismiss; existing search geometry/paging/export regressions). Initial geometry assertions
+compared global positions while Broadway resized the underlying test window; changed NEW tests
+to compare frame size/internal coordinates, preserving real no-resize assertions. Original search
+geometry regression still passes unchanged. Optional manager screenshot hook produced no render
+node without a connected Broadway browser, so no pixel-level visual QA claim.
+
+Logs /tmp/hermes-saved-searches-{compile,store,unit,check,release,ui,layers}.log; private XDG fixture
+root recorded in /tmp/hermes-saved-searches-qa-path. All temporary display work used private
+Broadway:93/18093, owned servers stopped. No live Hermes launch/restart/reposition, debug-main
+rebuild or personal Home indexing. Builds/tests sequential nice-n10/ionice idle/jobs2/threads2.
+README, docs/saved-searches.md, roadmap/storage evaluation updated. Final all-target check and
+release build pass with pre-existing warnings; scoped formatting and diff checks pass.
+
+## Zero-volume audio recovery — 2026-10-14
+
+User interrupted saved-search planning: music audio stutters after dragging the volume slider to0
+and raising it again; clarified AUDIO stutters, not the whole interface. Saved searches/Smart Folders
+have not been implemented or delegated yet. Resume those only after this focused playback fix.
+
+Host playback now removes GAP from nonempty post-volume PCM, preserving the actual zero samples,
+other flags and timestamps. GStreamer1.28.8 volume marks zero gain/mute as GAP; AudioBaseSink then
+skips PCM commit and resets next_sample even with sync=false. Host packets also gain sample-count
+durations at48kHz/stereo F32, including split tails. Duration alone is NOT the demonstrated cause
+or cure. Existing coalesced off-GTK volume writer, decoder protocol, queue limits and sink settings
+are unchanged. This applies to persistent music and the shared audio/video preview output.
+
+Three new normal regressions cover240 native packets with repeated gain0/restore and mute/unmute,
+exact output samples/timestamps/durations, shared-buffer copy-on-write/empty GAP preservation,
+and sample-count duration for small/full64KiB/tail packets.715 normal tests pass/99 ignored;
+all-target check passes with prior warnings. A private Broadway:92/18092 GTK controller check also
+passes, using generated silent WAV and disabling native audio sink ranks to force fake output.
+Owned display server stopped afterward. No live app launch/restart/movement or desktop mixer change.
+Logs /tmp/hermes-volume-zero-{compile,focused,unit,check,gtk,release}.log; private XDG root recorded in
+/tmp/hermes-volume-zero-qa-path. Release build passes with the prior single lint-expectation warning.
+
+Read-only agent Feynman inspected version-matched upstream sources and was closed. Temporary C
+dummy AudioSink probe /tmp/hermes-volume-gap-probe.c confirms GAP resets disappear but its simulated
+device can starve even with valid audible input; do NOT cite it as proof of real speaker continuity.
+Agent Turing separately tested actual pulsesink through a private PipeWire/Pulse server with only a
+null sink/dummy driver and explicit private client/monitor links, no hardware or user audio server.
+Two passes of four nine-second runs/900 packets include three1s zero-volume intervals: baseline and duration-only
+each log3 underflows, stretch the silent intervals to1.28s and capture5.06s audible PCM. Clearing GAP,
+with/without durations, logs0 underflows, captures5.94s audible PCM and keeps silent intervals~0.99s.
+All900 buffers render with0 appsrc drops, correct0.125 output peak; restores are continuous rather
+than the dummy-device artifact. Temporary-stream recreation left only the right playback channel
+linked in this isolated graph: restored RIGHT-channel continuity is verified, full stereo fidelity
+is NOT verified there. The normal native appsink regression does verify both channels' exact PCM.
+This reproduces and removes the zero-volume recovery delay on the isolated native Pulse output,
+not a claim of testing the user's physical speakers. Probe source/config/captured PCM and analysis.json
+are /tmp/hermes-private-volume-20261014-sidecar/, repeated results under pass1/. Owned server stopped
+and sockets removed (cleanup.log); both agents closed.
+No version/branch/commit changes. docs/preview-sandbox.md documents the silence/timing invariant.
+
+## Grouped unified search — 2026-10-14
+
+User authorized the next staged update. Delegated new DTO/aggregation module and search UI to two
+disjoint agents, reviewed/integrated both and closed them. Production search now has primary All,
+Files, Songs, Albums, Artists navigation; independent type/metadata/content filters remain in Filters.
+All uses balanced per-group prefixes with real section headers; More keeps each group's prefix,
+typed identity, rows and selection stable. Counts and controls retain fixed slots, no resize animation.
+
+SearchResult File/Album/Artist and SearchResultKey File/Entity are explicit; artwork representatives
+are real SearchItems, never fake filesystem paths. GroupIndex derives summaries from ALL ranked
+eligible songs before pagination and also scores entity labels against free terms. Song-title-only
+matches don't invent matching album/artist names. Case/whitespace variants join; album keys use
+album artist (track-artist fallback)+title, artist keys track artist (album-artist fallback). Compilations
+and disc folders can join; same-title albums by different owners stay separate. Missing/invalid names
+produce no guessed entities; untagged audio remains Songs. Counts mean MATCHING files, not full
+discography. Catalog still lacks MusicBrainz IDs/edition disambiguation.
+
+Derived entities retain source positions, bounded16MiB/40k combined entities. Partial grouping has
+its own notice and never drops physical matches. Source40k/32MiB and metadata20k limits unchanged.
+Grouped result totals can exceed source entry counts; More now clamps to result total, not source
+entry limit (small configured-limit regression covers this). Existing ungrouped/physical queries stay.
+
+Opening album/artist drills into scoped Songs INSIDE search, preserving query/filter/root, no
+autoplay or file activation. Back restores previous group/selection. Query/filter edits, Refresh,
+scope changes clear drilling. Album drilling and its exported tab use disc/track metadata order with
+filename-number fallback; artist/ordinary queries retain relevance. Real file activation still uses
+the existing window callback unchanged. Entity artwork uses visible-only thumbnails.
+
+ScopedSearch URLs now optionally carry group=files/songs plus artist-group/album-group fields;
+legacy URLs remain All/None. Bounded Unicode-normalized membership is separate from typed query;
+compilation membership never replaces explicit track-artist constraints. Invalid/duplicate/control/
+oversize/virtual-only export contexts rejected. Album/Artist export buttons are disabled until opening
+an entity, with callback guards as well; Files/Songs tabs retain group/entity filters. Physical adapter
+rejects grouped payloads rather than constructing fake entries. No schema/dependency/original-file
+changes. Saved searches remain NOT implemented.
+
+712 normal binary tests pass/99 optional ignored; eight isolated Broadway checks pass (geometry,
+pages, grouped drill/Back/typed-key collision, scoped tab exports, independent group/type filters,
+stale responses, exact filters, browser result snapshots). All-target check/release build pass with
+only prior warnings after parent removed newly introduced unused DTO/helper warnings. Formatting/
+diff checks pass. Integration fixtures initially handed workers an already-polled Subscription and
+correctly got no initial snapshot; fixed tests to use fresh shared subscriptions, no production bypass.
+Logs /tmp/hermes-grouped-search-{compile,focused,unit,check,release}.log; scoped XDG/UI fixture path
+in /tmp/hermes-grouped-search-qa-path. All temporary desktop work used private Broadway:91/18091,
+owned serverPID52928 stopped after checks. Sequential nice-n10/ionice idle/jobs2; no debug-main
+rebuild, live-app launch/restart/movement or personal data indexing. Historical user-appPID54037
+was already absent during this pass; do not act on historical PIDs. No version/branch/commit changes.
+
+README, roadmap and storage evaluation updated. Next: saved searches/Smart Folders using separate
+authoritative named-query storage, then remaining approved pre1.0 gates. Global cache retention/
+clear controls, larger coverage, fuzzy/token acceleration and broader corpus timings remain;
+do not claim faster end-to-end search or Dolphin parity from grouping tests.
+
+## Indexed filters and snapshot pagination — 2026-10-14
+
+User authorized the next search increment. Two disjoint agents supplied bounded SQLite exact-filter
+candidates and UI/adapter pagination, integrated/reviewed by parent; both closed. New candidates
+module uses existing rusqlite dependency, no manifest/storage-schema changes. Lazy in-memory index
+for directory/type, extension, exact artist/album/title; Rust Unicode lowercasing and parameter-bound
+SQL intersections return ALL eligible original positions, no arbitrary candidate cutoff. Existing
+fuzzy/path/date/content scorer still ranks every eligible candidate. Build/query errors fall back to
+exhaustive scoring, never silently missing hits. First filtered results publish BEFORE preparing
+the optional index off GTK. New queries cancel preparation; cancelled attempts can retry. Plain
+queries don't build it; source snapshots discard it. No production FTS/fuzzy acceleration yet.
+
+Shared query ranking stores (score,item-position), not clones of all matches. SearchPage carries
+query generation, revision, shown and total; dialog starts100 and More extends the same ranking by100.
+Duplicate/stale pages cannot advance another snapshot or overwrite a pending new query. Live source
+changes reset dialog paging. query_all exposes every bounded-index match in virtualized result tabs.
+UI keeps More in a fixed footer slot, counts in the reserved notice slot, preserves row identities/
+selection and rejects old session/query/page revisions or smaller same-revision responses. Row
+cleanup uses a HashSet instead of quadratic membership scans. Relative-root legacy/test scanner
+still uses its old100-result path; production absolute scopes all use shared catalogs.
+
+Candidate limits:40k items,32MiB main database pages,16KiB rows,2MiB page cache, fixed SQL/bindings,
+memory-only temporary structures/journal; this is NOT a total resident-memory cap. Query cancellation
+is checked between returned rows, not inside individual SQLite VM steps. Existing source coverage
+40k/32MiB and metadata20k caps still apply; notices remain. No larger Home coverage claim.
+
+674 normal binary tests pass/97 ignored; five private Broadway checks pass (paging205, stable
+geometry, stale generations, filters, result tabs/all views). All-target check and release build pass
+with prior warnings. Scoped formatting/diff checks pass. A fallback test initially used a20k-character
+library tag, correctly rejected by the existing256-character tag validator; rewritten as a direct
+synthetic worker fixture, leaving production validation intact. Parent fixed rusqlite usize FromSql
+errors using checked i64 conversions. No remaining compiler/test failure.
+
+Generated10k debug candidate-only benchmark (21 warm samples): build~104ms/1,318,912 database bytes;
+artist100 candidates p95~0.033ms, title1~0.008ms, file-type9k~2.47ms, six-field intersection1~1.45ms.
+These EXCLUDE scoring/catalog loading/worker scheduling/GTK; no end-to-end speedup or Dolphin parity
+claim. Raw /tmp/hermes-search-pages-benchmark.log; tests/check/release /tmp/hermes-search-pages-*.log;
+private XDG/UI files under path recorded in /tmp/hermes-search-pages-qa-path. README/roadmap/storage
+evaluation updated. Main candidate database32MiB does not cap SQLite temp/journal or source overhead.
+
+Builds/tests sequential, nice-n10/ionice idle/jobs2, no debug-main rebuild, no user app start/restart/
+movement or personal file/config indexing. User appPID54037 still alive unchanged at final checks;
+historical PID, always revalidate. Owned Broadway serverPID118731 on:90/port18090 is stopped after QA.
+No version/branch/commit changes. Next: real grouped Files/Songs/Albums/Artists +All with explicit
+virtual-entity activation DTOs (don't fabricate filesystem paths), then saved queries/Smart Folders;
+fuzzy/token acceleration, global cache retention/clear controls and broader corpus timings remain.
+
+## Shared persistent search catalog — 2026-10-14
+
+User approved continuing the persistent milestone; delegated SQLite storage and synthetic integration
+tests to two agents, reviewed/integrated their work and closed both. Added rusqlite0.40.2 with bundled
+SQLite/limits (four lockfile packages), no system installs. General absolute-root searches now use
+existing shared Library machinery via subscribe_catalog, with private SQLite snapshots of all entry
+names/types/identities and available song tags. Existing Music JSON cache remains compatible. Home
+delegates its visible Music subtree to the same active Music subscription rather than decoding those
+tags separately. Complete active parent general catalogs serve represented folder scopes; partial/
+missing/alias folders use their own scope. Worker root filtering preserves sibling isolation.
+
+Catalog names publish during walking, watchers debounce changes and reconcile every60s; monitor
+limits reported. Reopening active general queries does not force another crawl. Saved sources are
+validated before warming results; generation/cancellation, selection and UI geometry remain. Last
+subscriber cancels the worker; Home closure does not cancel another Music subscriber. Tag limits
+now retain untagged filenames rather than dropping audio entries. Identical settled snapshots skip
+repeat disk writes. Periodic scans still occur; this is not incremental SQL query acceleration.
+
+New catalog_disk module is scoped under services/music_library: per-root SHA256 filename in
+$XDG_CACHE_HOME/strata/search-catalog,0700 directories/0600 files, current owner, bounded64MiB per
+database/16KiB rows/2MiB page cache, opaque native paths, strong identity/root checks, strict known
+schema, disabled triggers/views/attach, private staged copies and atomic publication/cancellation.
+Unknown future versions, corrupt/insecure caches preserved and fall back to usable fresh scans;
+save failures shown. Known v1 root recreation can replace an old snapshot with fresh validated data.
+Validation avoids unnecessary final file opens; ancestor traversal stays pinned/no-follow. The64MiB
+cap is per root, not a global retention/prune budget; cache retention/clear controls remain a gate.
+
+651 normal binary tests pass/95 ignored, four private Broadway UI checks pass, generated10k+80
+synthetic-tag native benchmark passes, all-target check and release build pass with prior warnings.
+Normal tests/private displays use scoped XDG directories. All builds/tests nice10/ionice idle/jobs2;
+no debug-main rebuild or user-app launch/restart. Watcher PIDs33407/53998 were stopped during work
+and no longer appeared in the final process check; user appPID54037 remains alive unchanged
+(PIDs historical, always verify before touching). Owned
+Broadway server stopped after QA. No version bump, commit, branch or personal-data indexing.
+
+Benchmark debug/warm filesystem: cold first names~55ms/complete~113ms/80 cheap JSON tag reads;
+two warm first snapshots~64–65ms/reconcile~169–173ms/zero tag reads. 21 exact-filename queries per
+run p50~19ms/p95~20ms; database1,548,288 bytes. Warm filename display/reconcile not faster in this
+cheap-tag fixture; don't claim universal startup improvement, actual media parsing or Dolphin speed.
+Raw /tmp/hermes-catalog-native-benchmark.log; tests/check/build logs /tmp/hermes-catalog-*.log.
+docs/search-storage-evaluation.md and roadmap/README updated. Existing40k/32MiB/100-result caps
+remain. Next: bounded SQL candidate retrieval/ranking and snapshot pagination, grouped Albums/
+Artists/All, then saved queries/Smart Folders. Ratings/collections remain separate authoritative data.
+
+## Keep the user's window undisturbed — 2026-10-14
+
+User confirmed the first shared search update feels good and asks to work without the Hermes
+window jumping. Two actual cargo-watch supervisors ran --exec run and restarted/activated the dev
+app on source changes. Sent SIGSTOP ONLY to verified watcher PIDs33407 and53998, leaving the
+current appPID54037 alive; no signal to the app/terminal/child group. Do not resume these old
+restart watchers during coding. PIDs are historical; revalidate command/ownership before any action.
+
+scripts/dev.sh now starts Hermes once and watches cargo build by default, with --postpone avoiding
+an immediate duplicate build. New binaries take effect when the user reopens the app. Existing
+release mode preserved; HERMES_DEV_AUTO_RESTART=1 explicitly opts into the previous restarting
+workflow. README updated. Do not run a new dev launcher or restart the user's live app to apply this
+script change. Existing paused watchers use the old command until the user starts a fresh session.
+Keep tests on private displays and do not launch/reposition the user's window during future work.
+
+User supplied recording_20261014_085922.mp4 for player stuttering, then suspects our dev builds
+caused it. Treat build contention as plausible, not a verified playback-engine fault. Default dev
+builds now run nice10, two cargo jobs, optional ionice idle class3; only the compiler inherits
+priority changes, not the launched Hermes app. Future agent builds/tests/fixture generation should
+also use low priority and bounded concurrency; avoid overlapping heavy builds while user listens.
+No heavy validation/build or live-app restart for this script-only change. Bash syntax/diff checks
+pass. Recording not decoded after this steering; investigate only if stutter persists without builds.
+
+## Search layout stability — 2026-10-14
+
+User reported search animation felt odd, then clarified resizing caused stutters. Found the
+indexing notice reused search-status padding28px and toggled visibility, changing centered panel
+height every query/indexing phase. It now lives in a reserved32px slot with a compact single-line
+ellipsized label and full tooltip. Scope and row labels have bounded natural widths. Song metadata
+has a reserved single-line slot before tags arrive, preventing track rows growing during indexing.
+Rows reconcile by source path and unchanged SearchItem: preserve existing rows, replace only changed
+ones and move ranked rows as needed. Avoid rebuilding all100 GTK rows/artwork on each metadata event.
+Current generation/selection/cancellation behavior remains; no stale results retained across queries.
+
+New private GTK geometry fixture checks exact panel bounds across empty/loading/results/no-results,
+long scope/notice/title strings and100 hits; audio row height stays fixed when tags arrive, unchanged
+and reordered rows retain identity. Existing stale-query/filter/lazy-artwork checks run alongside.
+617 normal tests pass/94 ignored; release build and all four targeted checks pass; format/diff checks
+pass. Logs /tmp/hermes-search-geometry-test.log
+and /tmp/hermes-search-layout-qa.*. Owned Broadway server stopped after checks.
+This fixes proven layout churn; physical compositor smoothness still needs user confirmation.
+Production index, limits and0.2.0 unchanged. No user app restart, personal settings or file changes.
+
+## Search query contract increment — 2026-10-14
+
+Resumed the interrupted agent work and integrated the saved patches. Exact case-insensitive
+artist:/album:/title: fields (including quoted/escaped values) compose with existing filters and
+opt-in content; friendly controls preserve them through category/filter changes. Artist matches
+the track artist, not album_artist fallback. Exact-match placeholders now make that clear.
+The expanded popover scrolls with a520px natural-height cap. Plain fuzzy/free-text queries remain.
+
+SearchHandle::query now returns a monotonically increasing per-handle generation; results carry
+it. Dialog uses both session and query generations and result-tab adapter rejects old generations,
+including repeated query text. Search snapshots retain backend relevance order unless the user
+explicitly sorts; metadata hydration no longer rearranges relevance. Separate DirectoryEvent::Notice
+and BrowserEvent::LoadNotice preserve partial-index notices alongside usable results; state/snapshots
+carry notices to rebuilt grid/details panes. Reload clears them; stale request IDs are ignored.
+
+Implemented eight metadata-filter regressions plus generation, partial-notice and navigation checks.
+617 normal binary tests pass/93 ignored; four focused private Broadway tests pass (friendly filter
+round-trip, stale generations, categories, all-view snapshot selection/notices). All-target check
+passes with existing warnings. Debug and release builds pass. The all-view notice test additionally
+passes switching between all presentations after a notice arrives; selection remains intact.
+Scoped formatting/diff checks pass. Logs /tmp/hermes-search-*.log; private GTK session data under
+/tmp/hermes-search-ui-* and /tmp/hermes-search-view-qa.*. The owned Broadway server is stopped.
+No user app restart, personal config changes, version bump, commits or dependency installation.
+
+Generated SQLite/FTS5 experiment runs10k/100k synthetic records,21 warm samples, integrity/reopen/
+literal/Unicode/bounded-candidate checks. Script scripts/bench_search_catalog.py; findings in
+docs/search-storage-evaluation.md; raw /tmp/hermes-search-storage-evaluation.json. SQLite looks
+promising, but broad BM25 sorting~33ms p95 and a500-row substring candidate cap can lose global
+best ranking. Python linear timing is only a proxy, not Rust or a Hermes speedup. No production
+SQLite dependency/catalog added. Current40k/32MiB/100-result limits remain. Next milestone is
+durable shared catalog/storage/privacy/budgets/watcher/ranking/pagination integration, then grouped
+Albums/Artists and Smart Folders. These are not implemented by this query-contract increment.
+
+Two agents hit usage limits during the previous pass; their saved UI/benchmark source was reviewed
+and completed by parent. All three agents closed. Preserve earlier feature work in the dirty tree.
+
+## Pre-1.0 planning and Strata music reference — 2026-10-13
+
+User approved splitting work across agents. Two read-only subagents assessed search UI/adapters
+and music/collection boundaries; parent checked catalog contracts. Added a parallel work plan to
+docs/1.0-roadmap.md: freeze search request/result/coverage/pagination contract, then catalog and UI
+lanes with one shared-file integrator. Later pair music presentation with shared artwork; collection
+continuity supplies successful relocation mappings before ratings consumes them. Search tabs can
+lose relevance order through ordinary navigation sorting and drop notices with nonempty results;
+include both in migration acceptance. No production changes or new test run in this planning pass.
+
+Latest user endorsed unified search/Smart Folders, music preview ideas, saved searches/per-folder
+preferences, favorite/playlist rename/move continuity, transfer progress/cancellation/conflict audit,
+and document find/selection. Independent split view "could be good": keep a candidate, not a firm
+release blocker. Ratings now confirmed before1.0 for photos, videos and documents ONLY, not music;
+store locally in Hermes without changing original files. Hearts/favorites remain separate.
+Ratings are unrated/1–5 and belong to persistent user data, not a disposable search index. Full redo
+and advanced batch renaming explicitly after1.0. Roadmap updated; no implementation/version changes
+in this planning follow-up. Work should proceed as small validated milestones, search foundation first.
+
+User confirmed the latest playback/divider fixes feel fine and requested planning, not another
+feature implementation yet. Reviewed current search/audio/operations code and current primary
+comparison docs. Saved proposed scope/sequence/acceptance criteria in docs/1.0-roadmap.md.
+User confirmed names/metadata-first with content opt-in, grouped Files/Songs/Albums/Artists with
+an All view. Home default/other drives chosen remains. User supplied recording_20261013_174804.mp4:
+likes real spectrum, controls and spinning record; wants to retain Hermes's richer metadata.
+Plan combines them with lightweight optional motion/PCM analysis and shared album-art decoding.
+Single-track preview/main queue separation and no-selection-autoplay remain important.
+
+General search currently capped40k/32MiB with a10-minute process cache; Music scope uses the
+persistent monitored catalog, while Home still rewalks/reads tags separately. Proposed first
+milestone is one durable shared local catalog/query service, consistent fields/ranking/pagination,
+watchers/reconciliation, exclusions and transparent partial coverage, not just a dialog redesign.
+SQLite/FTS5 is a candidate to benchmark, not an approved dependency or magically fuzzy engine.
+Then preview polish, operation/collection continuity, per-folder preferences, performance/release
+gates. Do not mark already existing batch rename/undo/archives/GIO/devices/playlists missing.
+Independent split mode, saved searches, general file tags, redo and advanced rename remain gaps;
+user priorities decide which beyond the proposed core are1.0 blockers. Gapless/column sizing deferred.
+
+Strata main inspected at586ca3c9e5cf908fe7815573cf758c877c0755c1, not assumed equal to installed
+release. Read-only artifacts /tmp/hermes-1_0-audit.4Rjelb, recording contact frames generated there.
+No code imported, app restarted, dependencies installed, user settings changed, branch/commit/PR,
+tests rerun or version bump. Planning doc only;600 normal pass baseline remains from prior work.
+
+## Large audio packets and trailing column gap — 2026-10-13
+
+User supplied recording_20261012_191728.mp4 and screenshot_20261012_191803-region.png,
+then confirmed the "ghost column" means the empty strip between list and preview while dragging
+the divider, not old rows persisting. Inspected only that recording/screenshot and the specific
+video identified in the screenshot. No compositor settings, hardware permissions or user app changes.
+
+Reproduced the clip's GStreamer error through the real isolated worker. Better callback diagnostics
+identified a valid147440-byte decoded PCM buffer rejected by the64KiB wire limit. worker::write_audio
+now sends aligned chunks within that unchanged limit, retaining every sample and epoch without copying
+the entire buffer. Empty decoded buffers are skipped; misalignment and write errors still fail closed.
+No codec, duration, GPU access or host audio queue budget changes. The identified HEVC/mono PCM clip
+now passes startup/mid-seek/play, full playback to EOS and replay, with output muted during testing.
+Generated160000-byte real decoder samples and normal packet/alignment/write-error tests also pass.
+
+Column containers fill the browser; only the last column expands into spare space. Preceding columns
+keep their requested widths; truncation restores expansion on the new last column. Retained/new tab
+presentations use the same container layout. Preview reservation uses measured minimum column widths,
+not expanded allocation, preventing a divider-position feedback loop. Private GTK checks cover one/
+two/three columns, manual divider positions, overflow horizontal scrolling, truncation, custom minimum,
+retained/restored presentations and preview closing. No Wayland/Hyprland cause was established.
+
+600 normal tests pass/91 optional ignored. Targeted layout, retained tabs, Explorer/thumbnail sizing,
+preview divider, generated large PCM, heavy4K/HEVC/VFR/rotation, color bars and actual clip playback
+checks pass. All-target/debug/release and scoped formatting/diff checks pass; earlier unrelated warnings
+remain. Logs /tmp/hermes-ghost-qa; generated fixture pcm-mono.mov added under
+/tmp/hermes-preview-audit.J7eOla/fixtures. Private Broadway server stopped after testing. Physical
+compositor confirmation remains for the user after restarting the rebuilt app. Version remains0.2.0.
+
+Next suggestions remain distinct model/comic tiers and common album-art coalescing; no approval for
+those new features yet. Do not infer authorization from the positive first-startup report.
+
+## Heavy photo/video first-load work — 2026-10-13
+
+User approved heavy first-load photo/video work. Generated private12MP JPEG/HEIC and4K60 H.264,
+HEVC, rotated MOV and VFR fixtures; no personal media read. Implemented optional sandbox-only
+src/sandbox_helper/scaled.rs using installed vips (libvips8.18.7). Large supported RGB8 JPEGs
+exceeding the host decoded-frame budget and standard8-bit HEIF native-fallback cases try the
+scaled process before ImageMagick. No new Rust dependency, installation or safety-limit increase.
+Input is seekable stdin; fixed arguments, two threads, operation cache0, no upscaling, input128MiB,
+existing source pixel/output budgets, dimension-validated PNG. Missing/failing tool falls back.
+HEIF eligibility bounded two top-level IDs/32 thumbnails, standard NCLX only; HDR/high precision,
+multi-image and possibly adequate embedded-thumbnail cases stay with the existing fallback.
+This protects primary-image quality. The deprecated libheif-rs two-ID API is intentionally scoped
+with expect(deprecated), avoiding the unbounded allocation in image_ids(). No other formats added.
+
+Video rate limiting now precedes rotation/scale, with videoscale before videoconvert, reducing
+full-resolution RGB conversion. Fused videoconvertscale was measured and rejected as slower here;
+do not casually switch to it. Limits1280x720/30fps, audio, full length, rotation/seek epochs and
+device isolation unchanged. Codec reference frames still decode; no GPU permissions added.
+
+597 normal pass/88 optional ignored. Twelve distinct targeted optional tests pass, including new
+12MP quality/dimensions/all-eight-EXIF/pool/one-shot/missing-tool checks, actual4K/portrait/HEVC/VFR
+preroll/seek/end and generated color bars, plus native/embedded HEIF, prior native JPEG, full-length
+fullscreen/MOV, ghosting/zoom, visible sharing and cached-photo request guards. All-target/debug/
+release and scoped formatting/diff checks pass. Old warnings/unrelated broad integration failures
+remain. A first portrait probe failed because ffmpeg's old metadata option produced no rotation;
+regenerated using display_rotation90 and verified its matrix with ffprobe, then tests passed.
+
+Logs /tmp/hermes-heavy-preview-qa and /tmp/hermes-preview-audit.J7eOla. Generated warm-filesystem/
+debug observations: JPEG scaled64–91ms vs81–105ms after tool startup; first scaled calls140–154ms
+vs84–127ms were sometimes slower (plugin/startup cost remains). HEIC scaled159–202ms vs212–265ms.
+MeanRGB difference on representative fixture0.34 JPEG/0.046 HEIC; resamplers differ, not bit-exact
+or exhaustive camera/ICC quality. Generated4K60 pipeline drain early order~0.78–0.79s vs1.22–1.34s,
+CPU~1.08–1.10s vs1.98–2.02s; not playback FPS/startup. Native first frames after registry warming
+~149–173ms; rotation405x720, other samples1280x720. Color-bar meanRGBA difference0.24. No cold-disk,
+physical compositor/Dolphin parity guarantee. libvips's unrelated OpenSlide module warning is not fixed.
+
+Still needed: real slow camera examples (especially HDR/wide-gamut HEIC), physical speed/ghosting
+confirmation, separate model/cover tiers and common-art coalescing. Keep earlier features and0.2.0;
+no user app restart, personal config changes, branch/commit/PR. Gapless/column sizing still deferred.
+
+## Visible-first thumbnail scheduling — 2026-10-12
+
+User approved the next visible-first/duplicate-decoding pass. Implemented src/ui/thumbnail/
+scheduling.rs, replacing one unbounded thumbnail async pipeline per bound image with queued
+source resolution and shared identity-checked rendering. Up to default_worker_limit (at most4)
+metadata/cache/render jobs run; canceled jobs retain their slots until completion. Visible images
+rank ahead of half-viewport nearby prefetch; far-offscreen and unmapped targets wait. Map/unmap and
+completion wake immediately; scroll visibility is sampled every32ms while mapped work remains.
+All-hidden waiting queues stop polling until mapping wakes them. Popovers are separate clipping
+surfaces: their thumbnails are not clipped against the ancestor file pane.
+
+Only resolved renders with equal original/artwork identities, operation, kind and requested size
+share an in-flight job. Pending metadata lookups may group identical path/kind/size requests; new
+lookups never join an already-running lookup before fresh identity checks. Each subscriber retains
+its own weak image/request cancellation. Rebinding one cannot cancel or repaint a visible peer;
+no eligible subscribers cancels the shared job and live subscribers restart source resolution when
+they return. Queued/dead/recycled targets are pruned, workers carry no GTK objects, all source/cache
+I/O stays off GTK, and RAM/disk/source/artwork guards remain. Matching output is persisted once.
+Independent folder-nonempty checks and desktop icon lookups are unchanged by this admission cap.
+
+595 normal tests pass;85 optional ignored by default. Seven new normal scheduling regressions and
+two new private GTK tests cover ordering/bounds/identity/sharing, scrolling/tab mapping and rebind
+isolation. Fourteen distinct targeted optional tests pass across the pass (new fixtures plus cache,
+photo/poster/zoom/artwork, selected preview under thumbnail contention, slider/details, hover peeks,
+discarded presentations and retained tabs/transport). All-target/debug/release and scoped formatting/
+diff checks pass; existing warnings and unrelated historical integration failures remain untouched.
+Logs: /tmp/hermes-thumbnail-scheduling-qa and /tmp/hermes-preview-audit.4h33ra/scheduling-*.log.
+Generated duplicate-pair samples~70–100ms with one render; warm rebind~7.5–7.8ms without decoding. These are
+private debug/Broadway/warm-filesystem observations, not cold disk or physical compositor/Dolphin
+parity. No personal media/config changes, app restart, branch/commit/PR or version bump.
+
+Next useful performance work: distinct model/comic-cover thumbnail tiers, common cover sharing
+across different original tracks, heavy first-load photo/video profiling, then selected upstream
+safety/sort improvements. User-session ghosting/speed confirmation still needed. Gapless and
+detailed column sizing remain deferred; preserve music/settings/clipboard/favorite/playlist features.
+
+## Ghosting and persistent-thumbnail follow-up — 2026-10-12
+
+User supplied recording_20261012_173228.mp4 showing brief old-image/position ghosting during
+photo selection. Inspected only that explicitly supplied recording. Loading previews now use
+the full image viewport/footer layout; first draw fits immediately, and an opaque semantic theme
+background clears old letterbox pixels. Tiny photos are not enlarged during loading. GSK/Cairo,
+stable layout, stale/failed/closed request and zoom/fullscreen regressions pass. Ask user to restart
+the rebuilt app and confirm the real compositor/pointer behavior; do not call it universally fixed.
+
+Implemented private persistent raw-RGBA thumbnails at $XDG_CACHE_HOME/strata/thumbnails-rgba-v1.
+Disk validation/encoding/writes/pruning are off GTK, with strong file and adjacent-art identities,
+256px raster limit, 512 entries/128 MiB and eight queued saves. Owner/mode, symlink/FIFO/size/checksum
+guards, pinned directory handles and atomic writes; corrupt/changed entries safely miss. Unrelated
+Unicode names cannot panic pruning. Busy/full saves skip; abrupt exit may lose optional cache jobs.
+This is sRGB8 thumbnail reuse, not HDR/wide-gamut original replacement or a Freedesktop shared cache.
+Larger model/comic rasters intentionally are not persisted; no cache-settings UI added yet.
+
+Selected JPEG uses native codec-scaled decoding for bounded 8-bit three-component images; other
+encodings/large frames retain fallback. HEIF uses the primary image for bounded 8-bit supported
+NCLX profiles, falling back for large/HDR/wide-gamut/failed cases. EXIF, dimensions, representative
+colors and ICC propagation preserved; no exhaustive real camera/ICC corpus. Both pooled and
+one-shot JPEG/HEIF routes tested; one-shot HEIF dispatch now also calls the shared native renderer.
+GStreamer registry warmup starts once off-thread 1.2s after window presentation; no autoplay.
+It moves, not removes, startup scan cost. Corrected old audit wording: user-media native decoding
+already runs in a separate Bubblewrap worker; host-side audio output is in-process.
+
+Fresh QA: 588 normal pass/83 optional ignored; ten targeted private optional tests pass, native
+tests rerun with real pooled/one-shot assertions; all-target/debug/release pass. Logs under
+/tmp/hermes-preview-resume-qa and /tmp/hermes-preview-audit.4h33ra. Old /tmp logs vanished between
+interrupted sessions; initial 60-fixture matrix was not regenerated. Fresh debug/warm-filesystem
+samples: disk thumbnail reload1.03ms, cached pending-photo9.9ms; generated JPEG41–55ms vs65–76ms,
+HEIF40–55ms vs68–74ms; private registry warmup4.09s then HEVC frame100ms. Not cold disk, physical
+paint or Dolphin parity; large 12MP/HDR first-load work remains. See updated audit/baseline docs.
+Additional sandbox-routing rerun under load: JPEG72–191ms vs161–213ms, HEIF63–108ms vs211–276ms;
+quality/routing assertions still pass. Do not present the lower sample as guaranteed user latency.
+
+Keep earlier music/clipboard/settings changes and version0.2.0. No personal config/library edits,
+user app restart, branch/commit/PR. Next useful work: visible-first scheduling/duplicate coalescing,
+separate model/cover tiers, heavy photo/video profiling, selective upstream safety/sort work,
+search exclusions, per-folder preferences and document find. Gapless/column sizing stay deferred.
+
+## Preview speed / format audit / upstream review — 2026-10-12
+
+User asked for all-format review, Dolphin's loading strategy and recent original Strata work;
+photos and videos both feel slow. Interrupted by usage, now completed a scoped speed/reliability
+pass. See docs/preview-format-audit.md and the newest performance-baseline section first.
+
+Photo drawers show a validated existing thumbnail while full-quality decoding runs. Video
+streams reuse an existing cached poster; native frames win, canceled/stopped/error states and
+source replacements cannot accept a late poster. No new cold thumbnail job is started for the
+interim photo. Full Ready/failed/closed request guards prevent the prior-image overlay bug from
+returning. GIFs keep their animation path; zoom/pan/fullscreen apply to the full image as before.
+
+Encoded pool cache TTL is 300s, not 30s; unchanged budgets/strong mtime+ctime+inode identity.
+Real 31s revisits stay warm; this is memory reuse, not persistent thumbnail caching. PDF pool
+thumbnail operation renders 256px, not full selected-page size. AVIF/SVG/JPE/JFIF now thumbnail;
+the latter JPEG names classify as images for search. SVGZ/JXL/new animation types not enabled.
+
+Typed operations 22–25 preserve 3MF/EPUB/CBZ/CBR format through extensionless descriptors.
+Archive-cover CBR subprocesses receive seekable stdin instead of a CLOEXEC descriptor pathname.
+One-shot sandbox mounts a safe lowercase alphanumeric suffix at /input.ext (max16 characters),
+never the original basename/directory. DOCX/ODT helpers work through that actual sandbox route.
+The adapter also wrongly used pdf_page as every helper's value: archive/office now receive
+text_byte_limit with the existing output ceiling; model/cover fallback receives 800/1400.
+Tests assert actual nonempty document/archive text, not only a successful Ready event.
+
+Registry audit covers 121 extension rules/four special names/60 thumbnail rules; generated
+matrix has 60 fixtures/321 measurements, not every encoding. All eight audio metadata formats
+and embedded MP3 art work; bare no-art audio correctly falls back. XLSX sniffing already worked.
+RAW corpus, real CBR writer, extra formats and physical user-session paint are unverified.
+
+579 normal tests pass, 76 optional ignored; private format/GTK/cancel/budget/source-replacement/
+revisit/contention probes plus all-target and debug/release builds recorded under
+/tmp/hermes-preview-audit.q2u1x6 and /tmp/hermes-preview-final-*.log. No personal media/config
+changes or user-app restart. Baseline detailed Dolphin research: /tmp/hermes-dolphin-audit.wTdETK.
+Generated timings are warm-filesystem/debug state timings, not cold disk or Dolphin parity.
+First HEIC decode ~0.7–1.1s and private GStreamer registry initialization ~6.86s remain unsolved;
+cached thumbnail feedback is not a claim to have removed either cost.
+
+Upstream released Strata v1.0.0 Oct12 at20:15UTC/14:15MDT; pinned release
+0a086aa3bdb251842a1e8413e2a6b35970d0b409. Full release notes and selected release source/docs
+reviewed; earlier detailed tree was RC1. Temporary snapshots: /tmp/strata-readonly-audit.IwFi4L.
+Hermes stays0.2.0 until user approves; do not change license or import upstream defaults/styles.
+Useful candidates: asynchronous persistent thumbnail reuse, native bounded SVG/codec-scaled
+JPEG/HEIF decoding, stronger per-job isolation, sort/large-selection/drag improvements,
+search exclusions, document find and per-folder preferences. Hermes already pools/retains tabs.
+
+Next performance priorities: safe bounded persistent disk thumbnails, equivalent-quality native
+photo decoder benchmarks, duplicate in-flight coalescing/visible-first work, distinct model/cover
+thumbnail tiers, and independent GStreamer startup work. Product continuity: favorites/playlists
+still path-based with no rename inference. Keep all earlier clipboard/music/settings features;
+gapless/column sizing deferred, Save queue as playlist unwanted. Three research agents errored
+on usage after useful artifacts; their changes were validated and agents closed. No active work remains.
+
+## Clipboard polish, volume, photo menus and music collections — 2026-10-11
+
+Latest user wanted subtler clipboard feedback, volume-slider lag fixed, directory Copy that pastes
+into Dolphin, and right-click actions directly on photo previews. Then implement favorites,
+cleaner library navigation and playlists. They explicitly chose a separate playlist editor.
+Those features are implemented; keep them and do not revert the editor to an inline-only list.
+
+Clipboard feedback is now a compact square count badge, not a filename banner. Hover uses the
+standard brief tooltip; click opens a bounded item list. Replacing the clipboard hides the badge.
+File Copy exports explicit encoded text/uri-list and application/x-kde4-urilist, avoiding automatic
+portal advertisements; GTK still reads a FileList through deserialization. Actual isolated Dolphin
+pastes passed for single/multiple generated folders, nested contents and empty directories on
+X11 and native Wayland. The old FileList baseline also worked privately, so portal involvement in
+the user's failure is plausible, NOT confirmed. Ask them to retry the updated app. App-local Cut
+ownership remains; this does not claim every cross-app Cut protocol. Logs: /tmp/hermes-directory-clipboard-qa.
+
+Volume motion no longer captures entire queue snapshots or refreshes every Music view per event.
+Notifications coalesce on the existing 100ms tick; saves debounce 250ms and flush on shutdown.
+Native audio gain/mute property writes move off GTK via atomic latest state and one bounded wakeup.
+Startup reapplies the latest user gain/mute after the asynchronous session arrives; initialize
+output muted, set gain before unmuting. Tests cover stalled writers, multi-view/MPRIS, latest-value
+persistence and shutdown. Physical dragging/audio confirmation still belongs to the user.
+
+Photo drawer and fullscreen viewport menus target the captured preview file, never an unrelated
+current selection. Standard Open/Open With, Cut/Copy/Copy location, Rename, Trash/Properties plus
+Fullscreen/Fit/100% actions use existing styling/options. Menu lifecycle uses weak refs and releases
+on close, replacement and fullscreen teardown without changing primary-button pan/zoom behavior.
+
+Music now has Albums, Artists, Songs, Favorites and Playlists sections. Song heart buttons and
+track/album context menus update local favorites and playlist membership without modifying tags.
+The separate playlist editor creates/renames/deletes playlists, searches the catalog to add songs,
+removes membership, and reorders via handles or keyboard/up/down controls. Playlist playback follows
+saved order, starting at the activated song; normal track activation still queues remaining album
+tracks in metadata order. Browsing/editing never autoplays or replaces the current queue.
+Unavailable paths stay saved with placeholders and are skipped by playback; automatic rename
+matching is NOT implemented. Most played counts once per main-player instance after 30 seconds,
+or half of a shorter track; previews, paused time and seeks do not count. Recently added records
+first Hermes indexing, not mtime or historical library arrival. First-import dates are tied.
+
+Collections save off-thread to $XDG_DATA_HOME/strata/music-collections-v1.json with bounded requests,
+atomic private-file writes, retry/backoff and explicit graceful-shutdown flush. Corrupt/future-version
+data is preserved. An exclusive sidecar file lock prevents Dev/production processes overwriting one
+another; a second instance is read-only until restarted after the owner exits. Before replacement,
+compare original bytes and preserve externally changed/corrupted/symlinked files with visible save
+errors. This is not a guarantee against a noncooperating editor racing the final atomic rename.
+Unchanged editor/group models are retained; unrelated favorites/save acknowledgments do not splice
+playlist rows or invalidate drag tokens. Pending catalog observations coalesce and retry nonblocking.
+
+Private generated validation logs are /tmp/hermes-polish-qa.TPAYfn, /tmp/hermes-volume-qa and
+/tmp/hermes-photo-menu-qa.KCbtF0; no personal media/config edits or user-app restart. Version remains
+0.2.0, no branch/commit/PR. Final validation details are recorded in docs/performance-baseline.md.
+Still deferred: gapless, detailed column sizing and Save queue as playlist (explicitly unwanted).
+Further real MOV/HEVC/HEIC/JPG cold-start profiling and user-session UX confirmation remain useful;
+do not claim Dolphin parity or universally resolved lag from synthetic fixtures.
+
+## Media loading, album artwork and clipboard menus — 2026-10-11 follow-up
+
+User reordered priorities: MOV/JPG loading first, then inconsistent music artwork and contextual
+menus. They specifically want ordinary clipboard Copy/Cut/Paste, not only destination dialogs.
+Keep Copy location as a core action, relevant music actions, folder compression/archive extraction,
+and optional extras in settings. No Terminal by default; do not clone Dolphin's entire menu.
+
+Implemented separate thumbnail/selected-preview worker routing. MOV posters and embedded audio
+art now use pooled media workers and identity-validated caching. Open the passed descriptor as
+seekable stdin for ffmpegthumbnailer; do not expose the original path outside the sandbox.
+Cancelled jobs waiting for a worker return cancellation instead of falling through to one-shot
+processes. Selected photo previews remain available while the thumbnail pool is busy. JPEG output
+uses lossless Huffman-only PNG encoding; dimensions, orientation, quality and budgets are unchanged.
+Generated textured-photo renderer samples improve roughly 18–20%, not an end-to-end speed promise.
+Native video decoding is unchanged: the isolated first GStreamer registry initialization took
+~3.87s, subsequent generated MOV frames ~106–127ms. Real HEVC/4K and cold-storage work remain.
+
+All recognized audio formats can request embedded artwork, not just FLAC. If embedded art fails,
+tracks fall back to a recognized adjacent album cover, with both track and cover identity checks.
+Retagging retries embedded art; changed/deleted covers invalidate the fallback. Missing artwork
+uses a music icon. Generated MP3 embedded-art and adjacent-cover fixtures pass; no personal music
+was read or retagged. Ask the user to retry the slayr album after restarting the updated build.
+
+File menus now have single/multi-selection clipboard Copy, existing Cut, folder Paste and core
+Copy location, with icons, shortcut hints and cleaned-up separators. A fixture verifies URI-list
+export and importing another app's URI-list-only clipboard. Existing app-local cut ownership
+remains; do not claim every cross-app cut protocol is implemented. Settings > Context menu stores
+optional Open with, Preview, Pin, destination dialogs, archives, file compression, music actions
+and custom commands. Core file actions remain. Options and matching custom commands refresh on
+the next right-click without rebuilding retained tabs; custom-action config is no longer read
+for every menu installation. The new custom-command template omits Terminal, but existing user
+commands are untouched. Dedicated Music's essential queue menu is unchanged. This is built-in
+visibility configuration, not a new graphical custom-command editor.
+
+Validation: all-target checking, debug/release builds, 533 normal unit tests (55 optional ignored),
+and targeted generated/GTK fixtures pass. These cover pooled media/cancellation/cache isolation,
+JPEG orientations, MP3 artwork, clipboard single/multi-selection and URI interoperability,
+live custom actions/options, separator cleanup, cut outcomes, retained tabs, native MOV seek,
+full-length fullscreen, image zoom and thumbnail/detail sizing. Logs/private fixtures live in
+/tmp/hermes-cold-media-qa with isolated HOME/XDG/session bus. No user app restart or personal
+config/library changes. Historical integration failures and existing warnings remain unrelated;
+the broad integration suite was not rerun. Version stays 0.2.0; no commit/branch/PR created.
+
+Next approved work: favorites and cleaner Albums/Artists/Songs navigation, then manual playlists,
+Most played and Recently added. No Save queue as playlist. Gapless/column sizing remain deferred.
+Continue representative cold-media profiling; do not equate warm cache timings with Dolphin parity.
+
+## Settings/search refresh and preview layout/zoom — 2026-10-11
+
+Latest user requests supersede the earlier roadmap ordering: remove the normal video
+"Full-length playback" strip; refresh settings/themes/fonts/shortcut reference/About and Home
+search first, then favorites/cleaner music navigation, playlists, and MOV/JPG cold-loading work.
+Do not bump to 1.0 until the user explicitly says so. Gapless and column sizing remain deferred.
+User clarified Home as the default search scope, choosing This folder for another drive;
+they want a clearer shortcut reference, not configurable keybindings in this pass.
+
+Implemented: Graphite, Paper and Midnight basic palettes; remove built-in Omarchy Light and migrate
+its saved selection to Paper without overriding a custom theme with that same ID. Live Noctalia,
+optional Omarchy following and other/custom palettes remain. Separate Fonts page adds system sans/
+monospace alongside the two bundled fonts, persisted 10–22px sizing and restore defaults. Settings
+pages scroll, shortcut help covers files/search/tabs/media, About retains original-project credit
+and shows the unchanged actual package version plus pre-1.0 status. Search now defaults/resets to
+Home; explicit Music and current-folder scopes remain. Square search surfaces, category shortcuts
+and family filters distinguish songs/video/images/documents/apps/archives; artwork/type badges and
+separate artist/album metadata remain. Names/tags search is not unrestricted content indexing:
+hidden files/symlinks and existing scan/extraction limits remain excluded/bounded and reported.
+
+User also reported thumbnail resizing doing nothing, a strip between columns and previews,
+Explorer opening too narrow for details, excessive Name width, and choppy/ghosting image zoom/pan.
+Grid resizing now unwraps the registered Overlay before accessing its card/image. Preview sizing
+uses all remaining width, tracks column/mode changes, preserves manual divider positions and keeps
+the minimum preview width on narrow windows. Grid reservations use the full workspace width, not
+the already-shrunk browser pane. Explorer starts with a 320px Name column and reserves its whole
+684px details table; full names remain available as tooltips. Aspect-preserving image letterboxing
+is intentional; no automatic cropping/stretching. Healthy full-length video status is hidden;
+loading/seeking/end/error feedback still appears and native playback is still unlimited.
+
+Images prepare an immutable Cairo source once (shared with fullscreen, with a safe fallback) and
+paint into a fixed viewport-sized canvas, with an empty virtual scroll extent instead
+of an enormous zoom-sized painted surface. Clear old pixels, clip to the viewport, smoothly ease
+zoom around the pointer (respect reduced motion), and use projected offsets when switching from
+zoom to panning before GTK adjustments settle. Clamp pan offsets at image boundaries. Gesture
+instructions moved to Fit's tooltip so a floating tooltip no longer obstructs the image.
+Generated Cairo pixels and GTK assertions cover clearing, viewport bounds, rapid zoom/pan, fit/
+100%/fullscreen, real grid slider sizes, Explorer details, preview splits and manual dividers,
+fonts and search filters/scopes. Private fixtures use /tmp/hermes-refresh-qa and isolated HOME/XDG/
+session bus; no personal photos/documents/library or user app restart. Headless Broadway fixtures
+explicitly pump public update/layout phases where frames await a browser acknowledgment; this is
+geometry/state QA, not an end-to-end physical-pointer/renderer FPS benchmark. Some synthetic
+phase-pump runs produce GTK SVG clock warnings; do not confuse those with user-session crashes.
+
+Validation: `cargo check --all-targets`, debug/release builds and 528 unit tests pass (50 optional
+tests ignored in the default run). Nine isolated GTK fixtures also pass: image zoom/pan/fullscreen,
+thumbnail slider/Explorer details, preview split/manual divider, fonts, search scopes/categories,
+full-length video/hidden footer, retained tabs and flush compact tab geometry. Existing warning
+expectations and historical integration fixture failures remain unrelated; the broad integration
+suite was not rerun. Updated debug/release binaries are ready, but the user's running app was not
+restarted. Ask the user to confirm physical-pointer zoom/pan in the updated build before claiming
+the observed overlap is fully resolved. No commit/branch/PR created.
+
+## Flush tab strip follow-up (2026-10-10)
+
+User confirms real timeline-thumb dragging feels good. The remaining tab issue was the inset strip
+padding and vertically centered tab surfaces, not just corner radius. Tab-strip padding and inter-tab
+gaps are now zero; tabs and their click/close controls fill the 40px strip height. Compact intrinsic
+widths remain, with thin semantic-color separators and square close/new/rename states. Do not revert
+to full-width stretched tabs or remove rounding from unrelated window/sidebar components.
+The GTK layout fixture now covers flush top/left/bottom edges, adjacent surfaces, narrow overflow
+and a compact single tab, using freshly mapped windows for headless Broadway allocation. Widget
+reuse and tab switching/closing preserve the existing Music/transport behavior. User-facing next
+steps are favorites and cleaner Albums/Artists/Songs navigation, then manual playlists, Most played
+and Recently added; continue cold-media profiling alongside these. Gapless/column sizing stay later.
+
 ## Square tabs, draggable seek handles and JPEG/MOV loading (2026-10-10)
 
 Current user asked for square tab indicators, draggable preview timeline thumbs and then MOV/JPG

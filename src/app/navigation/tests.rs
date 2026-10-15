@@ -6,6 +6,55 @@ use super::*;
 use crate::app::music_order::tests::entry as track_entry;
 
 #[test]
+fn search_relevance_survives_snapshots_hydration_and_preserves_selection() {
+    let mut state = NavigationState::default();
+    let request_id = RequestId(101);
+    state.navigate(Location::uri("search://song"), request_id);
+    let first = track_entry("z exact.flac", Some(1), Some(1));
+    let second = track_entry("a fuzzy.flac", Some(1), Some(2));
+    state.apply_snapshot(request_id, vec![first.clone(), second.clone()]);
+    assert_eq!(state.columns[0].entries, vec![first.clone(), second.clone()]);
+    state.select(0, 0);
+    state.apply_snapshot(request_id, vec![second.clone(), first.clone()]);
+    assert_eq!(state.columns[0].selected, Some(1));
+    let mut enriched = first.clone();
+    std::rc::Rc::make_mut(&mut enriched.0).music_tags.as_mut().unwrap().title = Some("Updated".into());
+    state.apply_music_metadata(request_id, &[enriched.clone()]);
+    assert_eq!(state.columns[0].entries, vec![second, enriched]);
+    assert_eq!(state.columns[0].selected, Some(1));
+}
+
+#[test]
+fn explicit_search_sort_is_preserved_across_new_snapshots() {
+    let mut state = NavigationState::default();
+    let request_id = RequestId(101);
+    state.navigate(Location::uri("search://song"), request_id);
+    let first = track_entry("z exact.flac", Some(1), Some(1));
+    let second = track_entry("a fuzzy.flac", Some(1), Some(2));
+    state.apply_snapshot(request_id, vec![first.clone(), second.clone()]);
+    let preferences = ViewPreferences { sort_key: SortKey::Name, ..ViewPreferences::default() };
+    state.set_column_preferences(0, preferences);
+    state.apply_snapshot(request_id, vec![first.clone(), second.clone()]);
+    assert_eq!(state.columns[0].entries, vec![second, first]);
+}
+
+#[test]
+fn search_notices_are_independent_of_ready_results_and_clear_on_reload() {
+    let mut state = NavigationState::default();
+    let request_id = RequestId(101);
+    state.navigate(Location::uri("search://song"), request_id);
+    state.apply_snapshot(request_id, vec![track_entry("song.flac", Some(1), Some(1))]);
+    assert_eq!(state.set_notice(RequestId(100), Some("stale".into())), None);
+    assert_eq!(state.set_notice(request_id, Some("Partial index".into())), Some(0));
+    state.finish(request_id);
+    assert_eq!(state.columns[0].load_state, LoadState::Ready);
+    assert_eq!(state.columns[0].notice.as_deref(), Some("Partial index"));
+    state.reload_column(0, RequestId(102));
+    assert!(state.columns[0].notice.is_none());
+    assert_eq!(state.set_notice(request_id, Some("stale".into())), None);
+}
+
+#[test]
 fn restarted_streams_preserve_selection_until_fresh_entries_arrive() {
     let mut state = NavigationState::default();
     let request = RequestId(101);

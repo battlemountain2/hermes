@@ -876,7 +876,7 @@ fn measure(
             DirectoryEvent::Restarted { .. } => received.borrow_mut().clear(),
             DirectoryEvent::Finished { .. } => complete_emit.set(Some(started.elapsed())),
             DirectoryEvent::Failed { message, .. } => panic!("{message}"),
-            DirectoryEvent::MusicMetadata { .. } => {}
+            DirectoryEvent::MusicMetadata { .. } | DirectoryEvent::Notice { .. } => {}
         }),
     );
     until(context, || complete.get().is_some());

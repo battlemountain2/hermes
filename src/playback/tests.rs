@@ -1,6 +1,246 @@
 use super::*;
 
 #[test]
+fn pcm_packets_have_sample_accurate_durations_including_split_tails() {
+    gst::init().unwrap();
+    for frames in [1, 480, 8192, 37] {
+        let buffer = pcm_buffer(0.5_f32.to_le_bytes().repeat(frames * 2));
+        assert_eq!(buffer.size(), frames * 8);
+        assert_eq!(
+            buffer.duration(),
+            Some(gst::ClockTime::from_nseconds(
+                frames as u64 * 1_000_000_000 / 48_000
+            ))
+        );
+        assert_eq!(buffer.pts(), None);
+        assert!(!buffer.flags().contains(gst::BufferFlags::GAP));
+    }
+}
+
+#[test]
+#[ignore = "Explicit short video fixture and built sandbox worker; paused/muted output"]
+fn isolated_short_video_plays_to_end_and_replays_with_audio() {
+    let path = std::env::var_os("HERMES_STREAM_TEST_FILE").expect("Explicit short video path");
+    let session = Session::start(Path::new(&path)).unwrap();
+    session.set_volume(true, 0.0);
+    let start = Instant::now();
+    let mut duration = 0;
+    let mut frame_seen = false;
+    while duration == 0 || !frame_seen {
+        let updates = session.take_updates();
+        assert!(updates.error.is_none(), "{:?}", updates.error);
+        if let Some((length, audio, video, seekable)) = updates.prepared {
+            assert!(audio && video && seekable);
+            assert!(length > 0 && length < 15_000_000, "Use a short fixture");
+            duration = length;
+        }
+        frame_seen |= updates.frame.is_some();
+        assert!(start.elapsed() < Duration::from_secs(12));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for replay in [false, true] {
+        if replay {
+            assert!(session.seek(0));
+            let start = Instant::now();
+            loop {
+                let updates = session.take_updates();
+                assert!(updates.error.is_none(), "{:?}", updates.error);
+                if let Some(success) = updates.seeked {
+                    assert!(success);
+                    break;
+                }
+                assert!(start.elapsed() < Duration::from_secs(12));
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        assert!(session.play());
+        let start = Instant::now();
+        let mut advanced = false;
+        loop {
+            let updates = session.take_updates();
+            assert!(updates.error.is_none(), "{:?}", updates.error);
+            advanced |= updates
+                .position
+                .is_some_and(|position| position > duration / 2);
+            if updates.ended {
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_micros(duration as u64) + Duration::from_secs(8)
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(advanced);
+    }
+    session.stop();
+}
+
+#[test]
+#[ignore = "Private GStreamer registry/plugins; generated 4K color bars only"]
+fn generated_early_video_scaling_preserves_preview_colors() {
+    let root = std::path::PathBuf::from(std::env::var_os("HERMES_PREVIEW_PROBE").unwrap());
+    assert!(
+        std::path::PathBuf::from(std::env::var_os("XDG_CACHE_HOME").unwrap()).starts_with(root)
+    );
+    gst::init().unwrap();
+    let sample = |transforms: &str| {
+        let description = format!(
+            "videotestsrc num-buffers=1 pattern=smpte ! video/x-raw,format=I420,width=3840,height=2160,framerate=60/1,colorimetry=bt709 ! {transforms} ! video/x-raw,format=RGBA,width=1280,height=720,framerate=30/1,pixel-aspect-ratio=1/1 ! appsink name=frames"
+        );
+        let pipeline = gst::parse::launch(&description)
+            .unwrap()
+            .downcast::<gst::Pipeline>()
+            .unwrap();
+        let sink = pipeline
+            .by_name("frames")
+            .unwrap()
+            .downcast::<app::AppSink>()
+            .unwrap();
+        pipeline.set_state(gst::State::Paused).unwrap();
+        let sample = sink
+            .try_pull_preroll(gst::ClockTime::from_seconds(5))
+            .unwrap();
+        let info = gstreamer_video::VideoInfo::from_caps(sample.caps().unwrap()).unwrap();
+        assert_eq!((info.width(), info.height()), (1280, 720));
+        let bytes = sample
+            .buffer()
+            .unwrap()
+            .map_readable()
+            .unwrap()
+            .as_slice()
+            .to_vec();
+        pipeline.set_state(gst::State::Null).unwrap();
+        bytes
+    };
+    let before = sample(
+        "videoflip video-direction=auto ! videoconvert ! videoscale ! videorate drop-only=true max-rate=30",
+    );
+    let after = sample(
+        "videorate drop-only=true max-rate=30 ! videoflip video-direction=auto ! videoscale ! videoconvert",
+    );
+    assert_eq!(before.len(), after.len());
+    let difference = before
+        .iter()
+        .zip(&after)
+        .map(|(before, after)| u64::from(before.abs_diff(*after)))
+        .sum::<u64>() as f64
+        / before.len() as f64;
+    eprintln!("4K scaling representative RGBA mean difference: {difference}");
+    assert!(difference < 4.0);
+    assert!(after.chunks_exact(4).all(|pixel| pixel[3] == 255));
+}
+
+#[test]
+#[ignore = "Explicit private generated heavy-video corpus, codecs and built helper"]
+fn generated_heavy_video_preroll_rotation_vfr_and_seek_remain_bounded() {
+    let root = std::path::PathBuf::from(std::env::var_os("HERMES_PREVIEW_PROBE").unwrap());
+    assert!(root.starts_with("/tmp"));
+    assert!(
+        std::path::PathBuf::from(std::env::var_os("XDG_CACHE_HOME").unwrap()).starts_with(&root)
+    );
+    if let Some(warmup) = warmup() {
+        warmup.join().unwrap().unwrap();
+    }
+    for name in ["h264-4k60.mov", "h264-portrait.mov", "hevc.mov", "vfr.mp4"] {
+        let started = Instant::now();
+        let session = Session::start(&root.join("fixtures").join(name)).unwrap();
+        session.set_volume(true, 0.0);
+        let mut duration = 0;
+        let mut frame = None;
+        while duration == 0 || frame.is_none() {
+            let updates = session.take_updates();
+            assert!(updates.error.is_none(), "{name}: {:?}", updates.error);
+            if let Some((length, _, video, seekable)) = updates.prepared {
+                assert!(video && seekable);
+                duration = length;
+            }
+            if let Some((_, width, height, pixels)) = updates.frame {
+                assert!(width > 0 && width <= 1280 && height > 0 && height <= 720);
+                assert_eq!(pixels.len(), width as usize * height as usize * 4);
+                assert!(pixels.chunks_exact(4).all(|pixel| pixel[3] == 255));
+                if name == "h264-portrait.mov" {
+                    assert!(height > width);
+                } else {
+                    assert!(width > height);
+                }
+                frame = Some((width, height));
+            }
+            assert!(started.elapsed() < Duration::from_secs(12));
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        eprintln!(
+            "Heavy video {name} first real frame {:?} in {:?}",
+            frame.unwrap(),
+            started.elapsed()
+        );
+        let target = duration / 2;
+        assert!(session.seek(target));
+        let started = Instant::now();
+        let mut seeked = false;
+        while !seeked {
+            let updates = session.take_updates();
+            assert!(updates.error.is_none(), "{name}: {:?}", updates.error);
+            if let Some(success) = updates.seeked {
+                assert!(success);
+                seeked = true;
+            }
+            assert!(started.elapsed() < Duration::from_secs(12));
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(session.play());
+        let started = Instant::now();
+        let mut ended = false;
+        while !ended {
+            let updates = session.take_updates();
+            assert!(updates.error.is_none(), "{name}: {:?}", updates.error);
+            ended = updates.ended;
+            assert!(started.elapsed() < Duration::from_secs(12));
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        session.stop();
+    }
+}
+
+#[test]
+#[ignore = "Requires an explicit private generated preview audit and a built helper"]
+fn generated_idle_warmup_leaves_playback_paused_and_reuses_the_registry() {
+    let root = std::path::PathBuf::from(std::env::var_os("HERMES_PREVIEW_PROBE").unwrap());
+    assert!(root.starts_with("/tmp"));
+    assert!(
+        root.file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("hermes-preview-audit.")
+    );
+    assert!(
+        std::path::PathBuf::from(std::env::var_os("XDG_CACHE_HOME").unwrap()).starts_with(&root)
+    );
+    let start = Instant::now();
+    warmup().unwrap().join().unwrap().unwrap();
+    let warm_time = start.elapsed();
+    assert!(warmup().is_none());
+    let start = Instant::now();
+    let session = Session::start(&root.join("fixtures/hevc.mov")).unwrap();
+    session.set_volume(true, 0.0);
+    let mut prepared = false;
+    let mut frame = false;
+    while !prepared || !frame {
+        let updates = session.take_updates();
+        assert!(updates.error.is_none(), "{:?}", updates.error);
+        prepared |= updates.prepared.is_some();
+        frame |= updates.frame.is_some();
+        assert!(start.elapsed() < Duration::from_secs(12));
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(!session.playing.load(Ordering::Acquire));
+    eprintln!(
+        "Idle registry warmup={warm_time:?}, first HEVC frame after warmup={:?}",
+        start.elapsed()
+    );
+    session.stop();
+}
+
+#[test]
 #[ignore = "Requires HERMES_AUDIO_TEST_FILE and a built sandbox worker"]
 fn isolated_audio_survives_startup_thread_exit() {
     let path = std::env::var_os("HERMES_AUDIO_TEST_FILE").expect("Audio fixture path");

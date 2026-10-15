@@ -4,6 +4,41 @@ use std::fs;
 
 use crate::services::{FormatFamily, classify_by_name};
 
+#[path = "tests/generated_probe.rs"]
+mod generated_probe;
+
+#[test]
+fn preview_values_keep_page_numbers_text_limits_and_render_sizes_separate() {
+    use crate::sandbox::ParseOperation;
+    for operation in [
+        ParseOperation::PreviewOffice,
+        ParseOperation::PreviewArchive,
+    ] {
+        assert_eq!(super::preview_operation_value(operation, 0, 1024), 1024);
+        assert_eq!(super::preview_operation_value(operation, 9, 8), 8);
+        assert_eq!(
+            super::preview_operation_value(operation, 9, usize::MAX),
+            crate::sandbox::MAX_OUTPUT_BYTES as i32
+        );
+    }
+    assert_eq!(
+        super::preview_operation_value(ParseOperation::PreviewPdf, 9, 1024),
+        9
+    );
+    assert_eq!(
+        super::preview_operation_value(ParseOperation::PreviewModel, 9, 1024),
+        800
+    );
+    assert_eq!(
+        super::preview_operation_value(ParseOperation::PreviewArchiveCover, 9, 1024),
+        1400
+    );
+    assert_eq!(
+        super::preview_operation_value(ParseOperation::PreviewImage, 9, 1024),
+        0
+    );
+}
+
 #[test]
 fn audio_preview_requests_metadata_instead_of_waveform_or_encoded_audio() {
     assert_eq!(

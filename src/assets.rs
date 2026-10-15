@@ -39,6 +39,8 @@ pub mod icons {
     pub const FOLDER: &str = "strata-folder";
     pub const FOLDER_FILLED: &str = "strata-folder-filled";
     pub const HARD_DRIVE: &str = "strata-hard-drive";
+    pub const HEART: &str = "strata-heart";
+    pub const HEART_SELECTED: &str = "strata-heart-selected";
     pub const INFO: &str = "strata-info";
     pub const FUNNEL: &str = "strata-funnel";
     pub const GRID: &str = "strata-grid";

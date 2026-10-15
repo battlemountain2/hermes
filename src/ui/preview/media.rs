@@ -545,7 +545,7 @@ fn update_status(
             } else if stream.is_ended() {
                 "Video finished · Press Play to replay"
             } else {
-                "Full-length playback"
+                ""
             });
         } else {
             status.set_text(&format!(
@@ -556,6 +556,7 @@ fn update_status(
     } else {
         status.set_text("Loading playback…");
     }
+    status.set_visible(!status.text().is_empty());
 }
 
 pub(super) fn format_time(microseconds: i64) -> String {

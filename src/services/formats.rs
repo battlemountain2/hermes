@@ -300,7 +300,7 @@ pub fn classify_by_name(name: &OsStr) -> FormatFamily {
         "svg" => FormatFamily::Svg,
 
         // Standard raster images
-        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "avif" => {
+        "png" | "jpg" | "jpeg" | "jpe" | "jfif" | "webp" | "gif" | "bmp" | "avif" => {
             FormatFamily::Image
         }
 
@@ -359,12 +359,12 @@ pub fn classify_by_name(name: &OsStr) -> FormatFamily {
 ///
 /// This is intentionally a standalone function rather than a method on
 /// [`FormatFamily`] because the set of thumbnailable extensions is smaller than
-/// the set of extensions in each family (e.g. AVIF is [`FormatFamily::Image`]
-/// but is not currently thumbnailed by the sandbox).
+/// the set of extensions in each family.
 pub fn thumbnail_handler_for_name(name: &OsStr) -> Option<ThumbnailHandler> {
     let extension = Path::new(name).extension()?.to_str()?.to_ascii_lowercase();
     match extension.as_str() {
-        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tif" | "tiff" => {
+        "png" | "jpg" | "jpeg" | "jpe" | "jfif" | "webp" | "gif" | "bmp" | "tif" | "tiff"
+        | "avif" | "svg" => {
             Some(ThumbnailHandler::Image)
         }
         "heic" | "heif" => Some(ThumbnailHandler::Heif),
@@ -374,7 +374,8 @@ pub fn thumbnail_handler_for_name(name: &OsStr) -> Option<ThumbnailHandler> {
         "pdf" => Some(ThumbnailHandler::Pdf),
         "stl" | "3mf" => Some(ThumbnailHandler::Model),
         "epub" | "cbz" | "cbr" => Some(ThumbnailHandler::Cover),
-        "flac" | "mp4" | "mkv" | "webm" | "mov" | "avi" | "m4v" | "mpeg" | "mpg" | "ogv" => {
+        "flac" | "mp3" | "ogg" | "opus" | "m4a" | "aac" | "wav" | "wma"
+        | "mp4" | "mkv" | "webm" | "mov" | "avi" | "m4v" | "mpeg" | "mpg" | "ogv" => {
             Some(ThumbnailHandler::Media)
         }
         _ => None,

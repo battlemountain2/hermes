@@ -113,7 +113,8 @@ impl PreviewProvider for LocalPreviewProvider {
                     });
                     return;
                 };
-                let value = request.pdf_page;
+                let value =
+                    preview_operation_value(operation, request.pdf_page, request.text_byte_limit);
                 let cancellation = cancellation_for_task.clone();
                 let result = gio::spawn_blocking(move || {
                     if operation == ParseOperation::PreviewAudioMetadata {
@@ -255,6 +256,22 @@ fn preview_operation(handler: PreviewHandler) -> Option<ParseOperation> {
         PreviewHandler::Model => Some(ParseOperation::PreviewModel),
         PreviewHandler::ArchiveCover => Some(ParseOperation::PreviewArchiveCover),
         PreviewHandler::Spreadsheet => Some(ParseOperation::PreviewSpreadsheet),
+    }
+}
+
+fn preview_operation_value(
+    operation: ParseOperation,
+    pdf_page: i32,
+    text_byte_limit: usize,
+) -> i32 {
+    match operation {
+        ParseOperation::PreviewPdf => pdf_page,
+        ParseOperation::PreviewArchive | ParseOperation::PreviewOffice => {
+            text_byte_limit.clamp(1, crate::sandbox::MAX_OUTPUT_BYTES as usize) as i32
+        }
+        ParseOperation::PreviewModel => 800,
+        ParseOperation::PreviewArchiveCover => 1400,
+        _ => 0,
     }
 }
 

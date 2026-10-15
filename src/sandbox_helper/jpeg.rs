@@ -4,6 +4,136 @@ use gdk_pixbuf::{Pixbuf, PixbufLoader, PixbufRotation, prelude::*};
 
 use super::sniff;
 
+pub(super) fn external_preview_safe(path: &Path) -> bool {
+    let Ok(input) = File::open(path) else {
+        return false;
+    };
+    let mut prefix = Vec::new();
+    input.take(128 * 1024).read_to_end(&mut prefix).is_ok()
+        && prefix.starts_with(&[0xff, 0xd8])
+        && native_frame_supported(&prefix)
+        && sniff::sniff_jpeg_dimensions(&prefix).is_some_and(|dimensions| {
+            dimensions.width > 0
+                && dimensions.height > 0
+                && u64::from(dimensions.width) * u64::from(dimensions.height)
+                    <= sniff::MAX_PIXELS_CEILING
+        })
+}
+
+pub(super) fn scaled_preview(path: &Path, size: i32) -> Option<Vec<u8>> {
+    if !sniff::is_jpeg(path) {
+        return None;
+    }
+    let mut input = File::open(path).ok()?;
+    if input.metadata().ok()?.len() > 128 * 1024 * 1024 {
+        return None;
+    }
+    let mut prefix = Vec::new();
+    (&mut input)
+        .take(128 * 1024)
+        .read_to_end(&mut prefix)
+        .ok()?;
+    if !native_frame_supported(&prefix) {
+        return None;
+    }
+    let dimensions = sniff::sniff_jpeg_dimensions(&prefix)?;
+    if sniff::exceeds_decoded_frame_budget(dimensions.width, dimensions.height) {
+        return None;
+    }
+    let scale =
+        (f64::from(size.max(1)) / f64::from(dimensions.width.max(dimensions.height))).min(1.0);
+    let target = (
+        (f64::from(dimensions.width) * scale).round().max(1.0) as i32,
+        (f64::from(dimensions.height) * scale).round().max(1.0) as i32,
+    );
+    let primary_orientation = match exif(&prefix) {
+        Some(tiff) => {
+            let primary = directory(tiff, number(tiff, 4, 4)?)?;
+            orientation(tiff, primary.0, primary.1)?
+        }
+        None => 1,
+    };
+    let loader = PixbufLoader::with_type("jpeg").ok()?;
+    loader.set_size(target.0, target.1);
+    loader.write(&prefix).ok()?;
+    let mut chunk = [0; 64 * 1024];
+    loop {
+        let count = input.read(&mut chunk).ok()?;
+        if count == 0 {
+            break;
+        }
+        loader.write(&chunk[..count]).ok()?;
+    }
+    loader.close().ok()?;
+    let pixels = loader.pixbuf()?;
+    let primary_orientation = match pixels.option("orientation") {
+        Some(value) => {
+            let orientation = value.parse::<u16>().ok()?;
+            if !(1..=8).contains(&orientation) {
+                return None;
+            }
+            orientation
+        }
+        None => primary_orientation,
+    };
+    let pixels = pixels.apply_embedded_orientation().unwrap_or(pixels);
+    let profile = pixels.option("icc-profile");
+    let target = if (5..=8).contains(&primary_orientation) {
+        (target.1, target.0)
+    } else {
+        target
+    };
+    let pixels = if (pixels.width(), pixels.height()) != target {
+        pixels.scale_simple(target.0, target.1, gdk_pixbuf::InterpType::Hyper)?
+    } else {
+        pixels
+    };
+    let mut options = vec![("compression", "1")];
+    if let Some(profile) = profile.as_ref() {
+        options.push(("icc-profile", profile.as_str()));
+    }
+    pixels.save_to_bufferv("png", &options).ok()
+}
+
+fn native_frame_supported(data: &[u8]) -> bool {
+    let mut offset = 2;
+    while offset + 4 <= data.len() {
+        if data[offset] != 0xff {
+            return false;
+        }
+        while data.get(offset) == Some(&0xff) {
+            offset += 1;
+        }
+        let Some(&marker) = data.get(offset) else {
+            return false;
+        };
+        offset += 1;
+        if marker == 0xda || marker == 0xd9 {
+            return false;
+        }
+        if marker == 0x01 || (0xd0..=0xd8).contains(&marker) {
+            continue;
+        }
+        let Some(length) = data.get(offset..offset + 2) else {
+            return false;
+        };
+        let length = usize::from(u16::from_be_bytes([length[0], length[1]]));
+        if length < 2 {
+            return false;
+        }
+        let Some(segment) = data.get(offset + 2..offset + length) else {
+            return false;
+        };
+        if matches!(marker, 0xc0 | 0xc2) {
+            return segment.first() == Some(&8)
+                && segment.get(5) == Some(&3)
+                && segment.len() == 6 + usize::from(segment[5]) * 3;
+        }
+        offset += length;
+    }
+    false
+}
+
 pub(super) fn thumbnail(path: &Path, size: i32) -> Option<Vec<u8>> {
     if !sniff::is_jpeg(path) {
         return None;
@@ -157,4 +287,4 @@ fn orient(pixels: &Pixbuf, orientation: u16) -> Option<Pixbuf> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

@@ -181,6 +181,7 @@ fn desktop_application_shared_controller_multiview_shutdown_and_restore() {
         assert_eq!(controller.snapshot().track_id, id);
         assert_eq!(controller.stream.borrow().as_ref().unwrap(), &stream);
         second.state.volume.set_value(0.2);
+        pump(&first, || first.state.volume.value() == 0.2);
         assert_eq!(first.state.volume.value(), 0.2);
         controller.set_volume(0.0);
         let revision = controller.seek_revision();
@@ -453,6 +454,158 @@ fn controller_settings_and_stale_remote_position_are_validated() {
         .unwrap();
     assert_eq!(controller.position(), 0);
     assert!(controller.stream.borrow().is_none());
+}
+
+#[test]
+fn volume_motion_coalesces_notifications_and_defers_queue_capture() {
+    use crate::mpris::Backend;
+    let controller = stopped_controller();
+    let calls = Rc::new(Cell::new(0));
+    let observed = calls.clone();
+    let callback: Rc<dyn Fn()> = Rc::new(move || observed.set(observed.get() + 1));
+    controller.observe(&callback);
+    let queue = controller.queue.borrow_mut();
+    for index in 0..10_000 {
+        controller.set_volume(f64::from(index % 100) / 100.0);
+    }
+    controller.set_volume(0.23);
+    assert_eq!(calls.get(), 0);
+    assert!(controller.session_revision.get() > 0);
+    drop(queue);
+    assert_eq!(controller.snapshot().volume, 0.23);
+    assert!(controller.flush_volume_changes());
+    controller.notify();
+    assert_eq!(calls.get(), 1);
+    assert!(!controller.flush_volume_changes());
+    controller.set_volume(0.23);
+    controller.set_volume(f64::NAN);
+    assert!(!controller.flush_volume_changes());
+    assert_eq!(controller.snapshot().volume, 0.23);
+}
+
+#[test]
+fn debounced_volume_save_and_shutdown_capture_the_newest_value() {
+    let folder = std::env::temp_dir().join(format!(
+        "hermes-volume-save-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("queue.json");
+    let controller = Controller::new(Some(&path));
+    controller.set_volume(0.42);
+    assert!(controller.flush_volume_changes());
+    assert!(controller.volume_save_pending.get().is_some());
+    assert!(!path.exists());
+    controller
+        .volume_save_pending
+        .set(Some(std::time::Instant::now() - Duration::from_millis(300)));
+    assert!(!controller.flush_volume_changes());
+    assert!(controller.volume_save_pending.get().is_none());
+    if let Some(mut store) = controller.session_store.borrow_mut().take() {
+        store.finish();
+    }
+    let saved = crate::music::session::load(&path).unwrap().unwrap();
+    assert_eq!(saved.volume, 0.42);
+    controller
+        .session_store
+        .replace(Some(crate::music::session::Store::new(path.clone())));
+    controller.set_volume(0.17);
+    controller.shutdown();
+    assert_eq!(
+        crate::music::session::load(&path).unwrap().unwrap().volume,
+        0.17
+    );
+    controller.set_volume(0.99);
+    assert_eq!(controller.volume(), 0.17);
+    assert!(controller.volume_save_pending.get().is_none());
+    assert!(!controller.volume_notify_pending.get());
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+#[ignore = "Requires private GTK display, FFmpeg and a built worker; generated silent WAV only"]
+fn desktop_music_volume_motion_keeps_latest_native_multiview_and_remote_value() {
+    use crate::mpris::{Backend, Command};
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let folder = std::env::temp_dir().join(format!("hermes-volume-ui-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("silent.wav");
+    assert!(
+        std::process::Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-nostdin",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=48000:cl=stereo",
+                "-t",
+                "2",
+            ])
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let session_path = folder.join("queue.json");
+    let controller = Controller::with_session(Some(session_path.clone()));
+    let first = MusicPlayer::with_controller(controller.clone());
+    let second = MusicPlayer::with_controller(controller.clone());
+    let window = gtk::Window::builder().child(&first.bar()).build();
+    window.present();
+    controller.set_volume(0.0);
+    controller.replace(
+        vec![Track {
+            path,
+            tags: Default::default(),
+        }],
+        0,
+    );
+    let stream = controller.stream.borrow().clone().unwrap();
+    pump(&first, || stream.is_prepared());
+    controller.pause();
+    let calls = Rc::new(Cell::new(0));
+    let observed = calls.clone();
+    let callback: Rc<dyn Fn()> = Rc::new(move || observed.set(observed.get() + 1));
+    controller.observe(&callback);
+    let queue = controller.queue.borrow_mut();
+    for index in 0..10_000 {
+        first.state.volume.set_value(f64::from(index % 100) / 100.0);
+    }
+    first.state.volume.set_value(0.31);
+    assert_eq!(calls.get(), 0);
+    assert_eq!(controller.volume(), 0.31);
+    assert_eq!(stream.volume(), 0.31);
+    drop(queue);
+    stream.set_muted(true);
+    controller.command(Command::SetVolume(0.19)).unwrap();
+    assert_eq!(controller.snapshot().volume, 0.19);
+    assert!(stream.is_muted());
+    stream.set_muted(false);
+    pump(&first, || second.state.volume.value() == 0.19);
+    assert_eq!(first.state.volume.value(), 0.19);
+    assert!(!stream.is_muted());
+    assert_eq!(stream.volume(), 0.19);
+    assert!(!stream.is_playing());
+    assert_eq!(controller.stream.borrow().as_ref(), Some(&stream));
+    assert!(calls.get() < 5);
+    first.state.volume.set_value(0.11);
+    controller.shutdown();
+    assert_eq!(
+        crate::music::session::load(&session_path)
+            .unwrap()
+            .unwrap()
+            .volume,
+        0.11
+    );
+    window.close();
+    first.dispose_view();
+    second.dispose_view();
+    std::fs::remove_dir_all(folder).unwrap();
 }
 
 #[test]

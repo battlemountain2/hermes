@@ -15,7 +15,120 @@ fn invalid_input_is_rejected_without_decoding() {
     let path = std::env::temp_dir().join(format!("hermes-invalid-heif-{}", std::process::id()));
     std::fs::write(&path, b"not a HEIF image").unwrap();
     assert!(thumbnail(&path, 256).is_err());
+    assert!(preview(&path, 1400).is_err());
+    assert!(!external_preview_safe(&path, 1400));
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn native_preview_defers_hdr_and_wide_gamut_profiles_to_the_existing_renderer() {
+    use libheif_rs::{ColorPrimaries, TransferCharacteristics};
+    assert!(native_color_profile(
+        ColorPrimaries::ITU_R_BT_709_5,
+        TransferCharacteristics::IEC_61966_2_1
+    ));
+    assert!(!native_color_profile(
+        ColorPrimaries::ITU_R_BT_709_5,
+        TransferCharacteristics::ITU_R_BT_2100_0_PQ
+    ));
+    assert!(!native_color_profile(
+        ColorPrimaries::SMPTE_EG_432_1,
+        TransferCharacteristics::IEC_61966_2_1
+    ));
+}
+
+#[test]
+#[ignore = "Generated native HEIF benchmark requires HEVC codecs, ImageMagick, bubblewrap and built helper"]
+fn generated_native_heif_preview_preserves_orientation_and_uses_primary_image() {
+    use gdk_pixbuf::prelude::*;
+    let directory = crate::sandbox::browser::format_tests::FixtureDirectory::new();
+    let decoder = LibHeif::new_checked().unwrap();
+    let mut encoder = decoder
+        .encoder_for_format(libheif_rs::CompressionFormat::Hevc)
+        .unwrap();
+    encoder
+        .set_quality(libheif_rs::EncoderQuality::Lossy(90))
+        .unwrap();
+    let mut image = libheif_rs::Image::new(1600, 1200, ColorSpace::Rgb(RgbChroma::Rgb)).unwrap();
+    image
+        .create_plane(libheif_rs::Channel::Interleaved, 1600, 1200, 8)
+        .unwrap();
+    let plane = image.planes_mut().interleaved.unwrap();
+    for vertical in 0..1200usize {
+        for horizontal in 0..1600usize {
+            let offset = vertical * plane.stride + horizontal * 3;
+            plane.data[offset..offset + 3].copy_from_slice(if horizontal < 800 {
+                &[220, 30, 60]
+            } else {
+                &[30, 220, 60]
+            });
+        }
+    }
+    let mut options = libheif_rs::EncodingOptions::new().unwrap();
+    options.set_image_orientation(libheif_rs::ImageOrientation::Rotate90Cw);
+    let mut context = HeifContext::new().unwrap();
+    context
+        .encode_image(&image, &mut encoder, Some(options))
+        .unwrap();
+    let path = directory.0.join("primary.heic");
+    context.write_to_file(path.to_str().unwrap()).unwrap();
+    let expected = preview(&path, 1400).unwrap();
+    assert!(external_preview_safe(&path, 1400));
+    let pooled = crate::sandbox::parse(
+        &path,
+        crate::sandbox::ParseOperation::PreviewHeif,
+        1400,
+        &crate::sandbox::Cancellation::default(),
+    )
+    .unwrap();
+    assert_eq!(pooled.data, expected);
+    let one_shot = crate::sandbox::parse_one_shot_with_executable(
+        &path,
+        crate::sandbox::ParseOperation::PreviewHeif,
+        1400,
+        &crate::sandbox::Cancellation::default(),
+        &crate::sandbox::helper_executable().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(one_shot.data, expected);
+    for _ in 0..3 {
+        let started = std::time::Instant::now();
+        let native = preview(&path, 1400).unwrap();
+        let native_time = started.elapsed();
+        let started = std::time::Instant::now();
+        let old = super::super::render_imagemagick(&path, 1400).unwrap();
+        eprintln!(
+            "Native HEIF primary: {native_time:?}, previous={:?}",
+            started.elapsed()
+        );
+        let decode = |data: &[u8]| {
+            let loader = gdk_pixbuf::PixbufLoader::new();
+            loader.write(data).unwrap();
+            loader.close().unwrap();
+            loader.pixbuf().unwrap()
+        };
+        let native = decode(&native);
+        let old = decode(&old);
+        assert_eq!((native.width(), native.height()), (1050, 1400));
+        assert_eq!(
+            (native.width(), native.height()),
+            (old.width(), old.height())
+        );
+        let native_bytes = native.read_pixel_bytes();
+        let old_bytes = old.read_pixel_bytes();
+        for (horizontal, vertical) in [(262, 350), (788, 1050)] {
+            let native_offset =
+                vertical * native.rowstride() as usize + horizontal * native.n_channels() as usize;
+            let old_offset =
+                vertical * old.rowstride() as usize + horizontal * old.n_channels() as usize;
+            for channel in 0..3 {
+                assert!(
+                    native_bytes[native_offset + channel].abs_diff(old_bytes[old_offset + channel])
+                        <= 8
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -61,6 +174,8 @@ fn generated_embedded_heif_thumbnail_orientation_fallback_and_cache() {
     std::fs::create_dir_all(&directory).unwrap();
     let path = directory.join("generated.heic");
     context.write_to_file(path.to_str().unwrap()).unwrap();
+    assert!(external_preview_safe(&path, 1400));
+    assert!(!external_preview_safe(&path, 256));
     drop(context);
     let mut direct_times = Vec::new();
     let mut fallback_times = Vec::new();

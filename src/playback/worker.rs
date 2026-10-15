@@ -11,7 +11,7 @@ use gstreamer::{self as gst, prelude::*};
 use gstreamer_app as app;
 use gstreamer_video as video;
 
-use super::wire::{Command, Event, write_event};
+use super::wire::{Command, Event, MAX_AUDIO, write_event};
 
 pub(crate) fn report_error(message: &str) {
     let message = message.chars().take(500).collect();
@@ -24,7 +24,7 @@ pub(crate) fn run() -> Result<(), String> {
     let epoch = Arc::new(AtomicU64::new(0));
     let preroll_epoch = Arc::new(AtomicU64::new(0));
     let video_bin = gst::parse::bin_from_description(
-        "videoflip video-direction=auto ! videoconvert ! videoscale ! videorate drop-only=true max-rate=30 ! video/x-raw,format=RGBA,width=[1,1280],height=[1,720],framerate=[0/1,30/1],pixel-aspect-ratio=1/1 ! appsink name=frames sync=true max-buffers=2 drop=true enable-last-sample=false", true)
+        "videorate drop-only=true max-rate=30 ! videoflip video-direction=auto ! videoscale ! videoconvert ! video/x-raw,format=RGBA,width=[1,1280],height=[1,720],framerate=[0/1,30/1],pixel-aspect-ratio=1/1 ! appsink name=frames sync=true max-buffers=2 drop=true enable-last-sample=false", true)
         .map_err(|error| error.to_string())?;
     let frames = video_bin
         .by_name("frames")
@@ -87,11 +87,17 @@ pub(crate) fn run() -> Result<(), String> {
                 let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
                 let buffer = sample.buffer().ok_or(gst::FlowError::Error)?;
                 let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
-                let event = Event::Audio {
-                    epoch: audio_epoch.load(Ordering::Acquire),
-                };
-                write_event(&mut *audio_output.lock().unwrap(), &event, map.as_slice())
-                    .map_err(|_| gst::FlowError::Error)?;
+                let mut writer = audio_output.lock().unwrap();
+                write_audio(
+                    &mut *writer,
+                    audio_epoch.load(Ordering::Acquire),
+                    map.as_slice(),
+                )
+                .map_err(|error| {
+                    let message = format!("Audio transport rejected {} bytes: {error}", map.len());
+                    let _sent = write_event(&mut *writer, &Event::Error { message }, &[]);
+                    gst::FlowError::Error
+                })?;
                 Ok(gst::FlowSuccess::Ok)
             })
             .build(),
@@ -383,3 +389,19 @@ fn send_frame(
     .map_err(|_| gst::FlowError::Error)?;
     Ok(gst::FlowSuccess::Ok)
 }
+
+fn write_audio(writer: &mut impl io::Write, epoch: u64, data: &[u8]) -> io::Result<()> {
+    if !data.len().is_multiple_of(8) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Unaligned stereo PCM",
+        ));
+    }
+    for chunk in data.chunks(MAX_AUDIO) {
+        write_event(writer, &Event::Audio { epoch }, chunk)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;

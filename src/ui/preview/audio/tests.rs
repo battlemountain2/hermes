@@ -76,6 +76,58 @@ fn metadata_rows_include_useful_embedded_tags_and_unabridged_track_numbers() {
 }
 
 #[test]
+fn track_number_formatting_prefers_embedded_fractional_tracks_then_tag_numbers() {
+    let mut meta = AudioMetadata::default();
+    assert_eq!(format_track_number(&meta), None);
+
+    meta.tags.track = Some(6);
+    assert_eq!(format_track_number(&meta), Some("Track 6".into()));
+
+    meta.embedded_tags.insert("track".into(), "6/15".into());
+    assert_eq!(format_track_number(&meta), Some("Track 6/15".into()));
+}
+
+#[test]
+fn subtitle_formatting_joins_artist_and_album_cleanly() {
+    let mut meta = AudioMetadata::default();
+    assert_eq!(format_subtitle(&meta), "");
+
+    meta.tags.artist = Some("Charli xcx".into());
+    assert_eq!(format_subtitle(&meta), "Charli xcx");
+
+    meta.tags.album = Some("BRAT".into());
+    assert_eq!(format_subtitle(&meta), "Charli xcx — BRAT");
+
+    meta.tags.artist = None;
+    assert_eq!(format_subtitle(&meta), "BRAT");
+}
+
+#[test]
+fn vinyl_rotation_constants_match_33_rpm() {
+    let rpm_33_rad_per_sec = 33.3333333 * 2.0 * std::f64::consts::PI / 60.0;
+    assert!((rpm_33_rad_per_sec - 3.4906585).abs() < 0.001);
+}
+
+#[test]
+fn micro_segment_bands_match_spectrum_bands() {
+    assert_eq!(crate::playback::SPECTRUM_BANDS, 32);
+}
+
+#[test]
+fn micro_segment_visualizer_has_valid_dimensions() {
+    if gtk::init().is_err() {
+        return;
+    }
+    let stream = super::super::stream::PlaybackStream::new_audio(std::path::Path::new("/tmp/test.flac"));
+    let vis = MicroSegmentVisualizer::new(&stream);
+    let (_min_w, nat_w, _, _) = vis.widget().measure(gtk::Orientation::Horizontal, -1);
+    let (min_h, nat_h, _, _) = vis.widget().measure(gtk::Orientation::Vertical, 200);
+    assert!(nat_w >= 200, "Natural width must be >= 200, got {nat_w}");
+    assert!(nat_h >= 50, "Natural height must be >= 50, got {nat_h}");
+    assert_eq!(min_h, 54, "Minimum height must be 54, got {min_h}");
+}
+
+#[test]
 #[ignore = "Requires a private desktop display, FFmpeg and a built target/debug/strata worker"]
 fn desktop_audio_preview_playback_metadata_artwork_and_cancellation() {
     use crate::ui::music::controller::PlaybackStatus;

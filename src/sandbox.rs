@@ -320,6 +320,7 @@ fn sandbox_command(
     operation: ParseOperation,
     value: i32,
 ) -> Command {
+    let input_path = sandbox_input_path(input);
     let mut command = Command::new("bwrap");
     command.args([
         "--unshare-all",
@@ -369,7 +370,7 @@ fn sandbox_command(
         "--ro-bind",
     ]);
     command.arg(executable).arg("/app/strata");
-    command.arg("--ro-bind").arg(input).arg("/input");
+    command.arg("--ro-bind").arg(input).arg(&input_path);
     command.arg("--bind").arg(output).arg("/output");
     command.args([
         "--",
@@ -381,11 +382,24 @@ fn sandbox_command(
         "/app/strata",
         "--preview-helper",
         operation.argument(),
-        "/input",
+        &input_path,
     ]);
     command.arg(format!("/output/{}", operation.output_name()));
     command.arg(value.to_string());
     command
+}
+
+fn sandbox_input_path(input: &Path) -> String {
+    match input.extension().and_then(|extension| extension.to_str()) {
+        Some(extension)
+            if !extension.is_empty()
+                && extension.len() <= 16
+                && extension.bytes().all(|character| character.is_ascii_alphanumeric()) =>
+        {
+            format!("/input.{}", extension.to_ascii_lowercase())
+        }
+        _ => "/input".to_owned(),
+    }
 }
 
 fn terminate(child: &mut std::process::Child) {

@@ -56,6 +56,217 @@ fn identity() -> SourceIdentity {
     }
 }
 
+pub(in crate::ui) fn cache_fixture(path: &Path, bytes: glib::Bytes) {
+    let identity = SourceIdentity::read(path).unwrap();
+    THUMBNAIL_CACHE.with(|cache| {
+        cache.borrow_mut().insert(
+            ThumbnailKey {
+                path: path.to_owned(),
+                source_path: path.to_owned(),
+                identity,
+                source_identity: identity,
+                thumbnail_size: 256,
+            },
+            bytes,
+        )
+    });
+}
+
+#[test]
+fn preview_cache_only_reuses_the_requested_file_not_adjacent_album_art() {
+    let mut cache = ThumbnailCache::default();
+    let path = PathBuf::from("/generated/track.flac");
+    let mut key = ThumbnailKey {
+        path: path.clone(),
+        source_path: PathBuf::from("/generated/cover.jpg"),
+        identity: identity(),
+        source_identity: identity(),
+        thumbnail_size: 256,
+    };
+    cache.insert(key.clone(), glib::Bytes::from_static(b"cover"));
+    assert!(cache.preview(&path).is_none());
+    key.source_path = path.clone();
+    cache.insert(key, glib::Bytes::from_static(b"same file"));
+    assert_eq!(cache.preview(&path).unwrap().1.as_ref(), b"same file");
+    assert!(cache.preview(Path::new("/generated/other.flac")).is_none());
+}
+
+#[test]
+fn audio_thumbnails_prefer_embedded_art_then_track_identity_checked_folder_covers() {
+    let fixture = Fixture::new();
+    let path = fixture.write("track.MP3", b"generated audio placeholder");
+    let cover = fixture.write("cover.jpg", b"generated cover placeholder");
+    let initial = source(&path, ThumbnailKind::AudioAlbum, None);
+    let mut calls = Vec::new();
+    let (fallback, bytes) = super::render_thumbnail_with_cover(
+        initial,
+        ThumbnailKind::AudioAlbum,
+        &Cancellation::default(),
+        |path, operation, _, _| {
+            calls.push((path.to_owned(), operation));
+            if operation == ParseOperation::ThumbnailVideo {
+                Err("No embedded art".into())
+            } else {
+                Ok(vec![1, 2, 3])
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        calls,
+        vec![
+            (path.clone(), ParseOperation::ThumbnailVideo),
+            (cover.clone(), ParseOperation::ThumbnailImage)
+        ]
+    );
+    assert_eq!(bytes, vec![1, 2, 3]);
+    assert_eq!(fallback.key.path, path);
+    assert_eq!(fallback.key.source_path, cover);
+    let reused = source(&path, ThumbnailKind::AudioAlbum, Some(&fallback.key));
+    assert_eq!(reused.key, fallback.key);
+    fixture.write("cover.jpg", b"edited cover placeholder");
+    assert!(!fallback.unchanged());
+    let refreshed = source(&path, ThumbnailKind::AudioAlbum, Some(&fallback.key));
+    assert_ne!(refreshed.key.source_identity, fallback.key.source_identity);
+    fixture.write("track.MP3", b"new Picard tags and embedded artwork");
+    let edited = source(&path, ThumbnailKind::AudioAlbum, Some(&fallback.key));
+    assert_eq!(edited.key.source_path, path);
+    let (embedded, _) = super::render_thumbnail_with_cover(
+        edited,
+        ThumbnailKind::AudioAlbum,
+        &Cancellation::default(),
+        |_, operation, _, _| {
+            assert_eq!(operation, ParseOperation::ThumbnailVideo);
+            Ok(vec![4])
+        },
+    )
+    .unwrap();
+    assert_eq!(embedded.key.source_path, path);
+}
+
+#[test]
+fn cancelled_or_replaced_audio_never_falls_back_to_an_album_cover() {
+    let fixture = Fixture::new();
+    let path = fixture.write("track.mp3", b"audio");
+    fixture.write("cover.png", b"cover");
+    let cancellation = Cancellation::default();
+    let initial = source(&path, ThumbnailKind::AudioAlbum, None);
+    let result = super::render_thumbnail_with_cover(
+        initial,
+        ThumbnailKind::AudioAlbum,
+        &cancellation,
+        |_, operation, _, cancellation| {
+            assert_eq!(operation, ParseOperation::ThumbnailVideo);
+            cancellation.cancel();
+            Err("Cancelled".into())
+        },
+    );
+    assert!(result.is_err());
+    let initial = source(&path, ThumbnailKind::AudioAlbum, None);
+    assert!(
+        super::render_thumbnail_with_cover(
+            initial,
+            ThumbnailKind::AudioAlbum,
+            &Cancellation::default(),
+            |_, operation, _, _| {
+                assert_eq!(operation, ParseOperation::ThumbnailVideo);
+                std::fs::write(&path, b"replaced audio").unwrap();
+                Err("Changed".into())
+            }
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn audio_formats_can_request_artwork_even_without_flac_files() {
+    for extension in ["mp3", "flac", "m4a", "ogg", "opus", "aac", "wav", "wma"] {
+        assert_eq!(
+            thumbnail_handler_for_name(std::ffi::OsStr::new(&format!("track.{extension}"))),
+            Some(crate::services::ThumbnailHandler::Media)
+        );
+    }
+    let fixture = Fixture::new();
+    let path = fixture.write("track.mp3", b"audio placeholder");
+    assert_eq!(folder_album_art(&fixture.0).unwrap().0, path);
+}
+
+#[test]
+#[ignore = "Requires FFmpeg, image loaders, bubblewrap and built worker; generated artwork only"]
+fn generated_mp3_tracks_decode_embedded_art_and_adjacent_cover_fallback() {
+    use gtk::gdk_pixbuf::prelude::*;
+    let fixture = Fixture::new();
+    let cover = fixture.0.join("cover.png");
+    let image =
+        gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, false, 8, 320, 320).unwrap();
+    image.fill(0xd02040ff);
+    image.savev(&cover, "png", &[]).unwrap();
+    let plain = fixture.0.join("plain.mp3");
+    let embedded = fixture.0.join("embedded.mp3");
+    for path in [&plain, &embedded] {
+        let mut command = std::process::Command::new("ffmpeg");
+        command.args([
+            "-v",
+            "error",
+            "-nostdin",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=1",
+        ]);
+        if path == &embedded {
+            command.arg("-i").arg(&cover).args([
+                "-map",
+                "0:a",
+                "-map",
+                "1:v",
+                "-c:v",
+                "png",
+                "-disposition:v",
+                "attached_pic",
+                "-id3v2_version",
+                "3",
+            ]);
+        }
+        assert!(
+            command
+                .args(["-c:a", "libmp3lame", "-threads", "1"])
+                .arg(path)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    for path in [&embedded, &plain] {
+        let source = source(path, ThumbnailKind::AudioAlbum, None);
+        let (result, bytes) = super::render_thumbnail_with_cover(
+            source,
+            ThumbnailKind::AudioAlbum,
+            &Cancellation::default(),
+            |path, operation, size, cancellation| {
+                crate::sandbox::parse(path, operation, size, cancellation).map(|output| output.data)
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            result.key.source_path,
+            if path == &embedded {
+                embedded.clone()
+            } else {
+                cover.clone()
+            }
+        );
+        let loader = gtk::gdk_pixbuf::PixbufLoader::new();
+        loader.write(&bytes).unwrap();
+        loader.close().unwrap();
+        let pixels = loader.pixbuf().unwrap();
+        assert_eq!((pixels.width(), pixels.height()), (256, 256));
+        let decoded = pixels.read_pixel_bytes();
+        assert!(decoded[0] > 180 && decoded[1] < 80);
+    }
+}
+
 fn key(path: impl Into<PathBuf>) -> ThumbnailKey {
     let path = path.into();
     ThumbnailKey {
@@ -372,6 +583,7 @@ fn stale_cancelled_or_removed_bindings_never_paint_or_populate_the_cache() {
                 id: 2,
                 image: glib::WeakRef::new(),
                 cancellation: cancellation.clone(),
+                wake_handlers: Vec::new(),
             },
         );
     });
@@ -418,6 +630,7 @@ fn only_successfully_applied_current_results_enter_the_cache() {
                 id: 1,
                 image: glib::WeakRef::new(),
                 cancellation: cancellation.clone(),
+                wake_handlers: Vec::new(),
             },
         );
     });
@@ -504,4 +717,69 @@ fn rejects_files_without_a_thumbnail_provider() {
         thumbnail_handler_for_name(std::ffi::OsStr::new("no-extension")),
         None
     );
+}
+
+#[test]
+#[ignore = "Private GTK display, isolated cache and built worker; generated PNG only"]
+fn desktop_thumbnails_persist_and_reload_after_the_memory_cache_is_cleared() {
+    use gtk::prelude::*;
+    let root = PathBuf::from(std::env::var_os("HERMES_PREVIEW_PROBE").unwrap());
+    assert!(PathBuf::from(std::env::var_os("XDG_CACHE_HOME").unwrap()).starts_with(&root));
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let fixture = Fixture::new();
+    let pixels =
+        gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 256, 128).unwrap();
+    pixels.fill(0x3050d0ff);
+    let path = fixture.write("source.png", &pixels.save_to_bufferv("png", &[]).unwrap());
+    let entry = crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner {
+        location: crate::model::Location::local(&path),
+        native_name: path.file_name().unwrap().to_owned(),
+        display_name: "source.png".into(),
+        kind: crate::model::EntryKind::File,
+        size: crate::model::MetadataValue::Unknown,
+        modified_unix_seconds: crate::model::MetadataValue::Unknown,
+        music_tags: None,
+    }));
+    let image = gtk::Image::new();
+    let window = gtk::Window::builder().child(&image).build();
+    window.present();
+    super::set_thumbnail_or_icon(&image, &entry, crate::assets::icons::DOCUMENTS, 32, 64);
+    let cache_file = super::disk::root().join(super::disk::filename(&path).unwrap());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(12);
+    while !cache_file.is_file() || image.paintable().is_none() {
+        assert!(std::time::Instant::now() < deadline);
+        for _ in 0..64 {
+            if !glib::MainContext::default().iteration(false) {
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    THUMBNAIL_CACHE.with(|cache| *cache.borrow_mut() = ThumbnailCache::default());
+    let original = image
+        .paintable()
+        .unwrap()
+        .downcast::<gtk::gdk::Texture>()
+        .unwrap();
+    let started = std::time::Instant::now();
+    let bytes = glib::MainContext::default()
+        .block_on(super::cached_preview_bytes(&path))
+        .unwrap();
+    eprintln!(
+        "Persistent preview after memory eviction: {:?}",
+        started.elapsed()
+    );
+    let reloaded = gtk::gdk::Texture::from_bytes(&bytes).unwrap();
+    assert_eq!(
+        (original.width(), original.height()),
+        (reloaded.width(), reloaded.height())
+    );
+    let download = |texture: &gtk::gdk::Texture| {
+        let mut reader = gtk::gdk::TextureDownloader::new(texture);
+        reader.set_format(gtk::gdk::MemoryFormat::R8g8b8a8);
+        reader.download_bytes().0
+    };
+    assert_eq!(download(&original), download(&reloaded));
+    window.close();
 }

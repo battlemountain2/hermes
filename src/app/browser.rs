@@ -26,6 +26,7 @@ pub struct BrowserColumnSnapshot {
     pub entries: Vec<FileEntry>,
     pub selected_positions: Vec<usize>,
     pub loading: bool,
+    pub notice: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -65,6 +66,10 @@ pub enum BrowserEvent {
     },
     LoadFinished {
         depth: usize,
+    },
+    LoadNotice {
+        depth: usize,
+        message: Option<String>,
     },
     LoadFailed {
         depth: usize,
@@ -625,6 +630,7 @@ impl Browser {
             entries: column.entries.clone(),
             selected_positions: state.selected_positions(depth),
             loading: column.load_state == crate::app::navigation::LoadState::Loading,
+            notice: column.notice.clone(),
         })
     }
 
@@ -1500,6 +1506,13 @@ impl Browser {
             }
             DirectoryEvent::MusicMetadata { request_id, entries } => {
                 self.refresh_music_order(request_id, &entries);
+            }
+            DirectoryEvent::Notice { request_id, message } => {
+                let mut state = self.state.borrow_mut();
+                if let Some(depth) = state.set_notice(request_id, message.clone()) {
+                    drop(state);
+                    self.emit(BrowserEvent::LoadNotice { depth, message });
+                }
             }
             DirectoryEvent::Finished { request_id } => {
                 self.refresh_music_order(request_id, &[]);

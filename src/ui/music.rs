@@ -15,11 +15,14 @@ use crate::{
     sandbox::Cancellation,
 };
 
+mod collections;
 mod context_menu;
 pub(crate) mod controller;
 mod queue;
 mod session;
 
+use crate::services::music_collections::{Command as CollectionCommand, Store as CollectionStore};
+use collections::{Group, Section};
 use controller::Controller;
 
 #[derive(Clone)]
@@ -55,6 +58,7 @@ struct State {
     disposed: Cell<bool>,
     scan: RefCell<Option<crate::music::library::Scan>>,
     library: RefCell<Vec<Track>>,
+    library_revision: Cell<u64>,
     albums: RefCell<Vec<Album>>,
     album_model: gtk::StringList,
     album_selection: gtk::SingleSelection,
@@ -78,6 +82,24 @@ struct State {
     play_album: gtk::Button,
     selected_actions: Vec<gtk::Button>,
     selection_options: gtk::MenuButton,
+    collection_store: CollectionStore,
+    collection_snapshot: RefCell<std::sync::Arc<crate::services::music_collections::Snapshot>>,
+    section: Cell<Section>,
+    navigation: Vec<(Section, gtk::ToggleButton)>,
+    album_scroll: gtk::ScrolledWindow,
+    group_scroll: gtk::ScrolledWindow,
+    group_model: gtk::StringList,
+    group_labels: RefCell<Vec<String>>,
+    group_section: Cell<Option<Section>>,
+    group_library_revision: Cell<u64>,
+    group_selection: gtk::SingleSelection,
+    groups: RefCell<Vec<Group>>,
+    playlist_editor: gtk::Box,
+    collection_status: gtk::Label,
+    favorite_buttons: RefCell<Vec<(glib::WeakRef<gtk::ToggleButton>, PathBuf)>>,
+    favorite_paths: RefCell<std::collections::BTreeSet<PathBuf>>,
+    catalog_paths: RefCell<std::collections::BTreeSet<PathBuf>>,
+    pending_observation: RefCell<Option<collections::PendingObservation>>,
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -107,10 +129,20 @@ impl MusicPlayer {
 
     #[cfg(test)]
     fn with_session(session_path: Option<PathBuf>) -> Self {
-        Self::with_controller(Controller::with_session(session_path))
+        let controller = Controller::with_session(session_path);
+        let store = controller.collection_store.borrow().clone();
+        Self::with_collection_store(controller, store)
     }
 
     fn with_controller(controller: Rc<Controller>) -> Self {
+        let store = controller.collection_store.borrow().clone();
+        Self::with_collection_store(controller, store)
+    }
+
+    fn with_collection_store(
+        controller: Rc<Controller>,
+        collection_store: CollectionStore,
+    ) -> Self {
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         bar.add_css_class("music-transport");
         bar.set_visible(false);
@@ -199,6 +231,44 @@ impl MusicPlayer {
         queue_toggle.add_css_class("music-panel-toggle");
         header.append(&queue_toggle);
         view.append(&header);
+        let navigation_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        navigation_row.add_css_class("music-navigation");
+        let mut navigation = Vec::new();
+        for (section, label) in [
+            (Section::Albums, "Albums"),
+            (Section::Artists, "Artists"),
+            (Section::Songs, "Songs"),
+            (Section::Favorites, "Favorites"),
+            (Section::Playlists, "Playlists"),
+        ] {
+            let control = gtk::ToggleButton::with_label(label);
+            control.add_css_class("music-control");
+            control.add_css_class("music-panel-toggle");
+            if section == Section::Favorites {
+                control.set_child(Some(&control_contents(icons::HEART, label)));
+            }
+            if let Some((_, first)) = navigation.first() {
+                control.set_group(Some(first));
+            }
+            navigation_row.append(&control);
+            navigation.push((section, control));
+        }
+        navigation[0].1.set_active(true);
+        view.append(&navigation_row);
+        let playlist_editor = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        playlist_editor.add_css_class("music-playlist-actions");
+        let create_playlist = gtk::Button::with_label("Create playlist");
+        let edit_playlist = gtk::Button::with_label("Edit playlist");
+        for control in [&create_playlist, &edit_playlist] {
+            control.add_css_class("music-control");
+            playlist_editor.append(control);
+        }
+        view.append(&playlist_editor);
+        playlist_editor.set_visible(false);
+        let collection_status = text("", "music-detail");
+        collection_status.set_wrap(true);
+        collection_status.set_visible(false);
+        view.append(&collection_status);
         let status = text(
             "Single-click to browse · double-click an album or song to play",
             "music-detail",
@@ -305,6 +375,14 @@ impl MusicPlayer {
         let library_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         library_row.set_vexpand(true);
         library_row.append(&album_scroll);
+        let group_model = gtk::StringList::new(&[]);
+        let group_selection = gtk::SingleSelection::new(Some(group_model.clone()));
+        let group_view = gtk::ListView::new(Some(group_selection.clone()), Some(label_factory()));
+        group_view.set_single_click_activate(false);
+        let group_scroll = scroller(&group_view);
+        group_scroll.set_size_request(210, -1);
+        group_scroll.set_visible(false);
+        library_row.append(&group_scroll);
         library_row.append(&track_scroll);
         library_row.append(&queue_panel);
         view.append(&library_row);
@@ -377,6 +455,7 @@ impl MusicPlayer {
                 }
             },
         );
+        let collection_snapshot = collection_store.snapshot();
         let state = Rc::new(State {
             controller,
             displayed_revision: Cell::new(u64::MAX),
@@ -405,6 +484,7 @@ impl MusicPlayer {
             disposed: Cell::new(false),
             scan: RefCell::new(None),
             library: RefCell::new(Vec::new()),
+            library_revision: Cell::new(0),
             albums: RefCell::new(Vec::new()),
             album_model,
             album_selection,
@@ -428,7 +508,26 @@ impl MusicPlayer {
             play_album: play_album.clone(),
             selected_actions: vec![play_selected.clone(), add.clone(), play_next.clone()],
             selection_options: options.clone(),
+            collection_store,
+            collection_snapshot: RefCell::new(collection_snapshot),
+            section: Cell::new(Section::Albums),
+            navigation,
+            album_scroll,
+            group_scroll,
+            group_model,
+            group_labels: RefCell::new(Vec::new()),
+            group_section: Cell::new(None),
+            group_library_revision: Cell::new(u64::MAX),
+            group_selection,
+            groups: RefCell::new(Vec::new()),
+            playlist_editor,
+            collection_status,
+            favorite_buttons: RefCell::new(Vec::new()),
+            favorite_paths: RefCell::new(std::collections::BTreeSet::new()),
+            catalog_paths: RefCell::new(std::collections::BTreeSet::new()),
+            pending_observation: RefCell::new(None),
         });
+        collections::connect(&state, &create_playlist, &edit_playlist);
         let weak = Rc::downgrade(&state);
         state.waveform_toggle.connect_toggled(move |toggle| {
             if let Some(state) = weak.upgrade() {
@@ -580,10 +679,10 @@ impl MusicPlayer {
         let weak = Rc::downgrade(&state);
         play_album.connect_clicked(move |_| {
             if let Some(state) = weak.upgrade() {
-                if state.filter.text().is_empty() {
+                if state.filter.text().is_empty() && state.section.get() == Section::Albums {
                     state.play_album(state.album_selection.selected() as usize);
                 } else {
-                    let tracks = state.tracks.borrow().clone();
+                    let tracks = state.available_tracks();
                     state.replace(tracks, 0);
                 }
             }
@@ -740,10 +839,13 @@ impl MusicPlayer {
                     state.status.set_text(&library_notice);
                 }
                 if *state.library.borrow() != snapshot.tracks {
+                    state.observe_library_paths(&snapshot.tracks);
                     state.library.replace(snapshot.tracks);
                     state.render_library();
                 }
             }
+            state.retry_observation();
+            state.poll_collections();
             glib::ControlFlow::Continue
         });
         state.controller.attach(&state);
@@ -760,6 +862,7 @@ impl MusicPlayer {
             if let Some(state) = weak.upgrade() {
                 let album = state.queue.borrow().playing().map(Track::album_key);
                 if let Some(album) = album {
+                    state.navigation[0].1.set_active(true);
                     state.selected_album.replace(Some(album));
                     state.filter.set_text("");
                     let has_library = !state.library.borrow().is_empty();
@@ -843,6 +946,8 @@ impl State {
     }
 
     fn render_library(&self) {
+        self.library_revision
+            .set(self.library_revision.get().wrapping_add(1));
         self.rendering_library.set(true);
         let mut albums = std::collections::BTreeMap::<PathBuf, Album>::new();
         for track in self.library.borrow().iter() {
@@ -879,6 +984,7 @@ impl State {
         self.album_selection
             .set_selected(next.map_or(gtk::INVALID_LIST_POSITION, |position| position as u32));
         self.rendering_library.set(false);
+        self.render_groups();
         self.render_tracks();
     }
 
@@ -916,7 +1022,7 @@ impl State {
     }
 
     fn sync_actions(&self) {
-        let filtered = !self.filter.text().is_empty();
+        let filtered = !self.filter.text().is_empty() || self.section.get() != Section::Albums;
         self.play_album.set_child(Some(&control_contents(
             icons::PLAY,
             if filtered {
@@ -931,8 +1037,8 @@ impl State {
             "Play the full album in disc and track order; turns shuffle off"
         }));
         self.play_album
-            .set_sensitive(!self.tracks.borrow().is_empty());
-        let selected = (self.track_selection.selected() as usize) < self.tracks.borrow().len();
+            .set_sensitive(!self.available_tracks().is_empty());
+        let selected = !self.selected_tracks().is_empty();
         for control in &self.selected_actions {
             control.set_sensitive(selected);
         }
@@ -941,34 +1047,15 @@ impl State {
 
     fn render_tracks(&self) {
         let query = self.filter.text().to_lowercase();
-        let album = self.selected_album.borrow().clone();
-        let mut tracks: Vec<_> = self
-            .library
-            .borrow()
-            .iter()
-            .filter(|track| {
-                if query.is_empty() {
-                    return album
-                        .as_ref()
-                        .is_some_and(|album| track.album_key() == *album);
-                }
-                let metadata = format!(
-                    "{} {} {} {}",
-                    track.title(),
-                    track.artist(),
-                    track.album(),
-                    track.path.to_string_lossy()
-                )
-                .to_lowercase();
-                query.split_whitespace().all(|term| metadata.contains(term))
-            })
-            .cloned()
-            .collect();
-        tracks.sort_by(|left, right| {
-            left.album_key()
-                .cmp(&right.album_key())
-                .then_with(|| crate::music::compare_tracks(left, right))
-        });
+        let tracks = collections::visible_tracks(
+            &self.library.borrow(),
+            self.section.get(),
+            self.selected_album.borrow().as_deref(),
+            self.current_group().as_ref(),
+            &self.collection_snapshot.borrow().data,
+            &query,
+        );
+        self.collection_hint(tracks.len());
         if *self.tracks.borrow() == tracks {
             self.sync_actions();
             return;
@@ -1007,6 +1094,12 @@ impl State {
         self.tracks
             .borrow()
             .get(self.track_selection.selected() as usize)
+            .filter(|track| {
+                self.library
+                    .borrow()
+                    .iter()
+                    .any(|entry| entry.path == track.path)
+            })
             .cloned()
             .into_iter()
             .collect()
@@ -1021,7 +1114,10 @@ impl State {
         let Some(selected) = selected else {
             return;
         };
-        let tracks = crate::music::folder_queue(self.library.borrow().clone(), &selected);
+        let tracks = self.track_playback(&selected);
+        if tracks.is_empty() {
+            return;
+        }
         self.replace(tracks, 0);
     }
 
@@ -1379,12 +1475,77 @@ fn album_factory(state: std::rc::Weak<State>) -> gtk::SignalListItemFactory {
 }
 
 fn track_factory(state: std::rc::Weak<State>) -> gtk::SignalListItemFactory {
-    let factory = label_factory();
+    let factory = gtk::SignalListItemFactory::new();
+    let setup_state = state.clone();
     factory.connect_setup(move |_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>()
-            && let Some(row) = item.child()
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            let label = text("", "music-row");
+            label.set_hexpand(true);
+            row.append(&label);
+            let favorite = gtk::ToggleButton::new();
+            favorite.set_child(Some(&assets::primary_icon(icons::HEART, 16)));
+            favorite.add_css_class("music-control");
+            favorite.add_css_class("music-favorite");
+            favorite.set_tooltip_text(Some("Toggle favorite; never modifies audio tags"));
+            favorite.update_property(&[gtk::accessible::Property::Label("Favorite song")]);
+            let weak = setup_state.clone();
+            let weak_item = item.downgrade();
+            favorite.connect_clicked(move |control| {
+                if let (Some(state), Some(item)) = (weak.upgrade(), weak_item.upgrade())
+                    && let Some(track) = state.tracks.borrow().get(item.position() as usize)
+                {
+                    state.collection_command(CollectionCommand::Favorite(
+                        vec![track.path.clone()],
+                        control.is_active(),
+                    ));
+                }
+            });
+            row.append(&favorite);
+            context_menu::install_row(&row, item, setup_state.clone(), context_menu::Kind::Track);
+            item.set_child(Some(&row));
+        }
+    });
+    let bind_state = state.clone();
+    factory.connect_bind(move |_, item| {
+        let (Some(state), Some(item)) =
+            (bind_state.upgrade(), item.downcast_ref::<gtk::ListItem>())
+        else {
+            return;
+        };
+        let Some(row) = item.child().and_downcast::<gtk::Box>() else {
+            return;
+        };
+        let Some(track) = state.tracks.borrow().get(item.position() as usize).cloned() else {
+            return;
+        };
+        if let Some(value) = item.item().and_downcast::<gtk::StringObject>()
+            && let Some(label) = row.first_child().and_downcast::<gtk::Label>()
         {
-            context_menu::install_row(&row, item, state.clone(), context_menu::Kind::Track);
+            label.set_text(&value.string());
+            label.set_tooltip_text(Some(&track.path.to_string_lossy()));
+        }
+        if let Some(favorite) = row.last_child().and_downcast::<gtk::ToggleButton>() {
+            let active = state.favorite_paths.borrow().contains(&track.path);
+            favorite.set_active(active);
+            if let Some(image) = favorite.child().and_downcast::<gtk::Image>() {
+                assets::set_primary_icon(
+                    &image,
+                    if active {
+                        icons::HEART_SELECTED
+                    } else {
+                        icons::HEART
+                    },
+                );
+            }
+            favorite.update_property(&[gtk::accessible::Property::Label(if active {
+                "Remove song from favorites"
+            } else {
+                "Add song to favorites"
+            })]);
+            let mut buttons = state.favorite_buttons.borrow_mut();
+            buttons.retain(|(button, _)| button.upgrade().is_some_and(|button| button != favorite));
+            buttons.push((favorite.downgrade(), track.path));
         }
     });
     factory.connect_unbind(|_, item| {

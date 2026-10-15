@@ -1,6 +1,20 @@
 use super::*;
 
 #[test]
+fn native_jpeg_defers_cmyk_and_high_precision_frames() {
+    for (components, precision, supported) in
+        [(3, 8, true), (1, 8, false), (4, 8, false), (3, 12, false)]
+    {
+        let mut data = vec![0xff, 0xd8, 0xff, 0xc0];
+        data.extend_from_slice(&(8 + u16::from(components) * 3).to_be_bytes());
+        data.extend_from_slice(&[precision, 0, 16, 0, 16, components]);
+        data.resize(data.len() + usize::from(components) * 3, 1);
+        assert_eq!(native_frame_supported(&data), supported);
+        assert!(!native_frame_supported(&data[..7]));
+    }
+}
+
+#[test]
 fn embedded_jpeg_must_be_large_enough_and_match_the_requested_aspect() {
     assert!(adequate((320, 240), (256, 192)));
     assert!(!adequate((160, 120), (256, 192)));
@@ -51,7 +65,11 @@ fn tiff_header(orientation: u16, thumbnail: &[u8]) -> Vec<u8> {
     tiff
 }
 
-fn jpeg_fixture(orientation: u16, original: &[u8], thumbnail: &[u8]) -> Vec<u8> {
+pub(in crate::sandbox_helper) fn jpeg_fixture(
+    orientation: u16,
+    original: &[u8],
+    thumbnail: &[u8],
+) -> Vec<u8> {
     let mut payload = b"Exif\0\0".to_vec();
     payload.extend_from_slice(&tiff_header(orientation, thumbnail));
     let mut data = vec![0xff, 0xd8, 0xff, 0xe1];
@@ -66,6 +84,74 @@ fn pixels(data: &[u8]) -> Pixbuf {
     loader.write(data).unwrap();
     loader.close().unwrap();
     loader.pixbuf().unwrap()
+}
+
+#[test]
+#[ignore = "Generated native JPEG benchmark; needs codecs, ImageMagick, bubblewrap and built helper"]
+fn generated_native_scaled_jpeg_preserves_orientation_dimensions_and_colors() {
+    let directory = crate::sandbox::browser::format_tests::FixtureDirectory::new();
+    let original = Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 2400, 1600).unwrap();
+    original.fill(0xc04020ff);
+    let corner = Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 1200, 800).unwrap();
+    corner.fill(0x20c040ff);
+    corner.copy_area(0, 0, 1200, 800, &original, 0, 0);
+    let source = original
+        .save_to_bufferv("jpeg", &[("quality", "95")])
+        .unwrap();
+    for orientation in 1..=8 {
+        let path = directory.0.join(format!("orientation-{orientation}.jpg"));
+        std::fs::write(&path, jpeg_fixture(orientation, &source, &[])).unwrap();
+        let start = std::time::Instant::now();
+        let native = pixels(&scaled_preview(&path, 1400).expect("Native JPEG preview"));
+        let native_time = start.elapsed();
+        let start = std::time::Instant::now();
+        let reference = pixels(&super::super::render_imagemagick(&path, 1400).unwrap());
+        eprintln!(
+            "JPEG orientation {orientation}: native={native_time:?}, previous={:?}",
+            start.elapsed()
+        );
+        assert_eq!(
+            (native.width(), native.height()),
+            (reference.width(), reference.height())
+        );
+        let native_bytes = native.read_pixel_bytes();
+        let reference_bytes = reference.read_pixel_bytes();
+        for (horizontal, vertical) in [
+            (native.width() / 4, native.height() / 4),
+            (native.width() * 3 / 4, native.height() * 3 / 4),
+        ] {
+            let native_offset = vertical as usize * native.rowstride() as usize
+                + horizontal as usize * native.n_channels() as usize;
+            let reference_offset = vertical as usize * reference.rowstride() as usize
+                + horizontal as usize * reference.n_channels() as usize;
+            for channel in 0..3 {
+                assert!(
+                    native_bytes[native_offset + channel]
+                        .abs_diff(reference_bytes[reference_offset + channel])
+                        <= 8
+                );
+            }
+        }
+    }
+    let path = directory.0.join("orientation-6.jpg");
+    let expected = scaled_preview(&path, 1400).unwrap();
+    let pooled = crate::sandbox::parse(
+        &path,
+        crate::sandbox::ParseOperation::PreviewImage,
+        1400,
+        &crate::sandbox::Cancellation::default(),
+    )
+    .unwrap();
+    assert_eq!(pooled.data, expected);
+    let one_shot = crate::sandbox::parse_one_shot_with_executable(
+        &path,
+        crate::sandbox::ParseOperation::PreviewImage,
+        1400,
+        &crate::sandbox::Cancellation::default(),
+        &crate::sandbox::helper_executable().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(one_shot.data, expected);
 }
 
 #[test]

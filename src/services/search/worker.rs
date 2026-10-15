@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex, OnceLock,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
     time::{Duration, Instant},
@@ -12,7 +12,8 @@ use std::{
 
 use super::{
     ContentSearchContext, MAX_DOCUMENT_EXTRACTIONS_PER_QUERY, ParsedSearchQuery, RESULT_LIMIT,
-    SearchEvent, SearchItem, TextExtractionProvider, insert_match, score_item,
+    SearchEntityKey, SearchEvent, SearchGroup, SearchGroups, SearchItem, SearchPage,
+    TextExtractionProvider, insert_match, score_item,
 };
 use crate::services::music_library::{FileIdentity, Subscription};
 use crate::{
@@ -67,14 +68,29 @@ impl<T> Mailbox<T> {
 }
 
 struct Query {
+    generation: u64,
     text: String,
     cancelled: Arc<AtomicBool>,
+    limit: usize,
+    grouping: Option<Grouping>,
+}
+
+struct Grouping {
+    group: SearchGroup,
+    entity: Option<SearchEntityKey>,
+    virtual_results: bool,
+}
+
+enum Command {
+    Query(Query),
+    More(SearchPage),
 }
 
 pub(crate) struct SearchHandle {
+    next_generation: AtomicU64,
     scan_cancelled: Cancellation,
     query_cancelled: Mutex<Arc<AtomicBool>>,
-    commands: Arc<Mailbox<Query>>,
+    commands: Arc<Mailbox<Command>>,
     events: Arc<Mailbox<SearchEvent>>,
     startup_error: Option<String>,
     live: bool,
@@ -84,7 +100,79 @@ impl SearchHandle {
     pub(crate) fn is_live(&self) -> bool {
         self.live
     }
-    pub(crate) fn query(&self, query: &str) {
+    #[cfg(test)]
+    pub(crate) fn query(&self, query: &str) -> u64 {
+        self.query_with_limit(query, RESULT_LIMIT, None)
+    }
+
+    pub(crate) fn query_all(&self, query: &str) -> u64 {
+        self.query_with_limit(query, MAX_INDEX_ENTRIES, None)
+    }
+
+    pub(crate) fn query_group(
+        &self,
+        query: &str,
+        group: SearchGroup,
+        entity: Option<SearchEntityKey>,
+    ) -> u64 {
+        self.query_with_limit(
+            query,
+            RESULT_LIMIT,
+            Some(Grouping {
+                group,
+                entity,
+                virtual_results: true,
+            }),
+        )
+    }
+
+    pub(crate) fn query_all_scoped(
+        &self,
+        query: &str,
+        group: SearchGroup,
+        entity: Option<SearchEntityKey>,
+    ) -> u64 {
+        if group == SearchGroup::All && entity.is_none() {
+            return self.query_all(query);
+        }
+        self.query_with_limit(
+            query,
+            MAX_INDEX_ENTRIES,
+            Some(Grouping {
+                group,
+                entity,
+                virtual_results: false,
+            }),
+        )
+    }
+
+    pub(crate) fn more(&self, page: SearchPage) {
+        let current = self
+            .query_cancelled
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if !self.live
+            || current.load(Ordering::Acquire)
+            || page.generation
+                != self
+                    .next_generation
+                    .load(Ordering::Relaxed)
+                    .saturating_sub(1)
+        {
+            return;
+        }
+        let mut command = self
+            .commands
+            .value
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if !matches!(*command, Some(Command::Query(_))) {
+            *command = Some(Command::More(page));
+            self.commands.ready.notify_one();
+        }
+    }
+
+    fn query_with_limit(&self, query: &str, limit: usize, grouping: Option<Grouping>) -> u64 {
         let token = Arc::new(AtomicBool::new(false));
         let mut previous = self
             .query_cancelled
@@ -92,6 +180,7 @@ impl SearchHandle {
             .unwrap_or_else(|error| error.into_inner());
         previous.store(true, Ordering::Release);
         *previous = token.clone();
+        let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
         let mut text = query.trim().to_owned();
         if text.len() > MAX_QUERY_BYTES {
             let mut end = MAX_QUERY_BYTES;
@@ -102,17 +191,24 @@ impl SearchHandle {
         }
         if let Some(error) = &self.startup_error {
             self.events.put(SearchEvent::Results {
+                generation,
                 query: text,
                 items: Vec::new(),
                 indexing: false,
                 notice: Some(error.clone()),
+                page: None,
+                groups: None,
             });
-            return;
+            return generation;
         }
-        self.commands.put(Query {
+        self.commands.put(Command::Query(Query {
+            generation,
             text,
             cancelled: token,
-        });
+            limit,
+            grouping,
+        }));
+        generation
     }
 }
 
@@ -172,6 +268,10 @@ pub(crate) fn index_tree(
     let music = super::SearchScope::MusicLibrary.root(&gio::glib::home_dir());
     if shared_scope(&root, &music) {
         let subscription = crate::services::music_library::subscribe(music);
+        return start_shared(root, extraction, subscription);
+    }
+    if root.is_absolute() {
+        let subscription = crate::services::music_library::subscribe_catalog(root.clone());
         return start_shared(root, extraction, subscription);
     }
     start(
@@ -250,6 +350,7 @@ fn start_worker(
         ready: Condvar::new(),
     });
     let mut handle = SearchHandle {
+        next_generation: AtomicU64::new(1),
         scan_cancelled: Cancellation::default(),
         query_cancelled: Mutex::new(Arc::new(AtomicBool::new(false))),
         commands: commands.clone(),
@@ -263,10 +364,21 @@ fn start_worker(
         cancellation: handle.scan_cancelled.clone(),
         extraction,
         query: Query {
+            generation: 0,
             text: String::new(),
             cancelled: Arc::new(AtomicBool::new(false)),
+            limit: RESULT_LIMIT,
+            grouping: None,
         },
         matches: Vec::new(),
+        shared_items: Arc::new(Vec::new()),
+        candidates: None,
+        candidate_attempted: false,
+        shared_indexing: true,
+        ranked: Vec::new(),
+        groups: None,
+        revision: 0,
+        shown_limit: RESULT_LIMIT,
         scan_notice: None,
         query_notice: None,
         document_budget: MAX_DOCUMENT_EXTRACTIONS_PER_QUERY,
@@ -288,22 +400,33 @@ fn start_worker(
     {
         handle.startup_error = Some(format!("Unable to start search: {error}"));
         failure_events.put(SearchEvent::Results {
+            generation: 0,
             query: String::new(),
             items: Vec::new(),
             indexing: false,
             notice: Some(format!("Unable to start search: {error}")),
+            page: None,
+            groups: None,
         });
     }
     (handle, SearchReceiver(events))
 }
 
 struct Worker {
-    commands: Arc<Mailbox<Query>>,
+    commands: Arc<Mailbox<Command>>,
     events: Arc<Mailbox<SearchEvent>>,
     cancellation: Cancellation,
     extraction: Arc<dyn TextExtractionProvider>,
     query: Query,
     matches: Vec<(i64, SearchItem)>,
+    shared_items: Arc<Vec<SearchItem>>,
+    candidates: Option<super::candidates::Candidates>,
+    candidate_attempted: bool,
+    shared_indexing: bool,
+    ranked: Vec<(i64, usize)>,
+    groups: Option<super::groups::GroupIndex>,
+    revision: u64,
+    shown_limit: usize,
     scan_notice: Option<String>,
     query_notice: Option<String>,
     document_budget: usize,
@@ -315,13 +438,12 @@ struct Worker {
 
 impl Worker {
     fn run_shared(&mut self, root: PathBuf, mut library: Subscription) {
-        let mut items = Vec::new();
         let mut indexing = true;
         while !self.cancellation.is_cancelled() {
             if let Some(snapshot) = library.poll() {
                 indexing = snapshot.indexing;
                 self.scan_notice = snapshot.notice.clone();
-                items.clear();
+                let mut items = Vec::new();
                 let mut bytes = items.capacity() * size_of::<SearchItem>();
                 if root.is_dir() {
                     for entry in snapshot
@@ -377,10 +499,15 @@ impl Worker {
                         root.display()
                     ));
                 }
-                self.rescore(&items);
+                self.shared_items = Arc::new(items);
+                self.candidates = None;
+                self.candidate_attempted = false;
+                self.shared_indexing = indexing;
+                self.rescore_shared();
                 self.publish(indexing);
+                self.prepare_candidates();
             }
-            self.pending(&items, indexing);
+            self.pending_shared(indexing);
             let guard = self
                 .commands
                 .value
@@ -427,13 +554,161 @@ impl Worker {
     }
 
     fn pending(&mut self, items: &[SearchItem], indexing: bool) {
-        if let Some(query) = self.commands.take() {
+        if let Some(Command::Query(query)) = self.commands.take() {
             self.query = query;
             self.document_budget = MAX_DOCUMENT_EXTRACTIONS_PER_QUERY;
             self.content_scores.clear();
             self.query_notice = None;
             self.rescore(items);
             self.publish(indexing);
+        }
+    }
+
+    fn pending_shared(&mut self, indexing: bool) {
+        match self.commands.take() {
+            Some(Command::Query(query)) => {
+                self.query = query;
+                self.document_budget = MAX_DOCUMENT_EXTRACTIONS_PER_QUERY;
+                self.content_scores.clear();
+                self.query_notice = None;
+                self.rescore_shared();
+                self.publish(indexing);
+                self.prepare_candidates();
+            }
+            Some(Command::More(page)) => {
+                let total = self.result_total();
+                if page.generation == self.query.generation
+                    && page.revision == self.revision
+                    && page.shown == self.shown_limit.min(total)
+                    && page.total == total
+                {
+                    self.shown_limit = self.shown_limit.saturating_add(RESULT_LIMIT).min(total);
+                }
+                self.publish(indexing);
+            }
+            None => {}
+        }
+    }
+
+    fn rescore_shared(&mut self) {
+        self.revision = self.revision.wrapping_add(1).max(1);
+        self.shown_limit = self.query.limit;
+        self.ranked.clear();
+        self.groups = None;
+        let items = self.shared_items.clone();
+        let parsed = ParsedSearchQuery::parse(&self.query.text.to_lowercase());
+        if parsed.is_empty()
+            && self
+                .query
+                .grouping
+                .as_ref()
+                .is_none_or(|grouping| grouping.entity.is_none())
+        {
+            self.rebuild_groups(&parsed);
+            return;
+        }
+        let candidates = self.candidates.as_ref().and_then(|candidates| {
+            candidates
+                .matching(&parsed, &|| {
+                    self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire)
+                })
+                .ok()
+        });
+        let candidates = candidates.unwrap_or_else(|| (0..items.len()).collect());
+        for position in candidates {
+            if self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire) {
+                return;
+            }
+            let Some(item) = items.get(position) else {
+                continue;
+            };
+            if let Some(grouping) = &self.query.grouping {
+                if grouping
+                    .entity
+                    .as_ref()
+                    .is_some_and(|entity| !super::groups::matches_entity(item, entity))
+                {
+                    continue;
+                }
+                if !grouping.virtual_results {
+                    let audio = !item.is_directory
+                        && classify_by_name(item.path.as_os_str()) == FormatFamily::Audio;
+                    if (grouping.group == SearchGroup::Files && audio)
+                        || (grouping.group == SearchGroup::Songs && !audio)
+                    {
+                        continue;
+                    }
+                }
+            }
+            if let Some(score) = if parsed.is_empty() {
+                Some(0)
+            } else {
+                self.score(item, &parsed)
+            } {
+                self.ranked.push((score, position));
+            }
+        }
+        let album_order =
+            self.query.grouping.as_ref().is_some_and(|grouping| {
+                matches!(grouping.entity, Some(SearchEntityKey::Album { .. }))
+            });
+        self.ranked.sort_unstable_by(|left, right| {
+            if album_order {
+                return album_numbers(&items[left.1])
+                    .cmp(&album_numbers(&items[right.1]))
+                    .then_with(|| items[left.1].path.cmp(&items[right.1].path));
+            }
+            right
+                .0
+                .cmp(&left.0)
+                .then_with(|| items[left.1].path.cmp(&items[right.1].path))
+        });
+        self.rebuild_groups(&parsed);
+    }
+
+    fn rebuild_groups(&mut self, parsed: &ParsedSearchQuery) {
+        if self
+            .query
+            .grouping
+            .as_ref()
+            .is_some_and(|grouping| grouping.virtual_results)
+        {
+            self.groups =
+                super::groups::GroupIndex::build(&self.shared_items, &self.ranked, parsed, &|| {
+                    self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire)
+                })
+                .ok();
+        }
+    }
+
+    fn result_total(&self) -> usize {
+        self.query
+            .grouping
+            .as_ref()
+            .filter(|grouping| grouping.virtual_results)
+            .zip(self.groups.as_ref())
+            .map_or(self.ranked.len(), |(grouping, groups)| {
+                groups.counts().total(grouping.group)
+            })
+    }
+
+    fn prepare_candidates(&mut self) {
+        let parsed = ParsedSearchQuery::parse(&self.query.text.to_lowercase());
+        let filtered = parsed.directory.is_some()
+            || parsed.category.is_some()
+            || parsed.extension.is_some()
+            || parsed.artist.is_some()
+            || parsed.album.is_some()
+            || parsed.title.is_some();
+        if filtered && !self.shared_indexing && !self.candidate_attempted {
+            self.candidate_attempted = true;
+            self.candidates = super::candidates::Candidates::build(&self.shared_items, &|| {
+                self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire)
+            })
+            .ok();
+            if self.query.cancelled.load(Ordering::Acquire) {
+                self.candidate_attempted = false;
+            }
         }
     }
 
@@ -461,16 +736,50 @@ impl Worker {
         if let Some(notice) = &self.query_notice {
             notices.push(notice.clone());
         }
-        if self.matches.len() == RESULT_LIMIT {
+        if let Some(notice) = self.groups.as_ref().and_then(|groups| groups.notice()) {
+            notices.push(notice.to_owned());
+        }
+        if self.revision == 0 && self.matches.len() == RESULT_LIMIT {
             notices.push(format!(
                 "Showing the best {RESULT_LIMIT} matches; refine your search"
             ));
         }
+        let page = (self.revision > 0).then_some(SearchPage {
+            generation: self.query.generation,
+            revision: self.revision,
+            shown: self.shown_limit.min(self.result_total()),
+            total: self.result_total(),
+        });
+        let groups = self
+            .query
+            .grouping
+            .as_ref()
+            .filter(|grouping| grouping.virtual_results)
+            .zip(self.groups.as_ref())
+            .map(|(grouping, groups)| SearchGroups {
+                group: grouping.group,
+                results: groups.page(&self.shared_items, grouping.group, self.shown_limit),
+                counts: groups.counts(),
+            });
+        let items = if groups.is_some() {
+            Vec::new()
+        } else if let Some(page) = page {
+            self.ranked
+                .iter()
+                .take(page.shown)
+                .map(|(_, position)| self.shared_items[*position].clone())
+                .collect()
+        } else {
+            self.matches.iter().map(|(_, item)| item.clone()).collect()
+        };
         self.events.put(SearchEvent::Results {
+            generation: self.query.generation,
             query: self.query.text.clone(),
-            items: self.matches.iter().map(|(_, item)| item.clone()).collect(),
+            items,
             indexing,
             notice: (!notices.is_empty()).then(|| notices.join(" · ")),
+            page,
+            groups,
         });
         self.last_publish = Instant::now();
     }
@@ -770,5 +1079,36 @@ fn item_bytes(item: &SearchItem) -> usize {
         })
 }
 
+fn album_numbers(item: &SearchItem) -> (u32, u32) {
+    let tags = item.music_tags.as_ref();
+    let disc = tags
+        .and_then(|tags| tags.disc)
+        .filter(|number| *number > 0)
+        .unwrap_or(1);
+    let track = tags
+        .and_then(|tags| tags.track)
+        .filter(|number| *number > 0)
+        .or_else(|| {
+            let name = item.name.trim_start();
+            let digits: String = name.chars().take_while(char::is_ascii_digit).collect();
+            let suffix = name.get(digits.len()..)?;
+            if !suffix.starts_with(['.', '-', '_', ' ']) {
+                return None;
+            }
+            digits
+                .parse::<u32>()
+                .ok()
+                .filter(|number| *number > 0 && *number <= 1_000_000)
+        })
+        .unwrap_or(u32::MAX);
+    (disc, track)
+}
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod pagination_tests;
+
+#[cfg(test)]
+mod group_tests;

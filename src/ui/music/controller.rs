@@ -1,6 +1,8 @@
 use super::*;
 use std::rc::Weak;
 
+mod listening;
+
 thread_local! {
     static CONTROLLERS: RefCell<Vec<(glib::WeakRef<gtk::Application>, Weak<Controller>)>> = const { RefCell::new(Vec::new()) };
 }
@@ -70,6 +72,8 @@ pub(crate) struct Controller {
     pub(super) play_intent: Cell<bool>,
     pub(super) closed: Cell<bool>,
     pub(super) volume_value: Cell<f64>,
+    volume_notify_pending: Cell<bool>,
+    volume_save_pending: Cell<Option<std::time::Instant>>,
     pub(super) transport_visible: Cell<bool>,
     pub(super) notice: RefCell<String>,
     pub(super) waveform_notice: RefCell<String>,
@@ -80,6 +84,8 @@ pub(crate) struct Controller {
     pending_notify: Cell<bool>,
     seek_revision: Cell<u64>,
     checkpoint: Cell<std::time::Instant>,
+    pub(super) collection_store: RefCell<CollectionStore>,
+    listening: RefCell<listening::Listening>,
 }
 
 impl Controller {
@@ -101,7 +107,12 @@ impl Controller {
     }
 
     pub(crate) fn for_application(application: &gtk::Application) -> Rc<Self> {
-        Self::for_application_with_session(application, Some(crate::music::session::path()))
+        let controller =
+            Self::for_application_with_session(application, Some(crate::music::session::path()));
+        controller
+            .collection_store
+            .replace(CollectionStore::shared());
+        controller
     }
 
     fn for_application_with_session(
@@ -171,6 +182,8 @@ impl Controller {
             play_intent: Cell::new(false),
             closed: Cell::new(false),
             volume_value: Cell::new(0.75),
+            volume_notify_pending: Cell::new(false),
+            volume_save_pending: Cell::new(None),
             transport_visible: Cell::new(false),
             notice: RefCell::new(String::new()),
             waveform_notice: RefCell::new("Now playing waveform · click to seek".into()),
@@ -181,6 +194,8 @@ impl Controller {
             pending_notify: Cell::new(false),
             seek_revision: Cell::new(0),
             checkpoint: Cell::new(std::time::Instant::now()),
+            collection_store: RefCell::new(CollectionStore::start(None)),
+            listening: RefCell::new(listening::Listening::default()),
         });
         controller
     }
@@ -200,8 +215,10 @@ impl Controller {
                 }
                 controller.report_save_error();
             }
+            let volume_changed = controller.flush_volume_changes();
+            controller.sample_listening();
             let has_stream = controller.stream.borrow().is_some();
-            if has_stream {
+            if has_stream || volume_changed {
                 controller.notify();
             }
             glib::ControlFlow::Continue
@@ -228,6 +245,7 @@ impl Controller {
         }
         loop {
             self.pending_notify.set(false);
+            self.volume_notify_pending.set(false);
             let views: Vec<_> = {
                 let mut views = self.views.borrow_mut();
                 views.retain(|view| view.strong_count() > 0);
@@ -362,6 +380,8 @@ impl Controller {
         if self.closed.get() {
             return;
         }
+        self.sample_listening();
+        self.listening.borrow_mut().discontinue();
         self.play_intent.set(false);
         let stream = self.stream.borrow().clone();
         if let Some(stream) = stream {
@@ -394,6 +414,8 @@ impl Controller {
     }
 
     fn release_stream(&self) {
+        self.sample_listening();
+        self.listening.borrow_mut().reset(None);
         self.play_intent.set(false);
         self.transport_visible.set(false);
         self.generation.set(self.generation.get().wrapping_add(1));
@@ -472,6 +494,8 @@ impl Controller {
         if let Some(stream) = stream.filter(|stream| {
             stream.is_prepared() && stream.is_seekable() && stream.error().is_none()
         }) {
+            self.sample_listening();
+            self.listening.borrow_mut().discontinue();
             stream.seek(position.min(stream.duration().saturating_sub(1).max(0)));
         }
     }
@@ -488,8 +512,28 @@ impl Controller {
         if let Some(stream) = stream {
             stream.set_volume(volume);
         }
-        self.changed_session();
-        self.notify();
+        if !self.restoring.get() {
+            self.session_revision
+                .set(self.session_revision.get().wrapping_add(1));
+            self.volume_save_pending
+                .set(Some(std::time::Instant::now()));
+        }
+        self.volume_notify_pending.set(true);
+        if self.notifying.get() {
+            self.pending_notify.set(true);
+        }
+    }
+
+    fn flush_volume_changes(&self) -> bool {
+        if self
+            .volume_save_pending
+            .get()
+            .is_some_and(|changed| changed.elapsed() >= Duration::from_millis(250))
+        {
+            self.volume_save_pending.set(None);
+            self.save_session();
+        }
+        self.volume_notify_pending.replace(false)
     }
 
     pub(crate) fn set_repeat(&self, repeat: Repeat) {
@@ -535,6 +579,7 @@ impl Controller {
         let resume_position = self.resume_position.replace(0);
         let was_visible = self.transport_visible.get();
         self.release_stream();
+        self.listening.borrow_mut().reset(Some(track.path.clone()));
         self.resume_position.set(resume_position);
         self.play_intent.set(autoplay);
         self.transport_visible.set(was_visible);
@@ -572,9 +617,12 @@ impl Controller {
         stream.connect_playing_notify(move |stream| {
             if let Some(controller) = weak.upgrade()
                 && controller.generation.get() == generation
-                && stream.is_playing()
             {
-                controller.transport_visible.set(true);
+                controller.sample_listening();
+                controller.listening.borrow_mut().discontinue();
+                if stream.is_playing() {
+                    controller.transport_visible.set(true);
+                }
                 controller.notify();
             }
         });
@@ -738,11 +786,16 @@ impl Controller {
         if self.closed.replace(true) {
             return;
         }
+        self.volume_notify_pending.set(false);
+        self.volume_save_pending.set(None);
         self.save_session();
         self.release_stream();
         self.notify();
         if let Some(mut store) = self.session_store.borrow_mut().take() {
             store.finish();
+        }
+        if let Err(error) = self.collection_store.borrow().flush(Duration::from_secs(2)) {
+            tracing::warn!(%error, "Collections could not be flushed during shutdown");
         }
     }
 }

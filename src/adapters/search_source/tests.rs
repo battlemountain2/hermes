@@ -4,9 +4,12 @@ use std::path::Path;
 
 fn results(names: &[&str], indexing: bool) -> SearchEvent {
     SearchEvent::Results {
+        generation: 1,
         query: "song".into(),
         indexing,
         notice: None,
+        page: None,
+        groups: None,
         items: names
             .iter()
             .map(|name| {
@@ -22,18 +25,99 @@ fn results(names: &[&str], indexing: bool) -> SearchEvent {
 }
 
 #[test]
+fn grouped_payloads_cannot_be_mistaken_for_file_system_entries() {
+    let mut event = results(&["real-song.flac"], false);
+    let SearchEvent::Results { groups, .. } = &mut event;
+    *groups = Some(crate::services::SearchGroups {
+        group: crate::services::SearchGroup::Albums,
+        results: Vec::new(),
+        counts: crate::services::SearchCounts::default(),
+    });
+    let mut previous = None;
+    let mut notice = None;
+    let delivered = Cell::new(false);
+    assert_eq!(
+        deliver_results(
+            event,
+            "song",
+            1,
+            crate::services::RequestId(1),
+            &mut previous,
+            &mut notice,
+            &Cell::new(true),
+            &|_| delivered.set(true)
+        ),
+        glib::ControlFlow::Continue
+    );
+    assert!(!delivered.get());
+    assert!(previous.is_none());
+}
+
+#[test]
+fn search_tab_preserves_all_matches_and_ignores_page_metadata() {
+    let events = std::cell::RefCell::new(Vec::new());
+    let emit = |event| events.borrow_mut().push(event);
+    let mut previous = None;
+    let mut previous_notice = None;
+    let names: Vec<_> = (0..205)
+        .map(|number| format!("song-{number:03}.flac"))
+        .collect();
+    let borrowed: Vec<_> = names.iter().map(String::as_str).collect();
+    let mut event = results(&borrowed, false);
+    let SearchEvent::Results { page, .. } = &mut event;
+    *page = Some(crate::services::SearchPage {
+        generation: 1,
+        revision: 8,
+        shown: 205,
+        total: 205,
+    });
+    assert_eq!(
+        deliver_results(
+            event,
+            "song",
+            1,
+            crate::services::RequestId(12),
+            &mut previous,
+            &mut previous_notice,
+            &Cell::new(true),
+            &emit,
+        ),
+        glib::ControlFlow::Break
+    );
+    let events = events.borrow();
+    let [
+        DirectoryEvent::Snapshot { entries, .. },
+        DirectoryEvent::Finished { .. },
+    ] = events.as_slice()
+    else {
+        panic!("Expected the complete ranked snapshot followed by completion");
+    };
+    assert_eq!(entries.len(), 205);
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| &entry.display_name)
+            .collect::<Vec<_>>(),
+        names.iter().collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn provisional_search_tab_results_replace_instead_of_accumulating() {
     let events = std::cell::RefCell::new(Vec::new());
     let emit = |event| events.borrow_mut().push(event);
     let active = Cell::new(true);
     let mut previous = None;
+    let mut previous_notice = None;
     let request_id = crate::services::RequestId(12);
     assert_eq!(
         deliver_results(
             results(&["first.flac"], true),
             "song",
+            1,
             request_id,
             &mut previous,
+            &mut previous_notice,
             &active,
             &emit
         ),
@@ -45,8 +129,10 @@ fn provisional_search_tab_results_replace_instead_of_accumulating() {
     deliver_results(
         results(&["first.flac"], true),
         "song",
+        1,
         request_id,
         &mut previous,
+        &mut previous_notice,
         &active,
         &emit,
     );
@@ -54,8 +140,10 @@ fn provisional_search_tab_results_replace_instead_of_accumulating() {
     deliver_results(
         results(&["second.flac"], true),
         "song",
+        1,
         request_id,
         &mut previous,
+        &mut previous_notice,
         &active,
         &emit,
     );
@@ -64,8 +152,10 @@ fn provisional_search_tab_results_replace_instead_of_accumulating() {
         deliver_results(
             results(&["second.flac"], false),
             "song",
+            1,
             request_id,
             &mut previous,
+            &mut previous_notice,
             &active,
             &emit
         ),
@@ -87,12 +177,15 @@ fn stale_and_cancelled_search_updates_do_not_emit_finish_after_navigation() {
         active.set(false);
     };
     let mut previous = None;
+    let mut previous_notice = None;
     let request_id = crate::services::RequestId(12);
     deliver_results(
         results(&["song.flac"], false),
         "different",
+        1,
         request_id,
         &mut previous,
+        &mut previous_notice,
         &active,
         &emit,
     );
@@ -101,8 +194,10 @@ fn stale_and_cancelled_search_updates_do_not_emit_finish_after_navigation() {
         deliver_results(
             results(&["song.flac"], false),
             "song",
+            1,
             request_id,
             &mut previous,
+            &mut previous_notice,
             &active,
             &emit
         ),
@@ -115,8 +210,10 @@ fn stale_and_cancelled_search_updates_do_not_emit_finish_after_navigation() {
     deliver_results(
         results(&[], false),
         "song",
+        1,
         request_id,
         &mut previous,
+        &mut previous_notice,
         &active,
         &emit,
     );
@@ -128,19 +225,22 @@ fn final_empty_partial_search_reports_failure_not_false_success() {
     let events = std::cell::RefCell::new(Vec::new());
     let emit = |event| events.borrow_mut().push(event);
     let mut previous = None;
+    let mut previous_notice = None;
     let mut event = results(&[], false);
     let SearchEvent::Results { notice, .. } = &mut event;
     *notice = Some("Cannot search this scope".into());
     deliver_results(
         event,
         "song",
+        1,
         crate::services::RequestId(12),
         &mut previous,
+        &mut previous_notice,
         &Cell::new(true),
         &emit,
     );
     assert!(
-        matches!(events.borrow().as_slice(), [DirectoryEvent::Snapshot { entries, .. }, DirectoryEvent::Failed { .. }] if entries.is_empty())
+        matches!(events.borrow().as_slice(), [DirectoryEvent::Snapshot { entries, .. }, DirectoryEvent::Notice { .. }, DirectoryEvent::Failed { .. }] if entries.is_empty())
     );
 }
 
@@ -150,6 +250,60 @@ fn legacy_search_uses_home_including_music() {
     assert_eq!(search.scope, SearchScope::Home);
     assert_eq!(search.root, glib::home_dir());
     assert_eq!(search.query, "modified:today");
+}
+
+#[test]
+fn repeated_query_text_still_rejects_an_older_generation() {
+    let events = std::cell::RefCell::new(Vec::new());
+    let emit = |event| events.borrow_mut().push(event);
+    let mut previous = None;
+    let mut previous_notice = None;
+    deliver_results(
+        results(&["old.flac"], false),
+        "song",
+        3,
+        crate::services::RequestId(12),
+        &mut previous,
+        &mut previous_notice,
+        &Cell::new(true),
+        &emit,
+    );
+    assert!(events.borrow().is_empty());
+    assert!(previous.is_none());
+}
+
+#[test]
+fn partial_notices_update_and_clear_without_hiding_matching_files() {
+    let events = std::cell::RefCell::new(Vec::new());
+    let emit = |event| events.borrow_mut().push(event);
+    let mut previous = None;
+    let mut previous_notice = None;
+    let mut partial = results(&["song.flac"], true);
+    let SearchEvent::Results { notice, .. } = &mut partial;
+    *notice = Some("Some folders could not be indexed".into());
+    let active = Cell::new(true);
+    let request_id = crate::services::RequestId(12);
+    let mut repeated = results(&["song.flac"], true);
+    let SearchEvent::Results { notice, .. } = &mut repeated;
+    *notice = Some("Some folders could not be indexed".into());
+    for event in [partial, repeated, results(&["song.flac"], false)] {
+        deliver_results(
+            event,
+            "song",
+            1,
+            request_id,
+            &mut previous,
+            &mut previous_notice,
+            &active,
+            &emit,
+        );
+    }
+    assert!(matches!(events.borrow().as_slice(), [
+        DirectoryEvent::Snapshot { entries, .. },
+        DirectoryEvent::Notice { message: Some(_), .. },
+        DirectoryEvent::Notice { message: None, .. },
+        DirectoryEvent::Finished { .. },
+    ] if entries.len() == 1));
 }
 
 #[test]

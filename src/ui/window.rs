@@ -34,6 +34,8 @@ const SIDEBAR_WIDTH: i32 = 208;
 const MIN_SIDEBAR_WIDTH: i32 = 176;
 const SIDEBAR_TRANSITION: Duration = Duration::from_millis(300);
 
+mod saved_searches;
+
 pub fn present(application: &gtk::Application) {
     present_location(application, None);
 }
@@ -86,6 +88,7 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     let controller = browser.browser();
     controller.set_preferences(initial_view.preferences);
     let preview = PreviewDrawer::new(Rc::new(LocalPreviewProvider));
+    preview.set_image_context_menu_handler(browser.image_context_menu_handler());
     let music_player = super::music::MusicPlayer::for_application(application);
     install_audio_playback_coordination(&window, &preview, music_player.controller());
     let activated_music = music_player.clone();
@@ -398,9 +401,15 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     preview_split.set_vexpand(true);
     let measured_content = content.clone();
     let measured_browser = browser.clone();
+    let measured_split = preview_split.downgrade();
     preview.attach_split(
         &preview_split,
-        Rc::new(move || measured_content.position() + measured_browser.preview_occupied_width()),
+        Rc::new(move || {
+            let sidebar_width = measured_content.position();
+            let available = measured_split.upgrade().map_or(0, |split| split.width());
+            sidebar_width
+                + measured_browser.preview_occupied_width(available.saturating_sub(sidebar_width))
+        }),
     );
     let workspace = gtk::Stack::new();
     workspace.set_vexpand(true);
@@ -485,10 +494,15 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         }
     }));
     window_overlay.add_overlay(&search_dialog.widget());
+    let saved_search_layer = saved_searches::install(&window_overlay, &blurred_root, &search_dialog, &sidebar);
     let shown_search = search_dialog.clone();
     let search_browser = controller.clone();
     let search_blurred_root = blurred_root.clone();
+    let saved_layer_for_search = saved_search_layer.clone();
     search_button.connect_clicked(move |button| {
+        if saved_layer_for_search.is_visible() {
+            return;
+        }
         if shown_search.is_visible() {
             shown_search.hide();
             return;
@@ -506,7 +520,11 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     let shortcut_browser = controller.clone();
     let shortcut_search_button = search_button.clone();
     let shortcut_search_root = blurred_root.clone();
+    let saved_layer_for_shortcut = saved_search_layer.clone();
     search_action.connect_activate(move |_, _| {
+        if saved_layer_for_shortcut.is_visible() {
+            return;
+        }
         if shortcut_search.is_visible() {
             shortcut_search.hide();
         } else {
@@ -526,6 +544,9 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     let music_search_root = blurred_root.clone();
     let music_search_button = search_button.clone();
     music_search_action.connect_activate(move |_, _| {
+        if saved_search_layer.is_visible() {
+            return;
+        }
         music_search_button.add_css_class("active");
         music_search_root.set_blurred(true);
         music_search_dialog.show_music();
@@ -624,6 +645,12 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     });
     window.present();
     crate::metrics::mark_window_presented();
+    let weak_window = window.downgrade();
+    gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(1200), move || {
+        if weak_window.upgrade().is_some() {
+            let _warmup = crate::playback::warmup();
+        }
+    });
 }
 
 pub(crate) fn install_audio_playback_coordination(
@@ -1221,19 +1248,32 @@ struct SidebarState {
     place_rows: RefCell<Vec<(Location, gtk::Button)>>,
     theme_manager: Rc<ThemeManager>,
     recent_folders: Rc<RefCell<crate::ui::recent_folders::RecentFolders>>,
+    saved_searches: crate::services::saved_searches::Store,
+    saved_revision: Cell<u64>,
+    manage_saved_searches: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
 struct SidebarView {
     widget: gtk::Widget,
     state: Rc<SidebarState>,
     handlers: RefCell<Vec<glib::SignalHandlerId>>,
+    saved_updates: RefCell<Option<glib::SourceId>>,
 }
 
 impl SidebarView {
     fn disconnect(&self) {
+        if let Some(source) = self.saved_updates.take() {
+            source.remove();
+        }
         for handler in self.handlers.take() {
             self.state.volume_monitor.disconnect(handler);
         }
+    }
+}
+
+impl Drop for SidebarView {
+    fn drop(&mut self) {
+        self.disconnect();
     }
 }
 
@@ -1282,6 +1322,9 @@ impl SidebarState {
             self.append_recent_place("Yesterday", "modified:yesterday");
         }
 
+        if self.theme_manager.show_smart_folders() {
+            self.append_smart_folders();
+        }
         self.append_separator();
 
         let pinned = self
@@ -2280,6 +2323,14 @@ fn navigate_to_gio_file(browser: &Rc<Browser>, file: &gio::File) {
 }
 
 fn build_sidebar(view: BrowserView, theme_manager: Rc<ThemeManager>) -> SidebarView {
+    build_sidebar_with_searches(view, theme_manager, crate::services::saved_searches::Store::shared())
+}
+
+fn build_sidebar_with_searches(
+    view: BrowserView,
+    theme_manager: Rc<ThemeManager>,
+    saved_searches: crate::services::saved_searches::Store,
+) -> SidebarView {
     let widget = gtk::Box::new(gtk::Orientation::Vertical, 2);
     widget.add_css_class("sidebar");
     let scroller = gtk::ScrolledWindow::builder()
@@ -2303,6 +2354,9 @@ fn build_sidebar(view: BrowserView, theme_manager: Rc<ThemeManager>) -> SidebarV
         place_rows: RefCell::new(Vec::new()),
         theme_manager,
         recent_folders,
+        saved_searches,
+        saved_revision: Cell::new(0),
+        manage_saved_searches: RefCell::new(None),
     });
 
     let weak = Rc::downgrade(&state);
@@ -2368,10 +2422,21 @@ fn build_sidebar(view: BrowserView, theme_manager: Rc<ThemeManager>) -> SidebarV
     }));
     state.rebuild();
 
+    let weak = Rc::downgrade(&state);
+    let saved_updates = glib::timeout_add_local(Duration::from_millis(150), move || {
+        let Some(state) = weak.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
+        if state.saved_searches.revision() != state.saved_revision.get() {
+            state.rebuild();
+        }
+        glib::ControlFlow::Continue
+    });
     SidebarView {
         widget: scroller.upcast(),
         state,
         handlers: RefCell::new(handlers),
+        saved_updates: RefCell::new(Some(saved_updates)),
     }
 }
 

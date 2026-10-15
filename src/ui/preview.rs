@@ -22,6 +22,7 @@ use crate::{
 
 mod audio;
 mod image;
+mod loading;
 mod media;
 mod pdf_fullscreen;
 #[cfg(test)]
@@ -38,6 +39,17 @@ const PDF_PAGE_GAP: i32 = 6;
 const PDF_MIN_ZOOM: f64 = 1.0;
 const PDF_MAX_ZOOM: f64 = 4.0;
 
+#[derive(Clone)]
+pub(super) struct ImageMenuActions {
+    pub fit: glib::WeakRef<gtk::Button>,
+    pub actual: glib::WeakRef<gtk::Button>,
+    pub fullscreen: glib::WeakRef<gtk::Button>,
+    pub exiting_fullscreen: bool,
+}
+
+pub(super) type ImageContextMenuHandler =
+    Rc<dyn Fn(&gtk::Widget, FileEntry, ImageMenuActions, f64, f64)>;
+
 struct PreviewState {
     provider: Rc<dyn PreviewProvider>,
     revealer: gtk::Revealer,
@@ -51,6 +63,7 @@ struct PreviewState {
     audio: RefCell<Option<audio::AudioPreview>>,
     audio_play_handler: RefCell<Option<Rc<dyn Fn()>>>,
     image: RefCell<Option<image::ImagePreview>>,
+    image_context_menu_handler: RefCell<Option<ImageContextMenuHandler>>,
     pdf: RefCell<Option<pdf_fullscreen::PdfFullscreen>>,
     split: RefCell<Option<gtk::Paned>>,
     occupied_width: RefCell<Option<Rc<dyn Fn() -> i32>>>,
@@ -58,9 +71,11 @@ struct PreviewState {
     load: RefCell<Option<LoadHandle>>,
     pdf_loads: Rc<RefCell<HashMap<i32, LoadHandle>>>,
     current_request: Cell<Option<PreviewRequestId>>,
+    loading_image: RefCell<Option<image::ImagePreview>>,
     next_request: Cell<u64>,
     opened: Cell<bool>,
     last_split_width: Cell<i32>,
+    last_occupied_width: Cell<i32>,
     animating: Cell<bool>,
     animation_generation: Rc<Cell<u64>>,
 }
@@ -146,6 +161,7 @@ impl PreviewDrawer {
             audio: RefCell::new(None),
             audio_play_handler: RefCell::new(None),
             image: RefCell::new(None),
+            image_context_menu_handler: RefCell::new(None),
             pdf: RefCell::new(None),
             split: RefCell::new(None),
             occupied_width: RefCell::new(None),
@@ -153,9 +169,11 @@ impl PreviewDrawer {
             load: RefCell::new(None),
             pdf_loads: Rc::new(RefCell::new(HashMap::new())),
             current_request: Cell::new(None),
+            loading_image: RefCell::new(None),
             next_request: Cell::new(1),
             opened: Cell::new(false),
             last_split_width: Cell::new(0),
+            last_occupied_width: Cell::new(0),
             animating: Cell::new(false),
             animation_generation: Rc::new(Cell::new(0)),
         });
@@ -207,13 +225,15 @@ impl PreviewDrawer {
                 return glib::ControlFlow::Break;
             };
             let available = split.width();
-            if available > 0
-                && available != state.last_split_width.replace(available)
-                && state.opened.get()
-                && !state.animating.get()
-            {
-                let opening_width = state.opening_width(available);
-                split.set_position(available.saturating_sub(opening_width));
+            if available > 0 && state.opened.get() && !state.animating.get() {
+                let occupied = state.occupied_width.borrow().as_ref()
+                    .map_or(0, |width| width());
+                let width_changed = available != state.last_split_width.replace(available);
+                let occupied_changed = occupied != state.last_occupied_width.replace(occupied);
+                if width_changed || occupied_changed {
+                    let opening_width = state.opening_width(available);
+                    split.set_position(available.saturating_sub(opening_width));
+                }
             }
             glib::ControlFlow::Continue
         });
@@ -251,6 +271,10 @@ impl PreviewDrawer {
 
     pub fn set_audio_play_handler(&self, handler: Rc<dyn Fn()>) {
         self.state.audio_play_handler.replace(Some(handler));
+    }
+
+    pub(super) fn set_image_context_menu_handler(&self, handler: ImageContextMenuHandler) {
+        self.state.image_context_menu_handler.replace(Some(handler));
     }
 
     pub fn pause_audio_preview(&self) {
@@ -381,6 +405,7 @@ impl PreviewState {
         self.next_request
             .set(self.next_request.get().saturating_add(1));
         self.current_request.set(Some(request_id));
+        self.show_cached_image(&entry, request_id);
         let weak = Rc::downgrade(self);
         let emit = Rc::new(move |event| {
             let Some(state) = weak.upgrade() else {
@@ -480,7 +505,13 @@ impl PreviewState {
                 let bytes = glib::Bytes::from_owned(png);
                 match gtk::gdk::Texture::from_bytes(&bytes) {
                     Ok(texture) => {
-                        let image = image::ImagePreview::new(&texture);
+                        let image = image::ImagePreview::new(
+                            &texture,
+                            self.image_context_menu_handler
+                                .borrow()
+                                .clone()
+                                .map(|handler| (preview.entry.clone(), handler)),
+                        );
                         self.content.append(&image.widget);
                         self.image.replace(Some(image));
                     }
@@ -488,7 +519,7 @@ impl PreviewState {
                 }
             }
             PreviewContent::GeoTiff { png, metadata } => {
-                self.render_geotiff_viewer(png, metadata);
+                self.render_geotiff_viewer(preview.entry.clone(), png, metadata);
             }
             PreviewContent::SandboxedMedia { data } => {
                 let bytes = glib::Bytes::from_owned(data);
@@ -1117,6 +1148,9 @@ impl PreviewState {
     }
 
     fn clear_content(&self) {
+        if let Some(image) = self.loading_image.borrow_mut().take() {
+            image.stop();
+        }
         if let Some(preview) = self.audio.borrow_mut().take() {
             preview.stop();
         }
@@ -1162,7 +1196,12 @@ impl PreviewState {
         self.content.append(&box_);
     }
 
-    fn render_geotiff_viewer(self: &Rc<Self>, png: Vec<u8>, metadata: GeoTiffMetadata) {
+    fn render_geotiff_viewer(
+        self: &Rc<Self>,
+        entry: FileEntry,
+        png: Vec<u8>,
+        metadata: GeoTiffMetadata,
+    ) {
         let bytes = glib::Bytes::from_owned(png);
         let texture = match gtk::gdk::Texture::from_bytes(&bytes) {
             Ok(texture) => texture,
@@ -1189,7 +1228,13 @@ impl PreviewState {
         header_box.append(&map_widget);
         self.content.append(&header_box);
 
-        let image = image::ImagePreview::new(&texture);
+        let image = image::ImagePreview::new(
+            &texture,
+            self.image_context_menu_handler
+                .borrow()
+                .clone()
+                .map(|handler| (entry, handler)),
+        );
         self.content.append(&image.widget);
         self.image.replace(Some(image));
     }
@@ -1543,8 +1588,6 @@ fn set_pdf_page_texture(
 fn preview_width_for_empty_space(available: i32, occupied: i32) -> i32 {
     available
         .saturating_sub(occupied)
-        .saturating_mul(9)
-        .saturating_div(10)
         .max(MIN_WIDTH)
 }
 

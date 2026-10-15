@@ -1,6 +1,23 @@
+.search-coverage-notice {
+  color: @theme_dim_text;
+  background: @theme_surface;
+  border-bottom: 1px solid @theme_border;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
 window {
   background: @theme_bg;
   color: @theme_text;
+  font-family: "JetBrains Mono", "JetBrainsMono Nerd Font", monospace;
+  font-size: 13px;
+}
+
+popover,
+.search-dialog,
+.search-filter-popover,
+.search-filter-panel,
+.app-modal-layer {
   font-family: "JetBrains Mono", "JetBrainsMono Nerd Font", monospace;
   font-size: 13px;
 }
@@ -117,7 +134,7 @@ headerbar menubutton.header-action > button:focus-visible image {
 }
 
 .tab-strip-content {
-  padding: 3px 8px;
+  padding: 0;
   background: @theme_surface;
 }
 
@@ -126,7 +143,7 @@ headerbar menubutton.header-action > button:focus-visible image {
   min-height: 30px;
   margin: 0 0 0 4px;
   padding: 0;
-  border-radius: 5px;
+  border-radius: 0;
   color: @theme_text;
   background: @theme_surface;
   background-image: none;
@@ -142,12 +159,13 @@ headerbar menubutton.header-action > button:focus-visible image {
 }
 
 .file-tab {
-  min-height: 32px;
+  min-height: 40px;
   padding: 0 3px 0 7px;
   border-radius: 0;
   color: @theme_dim_text;
   background: @theme_surface;
-  border: 1px solid transparent;
+  border: 0;
+  border-right: 1px solid @theme_border;
   box-shadow: none;
   transition: background-color 120ms ease, color 120ms ease;
 }
@@ -160,7 +178,6 @@ headerbar menubutton.header-action > button:focus-visible image {
 .file-tab.active {
   color: @theme_text;
   background: @theme_bg;
-  border-color: transparent;
   box-shadow: inset 0 2px @theme_accent;
 }
 
@@ -202,7 +219,7 @@ headerbar menubutton.header-action > button:focus-visible image {
   min-width: 28px;
   min-height: 28px;
   padding: 0;
-  border-radius: 5px;
+  border-radius: 0;
 }
 
 .file-tab-close:hover {
@@ -237,7 +254,7 @@ headerbar menubutton.header-action > button:focus-visible image {
   caret-color: @theme_accent;
   background: @theme_bg;
   border: 1px solid @theme_accent;
-  border-radius: 5px;
+  border-radius: 0;
 }
 
 .appearance-popover contents {
@@ -404,42 +421,64 @@ headerbar menubutton.header-action > button:focus-visible image {
 }
 
 .clipboard-indicator {
-  background: @theme_surface;
-  border: 1px solid alpha(@theme_accent, 0.42);
-  border-radius: 7px;
-  box-shadow: 0 8px 24px alpha(@theme_bg, 0.72);
-  color: @theme_text;
-  font-weight: 600;
-  min-height: 30px;
-  padding: 4px 10px;
+  background: alpha(@theme_surface, 0.86);
+  border: 1px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
+  color: @theme_dim_text;
+  font-size: 0.82em;
+  font-weight: 400;
+  min-height: 20px;
+  padding: 2px 6px;
 }
 
 .clipboard-indicator:hover {
-  background: alpha(@theme_highlight, 0.92);
-  border-color: alpha(@theme_accent, 0.72);
+  background: @theme_highlight;
+  color: @theme_text;
+}
+
+.clipboard-indicator:focus-visible {
+  outline: 1px solid @theme_accent;
+  outline-offset: -1px;
 }
 
 .clipboard-popover contents {
   background: @theme_surface;
-  border: 1px solid alpha(@theme_accent, 0.42);
-  border-radius: 7px;
-  box-shadow: 0 12px 30px alpha(@theme_bg, 0.76);
-  min-width: 260px;
-  padding: 8px;
+  border: 1px solid @theme_border;
+  border-radius: 0;
+  box-shadow: 0 8px 20px alpha(@theme_bg, 0.56);
+  min-width: 160px;
+  padding: 4px;
 }
 
 .clipboard-list-item {
   color: @theme_text;
-  padding: 4px 7px;
+  font-size: 0.85em;
+  padding: 4px 6px;
 }
 
 .search-dialog {
   background: @theme_surface;
   border: 1px solid @theme_accent;
-  border-radius: 9px;
+  border-radius: 0;
   box-shadow: 0 12px 38px alpha(@theme_bg, 0.82), 0 0 14px alpha(@theme_accent, 0.24);
   min-height: 452px;
   min-width: 760px;
+}
+
+.search-dialog,
+.search-dialog entry,
+.search-dialog entry text,
+.search-group-header,
+.search-filter-popover,
+.search-filter-panel,
+.search-filter-panel entry,
+.search-filter-panel entry text,
+.search-filter-panel dropdown,
+.search-filter-panel dropdown button,
+.search-scope-bar,
+.search-scope-bar button {
+  font-family: inherit;
 }
 
 .search-bar {
@@ -448,8 +487,24 @@ headerbar menubutton.header-action > button:focus-visible image {
   padding: 0 16px;
 }
 
-.search-field {
+.search-bar .search-field {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  min-height: 38px;
+  font-size: 1.15em;
+  font-family: inherit;
+  color: @theme_text;
+  padding: 0 4px;
   outline: none;
+  border-radius: 0;
+}
+
+.search-bar .search-field:focus,
+.search-bar .search-field:focus-visible {
+  outline: none;
+  border: none;
+  box-shadow: none;
 }
 
 .search-field placeholder {
@@ -462,10 +517,29 @@ headerbar menubutton.header-action > button:focus-visible image {
   color: @theme_bg;
 }
 
+.search-scope-bar {
+  background: alpha(@theme_bg, 0.25);
+  border-bottom: 1px solid alpha(@theme_border, 0.45);
+  min-height: 38px;
+  padding: 0 16px;
+}
+
+.search-scope-bar dropdown > button {
+  background: @theme_bg;
+  color: @theme_text;
+  border: 1px solid alpha(@theme_border, 0.7);
+  border-radius: 0;
+  box-shadow: none;
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 0.88em;
+  font-family: inherit;
+}
+
 .search-filter-button {
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: 0;
   box-shadow: none;
   color: @theme_dim_text;
   min-height: 28px;
@@ -487,7 +561,7 @@ headerbar menubutton.header-action > button:focus-visible image {
 .search-filter-popover > contents {
   background: @theme_surface;
   border: 1px solid alpha(@theme_border, 0.78);
-  border-radius: 7px;
+  border-radius: 0;
   box-shadow: 0 12px 34px alpha(@theme_bg, 0.72);
   padding: 0;
 }
@@ -499,19 +573,28 @@ headerbar menubutton.header-action > button:focus-visible image {
 
 .search-filter-title {
   color: @theme_dim_text;
-  font-size: 10px;
+  font-size: 0.78em;
   font-weight: 700;
   letter-spacing: 0.09em;
+  margin-bottom: 2px;
+}
+
+.search-filter-section-title {
+  color: @theme_dim_text;
+  font-size: 0.78em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin-top: 6px;
   margin-bottom: 2px;
 }
 
 .search-filter-shortcut {
   background: alpha(@theme_muted, 0.62);
   border: 1px solid alpha(@theme_border, 0.68);
-  border-radius: 4px;
+  border-radius: 0;
   color: @theme_text;
-  font-family: "JetBrains Mono", "JetBrainsMono Nerd Font", monospace;
-  font-size: 10px;
+  font-family: inherit;
+  font-size: 0.78em;
   padding: 2px 6px;
 }
 
@@ -521,17 +604,21 @@ headerbar menubutton.header-action > button:focus-visible image {
 
 .search-filter-label {
   color: @theme_dim_text;
-  font-size: 12px;
+  font-size: 0.88em;
 }
 
 .search-content-toggle {
   color: @theme_text;
-  font-size: 12px;
+  font-size: 0.88em;
 }
 
 .search-content-note {
   color: @theme_dim_text;
-  font-size: 10px;
+  font-size: 0.78em;
+}
+
+.search-filter-panel dropdown {
+  min-height: 28px;
 }
 
 .search-filter-entry,
@@ -540,10 +627,12 @@ headerbar menubutton.header-action > button:focus-visible image {
 .search-filter-panel dropdown > button {
   background: @theme_bg;
   border: 1px solid alpha(@theme_border, 0.7);
-  border-radius: 5px;
+  border-radius: 0;
   box-shadow: none;
   color: @theme_text;
   min-height: 28px;
+  font-family: inherit;
+  font-size: 0.88em;
 }
 
 .search-filter-entry:focus,
@@ -554,9 +643,11 @@ headerbar menubutton.header-action > button:focus-visible image {
 
 .search-filter-clear,
 .search-filter-apply {
-  border-radius: 5px;
-  min-height: 30px;
+  border-radius: 0;
+  min-height: 28px;
   padding: 0 12px;
+  font-family: inherit;
+  font-size: 0.88em;
 }
 
 .search-filter-clear {
@@ -571,9 +662,59 @@ headerbar menubutton.header-action > button:focus-visible image {
   color: @theme_bg;
 }
 
+.search-interpretation-slot {
+  min-height: 32px;
+  padding: 0 16px;
+  background: alpha(@theme_highlight, 0.18);
+  border-bottom: 1px solid alpha(@theme_border, 0.45);
+}
+
+.search-inferred-chip {
+  background: alpha(@theme_highlight, 0.45);
+  border: 1px solid alpha(@theme_border, 0.75);
+  border-radius: 0;
+  padding: 2px 6px;
+  min-height: 22px;
+}
+
+.search-inferred-chip-label {
+  color: @theme_text;
+  font-size: 0.82em;
+  font-family: inherit;
+}
+
+.search-inferred-chip-remove {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 0 2px;
+  color: @theme_dim_text;
+  min-width: 14px;
+  min-height: 14px;
+}
+
+.search-inferred-chip-remove:hover {
+  background: alpha(@theme_muted, 0.6);
+  color: @theme_accent;
+}
+
 .search-status {
   color: @theme_dim_text;
   padding: 28px 24px;
+}
+
+.search-notice-slot {
+  min-height: 32px;
+  border-bottom: 1px solid alpha(@theme_border, 0.35);
+  background: alpha(@theme_bg, 0.15);
+}
+
+.search-notice {
+  color: @theme_dim_text;
+  padding: 0 16px;
+  font-size: 0.82em;
+  font-family: inherit;
 }
 
 .search-results-scroll {
@@ -623,17 +764,66 @@ headerbar menubutton.header-action > button:focus-visible image {
   font-size: 0.9em;
 }
 
+.search-group-header {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: @theme_dim_text;
+  font-size: 0.74em;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  padding: 4px 0 2px;
+  font-family: inherit;
+}
+
 .search-result-type {
   color: @theme_accent;
   background: alpha(@theme_highlight, 0.55);
   border: 1px solid @theme_border;
-  border-radius: 6px;
+  border-radius: 0;
   padding: 4px 7px;
   font-size: 0.8em;
 }
 
 .search-result-art {
   color: @theme_accent;
+}
+
+.search-dialog dropdown > button {
+  background: @theme_bg;
+  color: @theme_text;
+  border: 1px solid @theme_border;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.search-categories {
+  padding: 6px 16px;
+  border-bottom: 1px solid alpha(@theme_border, 0.45);
+}
+
+.search-category {
+  background: transparent;
+  color: @theme_dim_text;
+  border: 1px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
+  min-height: 28px;
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 0.88em;
+}
+
+.search-category:hover {
+  background: @theme_muted;
+  color: @theme_text;
+}
+
+.search-category:checked {
+  background: @theme_highlight;
+  color: @theme_accent;
+  border-color: @theme_border;
 }
 
 .search-result:selected .search-result-path {
@@ -849,14 +1039,14 @@ headerbar menubutton.header-action > button:focus-visible image {
 .settings-dialog {
   background: @theme_surface;
   border: 1px solid alpha(@theme_accent, 0.22);
-  border-radius: 7px;
+  border-radius: 0;
   box-shadow: 0 18px 54px alpha(black, 0.6);
 }
 
 .settings-navigation {
   background: @theme_bg;
   border-right: 1px solid alpha(@theme_border, 0.26);
-  border-radius: 7px 0 0 7px;
+  border-radius: 0;
   min-width: 220px;
   padding: 18px 12px;
 }
@@ -864,7 +1054,7 @@ headerbar menubutton.header-action > button:focus-visible image {
 .settings-navigation button {
   background: transparent;
   border: none;
-  border-radius: 5px;
+  border-radius: 0;
   box-shadow: none;
   color: @theme_dim_text;
   min-height: 38px;
@@ -883,7 +1073,7 @@ headerbar menubutton.header-action > button:focus-visible image {
 
 .settings-page {
   background: @theme_surface;
-  border-radius: 0 7px 7px 0;
+  border-radius: 0;
 }
 
 .settings-titlebar {
@@ -901,7 +1091,7 @@ headerbar menubutton.header-action > button:focus-visible image {
 .settings-close {
   background: transparent;
   border: none;
-  border-radius: 5px;
+  border-radius: 0;
   box-shadow: none;
   min-height: 28px;
   min-width: 28px;
@@ -919,7 +1109,7 @@ headerbar menubutton.header-action > button:focus-visible image {
 .settings-option {
   background: alpha(@theme_bg, 0.55);
   border: 1px solid alpha(@theme_border, 0.24);
-  border-radius: 6px;
+  border-radius: 0;
   min-height: 60px;
   padding: 10px 14px;
 }
@@ -937,7 +1127,7 @@ headerbar menubutton.header-action > button:focus-visible image {
 .settings-choice > button {
   background: @theme_surface;
   border: 1px solid alpha(@theme_border, 0.68);
-  border-radius: 5px;
+  border-radius: 0;
   box-shadow: none;
   color: @theme_text;
   min-height: 30px;
@@ -946,6 +1136,28 @@ headerbar menubutton.header-action > button:focus-visible image {
 
 .about-page {
   color: @theme_text;
+}
+
+.settings-font-preview {
+  background: @theme_bg;
+  color: @theme_text;
+  border: 1px solid @theme_border;
+  padding: 16px;
+}
+
+.settings-font-reset,
+.settings-page spinbutton {
+  background: @theme_bg;
+  color: @theme_text;
+  border: 1px solid @theme_border;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.settings-font-reset:hover,
+.settings-page spinbutton button:hover {
+  background: @theme_muted;
+  color: @theme_accent;
 }
 
 .about-identity {
@@ -1268,6 +1480,11 @@ paned > separator {
   font-size: 0.8em;
 }
 
+.hermes-image-canvas {
+  color: @theme_bg;
+  background: @theme_bg;
+}
+
 .hermes-media-action:hover,
 .hermes-media-action:active {
   background: alpha(@theme_accent, 0.14);
@@ -1337,6 +1554,15 @@ paned > separator {
 
 .preview-feedback-detail {
   color: @theme_dim_text;
+}
+
+.preview-loading-progress {
+  background: alpha(@theme_surface, 0.9);
+  border: 1px solid @theme_border;
+  border-radius: 0;
+  color: @theme_dim_text;
+  font-size: 0.82em;
+  padding: 4px 6px;
 }
 
 .preview-spinner {
@@ -2933,6 +3159,91 @@ button.music-cover-button:focus-visible {
   background: @theme_highlight;
 }
 
+.music-navigation .music-control {
+  background: transparent;
+  border-radius: 0;
+  border: 1px solid transparent;
+  border-bottom-width: 2px;
+  box-shadow: none;
+  color: @theme_dim_text;
+  padding: 5px 12px;
+}
+
+.music-navigation .music-control:hover {
+  background: alpha(@theme_highlight, 0.5);
+  color: @theme_text;
+}
+
+.music-navigation .music-control:checked {
+  background: @theme_highlight;
+  border-bottom-color: @theme_accent;
+  color: @theme_accent;
+}
+
+.music-navigation .music-control:focus-visible,
+.music-favorite:focus-visible {
+  outline: 1px solid @theme_accent;
+  outline-offset: -1px;
+}
+
+.music-playlist-editor {
+  background: @theme_surface;
+  color: @theme_text;
+}
+
+.music-playlist-editor listview {
+  background: @theme_bg;
+  color: @theme_text;
+}
+
+.music-playlist-editor row:hover {
+  background: alpha(@theme_highlight, 0.5);
+}
+
+.music-playlist-editor row:selected {
+  background: @theme_highlight;
+  color: @theme_accent;
+}
+
+.music-playlist-row {
+  color: @theme_text;
+  border-top: 2px solid transparent;
+  border-bottom: 2px solid transparent;
+  padding: 4px 6px;
+}
+
+.music-playlist-row.queue-drop-before {
+  border-top-color: @theme_accent;
+}
+
+.music-playlist-row.queue-drop-after {
+  border-bottom-color: @theme_accent;
+}
+
+.music-favorite {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  color: @theme_dim_text;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 4px;
+}
+
+.music-favorite:hover {
+  background: @theme_highlight;
+  color: @theme_accent;
+}
+
+.music-favorite:checked {
+  color: @theme_accent;
+}
+
+.music-favorite:disabled {
+  opacity: 0.45;
+}
+
 .music-actions {
   padding-top: 4px;
 }
@@ -3016,16 +3327,95 @@ button.music-cover-button:focus-visible {
   color: @theme_text;
 }
 
-.preview-audio-artwork {
+.preview-audio-player-card {
+  background: transparent;
+}
+
+.preview-audio-hero {
+  margin: 0;
+}
+
+.preview-audio-hero-overlay {
+  border-radius: 0;
+}
+
+.preview-audio-jacket {
   color: @theme_accent;
   background: @theme_surface;
-  border-radius: 8px;
+  border: 1px solid @theme_border;
+  border-radius: 0;
+}
+
+.preview-audio-track-number {
+  color: @theme_dim_text;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .preview-audio-title {
   color: @theme_text;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 700;
+}
+
+.preview-audio-subtitle {
+  color: @theme_dim_text;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.preview-audio-visualizer {
+  background: transparent;
+  border-radius: 0;
+  min-height: 54px;
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+
+.preview-audio-seek-box {
+  margin-top: 2px;
+}
+
+.preview-audio-time {
+  color: @theme_dim_text;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.preview-audio-transport {
+  margin-top: 2px;
+}
+
+.preview-audio-transport-button {
+  background: transparent;
+  color: @theme_text;
+  border: none;
+  border-radius: 4px;
+  padding: 6px;
+}
+
+.preview-audio-transport-button:hover {
+  background: @theme_surface;
+  color: @theme_accent;
+}
+
+.preview-audio-play-button {
+  background: @theme_accent;
+  color: @theme_background;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 10px;
+}
+
+.preview-audio-play-button:hover {
+  background: @theme_highlight;
+  color: @theme_background;
+}
+
+.preview-audio-volume-scale {
+  min-width: 64px;
 }
 
 .preview-audio-heading {
@@ -3053,12 +3443,14 @@ button.music-cover-button:focus-visible {
 }
 
 .preview-audio-tag-value:focus-visible,
-.preview-audio-title:focus-visible {
+.preview-audio-title:focus-visible,
+.preview-audio-subtitle:focus-visible {
   outline: 1px solid @theme_accent;
 }
 
 .preview-audio-tag-value selection,
-.preview-audio-title selection {
+.preview-audio-title selection,
+.preview-audio-subtitle selection {
   color: @theme_text;
   background: @theme_highlight;
 }

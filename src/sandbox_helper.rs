@@ -13,6 +13,7 @@ use gtk::gio;
 pub(crate) mod archive_cover;
 mod heif;
 mod jpeg;
+mod scaled;
 pub(crate) mod audio;
 pub(crate) mod waveform;
 pub(crate) mod geotiff;
@@ -80,7 +81,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         "thumbnail-pdf" => (render_pdf_thumbnail(input, value.clamp(16, 256))?, None),
         "thumbnail-video" => (render_media(input, value.clamp(16, 256))?, None),
         "preview-image" => (render_image(input, 1400)?, None),
-        "preview-heif" => (render_imagemagick(input, 1400)?, None),
+        "preview-heif" => (render_heif_preview(input)?, None),
         "preview-pdf" => {
             let (png, page, pages, text_layer) = render_pdf_page(input, value)?;
             if let Some(text_bytes) = text_layer {
@@ -140,6 +141,11 @@ pub(crate) fn render_image(path: &Path, size: i32) -> Result<Vec<u8>, String> {
             if u64::from(width) * u64::from(height) <= sniff::MAX_PIXELS_CEILING
                 && sniff::is_jpeg(path)
             {
+                if size > 256 && jpeg::external_preview_safe(path)
+                    && let Ok(png) = scaled::render(path, size)
+                {
+                    return Ok(png);
+                }
                 return render_imagemagick(path, size);
             }
             if !sniff::is_jpeg(path) && let Some(png) = sniff::read_exif_thumbnail(path, size) {
@@ -147,6 +153,9 @@ pub(crate) fn render_image(path: &Path, size: i32) -> Result<Vec<u8>, String> {
             }
             return Err("Image dimensions exceed the decoded frame budget".to_owned());
         }
+    }
+    if size > 256 && let Some(png) = jpeg::scaled_preview(path, size) {
+        return Ok(png);
     }
     // Prefer the bounded external decoder while glycin can inherit Strata's file-size limit and
     // receive SIGXFSZ when allocating shared memory for large decoded JPEG pixel buffers.
@@ -179,6 +188,7 @@ fn render_imagemagick(path: &Path, size: i32) -> Result<Vec<u8>, String> {
                 ])
                 .arg("-define")
                 .arg(format!("jpeg:size={width}x{height}"));
+            command.args(["-define", "png:compression-strategy=2"]);
         }
         let output = command
             .arg("-")
@@ -203,7 +213,14 @@ pub(crate) fn render_heif_thumbnail(path: &Path, size: i32) -> Result<Vec<u8>, S
 }
 
 pub(crate) fn render_heif_preview(path: &Path) -> Result<Vec<u8>, String> {
-    render_imagemagick(path, 1400)
+    heif::preview(path, 1400).or_else(|_| {
+        if heif::external_preview_safe(path, 1400)
+            && let Ok(png) = scaled::render(path, 1400)
+        {
+            return Ok(png);
+        }
+        render_imagemagick(path, 1400)
+    })
 }
 
 fn render_dcraw(path: &Path, size: i32) -> Result<Vec<u8>, String> {
@@ -244,7 +261,7 @@ fn render_dcraw(path: &Path, size: i32) -> Result<Vec<u8>, String> {
     Err("No embedded RAW thumbnail could be decoded".to_owned())
 }
 
-fn render_pdf_thumbnail(path: &Path, size: i32) -> Result<Vec<u8>, String> {
+pub(crate) fn render_pdf_thumbnail(path: &Path, size: i32) -> Result<Vec<u8>, String> {
     let uri = gio::File::for_path(path).uri();
     let document = poppler::Document::from_file(&uri, None).map_err(|error| error.to_string())?;
     let page = document
@@ -628,10 +645,12 @@ fn render_animation_preview(path: &Path, output: &Path) -> Result<(), String> {
     status.success().then_some(()).ok_or_else(|| format!("Unable to normalize animation preview: ffmpeg {status}"))
 }
 
-fn render_media(path: &Path, size: i32) -> Result<Vec<u8>, String> {
+pub(crate) fn render_media(path: &Path, size: i32) -> Result<Vec<u8>, String> {
+    let input = fs::File::open(path).map_err(|error| error.to_string())?;
     let output = Command::new("ffmpegthumbnailer")
         .arg("-i")
-        .arg(path)
+        .arg("/proc/self/fd/0")
+        .stdin(Stdio::from(input))
         .args(["-o", "/dev/stdout", "-s"])
         .arg(size.to_string())
         .args(["-q", "8"])

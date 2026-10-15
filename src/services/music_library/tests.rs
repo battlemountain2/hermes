@@ -380,7 +380,12 @@ fn index_entry_track_and_byte_limits_report_partial_results() {
         }
         let mut subscription = fixture.start(configuration);
         let snapshot = ready(&mut subscription, |snapshot| snapshot.notice.is_some());
-        assert!(snapshot.entries.len() <= 1);
+        if limit == 1 {
+            assert_eq!(snapshot.entries.len(), 2);
+            assert!(snapshot.entries.iter().filter(|entry| entry.music_tags.is_some()).count() <= 1);
+        } else {
+            assert!(snapshot.entries.len() <= 1);
+        }
         assert!(snapshot.notice.as_ref().unwrap().contains("limit"));
     }
 }

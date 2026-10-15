@@ -10,6 +10,9 @@ use std::{
 
 use gtk::{gdk, gio, glib, prelude::*};
 
+mod disk;
+mod scheduling;
+
 use crate::{
     model::FileEntry,
     sandbox::{Cancellation, ParseOperation},
@@ -30,6 +33,7 @@ struct ActiveRequest {
     id: u64,
     image: glib::WeakRef<gtk::Image>,
     cancellation: Cancellation,
+    wake_handlers: Vec<glib::SignalHandlerId>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -41,7 +45,7 @@ struct ThumbnailKey {
     thumbnail_size: i32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
 struct SourceIdentity {
     device: u64,
     inode: u64,
@@ -63,6 +67,7 @@ impl SourceIdentity {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct ThumbnailSource {
     key: ThumbnailKey,
     operation: ParseOperation,
@@ -84,6 +89,16 @@ struct ThumbnailCache {
 }
 
 impl ThumbnailCache {
+    fn preview(&mut self, path: &Path) -> Option<(ThumbnailKey, glib::Bytes)> {
+        let key = self
+            .recent
+            .iter()
+            .rev()
+            .find(|key| key.path == path && key.source_path == path)?
+            .clone();
+        self.get(&key).map(|bytes| (key, bytes))
+    }
+
     fn candidate(&self, path: &Path, thumbnail_size: i32) -> Option<ThumbnailKey> {
         self.recent
             .iter()
@@ -126,7 +141,25 @@ impl ThumbnailCache {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ThumbnailKind {
     FolderAlbum,
+    AudioAlbum,
     Sandboxed(ParseOperation),
+}
+
+pub(super) async fn cached_preview_bytes(path: &Path) -> Option<glib::Bytes> {
+    if let Some((key, bytes)) = THUMBNAIL_CACHE.with(|cache| cache.borrow_mut().preview(path)) {
+        let unchanged =
+            gio::spawn_blocking(move || SourceIdentity::read(&key.path) == Some(key.identity))
+                .await
+                .ok()?;
+        if unchanged {
+            return Some(bytes);
+        }
+    }
+    let path = path.to_owned();
+    gio::spawn_blocking(move || disk::preview(&path))
+        .await
+        .ok()?
+        .map(glib::Bytes::from_owned)
 }
 
 pub(super) fn set_thumbnail_or_icon(
@@ -136,6 +169,12 @@ pub(super) fn set_thumbnail_or_icon(
     icon_size: i32,
     thumbnail_size: i32,
 ) {
+    let audio = !entry.is_directory() && crate::app::music_order::is_audio(entry);
+    let fallback_icon = if audio {
+        crate::assets::icons::MUSIC
+    } else {
+        fallback_icon
+    };
     let (image_id, request, cancellation) = set_fallback_icon(image, fallback_icon, icon_size);
 
     let Some(path) = entry.location.native_path().map(Path::to_path_buf) else {
@@ -166,6 +205,8 @@ pub(super) fn set_thumbnail_or_icon(
     }
     let kind = if entry.is_directory() {
         ThumbnailKind::FolderAlbum
+    } else if audio {
+        ThumbnailKind::AudioAlbum
     } else if let FormatCapabilities {
         thumbnail: Some(handler),
         ..
@@ -176,69 +217,15 @@ pub(super) fn set_thumbnail_or_icon(
         return;
     };
     let thumbnail_size = thumbnail_size.clamp(16, 256);
-    let candidate = THUMBNAIL_CACHE.with(|cache| cache.borrow().candidate(&path, thumbnail_size));
-
-    let weak_image = glib::WeakRef::new();
-    weak_image.set(Some(image));
-    glib::MainContext::default().spawn_local(async move {
-        let worker_cancellation = cancellation.clone();
-        let Ok(Ok(source)) = gio::spawn_blocking(move || {
-            if worker_cancellation.is_cancelled() {
-                return Err("Thumbnail request was cancelled".to_owned());
-            }
-            let source = thumbnail_source(
-                &path,
-                kind,
-                thumbnail_size,
-                candidate.as_ref(),
-                folder_album_art,
-            )?;
-            if worker_cancellation.is_cancelled() || !source.unchanged() {
-                return Err("Thumbnail source changed".to_owned());
-            }
-            Ok(source)
-        })
-        .await
-        else {
-            return;
-        };
-        if !request_is_current(image_id, request, &cancellation) {
-            return;
-        }
-        if weak_image.upgrade().is_none() {
-            ACTIVE_REQUESTS.with(|requests| {
-                requests.borrow_mut().remove(&image_id);
-            });
-            return;
-        }
-        let key = source.key.clone();
-        let cached = THUMBNAIL_CACHE.with(|cache| cache.borrow_mut().get(&key));
-        let bytes = if let Some(bytes) = cached {
-            bytes
-        } else {
-            let worker_cancellation = cancellation.clone();
-            let Ok(Ok(png)) = gio::spawn_blocking(move || {
-                render_thumbnail(
-                    &source,
-                    &worker_cancellation,
-                    |path, operation, size, cancellation| {
-                        crate::sandbox::parse(path, operation, size, cancellation)
-                            .map(|output| output.data)
-                    },
-                )
-            })
-            .await
-            else {
-                return;
-            };
-            glib::Bytes::from_owned(png)
-        };
-        complete_thumbnail(image_id, request, &cancellation, key, bytes, |bytes| {
-            weak_image
-                .upgrade()
-                .is_some_and(|image| apply_thumbnail(&image, bytes, thumbnail_size))
-        });
-    });
+    scheduling::enqueue(
+        image,
+        image_id,
+        request,
+        cancellation,
+        path,
+        kind,
+        thumbnail_size,
+    );
 }
 
 fn desktop_icon(path: &Path, cancellation: &Cancellation) -> Option<String> {
@@ -343,8 +330,12 @@ pub(super) fn cancel_thumbnail(image: &gtk::Image) {
     ACTIVE_REQUESTS.with(|requests| {
         if let Some(request) = requests.borrow_mut().remove(&(image.as_ptr() as usize)) {
             request.cancellation.cancel();
+            for handler in request.wake_handlers {
+                image.disconnect(handler);
+            }
         }
     });
+    scheduling::wake();
 }
 
 fn set_fallback_icon(image: &gtk::Image, icon: &str, size: i32) -> (usize, u64, Cancellation) {
@@ -353,6 +344,10 @@ fn set_fallback_icon(image: &gtk::Image, icon: &str, size: i32) -> (usize, u64, 
     let weak_image = glib::WeakRef::new();
     weak_image.set(Some(image));
     let cancellation = Cancellation::default();
+    let wake_handlers = vec![
+        image.connect_map(|_| scheduling::wake()),
+        image.connect_unmap(|_| scheduling::wake()),
+    ];
     ACTIVE_REQUESTS.with(|requests| {
         let mut requests = requests.borrow_mut();
         requests.retain(|_, active| {
@@ -368,9 +363,13 @@ fn set_fallback_icon(image: &gtk::Image, icon: &str, size: i32) -> (usize, u64, 
                 id: request,
                 image: weak_image,
                 cancellation: cancellation.clone(),
+                wake_handlers,
             },
         ) {
             previous.cancellation.cancel();
+            for handler in previous.wake_handlers {
+                image.disconnect(handler);
+            }
         }
     });
     image.set_pixel_size(size);
@@ -390,22 +389,36 @@ fn thumbnail_source(
         SourceIdentity::read(path).ok_or_else(|| "Thumbnail source is unavailable".to_owned())?;
     let (source_path, operation) = match kind {
         ThumbnailKind::Sandboxed(operation) => (path.to_path_buf(), operation),
+        ThumbnailKind::AudioAlbum => {
+            if let Some(candidate) = candidate
+                && candidate.path == path
+                && candidate.identity == identity
+                && candidate.source_path != path
+                && let Some(source_identity) = SourceIdentity::read(&candidate.source_path)
+            {
+                let mut key = candidate.clone();
+                key.source_identity = source_identity;
+                return Ok(ThumbnailSource {
+                    key,
+                    operation: ParseOperation::ThumbnailImage,
+                });
+            }
+            (path.to_path_buf(), ParseOperation::ThumbnailVideo)
+        }
         ThumbnailKind::FolderAlbum => {
             if let Some(candidate) = candidate
                 && candidate.path == path
                 && candidate.identity == identity
                 && let Some(source_identity) = SourceIdentity::read(&candidate.source_path)
             {
-                let operation = if candidate
-                    .source_path
-                    .extension()
-                    .and_then(std::ffi::OsStr::to_str)
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("flac"))
-                {
-                    ParseOperation::ThumbnailVideo
-                } else {
-                    ParseOperation::ThumbnailImage
-                };
+                let operation =
+                    if crate::services::classify_by_name(candidate.source_path.as_os_str())
+                        == crate::services::FormatFamily::Audio
+                    {
+                        ParseOperation::ThumbnailVideo
+                    } else {
+                        ParseOperation::ThumbnailImage
+                    };
                 let mut key = candidate.clone();
                 key.source_identity = source_identity;
                 key.thumbnail_size = size;
@@ -452,10 +465,38 @@ fn render_thumbnail(
     Ok(png)
 }
 
+fn render_thumbnail_with_cover(
+    mut source: ThumbnailSource,
+    kind: ThumbnailKind,
+    cancellation: &Cancellation,
+    mut render: impl FnMut(&Path, ParseOperation, i32, &Cancellation) -> Result<Vec<u8>, String>,
+) -> Result<(ThumbnailSource, Vec<u8>), String> {
+    match render_thumbnail(&source, cancellation, &mut render) {
+        Ok(png) => return Ok((source, png)),
+        Err(error) => {
+            if kind != ThumbnailKind::AudioAlbum
+                || cancellation.is_cancelled()
+                || !source.unchanged()
+            {
+                return Err(error);
+            }
+        }
+    }
+    let parent = source.key.path.parent().ok_or("No album folder")?;
+    let (cover, operation) = folder_album_art(parent)
+        .filter(|(_, operation)| *operation == ParseOperation::ThumbnailImage)
+        .ok_or("No album artwork was found")?;
+    source.key.source_identity = SourceIdentity::read(&cover).ok_or("Album artwork unavailable")?;
+    source.key.source_path = cover;
+    source.operation = operation;
+    let png = render_thumbnail(&source, cancellation, render)?;
+    Ok((source, png))
+}
+
 pub(crate) fn folder_album_art(directory: &Path) -> Option<(std::path::PathBuf, ParseOperation)> {
     let mut embedded = None;
     let mut images = Vec::new();
-    for entry in std::fs::read_dir(directory).ok()?.flatten() {
+    for entry in std::fs::read_dir(directory).ok()?.take(4096).flatten() {
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -464,7 +505,8 @@ pub(crate) fn folder_album_art(directory: &Path) -> Option<(std::path::PathBuf, 
             .extension()
             .and_then(std::ffi::OsStr::to_str)
             .map(str::to_ascii_lowercase);
-        if extension.as_deref() == Some("flac")
+        if crate::services::classify_by_name(path.as_os_str())
+            == crate::services::FormatFamily::Audio
             && embedded
                 .as_ref()
                 .is_none_or(|(candidate, _)| &path < candidate)
@@ -498,4 +540,4 @@ pub(crate) fn folder_album_art(directory: &Path) -> Option<(std::path::PathBuf, 
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

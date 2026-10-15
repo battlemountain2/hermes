@@ -21,9 +21,13 @@ use crate::{
     model::{FileEntry, Location, MetadataValue, SortDirection, SortKey},
 };
 
-const EXPLORER_COLUMN_WIDTHS: [i32; 4] = [600, 90, 120, 150];
+const EXPLORER_COLUMN_WIDTHS: [i32; 4] = [320, 90, 120, 150];
 const DEFAULT_GRID_THUMBNAIL_SIZE: i32 = 64;
 const GRID_THUMBNAIL_SIZES: [i32; 8] = [48, 64, 80, 96, 128, 160, 192, 256];
+
+pub(super) fn explorer_preview_reservation() -> i32 {
+    EXPLORER_COLUMN_WIDTHS.iter().sum::<i32>() + 4
+}
 
 fn thumbnail_size_index(size: i32) -> usize {
     GRID_THUMBNAIL_SIZES
@@ -184,6 +188,7 @@ struct Pane {
     syncing_selection: Rc<Cell<bool>>,
     stack: gtk::Stack,
     status: gtk::Label,
+    notice: gtk::Label,
     spinner: gtk::Spinner,
     view: gtk::Widget,
     bound_items: Rc<RefCell<Vec<BoundModeItem>>>,
@@ -702,10 +707,16 @@ impl ModeViews {
             }
             BrowserEvent::ColumnReloaded { depth } => {
                 for pane in self.panes_at(*depth) {
+                    pane.notice.set_visible(false);
                     pane.model.splice(0, pane.model.n_items(), &[]);
                     pane.spinner.set_visible(true);
                     pane.spinner.start();
                     pane.stack.set_visible_child_name("loading");
+                }
+            }
+            BrowserEvent::LoadNotice { depth, message } => {
+                for pane in self.panes_at(*depth) {
+                    set_search_notice(&pane.notice, message.as_deref());
                 }
             }
             BrowserEvent::LoadFinished { depth } => {
@@ -1089,7 +1100,7 @@ fn build_grid_pane(
     let controls = grid_controls(&browser, depth, options.thumbnail_size.get());
     let thumbnail_size = options.thumbnail_size;
     let active_new_folder = options.active_new_folder;
-    let (pane, content, model, stack, status, spinner) = pane_base(
+    let (pane, content, model, stack, status, spinner, notice) = pane_base(
         title,
         "grid-pane",
         Some(controls.leading.clone().upcast()),
@@ -1377,6 +1388,7 @@ fn build_grid_pane(
         syncing_selection,
         stack,
         status,
+        notice,
         spinner,
         view: view.upcast(),
         bound_items,
@@ -1401,7 +1413,11 @@ fn refresh_grid_thumbnail_size(
         let Some(item) = bound.item.upgrade() else {
             return;
         };
-        let Some(card) = bound.widget.upgrade().and_downcast::<gtk::Box>() else {
+        let Some(card) = bound.widget.upgrade()
+            .and_downcast::<gtk::Overlay>()
+            .and_then(|overlay| overlay.child())
+            .and_downcast::<gtk::Box>()
+        else {
             return;
         };
         let Some(icon) = card
@@ -1663,7 +1679,7 @@ fn build_explorer_pane(
         filter_controls("Filter explorer (Ctrl+F)");
     actions.append(&view_options_button());
     actions.append(&filter_button);
-    let (shell, content, model, stack, status, spinner) = pane_base(
+    let (shell, content, model, stack, status, spinner, notice) = pane_base(
         title,
         "explorer-pane",
         Some(navigation.upcast()),
@@ -1858,6 +1874,7 @@ fn build_explorer_pane(
                 18,
             );
             name.set_label(&entry.display_name);
+            name.set_tooltip_text(Some(&entry.display_name));
             size.set_label(&entry_size(&entry));
             kind.set_label(entry_type(&entry));
             modified.set_label(&entry_modified(&entry));
@@ -1917,6 +1934,7 @@ fn build_explorer_pane(
         syncing_selection,
         stack,
         status,
+        notice,
         spinner,
         view: view.upcast(),
         bound_items,
@@ -1938,6 +1956,7 @@ fn pane_base(
     gtk::Stack,
     gtk::Label,
     gtk::Spinner,
+    gtk::Label,
 ) {
     let shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
     shell.add_css_class(class);
@@ -1959,6 +1978,8 @@ fn pane_base(
         header.append(&actions);
     }
     shell.append(&header);
+    let notice = search_notice_label();
+    shell.append(&notice);
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.set_hexpand(true);
@@ -1977,7 +1998,23 @@ fn pane_base(
     shell.append(&stack);
 
     let model = gtk::StringList::new(&[]);
-    (shell, content, model, stack, status, spinner)
+    (shell, content, model, stack, status, spinner, notice)
+}
+
+pub(super) fn search_notice_label() -> gtk::Label {
+    let label = gtk::Label::new(None);
+    label.add_css_class("search-coverage-notice");
+    label.set_xalign(0.0);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_max_width_chars(1);
+    label.set_visible(false);
+    label
+}
+
+pub(super) fn set_search_notice(label: &gtk::Label, message: Option<&str>) {
+    label.set_text(message.unwrap_or_default());
+    label.set_tooltip_text(message);
+    label.set_visible(message.is_some_and(|message| !message.is_empty()));
 }
 
 fn register_bound_mode_item(
@@ -2581,6 +2618,7 @@ fn show_count(pane: &Pane) {
 }
 
 fn apply_snapshot(pane: &Pane, snapshot: &BrowserColumnSnapshot) {
+    set_search_notice(&pane.notice, snapshot.notice.as_deref());
     replace_entries(pane, &snapshot.entries);
     set_selections(pane, &snapshot.selected_positions);
     if snapshot.loading {

@@ -6,7 +6,7 @@
 [![Built with Rust](https://img.shields.io/badge/Language-Rust_2024-orange.svg)](https://www.rust-lang.org/)
 [![GTK4](https://img.shields.io/badge/UI-GTK4_&_Wayland-purple.svg)](https://gtk.org/)
 
-Hermes is an experimental, keyboard-centric file manager and media hub engineered for Wayland and modern Linux desktops (designed primarily for Omarchy). It pairs responsive Miller-column navigation with an integrated background music player, live waveform visualization, an isolated media preview pipeline, and zero-latency tab switching.
+Hermes is an experimental, keyboard-centric file manager and media hub engineered for Wayland and modern Linux desktops (designed primarily for Omarchy). It pairs Miller-column navigation with an integrated background music player, optional waveform visualization, bounded media/document previews, and retained tab views.
 
 > [!NOTE]
 > **Origins & Attribution**: Hermes is derived from **[Strata](https://github.com/LGSE/strata)**, originally conceived and built by **Pierre Bérubé** and the **[LGSE](https://github.com/LGSE)** team. Hermes builds upon Strata’s architectural foundation—its GTK4/Rust design, cancellable directory enumeration, and Bubblewrap sandboxing—expanding it into a full-featured daily-driver file and music experience with retained tabs, whole-library music indexing, MPRIS v2 desktop integration, and high-performance image/video pipelines.
@@ -46,7 +46,8 @@ Responsive icon tiles with high-performance thumbnail caching.
 - **Safe, Atomic Operations**: File copies use private staging beside the target destination before publication; same-filesystem moves use atomic rename. An existing file is never deleted prior to a verified transfer.
 
 ### 🎵 Integrated Music Player & Library
-- **Dedicated Music View (<kbd>Ctrl</kbd>+<kbd>M</kbd>)**: Browse local audio by albums and tracks with disc-then-track metadata ordering.
+- **Dedicated Music View (<kbd>Ctrl</kbd>+<kbd>M</kbd>)**: Albums, Artists, Songs, Favorites and Playlists, with disc-then-track metadata ordering within albums.
+- **Favorites & Playlist Editor**: Use song hearts or track/album menus; a separate editor manages playlist names, membership and drag/keyboard ordering without changing audio files. Most played and Recently added collections update locally; missing paths remain saved and are skipped for playback.
 - **Live Playback Queue**:
   - Reorder queued tracks (<kbd>Alt</kbd>+<kbd>Up</kbd> / <kbd>Down</kbd> or drag handle).
   - Context menu actions on tracks and albums: **Play**, **Play next**, and **Add to queue** (<kbd>Shift</kbd>+<kbd>F10</kbd> or right-click).
@@ -60,18 +61,28 @@ Responsive icon tiles with high-performance thumbnail caching.
 ![Hermes Music Player and Library View](docs/assets/hermes-music.png)
 
 ### 🛡️ Sandboxed Media & Document Previews
-All untrusted file parsing runs inside a secure **[Bubblewrap (`bwrap`) sandbox](docs/preview-sandbox.md)** with tight CPU, memory, and output boundaries:
-- **Fast JPEG & HEIF/HEIC Loading**: Extracts embedded orientation-aware EXIF thumbnails for near-instant rendering (falling back to ImageMagick only when necessary).
-- **Streaming Video Previews**: Persistent GStreamer decoder with draggable scrub handles and 200 ms quick-start poster fallback. Press <kbd>F</kbd> for fullscreen playback.
+Image/document renderers use a **[Bubblewrap (`bwrap`) sandbox](docs/preview-sandbox.md)** with tight CPU, memory, and output boundaries. Native GStreamer decoding uses its own isolated worker; audio output remains in the host:
+- **Progressive Photo Loading**: Show an existing, source-validated thumbnail while the full preview loads, using the same viewport layout and opaque image background to avoid ghosting. Bounded native JPEG/HEIF paths speed up eligible selected photos; large or unsupported encodings retain the existing fallback. AVIF, SVG and JPE/JFIF thumbnails are supported.
+- **Persistent Thumbnails**: A private, bounded background disk cache retains small thumbnails across restarts, validating both file and album-cover identities. Full selected previews still decode the original; cached thumbnails never replace full quality.
+- **Visible-First Thumbnail Work**: Visible items load before nearby prefetch; hidden tabs defer their own work. Matching requests share an identity-checked render, with bounded background admission and independent cancellation for each view.
+- **Large Photo Loading**: Eligible large JPEG and standard 8-bit HEIF previews can use the optional installed `vips` tool inside the sandbox, with the existing ImageMagick fallback. Original orientation and the 1400px preview bounding box remain; HDR/wide-gamut HEIF keeps its existing renderer.
+- **Streaming Video Previews**: Persistent isolated GStreamer decoder with draggable scrub handles, cached-poster reuse and a 200 ms poster fallback on misses. Background initialization begins after the window appears, without autoplay; the first registry scan still has a cost. Playback is full length; press <kbd>F</kbd> for fullscreen.
 - **Camera RAW Support**: Decodes DNG, CR2/CR3, NEF, ARW, RAF, ORF, RW2, and more via host LibRaw or ImageMagick.
 - **Fullscreen PDF Reader**: Read multi-page PDFs with reading-position retention, zoom controls, and fullscreen toggle (<kbd>F</kbd>).
 - **Animated GIF Previews**: Sandboxed loopable playback with VP8 alpha-transparency retention.
+- **Photo Preview Menus**: Right-click an image in the drawer or fullscreen for file actions and Fullscreen/Fit/100% controls.
 - **Rich Text & Syntax Highlighting**: View source code and formatted text via GtkSourceView 5 with selectable mono fonts.
+- **Format & Speed Audit**: See the [preview audit](docs/preview-format-audit.md) for verified coverage, Dolphin/Strata comparisons, measurements and remaining cold-loading work.
 
 ### 🔍 Search & Custom Actions
-- **Fuzzy Search (<kbd>Ctrl</kbd>+<kbd>K</kbd>)**: Search current folder, whole filesystem, or music library with live result filtering and file-type badges.
+- **Fuzzy Search (<kbd>Ctrl</kbd>+<kbd>K</kbd>)**: Search Home by default, the current folder (including another drive), or your music library with live results and file-type badges. Exact music filters such as `artist:"Beach House"`, `album:"Depression Cherry"`, and `title:"Space Song"` compose with type, extension, dates, and optional content filters. Result tabs retain relevance order until you choose a sort and keep incomplete-search notices visible alongside matches.
+- **Persistent Search Catalog**: General search keeps a private SQLite snapshot of filenames, identities and available song tags across restarts, revalidates saved sources and reconciles file changes in the background. Concurrent searches share live catalogs; complete parent catalogs serve folder searches, and Home reuses Music's existing tag catalog. Index coverage remains bounded and partial coverage is shown.
+- **Saved Searches & Smart Folders**: Choose **Save search**, name the query, then reopen its current matches from the sidebar. **Manage searches…** edits names, queries, scopes and result groups, with confirmation before deleting a saved definition. Files stay in place; query definitions are stored separately from disposable search caches. See [saved searches](docs/saved-searches.md).
+- **Grouped Unified Search**: Switch between All, Files, Songs, Albums and Artists. Album/artist rows use song tags and artwork, show matching-song counts, and open their scoped songs inside search with Back navigation. File-type filters remain independent. Song-result tabs preserve artist/album context without inventing filesystem folders; untagged audio remains searchable as songs.
+- **Paged Search Results**: Load another 100 ranked matches with More without changing the search panel's size. Result tabs show every match in the bounded index. Exact type, extension and music-field filters use a lazy, disposable SQLite index; fuzzy ranking and opt-in content checks retain their existing semantics. File changes invalidate old page requests rather than mixing snapshots.
 - **Content Search**: Opt-in, off-thread search inside documents (PDF, DOCX, ODT) and text files up to 1 MiB.
 - **Custom Context Actions**: Define custom, argument-based actions in `~/.config/hermes/actions.toml` without shell injection risks (see [Custom Actions](docs/custom-actions.md)).
+- **Clipboard & Context Menus**: Standard file Copy/Cut/Paste and Copy location, compact click-to-expand clipboard feedback, and optional actions under Settings → Context menu. Native folder Copy interoperability is checked with Dolphin on X11 and Wayland.
 
 ![Hermes Universal Scoped Search](docs/assets/hermes-search.png)
 
@@ -129,6 +140,9 @@ sudo pacman -S --needed \
     libraw
 ```
 
+Optional large-photo acceleration uses `libvips` (`sudo pacman -S --needed libvips`).
+It is already available on the tested host; Hermes still works without it and no installer runs automatically.
+
 ### Build from Source
 
 Ensure you have a modern Rust toolchain installed (edition 2024 / Rust 1.85+):
@@ -149,7 +163,9 @@ install -Dm755 target/release/strata ~/.local/bin/hermes
 
 ### Development Mode
 
-For rapid iteration with automatic rebuilding and restarting on file changes:
+Development mode opens Hermes once and rebuilds in the background when files change. Your open
+window and playback stay in place; reopen Hermes when you want to use a new build. Background
+builds use two jobs at lower CPU priority and idle disk priority when `ionice` is available:
 
 ```bash
 make start-dev
@@ -159,6 +175,12 @@ To run development mode against release-optimized builds:
 
 ```bash
 HERMES_DEV_RELEASE=1 make start-dev
+```
+
+Automatic restarting is available explicitly:
+
+```bash
+HERMES_DEV_AUTO_RESTART=1 make start-dev
 ```
 
 Run test suites and quality linters:

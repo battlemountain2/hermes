@@ -28,7 +28,7 @@ mod worker;
 pub(crate) use worker::run;
 
 const CACHE_ENTRIES: usize = 64;
-const CACHE_TTL: Duration = Duration::from_secs(30);
+const CACHE_TTL: Duration = Duration::from_secs(300);
 const WAIT_QUANTUM: Duration = Duration::from_millis(20);
 pub(crate) const MAX_WORKERS: usize = 16;
 const DEFAULT_WORKER_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -496,14 +496,39 @@ fn map_preview_op(op: &ParseOperation) -> Option<Operation> {
         ParseOperation::PreviewAudioMetadata => Some(Operation::PreviewAudioMetadata),
         ParseOperation::PreviewImage => Some(Operation::PreviewImage),
         ParseOperation::PreviewGeoTiff => Some(Operation::PreviewGeoTiff),
+        ParseOperation::PreviewHeif => Some(Operation::PreviewHeif),
+        ParseOperation::PreviewSpreadsheet => Some(Operation::PreviewSpreadsheet),
+        _ => None,
+    }
+}
+
+fn map_format_preview_op(input: &Path, op: &ParseOperation) -> Result<Option<Operation>, String> {
+    use crate::sandbox_helper::archive_cover::CoverFormat;
+    use crate::services::model_preview::ModelFormat;
+
+    match op {
+        ParseOperation::PreviewModel => match ModelFormat::for_name(input.as_os_str()) {
+            Some(ModelFormat::Stl) => Ok(Some(Operation::PreviewModel)),
+            Some(ModelFormat::ThreeMf) => Ok(Some(Operation::PreviewThreeMf)),
+            _ => Err("Unsupported pooled model format".into()),
+        },
+        ParseOperation::PreviewArchiveCover => match CoverFormat::for_path(input) {
+            Some(CoverFormat::Epub) => Ok(Some(Operation::PreviewEpubCover)),
+            Some(CoverFormat::Cbz) => Ok(Some(Operation::PreviewCbzCover)),
+            Some(CoverFormat::Cbr) => Ok(Some(Operation::PreviewCbrCover)),
+            None => Err("Unsupported archive cover format".into()),
+        },
+        _ => Ok(map_preview_op(op)),
+    }
+}
+
+fn map_thumbnail_op(op: &ParseOperation) -> Option<Operation> {
+    match op {
         ParseOperation::ThumbnailImage => Some(Operation::Image),
         ParseOperation::ThumbnailHeif => Some(Operation::Heif),
-        ParseOperation::PreviewHeif => Some(Operation::PreviewHeif),
         ParseOperation::ThumbnailRaw => Some(Operation::Raw),
         ParseOperation::ThumbnailPdf => Some(Operation::Pdf),
-        ParseOperation::PreviewModel => Some(Operation::PreviewModel),
-        ParseOperation::PreviewArchiveCover => Some(Operation::PreviewArchiveCover),
-        ParseOperation::PreviewSpreadsheet => Some(Operation::PreviewSpreadsheet),
+        ParseOperation::ThumbnailVideo => Some(Operation::Video),
         _ => None,
     }
 }
@@ -516,7 +541,10 @@ pub(crate) fn preview(
     if !workers_supported() {
         return None;
     }
-    let wire_op = map_preview_op(operation)?;
+    let wire_op = match map_format_preview_op(input, operation) {
+        Ok(operation) => operation?,
+        Err(error) => return Some(Err(error)),
+    };
     let identity = Identity::read(input)?;
     if cancellation.is_cancelled() {
         return Some(Err("Preview cancelled".into()));
@@ -528,7 +556,11 @@ pub(crate) fn preview(
         return Some(Ok(cached));
     }
 
-    let mut lease = preview_pool().acquire(cancellation).ok()?;
+    let mut lease = match preview_pool().acquire(cancellation) {
+        Ok(lease) => lease,
+        Err(error) if cancellation.is_cancelled() => return Some(Err(error)),
+        Err(_) => return None,
+    };
     let result = lease.execute(input, wire_op, cancellation);
     match result {
         Ok(response) => {
@@ -566,7 +598,7 @@ pub(crate) fn thumbnail_parse(
     if !workers_supported() {
         return None;
     }
-    let wire_op = map_preview_op(&operation)?;
+    let wire_op = map_thumbnail_op(&operation)?;
     let identity = Identity::read(input)?;
     if cancellation.is_cancelled() {
         return Some(Err("Preview cancelled".into()));
@@ -576,7 +608,11 @@ pub(crate) fn thumbnail_parse(
         return Some(Ok(cached_data));
     }
 
-    let mut lease = pool().acquire(cancellation).ok()?;
+    let mut lease = match pool().acquire(cancellation) {
+        Ok(lease) => lease,
+        Err(error) if cancellation.is_cancelled() => return Some(Err(error)),
+        Err(_) => return None,
+    };
     let result = lease.execute(input, wire_op, cancellation);
     match result {
         Ok(response) => {
@@ -592,3 +628,6 @@ pub(crate) fn thumbnail_parse(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) mod format_tests;

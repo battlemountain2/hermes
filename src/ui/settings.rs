@@ -4,6 +4,9 @@ use std::{cell::RefCell, rc::Rc};
 
 use gtk::{gdk, gio, prelude::*};
 
+#[cfg(test)]
+mod tests;
+
 use crate::{
     assets::icons,
     services::{actions_path, create_custom_actions_template},
@@ -13,7 +16,7 @@ use super::{
     blur::BlurBin,
     browser::BrowserView,
     motion::set_reduce_motion,
-    theme::{Theme, ThemeManager, ThemeTokens},
+    theme::{INTERFACE_FONTS, Theme, ThemeManager, ThemeTokens},
 };
 
 type ThemeCards = Rc<RefCell<Vec<(String, gtk::Button, gtk::Image)>>>;
@@ -71,21 +74,28 @@ pub fn build_layer(
         .vexpand(true)
         .build();
     stack.add_named(
-        &general_page(browser, themes.clone(), refresh_sidebar),
+        &scroll_page(&general_page(browser, themes.clone(), refresh_sidebar)),
         Some("general"),
     );
     stack.add_named(&keybindings_page(), Some("keybindings"));
-    stack.add_named(&actions_page(), Some("actions"));
-    stack.add_named(&theme_page(themes), Some("theme"));
-    stack.add_named(&about_page(), Some("about"));
+    stack.add_named(
+        &scroll_page(&context_menu_page(themes.clone())),
+        Some("context-menu"),
+    );
+    stack.add_named(&scroll_page(&actions_page()), Some("actions"));
+    stack.add_named(&theme_page(themes.clone()), Some("theme"));
+    stack.add_named(&scroll_page(&fonts_page(themes)), Some("fonts"));
+    stack.add_named(&scroll_page(&about_page()), Some("about"));
     page.append(&stack);
 
     let nav_buttons: Rc<RefCell<Vec<gtk::Button>>> = Rc::new(RefCell::new(Vec::new()));
     for (label, icon, name) in [
         ("General", icons::SLIDERS, "general"),
-        ("Keybindings", icons::KEYBOARD, "keybindings"),
+        ("Keyboard shortcuts", icons::KEYBOARD, "keybindings"),
+        ("Context menu", icons::SLIDERS, "context-menu"),
         ("Custom actions", icons::SETTINGS_2, "actions"),
-        ("Theme & appearance", icons::PALETTE, "theme"),
+        ("Themes", icons::PALETTE, "theme"),
+        ("Fonts", icons::FILE_CODE, "fonts"),
         ("About", icons::INFO, "about"),
     ] {
         let button = navigation_button(icon, label);
@@ -143,29 +153,111 @@ fn hide(layer: &gtk::Box, button: &gtk::Button, root: &BlurBin) {
     button.remove_css_class("active");
 }
 
+fn context_menu_page(manager: Rc<ThemeManager>) -> gtk::Widget {
+    let content = page_content();
+    append_heading(&content, "RIGHT-CLICK ACTIONS");
+    let help = gtk::Label::new(Some(
+        "Cut, Copy, Paste, Copy location, Rename, Trash and Properties stay available where applicable. Optional actions appear only for supported selections; keyboard shortcuts are unchanged.",
+    ));
+    help.set_wrap(true);
+    help.set_xalign(0.0);
+    help.add_css_class("settings-option-description");
+    content.append(&help);
+    let options = manager.context_menu_options();
+    let controls = Rc::new(
+        vec![
+            (
+                "Open With",
+                "Choose another application for a file.",
+                options.open_with,
+            ),
+            (
+                "Quick preview",
+                "Preview a supported file without opening it externally.",
+                options.preview,
+            ),
+            ("Pin to sidebar", "Available on folders.", options.pin),
+            (
+                "Copy to / Move to",
+                "Optional destination dialogs, separate from clipboard Copy and Cut.",
+                options.transfer_destinations,
+            ),
+            (
+                "Compress / Extract",
+                "Compress folders and extract supported archives.",
+                options.archives,
+            ),
+            (
+                "Compress individual files",
+                "Also offer compression on files and mixed selections.",
+                options.compress_files,
+            ),
+            (
+                "Music actions",
+                "Play and queue selected tracks.",
+                options.music,
+            ),
+            (
+                "Custom commands",
+                "Show matching commands configured on the Custom actions page.",
+                options.custom_actions,
+            ),
+        ]
+        .into_iter()
+        .map(|(title, detail, enabled)| {
+            let (row, toggle) = settings_option(title, detail, enabled);
+            content.append(&row);
+            toggle
+        })
+        .collect::<Vec<_>>(),
+    );
+    for control in controls.iter() {
+        let weak_controls = Rc::downgrade(&controls);
+        let manager = manager.clone();
+        control.connect_active_notify(move |_| {
+            if let Some(controls) = weak_controls.upgrade() {
+                manager.set_context_menu_options(super::context_menu::Options {
+                    open_with: controls[0].is_active(),
+                    preview: controls[1].is_active(),
+                    pin: controls[2].is_active(),
+                    transfer_destinations: controls[3].is_active(),
+                    archives: controls[4].is_active(),
+                    compress_files: controls[5].is_active(),
+                    music: controls[6].is_active(),
+                    custom_actions: controls[7].is_active(),
+                });
+            }
+        });
+    }
+    let defaults = gtk::Button::with_label("Restore context menu defaults");
+    defaults.add_css_class("settings-font-reset");
+    defaults.set_halign(gtk::Align::Start);
+    defaults.connect_clicked(move |_| {
+        let options = super::context_menu::Options::default();
+        for (toggle, enabled) in controls.iter().zip([
+            options.open_with,
+            options.preview,
+            options.pin,
+            options.transfer_destinations,
+            options.archives,
+            options.compress_files,
+            options.music,
+            options.custom_actions,
+        ]) {
+            toggle.set_active(enabled);
+        }
+        manager.set_context_menu_options(options);
+    });
+    content.append(&defaults);
+    content.upcast()
+}
+
 fn general_page(
     browser: &BrowserView,
     manager: Rc<ThemeManager>,
     refresh_sidebar: Rc<dyn Fn()>,
 ) -> gtk::Widget {
     let preferences = page_content();
-    append_heading(&preferences, "INTERFACE");
-    let (font_row, interface_font) = settings_choice(
-        "Interface font",
-        "Choose the font used throughout Hermes and text previews.",
-        &["Maple Mono", "JetBrains Mono"],
-        u32::from(manager.interface_font() == "jetbrains"),
-    );
-    let manager_for_font = manager.clone();
-    interface_font.connect_selected_notify(move |font| {
-        manager_for_font.set_interface_font(if font.selected() == 1 {
-            "jetbrains"
-        } else {
-            "maple"
-        });
-    });
-    preferences.append(&font_row);
-
     append_heading(&preferences, "BROWSING");
     let (peeking_row, peeking) = settings_option(
         "Folder peeking",
@@ -277,16 +369,103 @@ fn general_page(
     preferences.upcast()
 }
 
+fn scroll_page(content: &gtk::Widget) -> gtk::Widget {
+    gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .hexpand(true)
+        .vexpand(true)
+        .child(content)
+        .build()
+        .upcast()
+}
+
+fn fonts_page(manager: Rc<ThemeManager>) -> gtk::Widget {
+    let content = page_content();
+    append_heading(&content, "TYPOGRAPHY");
+    let names: Vec<_> = INTERFACE_FONTS.iter().map(|(_, name)| *name).collect();
+    let selected = INTERFACE_FONTS
+        .iter()
+        .position(|(id, _)| *id == manager.interface_font())
+        .unwrap_or(0);
+    let (row, family) = settings_choice(
+        "Interface font",
+        "Bundled monospace fonts or your system's default font. Updates immediately.",
+        &names,
+        selected as u32,
+    );
+    content.append(&row);
+    let manager_for_font = manager.clone();
+    family.connect_selected_notify(move |font| {
+        if let Some((id, _)) = INTERFACE_FONTS.get(font.selected() as usize) {
+            manager_for_font.set_interface_font(id);
+        }
+    });
+    let size_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    size_row.add_css_class("settings-option");
+    let label = gtk::Label::new(Some("Interface size (px)"));
+    label.set_xalign(0.0);
+    label.set_hexpand(true);
+    label.add_css_class("settings-option-title");
+    let size = gtk::SpinButton::with_range(10.0, 22.0, 1.0);
+    size.set_value(f64::from(manager.interface_font_size()));
+    size.set_valign(gtk::Align::Center);
+    let manager_for_size = manager.clone();
+    size.connect_value_changed(move |size| {
+        manager_for_size.set_interface_font_size(size.value_as_int() as u32)
+    });
+    size_row.append(&label);
+    size_row.append(&size);
+    content.append(&size_row);
+    append_heading(&content, "PREVIEW");
+    let sample = gtk::Label::new(Some(
+        "Hermes · Files, media & music\nThe quick brown fox jumps over the lazy dog.\n0123456789 — Aa Bb Cc",
+    ));
+    sample.set_xalign(0.0);
+    sample.set_wrap(true);
+    sample.set_selectable(true);
+    sample.add_css_class("settings-font-preview");
+    content.append(&sample);
+    let reset = gtk::Button::with_label("Restore default font and size");
+    reset.add_css_class("settings-font-reset");
+    reset.set_halign(gtk::Align::Start);
+    let weak_family = family.downgrade();
+    let weak_size = size.downgrade();
+    reset.connect_clicked(move |_| {
+        manager.set_interface_font("maple");
+        manager.set_interface_font_size(13);
+        if let Some(family) = weak_family.upgrade() {
+            family.set_selected(0);
+        }
+        if let Some(size) = weak_size.upgrade() {
+            size.set_value(13.0);
+        }
+    });
+    content.append(&reset);
+    content.upcast()
+}
+
 fn keybindings_page() -> gtk::Widget {
     let content = page_content();
+    let help = gtk::Label::new(Some(
+        "Current shortcuts · Navigation keys apply in file views, not while typing. F opens supported previews fullscreen.",
+    ));
+    help.set_wrap(true);
+    help.set_xalign(0.0);
+    help.add_css_class("settings-option-description");
+    content.append(&help);
     append_heading(&content, "NAVIGATION");
     for (label, keys) in [
         ("Move through items", "J / K  or  ↑ / ↓"),
         ("Open folder", "L / → / Enter"),
         ("Go to parent", "H / ←"),
+        ("Back / forward", "Alt + ← / →"),
+        ("Parent folder", "Alt + ↑ / Backspace"),
+        ("Home", "Alt + Home"),
         ("Edit location", "Ctrl + L"),
         ("Filter items", "Ctrl + F"),
         ("Toggle sidebar", "Ctrl + B"),
+        ("Show hidden files", "Ctrl + H"),
     ] {
         append_keybinding(&content, label, keys);
     }
@@ -297,12 +476,34 @@ fn keybindings_page() -> gtk::Widget {
         ("Cut", "Ctrl + X"),
         ("Copy", "Ctrl + C"),
         ("Paste", "Ctrl + V"),
+        ("Select all", "Ctrl + A"),
+        ("Rename", "F2"),
+        ("Move to Trash", "Delete"),
+        ("Delete permanently (confirmation)", "Shift + Delete"),
+        ("Properties", "Alt + Enter"),
     ] {
         append_keybinding(&content, label, keys);
     }
 
     append_heading(&content, "APPLICATION");
-    for (label, keys) in [("Search", "Ctrl + K"), ("Open settings", "Ctrl + ,")] {
+    for (label, keys) in [
+        ("Search Home", "Ctrl + K"),
+        ("Search Music library", "Ctrl + Shift + K"),
+        ("Refresh search index", "Ctrl + R (in search)"),
+        ("Open settings", "Ctrl + ,"),
+    ] {
+        append_keybinding(&content, label, keys);
+    }
+
+    append_heading(&content, "MEDIA & MUSIC");
+    for (label, keys) in [
+        ("Preview selected file", "Space"),
+        ("Fullscreen image, video or PDF", "F"),
+        ("Leave fullscreen / close preview", "Escape"),
+        ("Toggle Music screen", "Ctrl + M"),
+        ("Play selected music in main player", "Ctrl + Enter"),
+        ("Track or album actions", "Menu / Shift + F10"),
+    ] {
         append_keybinding(&content, label, keys);
     }
 
@@ -407,8 +608,11 @@ fn about_page() -> gtk::Widget {
 
     let name = gtk::Label::new(Some("Hermes"));
     name.add_css_class("about-name");
-    let description = gtk::Label::new(Some(crate::build_info::DESCRIPTION));
+    let description = gtk::Label::new(Some(
+        "Your files, media and music in one place.\nBuilt for Linux, with a focused interface and native playback.",
+    ));
     description.add_css_class("about-description");
+    description.set_tooltip_text(Some(crate::build_info::DESCRIPTION));
     description.set_justify(gtk::Justification::Center);
     description.set_wrap(true);
     identity.append(&name);
@@ -419,7 +623,9 @@ fn about_page() -> gtk::Widget {
     let build = gtk::Box::new(gtk::Orientation::Vertical, 0);
     build.add_css_class("about-details");
     append_about_detail(&build, "Version", crate::build_info::VERSION, false);
+    append_about_detail(&build, "Status", "In development · Pre-1.0", false);
     append_about_detail(&build, "Commit", crate::build_info::COMMIT, true);
+    append_about_detail(&build, "License", "GPL-3.0-or-later", false);
     content.append(&build);
 
     append_heading(&content, "HERMES PROJECT");
@@ -433,7 +639,7 @@ fn about_page() -> gtk::Widget {
     ));
     content.append(&project);
 
-    append_heading(&content, "ORIGINAL PROJECT");
+    append_heading(&content, "ACKNOWLEDGMENTS");
     let original = gtk::Box::new(gtk::Orientation::Vertical, 0);
     original.add_css_class("about-details");
     append_about_detail(&original, "Original author", "LGSE Ltd.", false);

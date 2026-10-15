@@ -5,6 +5,28 @@ use super::{
 };
 
 #[test]
+fn basic_palettes_replace_omarchy_light_without_losing_saved_light_selection() {
+    let themes = super::builtins();
+    assert!(!themes.iter().any(|theme| theme.id == "omarchy-light"));
+    for id in ["graphite", "paper", "midnight"] {
+        assert!(themes.iter().any(|theme| theme.id == id));
+    }
+    assert_eq!(super::migrate_theme_id("omarchy-light"), "paper");
+    assert_eq!(super::migrate_theme_id("custom-light"), "custom-light");
+}
+
+#[test]
+fn font_choices_are_safe_and_legacy_sizes_default_to_thirteen() {
+    assert_eq!(super::normalized_font("sans"), "sans");
+    assert_eq!(super::normalized_font("mono"), "mono");
+    assert_eq!(super::normalized_font("malformed; CSS"), "maple");
+    let preferences: Preferences = toml::from_str("mode = 'theme'\ntheme = 'paper'").unwrap();
+    assert_eq!(preferences.interface_font_size, 13);
+    let css = super::tokens_css(&super::azure_tokens(), "sans");
+    assert!(css.contains("font-family: sans-serif"));
+}
+
+#[test]
 fn names_become_safe_config_file_slugs() {
     assert_eq!(slugify("  Rosé / Pine!  "), "ros-pine");
     assert_eq!(slugify("Ocean  Blue"), "ocean-blue");
