@@ -72,6 +72,16 @@ fn album_playback_falls_back_to_filename_numbers_and_excludes_other_folders() {
 }
 
 #[test]
+fn album_tracks_empty_and_matching_keys() {
+    let album = PathBuf::from("/music/Album");
+    let track1 = tagged_track(album.join("01.flac"), None, Some(1), "Song 1");
+    let track2 = tagged_track(album.join("02.flac"), None, Some(2), "Song 2");
+    let other = tagged_track(PathBuf::from("/music/Other/01.flac"), None, Some(1), "Other Song");
+    let library = vec![track2.clone(), other, track1.clone()];
+    assert_eq!(album_tracks(&library, &album), vec![track1, track2]);
+}
+
+#[test]
 #[ignore = "Requires isolated GTK display, FFmpeg and a built worker; generated media only, no personal library or session"]
 fn desktop_album_browse_activation_filtered_results_and_queue_visibility() {
     gtk::init().unwrap();
@@ -172,6 +182,7 @@ fn desktop_album_browse_activation_filtered_results_and_queue_visibility() {
     let album_view = &lists[0];
     let track_view = &lists[1];
     assert!(!album_view.is_single_click_activate());
+    assert!(track_view.is_single_click_activate());
     player.state.album_selection.set_selected(1);
     assert_eq!(player.state.tracks.borrow().as_slice(), &tracks[4..]);
     assert!(player.state.stream.borrow().is_none());

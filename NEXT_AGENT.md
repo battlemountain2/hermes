@@ -1,8 +1,27 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Immersive Listening Mode Polish & Performance Optimization — 2026-10-18
+## Music Library Album & Track Single-Click Playback Polish — 2026-10-18
 
 Completed on branch `feat/6-spreadsheet-and-settings-polish`:
+
+1. **Instant Track Single-Click Activation (`src/ui/music.rs`)**:
+   - Switched track list view to `tracks.set_single_click_activate(true)`, enabling immediate single-click playback on any song in the track list across all library sections, eliminating the counter-intuitive requirement to double-click or press Enter.
+   - Updated user status indicators and tooltips across the view: "Click any song to play · click Play to play full album".
+
+2. **Album Row 1-Click Play Controls (`src/ui/music.rs`, `src/style.css`)**:
+   - Added a dedicated `.music-album-play` icon button (`icons::PLAY`, 16px) to each album row in `album_factory`, allowing users to play any album from track 1 with a single click.
+   - Added click gesture on album artwork thumbnail to immediately play the full album from track 1 with pointer cursor feedback.
+   - Preserved clean browsing: clicking the album title/artist row selects the album and updates the track list without interrupting currently playing music.
+   - Styled `.music-album-row` and `.music-album-play` strictly using semantic `@theme_*` tokens (`@theme_dim_text`, `@theme_accent`, `@theme_highlight`).
+
+3. **Robust Album Resolution & Queue Playback (`src/ui/music.rs`, `src/ui/music/collections.rs`)**:
+   - Fixed `play_album` action button: resolves album position dynamically by matching `selected_album` against the current library, falling back cleanly to `album_selection.selected()` or `available_tracks()`, preventing silent no-ops when selection is unaligned.
+   - Streamlined `track_playback`: when searching or browsing filtered/dedicated sections (Favorites, Artists, Songs), queues remaining tracks from the visible view rather than reverting strictly to disk folder queue.
+
+4. **Test Suite & Code Health**:
+   - 787 binary unit tests pass cleanly (`cargo test --bin strata --jobs 2`).
+   - Clean `cargo check` and clean `git diff --check`.
+
 
 1. **Album Artwork Flickering & Double Controls Fix (`src/ui/music.rs`)**:
    - Zero-flicker track synchronization: wrapped hero deck metadata, badges, and `set_thumbnail_or_icon` updates in an explicit `track_changed` guard, preventing periodic tick callbacks from clearing and reloading cover textures while playback continues.

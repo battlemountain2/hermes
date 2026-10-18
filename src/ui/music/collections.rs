@@ -198,6 +198,21 @@ impl State {
             }
             return Vec::new();
         }
+        let filtered = !self.filter.text().is_empty() || self.section.get() != Section::Albums;
+        if filtered {
+            let mut tracks = self.available_tracks();
+            if let Some(position) = tracks.iter().position(|track| track.path == selected) {
+                tracks.drain(..position);
+                return tracks;
+            }
+        }
+        if let Some(album_path) = self.selected_album.borrow().as_ref() {
+            let mut tracks = super::album_tracks(&self.library.borrow(), album_path);
+            if let Some(position) = tracks.iter().position(|track| track.path == selected) {
+                tracks.drain(..position);
+                return tracks;
+            }
+        }
         crate::music::folder_queue(self.library.borrow().clone(), selected)
     }
 

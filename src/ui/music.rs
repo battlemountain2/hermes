@@ -382,7 +382,7 @@ impl MusicPlayer {
         collection_status.set_visible(false);
         view.append(&collection_status);
         let status = text(
-            "Single-click to browse · double-click an album or song to play",
+            "Click any song to play · click Play to play full album",
             "music-detail",
         );
         view.append(&status);
@@ -391,14 +391,14 @@ impl MusicPlayer {
         let albums = gtk::ListView::new(Some(album_selection.clone()), Some(label_factory()));
         albums.set_single_click_activate(false);
         albums.set_tooltip_text(Some(
-            "Single-click to browse · double-click or Enter to play the full album",
+            "Click to browse · click Play or artwork to play full album",
         ));
         let album_scroll = scroller(&albums);
         album_scroll.set_size_request(245, -1);
         let track_model = gtk::StringList::new(&[]);
         let track_selection = gtk::SingleSelection::new(Some(track_model.clone()));
         let tracks = gtk::ListView::new(Some(track_selection.clone()), Some(label_factory()));
-        tracks.set_single_click_activate(false);
+        tracks.set_single_click_activate(true);
         let track_scroll = scroller(&tracks);
         track_scroll.set_hexpand(true);
         let queue_model = gtk::StringList::new(&[]);
@@ -431,7 +431,7 @@ impl MusicPlayer {
         let popup_contents = gtk::Box::new(gtk::Orientation::Vertical, 8);
         popup_contents.append(&queue_summary);
         popup_contents.append(&text(
-            "Drag to arrange · double-click to play",
+            "Drag to arrange · click to play",
             "music-detail",
         ));
         popup_contents.append(&queue_empty);
@@ -914,10 +914,34 @@ impl MusicPlayer {
         play_album.connect_clicked(move |_| {
             if let Some(state) = weak.upgrade() {
                 if state.filter.text().is_empty() && state.section.get() == Section::Albums {
-                    state.play_album(state.album_selection.selected() as usize);
+                    let position = state
+                        .selected_album
+                        .borrow()
+                        .as_ref()
+                        .and_then(|path| {
+                            state
+                                .albums
+                                .borrow()
+                                .iter()
+                                .position(|album| &album.path == path)
+                        })
+                        .or_else(|| {
+                            let selected = state.album_selection.selected() as usize;
+                            (selected < state.albums.borrow().len()).then_some(selected)
+                        });
+                    if let Some(position) = position {
+                        state.play_album(position);
+                    } else {
+                        let tracks = state.available_tracks();
+                        if !tracks.is_empty() {
+                            state.replace(tracks, 0);
+                        }
+                    }
                 } else {
                     let tracks = state.available_tracks();
-                    state.replace(tracks, 0);
+                    if !tracks.is_empty() {
+                        state.replace(tracks, 0);
+                    }
                 }
             }
         });
@@ -1759,7 +1783,7 @@ fn labeled_button(icon: &str, label: &str, tooltip: &str) -> gtk::Button {
     button
 }
 
-fn album_tracks(library: &[Track], album: &std::path::Path) -> Vec<Track> {
+pub(super) fn album_tracks(library: &[Track], album: &std::path::Path) -> Vec<Track> {
     let mut tracks: Vec<_> = library
         .iter()
         .filter(|track| track.album_key() == album)
@@ -1803,12 +1827,42 @@ fn album_factory(state: std::rc::Weak<State>) -> gtk::SignalListItemFactory {
     factory.connect_setup(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            row.add_css_class("music-album-row");
             let cover = assets::primary_icon(icons::MUSIC, 42);
             cover.set_size_request(48, 48);
+            cover.set_cursor_from_name(Some("pointer"));
+            cover.set_tooltip_text(Some("Click artwork to play album"));
+            let cover_click = gtk::GestureClick::new();
+            let weak_cover = setup_state.clone();
+            let weak_cover_item = item.downgrade();
+            cover_click.connect_pressed(move |_, _, _, _| {
+                if let (Some(state), Some(item)) = (weak_cover.upgrade(), weak_cover_item.upgrade()) {
+                    state.play_album(item.position() as usize);
+                }
+            });
+            cover.add_controller(cover_click);
+
             let label = text("", "music-row");
             label.set_hexpand(true);
             row.append(&cover);
             row.append(&label);
+
+            let play = gtk::Button::new();
+            play.set_child(Some(&assets::primary_icon(icons::PLAY, 16)));
+            play.add_css_class("music-control");
+            play.add_css_class("music-album-play");
+            play.set_tooltip_text(Some("Play album"));
+            play.update_property(&[gtk::accessible::Property::Label("Play album")]);
+            play.set_cursor_from_name(Some("pointer"));
+            let weak_play = setup_state.clone();
+            let weak_play_item = item.downgrade();
+            play.connect_clicked(move |_| {
+                if let (Some(state), Some(item)) = (weak_play.upgrade(), weak_play_item.upgrade()) {
+                    state.play_album(item.position() as usize);
+                }
+            });
+            row.append(&play);
+
             context_menu::install_row(&row, item, setup_state.clone(), context_menu::Kind::Album);
             item.set_child(Some(&row));
         }

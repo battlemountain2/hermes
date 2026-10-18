@@ -3544,6 +3544,38 @@ button.music-cover-button:focus-visible {
   opacity: 0.45;
 }
 
+.music-album-row {
+  border-radius: 6px;
+  padding: 4px;
+}
+
+.music-album-row:hover {
+  background: alpha(@theme_highlight, 0.4);
+}
+
+.music-album-play {
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  box-shadow: none;
+  color: @theme_dim_text;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 4px;
+  opacity: 0.75;
+}
+
+.music-album-row:hover .music-album-play,
+.music-album-play:hover {
+  opacity: 1.0;
+  color: @theme_accent;
+  background: @theme_highlight;
+}
+
+.music-album-play:active {
+  background: alpha(@theme_accent, 0.2);
+}
+
 .music-actions {
   padding-top: 4px;
 }
