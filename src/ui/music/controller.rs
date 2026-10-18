@@ -281,6 +281,19 @@ impl Controller {
             .current(self.queue.borrow().current)
     }
 
+    pub(crate) fn stream(&self) -> Option<PlaybackStream> {
+        self.stream.borrow().clone()
+    }
+
+    pub(crate) fn spectrum_bands(&self) -> [f32; crate::playback::SPECTRUM_BANDS] {
+        self.stream
+            .borrow()
+            .as_ref()
+            .map_or([0.0; crate::playback::SPECTRUM_BANDS], |stream| {
+                stream.spectrum_bands()
+            })
+    }
+
     pub(crate) fn position(&self) -> i64 {
         self.stream
             .borrow()

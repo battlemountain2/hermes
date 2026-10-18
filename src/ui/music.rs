@@ -18,6 +18,8 @@ use crate::{
 mod collections;
 mod context_menu;
 pub(crate) mod controller;
+pub(crate) mod immersive;
+pub(crate) mod mini;
 mod queue;
 mod session;
 
@@ -100,6 +102,20 @@ struct State {
     favorite_paths: RefCell<std::collections::BTreeSet<PathBuf>>,
     catalog_paths: RefCell<std::collections::BTreeSet<PathBuf>>,
     pending_observation: RefCell<Option<collections::PendingObservation>>,
+    mini_player: RefCell<Option<mini::MiniPlayer>>,
+    open_immersive: RefCell<Option<Rc<dyn Fn()>>>,
+    hero_deck: gtk::Box,
+    hero_cover: gtk::Image,
+    hero_title: gtk::Label,
+    hero_detail: gtk::Label,
+    hero_badge: gtk::Label,
+    hero_seek: gtk::Scale,
+    hero_clock: gtk::Label,
+    hero_play: gtk::Button,
+    hero_speaker: gtk::Button,
+    hero_volume: gtk::Scale,
+    hero_shuffle: gtk::ToggleButton,
+    hero_repeat: gtk::Button,
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -230,6 +246,20 @@ impl MusicPlayer {
         queue_toggle.add_css_class("music-control");
         queue_toggle.add_css_class("music-panel-toggle");
         header.append(&queue_toggle);
+        let immersive_btn = gtk::Button::builder()
+            .tooltip_text("Open Immersive listening mode · Ctrl+I")
+            .build();
+        immersive_btn.set_child(Some(&control_contents(icons::MAXIMIZE, "Immersive")));
+        immersive_btn.add_css_class("music-control");
+        immersive_btn.add_css_class("music-panel-toggle");
+        header.append(&immersive_btn);
+        let mini_btn = gtk::Button::builder()
+            .tooltip_text("Open Floating Mini-Player")
+            .build();
+        mini_btn.set_child(Some(&control_contents(icons::EXTERNAL_LINK, "Mini")));
+        mini_btn.add_css_class("music-control");
+        mini_btn.add_css_class("music-panel-toggle");
+        header.append(&mini_btn);
         view.append(&header);
         let navigation_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         navigation_row.add_css_class("music-navigation");
@@ -274,6 +304,99 @@ impl MusicPlayer {
             "music-detail",
         );
         view.append(&status);
+
+        let hero_deck = gtk::Box::new(gtk::Orientation::Horizontal, 14);
+        hero_deck.add_css_class("music-hero-deck");
+        hero_deck.set_visible(false);
+
+        let hero_cover = assets::primary_icon(icons::MUSIC, 56);
+        hero_cover.set_size_request(64, 64);
+        hero_cover.add_css_class("music-hero-cover");
+        let hero_cover_btn = gtk::Button::builder()
+            .child(&hero_cover)
+            .tooltip_text("Open Immersive listening mode · Ctrl+I")
+            .build();
+        hero_cover_btn.add_css_class("music-cover-button");
+        hero_deck.append(&hero_cover_btn);
+
+        let hero_mid = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        hero_mid.set_hexpand(true);
+
+        let hero_title_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let hero_title = text("Nothing playing", "music-title");
+        hero_title.add_css_class("music-hero-title");
+        let hero_badge = text("AUDIO", "mini-subtle-badge");
+        hero_title_row.append(&hero_title);
+        hero_title_row.append(&hero_badge);
+        hero_mid.append(&hero_title_row);
+
+        let hero_detail = text("Choose a track in Music", "music-detail");
+        hero_mid.append(&hero_detail);
+
+        let hero_scrub_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let hero_seek = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
+        hero_seek.set_draw_value(false);
+        hero_seek.set_hexpand(true);
+        hero_seek.add_css_class("music-hero-seek");
+        let hero_clock = text("0:00 / 0:00", "music-detail");
+        hero_scrub_row.append(&hero_seek);
+        hero_scrub_row.append(&hero_clock);
+        hero_mid.append(&hero_scrub_row);
+        hero_deck.append(&hero_mid);
+
+        let hero_right = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        hero_right.set_valign(gtk::Align::Center);
+
+        let hero_transport = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        hero_transport.add_css_class("music-hero-transport");
+
+        let hero_shuffle = gtk::ToggleButton::new();
+        hero_shuffle.set_child(Some(&assets::primary_icon(icons::SHUFFLE, 16)));
+        hero_shuffle.add_css_class("music-control");
+        hero_shuffle.set_tooltip_text(Some("Shuffle"));
+
+        let hero_previous = button(icons::ARROW_LEFT, "Previous track");
+        let hero_play = button(icons::PLAY, "Play / pause music");
+        let hero_next = button(icons::ARROW_RIGHT, "Next track");
+
+        let hero_repeat = button(icons::REPEAT, "Repeat");
+        hero_repeat.add_css_class("music-mode-control");
+
+        hero_transport.append(&hero_shuffle);
+        hero_transport.append(&hero_previous);
+        hero_transport.append(&hero_play);
+        hero_transport.append(&hero_next);
+        hero_transport.append(&hero_repeat);
+        hero_right.append(&hero_transport);
+
+        let hero_bottom_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let hero_speaker = button(icons::VOLUME, "Mute / unmute");
+        hero_bottom_row.append(&hero_speaker);
+
+        let hero_volume = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.05);
+        hero_volume.set_draw_value(false);
+        hero_volume.set_value(0.75);
+        hero_volume.set_size_request(80, -1);
+        hero_volume.add_css_class("music-vol-scale");
+        hero_bottom_row.append(&hero_volume);
+
+        let hero_immersive_btn = gtk::Button::builder()
+            .tooltip_text("Immersive listening mode · Ctrl+I")
+            .build();
+        hero_immersive_btn.set_child(Some(&control_contents(icons::MAXIMIZE, "Immersive")));
+        hero_immersive_btn.add_css_class("music-control");
+        hero_bottom_row.append(&hero_immersive_btn);
+
+        let hero_mini_btn = gtk::Button::builder()
+            .tooltip_text("Floating mini-player")
+            .build();
+        hero_mini_btn.set_child(Some(&control_contents(icons::EXTERNAL_LINK, "Mini")));
+        hero_mini_btn.add_css_class("music-control");
+        hero_bottom_row.append(&hero_mini_btn);
+
+        hero_right.append(&hero_bottom_row);
+        hero_deck.append(&hero_right);
+        view.append(&hero_deck);
         let album_model = gtk::StringList::new(&[]);
         let album_selection = gtk::SingleSelection::new(Some(album_model.clone()));
         let albums = gtk::ListView::new(Some(album_selection.clone()), Some(label_factory()));
@@ -457,7 +580,7 @@ impl MusicPlayer {
         );
         let collection_snapshot = collection_store.snapshot();
         let state = Rc::new(State {
-            controller,
+            controller: controller.clone(),
             displayed_revision: Cell::new(u64::MAX),
             displayed_track: RefCell::new(None),
             playing_icon: Cell::new(false),
@@ -526,6 +649,130 @@ impl MusicPlayer {
             favorite_paths: RefCell::new(std::collections::BTreeSet::new()),
             catalog_paths: RefCell::new(std::collections::BTreeSet::new()),
             pending_observation: RefCell::new(None),
+            mini_player: RefCell::new(None),
+            open_immersive: RefCell::new(None),
+            hero_deck,
+            hero_cover,
+            hero_title,
+            hero_detail,
+            hero_badge,
+            hero_seek,
+            hero_clock,
+            hero_play,
+            hero_speaker,
+            hero_volume,
+            hero_shuffle,
+            hero_repeat,
+        });
+        let weak_for_mini = Rc::downgrade(&state);
+        let mini = mini::MiniPlayer::new(
+            controller.clone(),
+            Rc::new(move || {
+                if let Some(state) = weak_for_mini.upgrade()
+                    && let Some(ref cb) = *state.open_immersive.borrow()
+                {
+                    cb();
+                }
+            }),
+        );
+        state.mini_player.replace(Some(mini));
+
+        let weak = Rc::downgrade(&state);
+        for btn in [&immersive_btn, &hero_cover_btn, &hero_immersive_btn] {
+            let weak = weak.clone();
+            btn.connect_clicked(move |_| {
+                if let Some(state) = weak.upgrade()
+                    && let Some(ref cb) = *state.open_immersive.borrow()
+                {
+                    cb();
+                }
+            });
+        }
+
+        let weak = Rc::downgrade(&state);
+        for btn in [&mini_btn, &hero_mini_btn] {
+            let weak = weak.clone();
+            btn.connect_clicked(move |_| {
+                if let Some(state) = weak.upgrade()
+                    && let Some(ref mini) = *state.mini_player.borrow()
+                {
+                    mini.toggle();
+                }
+            });
+        }
+
+        let weak = Rc::downgrade(&state);
+        state.hero_play.connect_clicked(move |_| {
+            if let Some(state) = weak.upgrade() {
+                state.toggle();
+            }
+        });
+
+        let weak = Rc::downgrade(&state);
+        hero_previous.connect_clicked(move |_| {
+            if let Some(state) = weak.upgrade() {
+                state.previous();
+            }
+        });
+
+        let weak = Rc::downgrade(&state);
+        hero_next.connect_clicked(move |_| {
+            if let Some(state) = weak.upgrade() {
+                state.next();
+            }
+        });
+
+        let weak = Rc::downgrade(&state);
+        state.hero_speaker.connect_clicked(move |_| {
+            if let Some(state) = weak.upgrade()
+                && let Some(stream) = state.stream.borrow().clone()
+            {
+                stream.set_muted(!stream.is_muted());
+                state.notify();
+            }
+        });
+
+        let weak = Rc::downgrade(&state);
+        state.hero_volume.connect_value_changed(move |volume| {
+            if let Some(state) = weak.upgrade()
+                && !state.syncing.get()
+            {
+                state.set_volume(volume.value());
+            }
+        });
+
+        let weak = Rc::downgrade(&state);
+        state.hero_shuffle.connect_toggled(move |button| {
+            if let Some(state) = weak.upgrade()
+                && !state.syncing.get()
+            {
+                state.set_shuffle(button.is_active());
+            }
+        });
+
+        let weak = Rc::downgrade(&state);
+        state.hero_repeat.connect_clicked(move |_| {
+            if let Some(state) = weak.upgrade() {
+                let repeat = match state.controller.repeat() {
+                    Repeat::Off => Repeat::All,
+                    Repeat::All => Repeat::One,
+                    Repeat::One => Repeat::Off,
+                };
+                state.set_repeat(repeat);
+            }
+        });
+
+        let weak = Rc::downgrade(&state);
+        state.hero_seek.connect_change_value(move |_, _, value| {
+            if let Some(state) = weak.upgrade()
+                && !state.syncing.get()
+            {
+                let duration = state.controller.duration();
+                if duration > 0 {
+                    state.controller.seek((value * duration as f64) as i64);
+                }
+            }
+            glib::Propagation::Proceed
         });
         collections::connect(&state, &create_playlist, &edit_playlist);
         let weak = Rc::downgrade(&state);
@@ -877,6 +1124,18 @@ impl MusicPlayer {
     pub fn view(&self) -> gtk::Widget {
         self.state.view.clone().upcast()
     }
+    pub fn toggle_mini_player(&self) {
+        if let Some(mini) = self.state.mini_player.borrow().as_ref() {
+            mini.toggle();
+        }
+    }
+    #[expect(dead_code, reason = "Accessor for mini player instance")]
+    pub fn mini_player(&self) -> Option<mini::MiniPlayer> {
+        self.state.mini_player.borrow().clone()
+    }
+    pub fn connect_open_immersive(&self, open: Rc<dyn Fn()>) {
+        self.state.open_immersive.replace(Some(open));
+    }
     #[cfg(test)]
     pub fn is_playing(&self) -> bool {
         self.state
@@ -1156,7 +1415,7 @@ impl State {
             self.detail.set_tooltip_text(Some(&error.to_string()));
         } else {
             self.detail.set_tooltip_text(None);
-            self.detail.set_text(&track.map_or_else(
+            self.detail.set_text(&track.as_ref().map_or_else(
                 || "Choose a track in Music".into(),
                 |track| format!("{} · {}", track.artist(), track.album()),
             ));
@@ -1213,6 +1472,52 @@ impl State {
                 17,
             )));
         }
+        let layout = super::theme::ThemeManager::shared().music_player_layout();
+        let is_top = layout == "top";
+        self.hero_deck.set_visible(is_top && self.transport_visible.get());
+        if let Some(track) = track.as_ref() {
+            self.hero_title.set_text(&track.title());
+            self.hero_detail.set_text(&format!("{} · {}", track.artist(), track.album()));
+            let ext = track
+                .path
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("AUDIO")
+                .to_uppercase();
+            self.hero_badge.set_text(&ext);
+            super::thumbnail::set_thumbnail_or_icon(
+                &self.hero_cover,
+                &file_entry(track),
+                icons::MUSIC,
+                56,
+                64,
+            );
+        } else {
+            self.hero_title.set_text("Nothing playing");
+            self.hero_detail.set_text("Choose a track in Music");
+            self.hero_badge.set_text("AUDIO");
+            assets::set_primary_icon(&self.hero_cover, icons::MUSIC);
+        }
+        self.hero_volume.set_value(self.controller.volume());
+        self.hero_shuffle.set_active(self.controller.shuffle());
+        self.hero_repeat.set_child(Some(&assets::primary_icon(
+            if repeat == Repeat::One {
+                icons::REPEAT_ONE
+            } else {
+                icons::REPEAT
+            },
+            16,
+        )));
+        if repeat == Repeat::Off {
+            self.hero_repeat.remove_css_class("repeat-enabled");
+        } else {
+            self.hero_repeat.add_css_class("repeat-enabled");
+        }
+        self.hero_speaker.set_child(Some(&assets::primary_icon(
+            if muted { icons::MUTED } else { icons::VOLUME },
+            16,
+        )));
+
         self.bar.set_visible(self.transport_visible.get());
         if self.displayed_revision.replace(self.queue_revision.get()) != self.queue_revision.get() {
             self.render_queue();
@@ -1286,11 +1591,30 @@ impl State {
                 time_label(stream.timestamp()),
                 time_label(stream.duration())
             ));
+            let dur = stream.duration();
+            let pos = stream.timestamp();
+            let frac = if dur > 0 {
+                (pos as f64 / dur as f64).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            self.hero_seek.set_value(frac);
+            self.hero_clock.set_text(&format!(
+                "{} / {}",
+                time_label(pos),
+                time_label(dur)
+            ));
         } else {
             self.clock.set_text("0:00 / 0:00");
+            self.hero_seek.set_value(0.0);
+            self.hero_clock.set_text("0:00 / 0:00");
         }
         if self.playing_icon.replace(playing) != playing {
             self.play.set_child(Some(&assets::primary_icon(
+                if playing { icons::PAUSE } else { icons::PLAY },
+                17,
+            )));
+            self.hero_play.set_child(Some(&assets::primary_icon(
                 if playing { icons::PAUSE } else { icons::PLAY },
                 17,
             )));
@@ -1352,7 +1676,7 @@ fn read_folder_queue(
     Ok(crate::music::folder_queue(tracks, selected))
 }
 
-fn file_entry(track: &Track) -> FileEntry {
+pub(super) fn file_entry(track: &Track) -> FileEntry {
     FileEntry(Rc::new(FileEntryInner {
         location: Location::local(&track.path),
         native_name: track.path.file_name().unwrap_or_default().to_owned(),
@@ -1497,7 +1821,12 @@ fn track_factory(state: std::rc::Weak<State>) -> gtk::SignalListItemFactory {
     let setup_state = state.clone();
     factory.connect_setup(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            row.add_css_class("music-track-row");
+            let num = text("", "music-track-num");
+            num.set_size_request(24, -1);
+            num.set_xalign(1.0);
+            row.append(&num);
             let label = text("", "music-row");
             label.set_hexpand(true);
             row.append(&label);
@@ -1537,10 +1866,14 @@ fn track_factory(state: std::rc::Weak<State>) -> gtk::SignalListItemFactory {
         let Some(track) = state.tracks.borrow().get(item.position() as usize).cloned() else {
             return;
         };
-        if let Some(value) = item.item().and_downcast::<gtk::StringObject>()
-            && let Some(label) = row.first_child().and_downcast::<gtk::Label>()
-        {
-            label.set_text(&value.string());
+        if let Some(num) = row.first_child().and_downcast::<gtk::Label>() {
+            let num_text = track.tags.track.map_or_else(String::new, |n| format!("{n:02}"));
+            num.set_text(&num_text);
+        }
+        if let Some(label) = row.first_child().and_then(|w| w.next_sibling()).and_downcast::<gtk::Label>() {
+            let title = track.title();
+            let detail = format!("{} · {}", track.artist(), track.album());
+            label.set_text(&format!("{title}\n{detail}"));
             label.set_tooltip_text(Some(&track.path.to_string_lossy()));
         }
         if let Some(favorite) = row.last_child().and_downcast::<gtk::ToggleButton>() {
@@ -1594,7 +1927,7 @@ fn replace_model(model: &gtk::StringList, values: &[String]) {
     }
 }
 
-fn time_label(microseconds: i64) -> String {
+pub(super) fn time_label(microseconds: i64) -> String {
     let seconds = microseconds.max(0) / 1_000_000;
     format!("{}:{:02}", seconds / 60, seconds % 60)
 }

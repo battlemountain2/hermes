@@ -415,9 +415,36 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     workspace.set_vexpand(true);
     workspace.add_named(&preview_split, Some("files"));
     workspace.add_named(&music_player.view(), Some("music"));
+
+    let ws_for_imm_close = workspace.clone();
+    let ws_for_imm_lib = workspace.clone();
+    let toggle_for_imm_close = music_toggle.clone();
+    let toggle_for_imm_lib = music_toggle.clone();
+    let immersive_view = super::music::immersive::ImmersiveView::new(
+        music_player.controller(),
+        Rc::new(move || {
+            toggle_for_imm_close.set_active(true);
+            ws_for_imm_close.set_visible_child_name("music");
+        }),
+        Rc::new(move || {
+            toggle_for_imm_lib.set_active(true);
+            ws_for_imm_lib.set_visible_child_name("music");
+        }),
+    );
+    workspace.add_named(immersive_view.widget(), Some("immersive"));
     workspace.set_visible_child_name("files");
     root.append(&workspace);
     root.append(&music_player.bar());
+
+    let ws_for_imm_open = workspace.clone();
+    let toggle_for_imm_open = music_toggle.clone();
+    let imm_for_open = immersive_view.clone();
+    music_player.connect_open_immersive(Rc::new(move || {
+        toggle_for_imm_open.set_active(false);
+        ws_for_imm_open.set_visible_child_name("immersive");
+        imm_for_open.sync();
+    }));
+
     let shown_workspace = workspace.clone();
     music_toggle.connect_toggled(move |button| {
         shown_workspace.set_visible_child_name(if button.is_active() { "music" } else { "files" });
@@ -433,6 +460,31 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     music_action.connect_activate(move |_, _| toggled_music.set_active(!toggled_music.is_active()));
     window.add_action(&music_action);
     application.set_accels_for_action("win.music", &["<Control>m"]);
+
+    let immersive_action = gio::SimpleAction::new("immersive", None);
+    let ws_for_imm_action = workspace.clone();
+    let toggle_for_imm_action = music_toggle.clone();
+    let imm_for_action = immersive_view.clone();
+    immersive_action.connect_activate(move |_, _| {
+        if ws_for_imm_action.visible_child_name().as_deref() == Some("immersive") {
+            toggle_for_imm_action.set_active(true);
+            ws_for_imm_action.set_visible_child_name("music");
+        } else {
+            toggle_for_imm_action.set_active(false);
+            ws_for_imm_action.set_visible_child_name("immersive");
+            imm_for_action.sync();
+        }
+    });
+    window.add_action(&immersive_action);
+    application.set_accels_for_action("win.immersive", &["<Control>i"]);
+
+    let mini_player_action = gio::SimpleAction::new("mini-player", None);
+    let music_for_mini = music_player.clone();
+    mini_player_action.connect_activate(move |_, _| {
+        music_for_mini.toggle_mini_player();
+    });
+    window.add_action(&mini_player_action);
+    application.set_accels_for_action("win.mini-player", &["<Control><Shift>m"]);
     let play_music = gio::SimpleAction::new("play-music-selection", None);
     let selected_music = music_player.clone();
     let selected_controller = controller.clone();
@@ -633,6 +685,8 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         &preview,
         trails.clone(),
         capture_view,
+        &workspace,
+        &music_toggle,
     );
     install_mouse_navigation(&window, &controller);
     if let Some(id) = trails.active_id()
@@ -806,6 +860,8 @@ fn install_keyboard_navigation(
     preview: &PreviewDrawer,
     trails: Rc<Trails>,
     capture_view: Rc<dyn Fn() -> TrailViewState>,
+    workspace: &gtk::Stack,
+    music_toggle: &gtk::ToggleButton,
 ) {
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -814,10 +870,19 @@ fn install_keyboard_navigation(
     let preview = preview.clone();
     let dialog_parent = window.clone();
     let weak_browser = Rc::downgrade(&view.browser());
+    let workspace = workspace.clone();
+    let music_toggle = music_toggle.clone();
     keys.connect_key_pressed(move |_, key, _, modifiers| {
         let Some(browser) = weak_browser.upgrade() else {
             return glib::Propagation::Proceed;
         };
+        if key == gtk::gdk::Key::Escape
+            && workspace.visible_child_name().as_deref() == Some("immersive")
+        {
+            music_toggle.set_active(true);
+            workspace.set_visible_child_name("music");
+            return glib::Propagation::Stop;
+        }
         if let Some(layer) = visible_modal_layer(&dialog_parent) {
             let focus_is_inside = gtk::prelude::RootExt::focus(&dialog_parent)
                 .is_some_and(|focus| focus == layer || focus.is_ancestor(&layer));

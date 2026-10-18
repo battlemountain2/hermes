@@ -5,6 +5,7 @@ mod file_source;
 mod formats;
 pub(crate) mod music_collections;
 pub(crate) mod music_library;
+pub(crate) mod lyrics;
 pub(crate) mod model_preview;
 mod operations;
 pub(crate) mod preview;

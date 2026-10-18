@@ -1,5 +1,42 @@
 # Next agent: Hermes performance, file features and media polish
 
+## Immersive Listening Mode, Dual Selectable Layouts & Floating Mini Player — 2026-10-18
+
+Completed on branch `feat/6-spreadsheet-and-settings-polish`:
+
+1. **Subtle & Polished Music Player Upgrades (Top Hero Deck vs Persistent Bottom Dock)**:
+   - Configured cleanly in `Settings > Audio & DSP > Player layout` with visual choice cards for `"top"` (Top Hero Deck) and `"bottom"` (Bottom Dock), stored in `preferences.music_player_layout`.
+   - Zero layout toggle clutter on the music workspace itself.
+   - Clean tabular track queue listing with dedicated track numbering (`.music-track-num`).
+   - Integrated header mode action button to open Immersive Listening Mode directly.
+
+2. **Cider-Inspired Immersive Listening Mode (`src/ui/music/immersive.rs`)**:
+   - Dynamic ambient color aura canvas rendered via Cairo with soft radial gradients following live theme accent/highlight tokens and artwork tones.
+   - Hover-revealed playback and volume controls: during resting playback, controls disappear smoothly to highlight cover art, song title, artist, and scrub bar.
+   - Clean synchronized LRC lyrics parser (`src/services/lyrics.rs`) with binary-search active line activation, interactive click-to-seek, and smooth auto-centering scroll. Labeled concisely as "Lyrics".
+   - Automatic solo centered artwork scaling when no lyrics are available.
+   - Aesthetic full-screen visualizer mode with 3 user-selectable generative styles: `Ribbons` (neon harmonic waveforms), `Tunnel` (warp speed bass tunnel), and `Cosmic` (orbital particle dust). Labeled concisely as "Visualizer", hiding lyrics and artwork for a focused ambient experience.
+   - Floating pill transport dock active during visualizer mode with compact playback, volume, and timing info.
+   - Keyboard navigation: `<Control>i` toggles immersive view; `Escape` returns to Library.
+
+3. **Floating Mini-Player Micro-Deck (`src/ui/music/mini.rs`)**:
+   - Secondary GTK window titled `"Hermes Mini"` ($380 \times 128$).
+   - Minimalist, subtle monochrome badges (`AUDIO`, `48kHz FLAC`), compact title/artist row, scrub slider, and volume slider.
+   - Expand-to-immersive button (`Ctrl+I`).
+   - Keyboard shortcut `<Control><Shift>m` wired to `win.mini-player`.
+   - Hyprland window rules ready:
+     ```ini
+     windowrulev2 = float, class:^(strata)$, title:^(Hermes Mini)$
+     windowrulev2 = size 380 128, class:^(strata)$, title:^(Hermes Mini)$
+     windowrulev2 = pin, class:^(strata)$, title:^(Hermes Mini)$
+     ```
+
+4. **Code Quality, Theming & Test Organization**:
+   - Strictly 100% semantic `@theme_*` tokens applied across all CSS and Cairo renderers; zero static hex/RGB colors.
+   - Adjacent test modules (`#[cfg(test)] mod tests;`): `src/services/lyrics/tests.rs`, `src/ui/music/immersive/tests.rs`, `src/ui/music/mini/tests.rs`.
+   - Zero compiler warnings; 786 binary unit tests pass cleanly (`cargo test --bin strata --jobs 2 -- --test-threads=2`).
+   - Clean `git diff --check` and clean `cargo check`.
+
 ## Dolphin-Inspired Settings Overhaul & Instant Search Navigation — 2026-10-17
 
 Completed on branch `feat/6-spreadsheet-and-settings-polish` (commits `2cd72e0`, `8fc4e27`, `c81eea8`):

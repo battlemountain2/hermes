@@ -3895,3 +3895,353 @@ button.music-cover-button:focus-visible {
   background: alpha(@theme_bg, 0.6);
   border: 1px solid alpha(@theme_border, 0.2);
 }
+
+/* -------------------------------------------------------------
+   Music Player Upgrade: Top Hero Deck & Tabular Track Rows
+   ------------------------------------------------------------- */
+.music-hero-deck {
+  background: @theme_surface;
+  border: 1px solid alpha(@theme_border, 0.4);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+}
+
+.music-hero-cover {
+  border-radius: 6px;
+  border: 1px solid alpha(@theme_border, 0.3);
+}
+
+.music-hero-title {
+  color: @theme_text;
+  font-weight: 700;
+  font-size: 1.1em;
+}
+
+.music-hero-seek trough {
+  background: alpha(@theme_border, 0.4);
+  min-height: 4px;
+}
+
+.music-hero-seek highlight {
+  background: @theme_accent;
+}
+
+.music-hero-transport .music-control {
+  padding: 6px;
+}
+
+.music-track-row {
+  padding: 5px 8px;
+  border-radius: 4px;
+}
+
+.music-track-row:hover {
+  background: alpha(@theme_highlight, 0.35);
+}
+
+.music-track-num {
+  color: @theme_dim_text;
+  font-size: 0.85em;
+  font-family: inherit;
+  margin-right: 4px;
+}
+
+/* -------------------------------------------------------------
+   Immersive Listening Mode (Cider Inspiration + Visualizer)
+   ------------------------------------------------------------- */
+.immersive-root {
+  background: @theme_bg;
+}
+
+.immersive-ambient-aura,
+.immersive-visualizer-canvas {
+  background: transparent;
+}
+
+.immersive-content {
+  padding: 24px 32px;
+  background: alpha(@theme_bg, 0.25);
+}
+
+.immersive-top-bar {
+  padding-bottom: 8px;
+}
+
+.immersive-pill-btn {
+  background: alpha(@theme_surface, 0.6);
+  border: 1px solid alpha(@theme_border, 0.4);
+  border-radius: 20px;
+  color: @theme_text;
+  padding: 6px 14px;
+  font-size: 0.82em;
+  font-weight: 600;
+}
+
+.immersive-pill-btn:hover {
+  background: @theme_highlight;
+  color: @theme_accent;
+  border-color: @theme_accent;
+}
+
+.immersive-pill-btn:checked {
+  background: alpha(@theme_accent, 0.18);
+  border-color: @theme_accent;
+  color: @theme_accent;
+}
+
+.immersive-style-selector {
+  background: alpha(@theme_surface, 0.5);
+  border: 1px solid alpha(@theme_border, 0.3);
+  border-radius: 16px;
+  padding: 2px 6px;
+}
+
+.immersive-style-opt {
+  background: transparent;
+  border: none;
+  border-radius: 12px;
+  color: @theme_dim_text;
+  padding: 4px 10px;
+  font-size: 0.78em;
+  font-weight: 600;
+}
+
+.immersive-style-opt:hover {
+  color: @theme_text;
+}
+
+.immersive-style-opt:checked {
+  background: alpha(@theme_accent, 0.25);
+  color: @theme_accent;
+}
+
+.immersive-stage {
+  margin: auto;
+}
+
+.immersive-stage-solo .immersive-art-img {
+  border-radius: 12px;
+}
+
+.immersive-art-box {
+  border-radius: 12px;
+  border: 1px solid alpha(@theme_border, 0.3);
+  box-shadow: 0 16px 40px alpha(@theme_bg, 0.6);
+  background: alpha(@theme_surface, 0.8);
+  overflow: hidden;
+}
+
+.immersive-art-img {
+  border-radius: 10px;
+}
+
+.immersive-title {
+  color: @theme_text;
+  font-size: 1.35em;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.immersive-artist {
+  color: @theme_dim_text;
+  font-size: 0.95em;
+}
+
+.immersive-time {
+  color: @theme_dim_text;
+  font-size: 0.8em;
+  font-family: inherit;
+}
+
+.immersive-scrub-scale trough {
+  background: alpha(@theme_border, 0.35);
+  min-height: 4px;
+}
+
+.immersive-scrub-scale highlight {
+  background: @theme_accent;
+}
+
+.immersive-hover-controls {
+  padding-top: 8px;
+}
+
+.immersive-control-btn {
+  background: alpha(@theme_surface, 0.6);
+  border: 1px solid alpha(@theme_border, 0.3);
+  border-radius: 6px;
+  color: @theme_text;
+  padding: 6px 10px;
+}
+
+.immersive-control-btn:hover {
+  background: @theme_highlight;
+  color: @theme_accent;
+}
+
+.immersive-play-btn {
+  background: @theme_accent;
+  color: @theme_bg;
+  border: 1px solid @theme_accent;
+  border-radius: 50%;
+  padding: 10px;
+}
+
+.immersive-play-btn:hover {
+  background: @theme_text;
+  border-color: @theme_text;
+}
+
+.immersive-vol-scale trough {
+  background: alpha(@theme_border, 0.35);
+  min-height: 4px;
+}
+
+.immersive-vol-scale highlight {
+  background: @theme_accent;
+}
+
+.immersive-lyrics-box {
+  padding: 30px 16px;
+}
+
+.immersive-lyric-line {
+  color: alpha(@theme_text, 0.35);
+  font-size: 1.35em;
+  font-weight: 600;
+  line-height: 1.4;
+  padding: 6px 10px;
+  border-radius: 6px;
+  transition: all 180ms ease;
+}
+
+.immersive-lyric-line:hover {
+  color: alpha(@theme_text, 0.7);
+}
+
+.immersive-lyric-line.active-lyric {
+  color: @theme_text;
+  font-size: 1.6em;
+  font-weight: 800;
+  background: alpha(@theme_highlight, 0.2);
+}
+
+.immersive-floating-dock {
+  background: alpha(@theme_surface, 0.78);
+  border: 1px solid alpha(@theme_border, 0.35);
+  border-radius: 28px;
+  padding: 8px 20px;
+  box-shadow: 0 8px 30px alpha(@theme_bg, 0.5);
+}
+
+.immersive-floating-title {
+  color: @theme_text;
+  font-weight: 700;
+  font-size: 0.9em;
+}
+
+.immersive-floating-artist {
+  color: @theme_dim_text;
+  font-size: 0.8em;
+}
+
+/* -------------------------------------------------------------
+   Floating Mini-Player Window
+   ------------------------------------------------------------- */
+.hermes-mini-window {
+  background: @theme_surface;
+}
+
+.mini-player-root {
+  background: @theme_surface;
+  padding: 12px 14px;
+}
+
+.mini-player-cover {
+  border-radius: 6px;
+  border: 1px solid alpha(@theme_border, 0.3);
+}
+
+.mini-player-title {
+  color: @theme_text;
+  font-weight: 700;
+  font-size: 0.9em;
+}
+
+.mini-player-artist {
+  color: @theme_dim_text;
+  font-size: 0.8em;
+}
+
+.mini-subtle-badge {
+  color: @theme_dim_text;
+  background: alpha(@theme_border, 0.25);
+  border: 1px solid alpha(@theme_border, 0.35);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 0.72em;
+  font-weight: 600;
+}
+
+.mini-player-time {
+  color: @theme_dim_text;
+  font-size: 0.74em;
+  font-family: inherit;
+}
+
+.mini-scrub-scale trough {
+  background: alpha(@theme_border, 0.3);
+  min-height: 4px;
+}
+
+.mini-scrub-scale highlight {
+  background: @theme_accent;
+}
+
+.mini-control-btn {
+  background: alpha(@theme_border, 0.15);
+  border: 1px solid alpha(@theme_border, 0.25);
+  border-radius: 4px;
+  color: @theme_text;
+  padding: 4px 8px;
+}
+
+.mini-control-btn:hover {
+  background: @theme_highlight;
+  color: @theme_accent;
+}
+
+.mini-play-btn {
+  background: @theme_accent;
+  color: @theme_bg;
+  border: 1px solid @theme_accent;
+  border-radius: 5px;
+  padding: 5px 10px;
+}
+
+.mini-play-btn:hover {
+  background: @theme_text;
+  border-color: @theme_text;
+}
+
+.mini-expand-btn {
+  background: transparent;
+  border: none;
+  color: @theme_dim_text;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.mini-expand-btn:hover {
+  color: @theme_text;
+}
+
+.mini-vol-scale trough {
+  background: alpha(@theme_border, 0.3);
+  min-height: 4px;
+}
+
+.mini-vol-scale highlight {
+  background: @theme_accent;
+}
