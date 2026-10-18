@@ -1247,6 +1247,145 @@ headerbar menubutton.header-action > button:focus-visible image {
   opacity: 0.5;
 }
 
+.settings-choice-cards {
+  margin-bottom: 14px;
+}
+
+.settings-choice-card {
+  background: alpha(@theme_bg, 0.65);
+  border: 1px solid alpha(@theme_border, 0.28);
+  border-radius: 6px;
+  box-shadow: none;
+  padding: 12px 14px;
+  transition: all 120ms ease;
+}
+
+.settings-choice-card:hover {
+  background: alpha(@theme_surface, 0.85);
+  border-color: alpha(@theme_accent, 0.4);
+}
+
+.settings-choice-card.selected {
+  background: alpha(@theme_highlight, 0.55);
+  border-color: @theme_accent;
+  box-shadow: 0 0 0 1px @theme_accent;
+}
+
+.settings-choice-card-tag {
+  color: @theme_dim_text;
+  font-size: 0.68em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.settings-choice-card-title {
+  color: @theme_text;
+  font-size: 0.94em;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.settings-choice-card-desc {
+  color: @theme_dim_text;
+  font-size: 0.78em;
+  line-height: 1.35;
+  margin-top: 2px;
+}
+
+.settings-choice-indicator {
+  min-width: 12px;
+  min-height: 12px;
+  border-radius: 50%;
+  border: 1px solid alpha(@theme_border, 0.5);
+  background: transparent;
+}
+
+.settings-choice-card.selected .settings-choice-indicator {
+  border-color: @theme_accent;
+  background: @theme_accent;
+}
+
+.settings-choice-icon-box {
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  margin: 4px 0;
+}
+
+.settings-wireframe-box {
+  background: alpha(@theme_surface, 0.5);
+  border: 1px solid alpha(@theme_border, 0.16);
+  border-radius: 4px;
+  padding: 6px;
+  min-height: 48px;
+  margin: 6px 0 8px;
+}
+
+.settings-wireframe-col {
+  background: alpha(@theme_border, 0.15);
+  border-radius: 2px;
+  padding: 3px;
+  min-width: 24px;
+}
+
+.settings-wireframe-col.active {
+  background: alpha(@theme_accent, 0.16);
+  border: 1px solid alpha(@theme_accent, 0.4);
+}
+
+.settings-wireframe-bar {
+  background: alpha(@theme_dim_text, 0.35);
+  border-radius: 1px;
+  min-height: 3px;
+  margin-bottom: 2px;
+}
+
+.settings-wireframe-bar.accent {
+  background: @theme_accent;
+}
+
+.settings-format-grid {
+  margin-bottom: 12px;
+}
+
+.settings-format-tile {
+  background: alpha(@theme_bg, 0.55);
+  border: 1px solid alpha(@theme_border, 0.22);
+  border-radius: 6px;
+  padding: 10px 14px;
+  transition: all 120ms ease;
+}
+
+.settings-format-tile:hover {
+  background: alpha(@theme_surface, 0.75);
+  border-color: alpha(@theme_accent, 0.35);
+}
+
+.settings-format-icon {
+  background: alpha(@theme_surface, 0.6);
+  border: 1px solid alpha(@theme_border, 0.2);
+  border-radius: 4px;
+  min-width: 36px;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-format-ext {
+  color: @theme_dim_text;
+  font-size: 0.72em;
+}
+
+.settings-live-chip {
+  color: @theme_accent;
+  background: alpha(@theme_accent, 0.12);
+  border: 1px solid alpha(@theme_accent, 0.32);
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
 .settings-option {
   background: alpha(@theme_bg, 0.55);
   border: 1px solid alpha(@theme_border, 0.24);

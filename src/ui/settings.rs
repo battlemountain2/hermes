@@ -411,36 +411,37 @@ fn general_page(
     let preferences = page_content();
     browser.set_single_click_previews(manager.single_click_previews());
 
-    append_heading(&preferences, "STARTUP & NAVIGATION");
-    let startup_card = settings_card();
+    append_heading(&preferences, "STARTUP DESTINATION");
+    let startup_cards = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    startup_cards.add_css_class("settings-choice-cards");
 
-    let startup_choices = [
-        "Home folder · Default user directory",
-        "Music library · Instant jukebox mode",
-        "Last active location · Resume previous session",
+    let current_startup = manager.startup_location();
+    let startup_options = [
+        ("home", "DEFAULT HOME", "Home Folder", "Default user directory with pinned places and candidate search cache.", icons::HOME),
+        ("music", "JUKEBOX MODE", "Music Library", "Directly launch into music collection and hardware DSP visualizer.", icons::MUSIC),
+        ("last", "SESSION CONTINUITY", "Last Session", "Restore open tabs, directory paths, and scroll positions.", icons::REPEAT),
     ];
-    let selected_startup_idx = match manager.startup_location().as_str() {
-        "music" => 1,
-        "last" => 2,
-        _ => 0,
-    };
-    let (startup_row, startup_choice) = settings_choice(
-        "Startup location",
-        "Initial folder or view opened when Hermes launches.",
-        &startup_choices,
-        selected_startup_idx,
-    );
-    let manager_for_startup = manager.clone();
-    startup_choice.connect_selected_notify(move |dropdown| {
-        let loc = match dropdown.selected() {
-            1 => "music",
-            2 => "last",
-            _ => "home",
-        };
-        manager_for_startup.set_startup_location(loc);
-    });
-    startup_card.append(&startup_row);
 
+    let startup_buttons = Rc::new(RefCell::new(Vec::<gtk::Button>::new()));
+    for (id, tag, title, desc, icon) in startup_options {
+        let is_selected = id == current_startup;
+        let card = visual_choice_card(tag, title, desc, None, Some(icon), is_selected);
+        let buttons = startup_buttons.clone();
+        let manager_for_card = manager.clone();
+        let loc_id = id.to_owned();
+        card.connect_clicked(move |clicked| {
+            for btn in buttons.borrow().iter() {
+                btn.remove_css_class("selected");
+            }
+            clicked.add_css_class("selected");
+            manager_for_card.set_startup_location(&loc_id);
+        });
+        startup_buttons.borrow_mut().push(card.clone());
+        startup_cards.append(&card);
+    }
+    preferences.append(&startup_cards);
+
+    let search_card = settings_card();
     let direct_open_enabled = manager.search_open_files_directly();
     let (search_open_row, search_open_files) = settings_option(
         "Open search results directly",
@@ -451,8 +452,8 @@ fn general_page(
     search_open_files.connect_active_notify(move |toggle| {
         manager_for_search.set_search_open_files_directly(toggle.is_active());
     });
-    startup_card.append(&search_open_row);
-    preferences.append(&startup_card);
+    search_card.append(&search_open_row);
+    preferences.append(&search_card);
 
     append_heading(&preferences, "CONFIRMATIONS & SAFETY");
     let safety_card = settings_card();
@@ -550,35 +551,58 @@ fn view_formats_page(
 ) -> gtk::Widget {
     let content = page_content();
 
-    append_heading(&content, "DEFAULT VIEW & DENSITY");
-    let card1 = settings_card();
+    append_heading(&content, "DEFAULT BROWSER PRESENTATION");
+    let layout_cards = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    layout_cards.add_css_class("settings-choice-cards");
 
-    let view_mode_choices = [
-        "Columns · Miller columns hierarchy",
-        "Grid · Visual gallery layout",
-        "Explorer · Tree split view",
+    let layout_options = [
+        ("columns", "MILLER HIERARCHY", "Columns View", "Cascading columns with instant branch navigation."),
+        ("grid", "THUMBNAIL GALLERY", "Grid Gallery", "High-density responsive grid for photos and media."),
+        ("explorer", "DUAL-PANE TREE", "Explorer Split", "Classic sidebar folder tree paired with active file list."),
     ];
-    let (view_row, _view_choice) = settings_choice(
-        "Default browser layout",
-        "Preferred presentation style when opening new folder panes.",
-        &view_mode_choices,
-        0,
-    );
-    card1.append(&view_row);
 
-    let density_choices = [
-        "Compact · Maximum data density",
-        "Standard · Balanced spacing",
-        "Airy · Generous line heights & touch targets",
+    let layout_buttons = Rc::new(RefCell::new(Vec::<gtk::Button>::new()));
+    for (id, tag, title, desc) in layout_options {
+        let card = visual_choice_card(tag, title, desc, Some(id), None, id == "columns");
+        let buttons = layout_buttons.clone();
+        card.connect_clicked(move |clicked| {
+            for btn in buttons.borrow().iter() {
+                btn.remove_css_class("selected");
+            }
+            clicked.add_css_class("selected");
+        });
+        layout_buttons.borrow_mut().push(card.clone());
+        layout_cards.append(&card);
+    }
+    content.append(&layout_cards);
+
+    append_heading(&content, "INFORMATION DENSITY");
+    let density_cards = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    density_cards.add_css_class("settings-choice-cards");
+
+    let density_options = [
+        ("compact", "MAXIMUM DENSITY", "Compact", "Tight spacing and compact row heights for power users."),
+        ("standard", "BALANCED", "Standard", "Standard balanced padding and icon sizing."),
+        ("airy", "GENEROUS SPACING", "Airy", "Spacious line heights and generous touch targets."),
     ];
-    let (density_row, _density_choice) = settings_choice(
-        "Information density",
-        "Row spacing, icon sizing, and padding in Miller columns and file lists.",
-        &density_choices,
-        0,
-    );
-    card1.append(&density_row);
 
+    let density_buttons = Rc::new(RefCell::new(Vec::<gtk::Button>::new()));
+    for (id, tag, title, desc) in density_options {
+        let card = visual_choice_card(tag, title, desc, Some(id), None, id == "compact");
+        let buttons = density_buttons.clone();
+        card.connect_clicked(move |clicked| {
+            for btn in buttons.borrow().iter() {
+                btn.remove_css_class("selected");
+            }
+            clicked.add_css_class("selected");
+        });
+        density_buttons.borrow_mut().push(card.clone());
+        density_cards.append(&card);
+    }
+    content.append(&density_cards);
+
+    append_heading(&content, "HIDDEN FILES & NAVIGATION");
+    let general_card = settings_card();
     let (hidden_row, hidden_toggle) = settings_option(
         "Show hidden files by default",
         "Display dotfiles and hidden directories (e.g. .config, .local) on folder navigation.",
@@ -588,8 +612,8 @@ fn view_formats_page(
     hidden_toggle.connect_active_notify(move |toggle| {
         manager_for_hidden.set_show_hidden_default(toggle.is_active());
     });
-    card1.append(&hidden_row);
-    content.append(&card1);
+    general_card.append(&hidden_row);
+    content.append(&general_card);
 
     append_heading(&content, "DATE & TIME DISPLAY");
     let card2 = settings_card();
@@ -607,15 +631,25 @@ fn view_formats_page(
         &date_format_choices,
         selected_date_idx,
     );
+    let (date_sample_row, date_badge) = sample_telemetry_row(
+        "Live timestamp preview",
+        "Sample formatted timestamp as calculated across directory listings",
+        &date_sample_text(&manager.date_format()),
+    );
     let manager_for_date = manager.clone();
+    let weak_date_badge = date_badge.downgrade();
     date_choice.connect_selected_notify(move |dropdown| {
         let fmt = match dropdown.selected() {
             1 => "iso",
             _ => "relative",
         };
         manager_for_date.set_date_format(fmt);
+        if let Some(badge) = weak_date_badge.upgrade() {
+            badge.set_text(&date_sample_text(fmt));
+        }
     });
     card2.append(&date_row);
+    card2.append(&date_sample_row);
     content.append(&card2);
 
     append_heading(&content, "FILE SIZE MEASUREMENT");
@@ -634,15 +668,25 @@ fn view_formats_page(
         &size_unit_choices,
         selected_unit_idx,
     );
+    let (size_sample_row, size_badge) = sample_telemetry_row(
+        "Live size prefix preview",
+        "Sample byte conversion as calculated in file properties and status cards",
+        &size_sample_text(&manager.size_unit()),
+    );
     let manager_for_unit = manager.clone();
+    let weak_size_badge = size_badge.downgrade();
     unit_choice.connect_selected_notify(move |dropdown| {
         let unit = match dropdown.selected() {
             1 => "binary",
             _ => "decimal",
         };
         manager_for_unit.set_size_unit(unit);
+        if let Some(badge) = weak_size_badge.upgrade() {
+            badge.set_text(&size_sample_text(unit));
+        }
     });
     card3.append(&unit_row);
+    card3.append(&size_sample_row);
     content.append(&card3);
 
     content.upcast()
@@ -696,75 +740,74 @@ fn previews_page(browser: &BrowserView, manager: Rc<ThemeManager>) -> gtk::Widge
     card1.append(&max_size_row);
     content.append(&card1);
 
-    append_heading(&content, "FILE FORMAT GENERATORS");
-    let card2 = settings_card();
+    append_heading(&content, "FILE FORMAT DECODER MATRIX");
+    let format_grid = gtk::Grid::new();
+    format_grid.set_column_spacing(10);
+    format_grid.set_row_spacing(10);
+    format_grid.set_column_homogeneous(true);
+    format_grid.add_css_class("settings-format-grid");
 
-    let (audio_row, audio_toggle) = settings_option(
-        "Audio waveforms & ID3 tags",
-        "Decode FLAC, MP3, WAV, OGG, and AAC files for live waveform previews and album metadata.",
-        manager.preview_audio(),
-    );
     let manager_for_audio = manager.clone();
-    audio_toggle.connect_active_notify(move |toggle| {
-        manager_for_audio.set_preview_audio(toggle.is_active());
-    });
-    card2.append(&audio_row);
-
-    let (images_row, images_toggle) = settings_option(
-        "Images & photographic EXIF",
-        "Generate high-resolution thumbnails and display camera aperture, ISO, and dimension telemetry.",
-        manager.preview_images(),
+    let audio_tile = format_tile(
+        icons::MUSIC,
+        "Audio waveforms & tags",
+        "FLAC · MP3 · WAV · OGG · AAC",
+        manager.preview_audio(),
+        move |active| manager_for_audio.set_preview_audio(active),
     );
+    format_grid.attach(&audio_tile, 0, 0, 1, 1);
+
     let manager_for_images = manager.clone();
-    images_toggle.connect_active_notify(move |toggle| {
-        manager_for_images.set_preview_images(toggle.is_active());
-    });
-    card2.append(&images_row);
-
-    let (videos_row, videos_toggle) = settings_option(
-        "Video keyframes & durations",
-        "Extract representative keyframes and container specs for MP4, MKV, and WebM files.",
-        manager.preview_videos(),
+    let images_tile = format_tile(
+        icons::PICTURES,
+        "Images & photo EXIF",
+        "PNG · JPEG · SVG · WEBP · GIF",
+        manager.preview_images(),
+        move |active| manager_for_images.set_preview_images(active),
     );
+    format_grid.attach(&images_tile, 1, 0, 1, 1);
+
     let manager_for_videos = manager.clone();
-    videos_toggle.connect_active_notify(move |toggle| {
-        manager_for_videos.set_preview_videos(toggle.is_active());
-    });
-    card2.append(&videos_row);
-
-    let (pdf_row, pdf_toggle) = settings_option(
-        "PDF documents & PostScript",
-        "Render vector first-page covers and inspect document page counts.",
-        manager.preview_pdf(),
+    let videos_tile = format_tile(
+        icons::VIDEOS,
+        "Video keyframes & reels",
+        "MP4 · MKV · WEBM · MOV",
+        manager.preview_videos(),
+        move |active| manager_for_videos.set_preview_videos(active),
     );
+    format_grid.attach(&videos_tile, 0, 1, 1, 1);
+
     let manager_for_pdf = manager.clone();
-    pdf_toggle.connect_active_notify(move |toggle| {
-        manager_for_pdf.set_preview_pdf(toggle.is_active());
-    });
-    card2.append(&pdf_row);
-
-    let (spreadsheets_row, spreadsheets_toggle) = settings_option(
-        "Spreadsheets & tabular data",
-        "Render interactive scrollable tables and sheet tabs for XLSX, CSV, and TSV files.",
-        manager.preview_spreadsheets(),
+    let pdf_tile = format_tile(
+        icons::DOCUMENTS,
+        "PDF vector documents",
+        "PDF · PostScript Vector",
+        manager.preview_pdf(),
+        move |active| manager_for_pdf.set_preview_pdf(active),
     );
+    format_grid.attach(&pdf_tile, 1, 1, 1, 1);
+
     let manager_for_spreadsheets = manager.clone();
-    spreadsheets_toggle.connect_active_notify(move |toggle| {
-        manager_for_spreadsheets.set_preview_spreadsheets(toggle.is_active());
-    });
-    card2.append(&spreadsheets_row);
-
-    let (code_row, code_toggle) = settings_option(
-        "Source code & Markdown syntax",
-        "Provide syntax-highlighted peeks and line counts for source code and text files.",
-        manager.preview_code(),
+    let spreadsheets_tile = format_tile(
+        icons::GRID,
+        "Spreadsheet workbooks",
+        "XLSX · CSV · TSV · ODS",
+        manager.preview_spreadsheets(),
+        move |active| manager_for_spreadsheets.set_preview_spreadsheets(active),
     );
+    format_grid.attach(&spreadsheets_tile, 0, 2, 1, 1);
+
     let manager_for_code = manager.clone();
-    code_toggle.connect_active_notify(move |toggle| {
-        manager_for_code.set_preview_code(toggle.is_active());
-    });
-    card2.append(&code_row);
-    content.append(&card2);
+    let code_tile = format_tile(
+        icons::FILE_CODE,
+        "Source code syntax",
+        "RS · TS · PY · JSON · MD",
+        manager.preview_code(),
+        move |active| manager_for_code.set_preview_code(active),
+    );
+    format_grid.attach(&code_tile, 1, 2, 1, 1);
+
+    content.append(&format_grid);
 
     content.upcast()
 }
@@ -1947,6 +1990,251 @@ fn append_catalog_status_row(card: &gtk::Box, label: &str, path: &str, status: &
     row.append(&copy);
     row.append(&badge);
     card.append(&row);
+}
+
+fn visual_choice_card(
+    tag: &str,
+    title: &str,
+    desc: &str,
+    wireframe_type: Option<&str>,
+    icon_name: Option<&str>,
+    selected: bool,
+) -> gtk::Button {
+    let card = gtk::Button::builder().build();
+    card.add_css_class("settings-choice-card");
+    card.set_hexpand(true);
+    card.set_has_frame(false);
+    if selected {
+        card.add_css_class("selected");
+    }
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 6);
+
+    let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let tag_label = gtk::Label::new(Some(tag));
+    tag_label.set_xalign(0.0);
+    tag_label.set_hexpand(true);
+    tag_label.add_css_class("settings-choice-card-tag");
+    let indicator = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    indicator.add_css_class("settings-choice-indicator");
+    top.append(&tag_label);
+    top.append(&indicator);
+    content.append(&top);
+
+    if let Some(wf) = wireframe_type {
+        let wireframe = build_wireframe(wf);
+        content.append(&wireframe);
+    } else if let Some(icon) = icon_name {
+        let icon_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        icon_box.add_css_class("settings-choice-icon-box");
+        let icon_widget = crate::assets::primary_icon(icon, 20);
+        icon_box.append(&icon_widget);
+        content.append(&icon_box);
+    }
+
+    let title_label = gtk::Label::new(Some(title));
+    title_label.set_xalign(0.0);
+    title_label.add_css_class("settings-choice-card-title");
+    content.append(&title_label);
+
+    let desc_label = gtk::Label::new(Some(desc));
+    desc_label.set_xalign(0.0);
+    desc_label.set_wrap(true);
+    desc_label.add_css_class("settings-choice-card-desc");
+    content.append(&desc_label);
+
+    card.set_child(Some(&content));
+    card
+}
+
+fn build_wireframe(wf_type: &str) -> gtk::Widget {
+    let container = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    container.add_css_class("settings-wireframe-box");
+    container.set_valign(gtk::Align::Center);
+    container.set_hexpand(true);
+
+    match wf_type {
+        "columns" => {
+            for i in 0..3 {
+                let col = gtk::Box::new(gtk::Orientation::Vertical, 3);
+                col.add_css_class("settings-wireframe-col");
+                col.set_hexpand(true);
+                if i == 1 {
+                    col.add_css_class("active");
+                }
+                for j in 0..3 {
+                    let bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                    bar.add_css_class("settings-wireframe-bar");
+                    if i == 1 && j == 1 {
+                        bar.add_css_class("accent");
+                    }
+                    col.append(&bar);
+                }
+                container.append(&col);
+            }
+        }
+        "grid" => {
+            let grid = gtk::Grid::new();
+            grid.set_column_spacing(4);
+            grid.set_row_spacing(4);
+            grid.set_hexpand(true);
+            for r in 0..2 {
+                for c in 0..4 {
+                    let cell = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                    cell.add_css_class("settings-wireframe-col");
+                    cell.set_size_request(16, 12);
+                    if r == 0 && c == 1 {
+                        cell.add_css_class("active");
+                    }
+                    grid.attach(&cell, c, r, 1, 1);
+                }
+            }
+            container.append(&grid);
+        }
+        "compact" => {
+            let col = gtk::Box::new(gtk::Orientation::Vertical, 2);
+            col.set_hexpand(true);
+            for _ in 0..4 {
+                let bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                bar.add_css_class("settings-wireframe-bar");
+                bar.add_css_class("accent");
+                col.append(&bar);
+            }
+            container.append(&col);
+        }
+        "standard" => {
+            let col = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            col.set_hexpand(true);
+            for _ in 0..3 {
+                let bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                bar.add_css_class("settings-wireframe-bar");
+                col.append(&bar);
+            }
+            container.append(&col);
+        }
+        "airy" => {
+            let col = gtk::Box::new(gtk::Orientation::Vertical, 7);
+            col.set_hexpand(true);
+            for _ in 0..2 {
+                let bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                bar.add_css_class("settings-wireframe-bar");
+                col.append(&bar);
+            }
+            container.append(&col);
+        }
+        _ => {
+            let tree_col = gtk::Box::new(gtk::Orientation::Vertical, 3);
+            tree_col.add_css_class("settings-wireframe-col");
+            tree_col.set_size_request(24, -1);
+            for _ in 0..3 {
+                let bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                bar.add_css_class("settings-wireframe-bar");
+                tree_col.append(&bar);
+            }
+            let list_col = gtk::Box::new(gtk::Orientation::Vertical, 3);
+            list_col.add_css_class("settings-wireframe-col");
+            list_col.add_css_class("active");
+            list_col.set_hexpand(true);
+            for j in 0..3 {
+                let bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                bar.add_css_class("settings-wireframe-bar");
+                if j == 0 {
+                    bar.add_css_class("accent");
+                }
+                list_col.append(&bar);
+            }
+            container.append(&tree_col);
+            container.append(&list_col);
+        }
+    }
+    container.upcast()
+}
+
+fn format_tile(
+    icon: &str,
+    title: &str,
+    extensions: &str,
+    active: bool,
+    on_toggle: impl Fn(bool) + 'static,
+) -> gtk::Widget {
+    let tile = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    tile.add_css_class("settings-format-tile");
+
+    let icon_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    icon_box.add_css_class("settings-format-icon");
+    icon_box.set_valign(gtk::Align::Center);
+    icon_box.set_halign(gtk::Align::Center);
+    let icon_widget = crate::assets::primary_icon(icon, 18);
+    icon_box.append(&icon_widget);
+    tile.append(&icon_box);
+
+    let copy = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    copy.set_hexpand(true);
+    copy.set_valign(gtk::Align::Center);
+    let title_label = gtk::Label::new(Some(title));
+    title_label.set_xalign(0.0);
+    title_label.add_css_class("settings-option-title");
+    let ext_label = gtk::Label::new(Some(extensions));
+    ext_label.set_xalign(0.0);
+    ext_label.add_css_class("settings-format-ext");
+    copy.append(&title_label);
+    copy.append(&ext_label);
+    tile.append(&copy);
+
+    let toggle = gtk::Switch::builder()
+        .active(active)
+        .valign(gtk::Align::Center)
+        .build();
+    toggle.connect_active_notify(move |sw| on_toggle(sw.is_active()));
+    tile.append(&toggle);
+
+    tile.upcast()
+}
+
+fn sample_telemetry_row(
+    title: &str,
+    description: &str,
+    initial_sample: &str,
+) -> (gtk::Box, gtk::Label) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    row.add_css_class("settings-option");
+    let copy = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    copy.set_hexpand(true);
+    copy.set_valign(gtk::Align::Center);
+    let title_widget = gtk::Label::new(Some(title));
+    title_widget.set_xalign(0.0);
+    title_widget.add_css_class("settings-option-title");
+    let desc_widget = gtk::Label::new(Some(description));
+    desc_widget.set_xalign(0.0);
+    desc_widget.set_wrap(true);
+    desc_widget.add_css_class("settings-option-description");
+    copy.append(&title_widget);
+    copy.append(&desc_widget);
+
+    let badge = gtk::Label::new(Some(initial_sample));
+    badge.add_css_class("settings-telemetry-badge");
+    badge.add_css_class("settings-live-chip");
+    badge.set_valign(gtk::Align::Center);
+    badge.set_selectable(true);
+
+    row.append(&copy);
+    row.append(&badge);
+    (row, badge)
+}
+
+fn date_sample_text(format: &str) -> String {
+    if format == "iso" {
+        "Sample: 2026-10-18 09:14".to_owned()
+    } else {
+        "Sample: 4m ago".to_owned()
+    }
+}
+
+fn size_sample_text(unit: &str) -> String {
+    if unit == "binary" {
+        "Sample: 1.32 GiB (IEC)".to_owned()
+    } else {
+        "Sample: 1.42 GB (SI)".to_owned()
+    }
 }
 
 trait RoundedRectangle {
