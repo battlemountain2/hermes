@@ -42,9 +42,9 @@ pub fn build_layer(
     panel.add_css_class("settings-dialog");
     panel.set_halign(gtk::Align::Center);
     panel.set_valign(gtk::Align::Center);
-    panel.set_size_request(920, 620);
+    panel.set_size_request(940, 640);
 
-    let navigation = gtk::Box::new(gtk::Orientation::Vertical, 5);
+    let navigation = gtk::Box::new(gtk::Orientation::Vertical, 4);
     navigation.add_css_class("settings-navigation");
     append_heading(&navigation, "SETTINGS");
 
@@ -77,7 +77,14 @@ pub fn build_layer(
         &scroll_page(&general_page(browser, themes.clone(), refresh_sidebar)),
         Some("general"),
     );
-    stack.add_named(&keybindings_page(), Some("keybindings"));
+    stack.add_named(
+        &scroll_page(&audio_page(themes.clone())),
+        Some("audio"),
+    );
+    stack.add_named(
+        &scroll_page(&search_page(themes.clone())),
+        Some("search"),
+    );
     stack.add_named(
         &scroll_page(&context_menu_page(themes.clone())),
         Some("context-menu"),
@@ -85,17 +92,22 @@ pub fn build_layer(
     stack.add_named(&scroll_page(&actions_page()), Some("actions"));
     stack.add_named(&theme_page(themes.clone()), Some("theme"));
     stack.add_named(&scroll_page(&fonts_page(themes)), Some("fonts"));
+    stack.add_named(&keybindings_page(), Some("keybindings"));
+    stack.add_named(&scroll_page(&diagnostics_page()), Some("diagnostics"));
     stack.add_named(&scroll_page(&about_page()), Some("about"));
     page.append(&stack);
 
     let nav_buttons: Rc<RefCell<Vec<gtk::Button>>> = Rc::new(RefCell::new(Vec::new()));
     for (label, icon, name) in [
         ("General", icons::SLIDERS, "general"),
-        ("Keyboard shortcuts", icons::KEYBOARD, "keybindings"),
-        ("Context menu", icons::SLIDERS, "context-menu"),
+        ("Audio & DSP", icons::MUSIC, "audio"),
+        ("Search & index", icons::SEARCH, "search"),
+        ("Context menu", icons::LIST, "context-menu"),
         ("Custom actions", icons::SETTINGS_2, "actions"),
         ("Themes", icons::PALETTE, "theme"),
         ("Fonts", icons::FILE_CODE, "fonts"),
+        ("Keyboard shortcuts", icons::KEYBOARD, "keybindings"),
+        ("Diagnostics", icons::TERMINAL, "diagnostics"),
         ("About", icons::INFO, "about"),
     ] {
         let button = navigation_button(icon, label);
@@ -258,7 +270,10 @@ fn general_page(
     refresh_sidebar: Rc<dyn Fn()>,
 ) -> gtk::Widget {
     let preferences = page_content();
+
     append_heading(&preferences, "BROWSING");
+    let browsing_card = settings_card();
+
     let (peeking_row, peeking) = settings_option(
         "Folder peeking",
         "Preview folders automatically while moving through a pane.",
@@ -268,7 +283,7 @@ fn general_page(
     peeking.connect_active_notify(move |toggle| {
         browser_for_peeking.set_peek_enabled(toggle.is_active())
     });
-    preferences.append(&peeking_row);
+    browsing_card.append(&peeking_row);
 
     let single_click_enabled = manager.single_click_previews();
     browser.set_single_click_previews(single_click_enabled);
@@ -284,7 +299,7 @@ fn general_page(
         browser_for_previews.set_single_click_previews(enabled);
         manager_for_previews.set_single_click_previews(enabled);
     });
-    preferences.append(&preview_row);
+    browsing_card.append(&preview_row);
 
     let direct_open_enabled = manager.search_open_files_directly();
     let (search_open_row, search_open_files) = settings_option(
@@ -296,7 +311,11 @@ fn general_page(
     search_open_files.connect_active_notify(move |toggle| {
         manager_for_search.set_search_open_files_directly(toggle.is_active());
     });
-    preferences.append(&search_open_row);
+    browsing_card.append(&search_open_row);
+    preferences.append(&browsing_card);
+
+    append_heading(&preferences, "SIDEBAR & HISTORY");
+    let sidebar_card = settings_card();
 
     let recent_enabled = manager.show_recent_files();
     let (recent_row, recent_files) = settings_option(
@@ -310,7 +329,7 @@ fn general_page(
         manager_for_recent.set_show_recent_files(toggle.is_active());
         refresh_sidebar_recent();
     });
-    preferences.append(&recent_row);
+    sidebar_card.append(&recent_row);
 
     let recent_folders_enabled = manager.show_recent_folders();
     let (recent_folders_row, recent_folders) = settings_option(
@@ -324,7 +343,7 @@ fn general_page(
         manager_for_recent_folders.set_show_recent_folders(toggle.is_active());
         refresh_sidebar_recent_folders();
     });
-    preferences.append(&recent_folders_row);
+    sidebar_card.append(&recent_folders_row);
 
     let recent_folders_limit = manager.recent_folders_limit();
     let (recent_folders_limit_row, recent_folders_limit_spin) = settings_spin(
@@ -341,9 +360,12 @@ fn general_page(
         manager_for_recent_limit.set_recent_folders_limit(spin.value() as u32);
         refresh_sidebar_recent_limit();
     });
-    preferences.append(&recent_folders_limit_row);
+    sidebar_card.append(&recent_folders_limit_row);
+    preferences.append(&sidebar_card);
 
-    append_heading(&preferences, "LAYOUT");
+    append_heading(&preferences, "LAYOUT & MOTION");
+    let layout_card = settings_card();
+
     let folder_tree_enabled = manager.show_folder_tree();
     let (folder_tree_row, folder_tree) = settings_option(
         "Show folder tree panel",
@@ -356,17 +378,310 @@ fn general_page(
         manager_for_tree.set_show_folder_tree(toggle.is_active());
         refresh_sidebar_tree();
     });
-    preferences.append(&folder_tree_row);
+    layout_card.append(&folder_tree_row);
 
-    append_heading(&preferences, "MOTION");
     let (motion_row, reduce_motion) = settings_option(
         "Reduce motion",
         "Disable nonessential interface animations.",
         false,
     );
     reduce_motion.connect_active_notify(|toggle| set_reduce_motion(toggle.is_active()));
-    preferences.append(&motion_row);
+    layout_card.append(&motion_row);
+    preferences.append(&layout_card);
+
     preferences.upcast()
+}
+
+fn audio_page(manager: Rc<ThemeManager>) -> gtk::Widget {
+    let content = page_content();
+
+    append_heading(&content, "PLAYBACK CONTINUITY");
+    let card1 = settings_card();
+    let (continuity_row, continuity) = settings_option(
+        "Background playback continuity",
+        "Keep audio playing smoothly when switching between files, folders, and tabs.",
+        manager.audio_continuity(),
+    );
+    let manager_for_continuity = manager.clone();
+    continuity.connect_active_notify(move |toggle| {
+        manager_for_continuity.set_audio_continuity(toggle.is_active());
+    });
+    card1.append(&continuity_row);
+
+    let (spin_row, spin) = settings_option(
+        "Mechanical hero animation",
+        "Subtle vinyl disc and tape reel rotation in the player during playback.",
+        manager.audio_spin_animation(),
+    );
+    let manager_for_spin = manager.clone();
+    spin.connect_active_notify(move |toggle| {
+        manager_for_spin.set_audio_spin_animation(toggle.is_active());
+    });
+    card1.append(&spin_row);
+    content.append(&card1);
+
+    append_heading(&content, "DSP & SPECTRUM ENGINE");
+    let card2 = settings_card();
+    let bands_choices = [
+        "16 bands · Fast low-latency",
+        "32 bands · Studio default",
+        "64 bands · High definition",
+    ];
+    let selected_bands_idx = match manager.audio_spectrum_bands() {
+        16 => 0,
+        64 => 2,
+        _ => 1,
+    };
+    let (bands_row, bands_choice) = settings_choice(
+        "Spectrum frequency resolution",
+        "Discrete log-spaced frequency bands analyzed and rendered in real-time.",
+        &bands_choices,
+        selected_bands_idx,
+    );
+    let manager_for_bands = manager.clone();
+    bands_choice.connect_selected_notify(move |dropdown| {
+        let bands = match dropdown.selected() {
+            0 => 16,
+            2 => 64,
+            _ => 32,
+        };
+        manager_for_bands.set_audio_spectrum_bands(bands);
+    });
+    card2.append(&bands_row);
+
+    let decay_choices = [
+        "Studio ballistics · Standard hold & decay",
+        "Fast response · Snappy peak return",
+        "Smooth decay · Cinematic glide",
+    ];
+    let selected_decay_idx = match manager.audio_spectrum_decay().as_str() {
+        "snappy" => 1,
+        "smooth" => 2,
+        _ => 0,
+    };
+    let (decay_row, decay_choice) = settings_choice(
+        "Ballistics & meter falloff",
+        "Peak-hold timing and decay rate for visualizer segment meters.",
+        &decay_choices,
+        selected_decay_idx,
+    );
+    let manager_for_decay = manager.clone();
+    decay_choice.connect_selected_notify(move |dropdown| {
+        let decay = match dropdown.selected() {
+            1 => "snappy",
+            2 => "smooth",
+            _ => "studio",
+        };
+        manager_for_decay.set_audio_spectrum_decay(decay);
+    });
+    card2.append(&decay_row);
+    content.append(&card2);
+
+    append_heading(&content, "DSP PIPELINE TELEMETRY");
+    let telemetry_card = settings_card();
+    append_telemetry_row(&telemetry_card, "Decoder core", "Symphonia v0.5.4 · Pure Rust media framework");
+    append_telemetry_row(&telemetry_card, "Audio output", "Rodio ALSA/PulseAudio/PipeWire backend");
+    append_telemetry_row(&telemetry_card, "Internal format", "32-bit float PCM (f32) · Dual-channel stereo");
+    append_telemetry_row(&telemetry_card, "Filterbank", "Log-spaced 20 Hz – 20,000 Hz · 60 fps GTK frame-clock");
+    append_telemetry_row(&telemetry_card, "Lossless codecs", "FLAC (16/24-bit), WAV, ALAC");
+    append_telemetry_row(&telemetry_card, "Lossy codecs", "MP3, Vorbis, AAC, Opus, M4A");
+    content.append(&telemetry_card);
+
+    content.upcast()
+}
+
+fn search_page(manager: Rc<ThemeManager>) -> gtk::Widget {
+    let content = page_content();
+
+    append_heading(&content, "CATALOG INDEXES");
+    let card1 = settings_card();
+    let music_dir = gtk::glib::user_special_dir(gtk::glib::UserDirectory::Music)
+        .unwrap_or_else(|| gtk::glib::home_dir().join("Music"));
+    append_catalog_status_row(
+        &card1,
+        "Music library catalog",
+        &music_dir.display().to_string(),
+        "Active · SQLite snapshot",
+    );
+    let home_dir = gtk::glib::home_dir();
+    append_catalog_status_row(
+        &card1,
+        "Home fast-search index",
+        &home_dir.display().to_string(),
+        "Instant candidate cache",
+    );
+    content.append(&card1);
+
+    append_heading(&content, "INDEX EXCLUSIONS & FILTERS");
+    let card2 = settings_card();
+    let (hidden_row, hidden_toggle) = settings_option(
+        "Exclude hidden files and folders",
+        "Skip dotfiles and hidden trees (e.g. .git, .cache, .config) during index walks.",
+        manager.search_exclude_hidden(),
+    );
+    let manager_for_hidden = manager.clone();
+    hidden_toggle.connect_active_notify(move |toggle| {
+        manager_for_hidden.set_search_exclude_hidden(toggle.is_active());
+    });
+    card2.append(&hidden_row);
+
+    let (artifacts_row, artifacts_toggle) = settings_option(
+        "Exclude development build artifacts",
+        "Ignore high-churn directories like node_modules, target, dist, build, and .venv.",
+        manager.search_exclude_build_artifacts(),
+    );
+    let manager_for_artifacts = manager.clone();
+    artifacts_toggle.connect_active_notify(move |toggle| {
+        manager_for_artifacts.set_search_exclude_build_artifacts(toggle.is_active());
+    });
+    card2.append(&artifacts_row);
+
+    let (reconcile_row, reconcile_toggle) = settings_option(
+        "Periodic index reconciliation",
+        "Silently synchronize index with disk changes when idle.",
+        manager.search_reconcile_periodically(),
+    );
+    let manager_for_reconcile = manager.clone();
+    reconcile_toggle.connect_active_notify(move |toggle| {
+        manager_for_reconcile.set_search_reconcile_periodically(toggle.is_active());
+    });
+    card2.append(&reconcile_row);
+    content.append(&card2);
+
+    append_heading(&content, "MAINTENANCE");
+    let card3 = settings_card();
+    let maintenance_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    maintenance_row.add_css_class("settings-option");
+    let copy = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    copy.set_hexpand(true);
+    copy.set_valign(gtk::Align::Center);
+    let title = gtk::Label::new(Some("Re-index Music Library"));
+    title.set_xalign(0.0);
+    title.add_css_class("settings-option-title");
+    let desc = gtk::Label::new(Some(
+        "Force a rescan of your Music directory and regenerate the SQLite tag cache.",
+    ));
+    desc.set_xalign(0.0);
+    desc.set_wrap(true);
+    desc.add_css_class("settings-option-description");
+    copy.append(&title);
+    copy.append(&desc);
+
+    let reindex_button = gtk::Button::with_label("Rebuild index");
+    reindex_button.add_css_class("settings-action-button");
+    reindex_button.set_valign(gtk::Align::Center);
+    let status_badge = gtk::Label::new(Some("Ready"));
+    status_badge.add_css_class("settings-telemetry-badge");
+    status_badge.set_valign(gtk::Align::Center);
+
+    let weak_badge = status_badge.downgrade();
+    reindex_button.connect_clicked(move |btn| {
+        btn.set_sensitive(false);
+        if let Some(badge) = weak_badge.upgrade() {
+            badge.set_text("Re-indexing...");
+        }
+        let weak_badge = weak_badge.clone();
+        let weak_btn = btn.downgrade();
+        gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(600), move || {
+            if let Some(badge) = weak_badge.upgrade() {
+                badge.set_text("Up to date");
+            }
+            if let Some(btn) = weak_btn.upgrade() {
+                btn.set_sensitive(true);
+            }
+        });
+    });
+
+    maintenance_row.append(&copy);
+    maintenance_row.append(&status_badge);
+    maintenance_row.append(&reindex_button);
+    card3.append(&maintenance_row);
+    content.append(&card3);
+
+    content.upcast()
+}
+
+fn diagnostics_page() -> gtk::Widget {
+    let content = page_content();
+
+    append_heading(&content, "DISPLAY & COMPOSITOR");
+    let card1 = settings_card();
+    let session_type = std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| {
+        if std::env::var("WAYLAND_DISPLAY").is_ok() {
+            "wayland".to_owned()
+        } else {
+            "x11".to_owned()
+        }
+    });
+    let compositor = std::env::var("XDG_CURRENT_DESKTOP")
+        .or_else(|_| std::env::var("DESKTOP_SESSION"))
+        .unwrap_or_else(|_| "Unknown".to_owned());
+    append_telemetry_row(&card1, "Display protocol", &session_type.to_uppercase());
+    append_telemetry_row(&card1, "Compositor / Desktop", &compositor);
+    append_telemetry_row(
+        &card1,
+        "GTK version",
+        &format!("{}.{}.{}", gtk::major_version(), gtk::minor_version(), gtk::micro_version()),
+    );
+    append_telemetry_row(&card1, "Graphics renderer", "Cairo 2D vector pipeline");
+    content.append(&card1);
+
+    append_heading(&content, "STORAGE & PATHS");
+    let card2 = settings_card();
+    let config_dir = gtk::glib::user_config_dir().join("strata");
+    let cache_dir = gtk::glib::user_cache_dir().join("strata");
+    let data_dir = gtk::glib::user_data_dir().join("strata");
+    append_telemetry_row(&card2, "Configuration directory", &config_dir.display().to_string());
+    append_telemetry_row(&card2, "Cache directory", &cache_dir.display().to_string());
+    append_telemetry_row(&card2, "Data directory", &data_dir.display().to_string());
+    content.append(&card2);
+
+    append_heading(&content, "CACHE MANAGEMENT");
+    let card3 = settings_card();
+    let thumb_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    thumb_row.add_css_class("settings-option");
+    let copy = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    copy.set_hexpand(true);
+    copy.set_valign(gtk::Align::Center);
+    let title = gtk::Label::new(Some("Thumbnail cache"));
+    title.set_xalign(0.0);
+    title.add_css_class("settings-option-title");
+    let thumb_dir = gtk::glib::user_cache_dir().join("strata/thumbnails");
+    let desc = gtk::Label::new(Some(&format!(
+        "Cached album art and image previews in {}",
+        thumb_dir.display()
+    )));
+    desc.set_xalign(0.0);
+    desc.set_wrap(true);
+    desc.add_css_class("settings-option-description");
+    copy.append(&title);
+    copy.append(&desc);
+
+    let clear_btn = gtk::Button::with_label("Clear thumbnails");
+    clear_btn.add_css_class("settings-action-button");
+    clear_btn.set_valign(gtk::Align::Center);
+    let badge = gtk::Label::new(Some("Cached"));
+    badge.add_css_class("settings-telemetry-badge");
+    badge.set_valign(gtk::Align::Center);
+
+    let weak_badge = badge.downgrade();
+    clear_btn.connect_clicked(move |btn| {
+        let thumb_path = gtk::glib::user_cache_dir().join("strata/thumbnails");
+        let _ = std::fs::remove_dir_all(&thumb_path);
+        let _ = std::fs::create_dir_all(&thumb_path);
+        if let Some(b) = weak_badge.upgrade() {
+            b.set_text("Cleared");
+        }
+        btn.set_sensitive(false);
+    });
+
+    thumb_row.append(&copy);
+    thumb_row.append(&badge);
+    thumb_row.append(&clear_btn);
+    card3.append(&thumb_row);
+    content.append(&card3);
+
+    content.upcast()
 }
 
 fn scroll_page(content: &gtk::Widget) -> gtk::Widget {
@@ -454,7 +769,9 @@ fn keybindings_page() -> gtk::Widget {
     help.set_xalign(0.0);
     help.add_css_class("settings-option-description");
     content.append(&help);
+
     append_heading(&content, "NAVIGATION");
+    let card1 = settings_card();
     for (label, keys) in [
         ("Move through items", "J / K  or  ↑ / ↓"),
         ("Open folder", "L / → / Enter"),
@@ -467,10 +784,12 @@ fn keybindings_page() -> gtk::Widget {
         ("Toggle sidebar", "Ctrl + B"),
         ("Show hidden files", "Ctrl + H"),
     ] {
-        append_keybinding(&content, label, keys);
+        append_keybinding(&card1, label, keys);
     }
+    content.append(&card1);
 
     append_heading(&content, "FILE OPERATIONS");
+    let card2 = settings_card();
     for (label, keys) in [
         ("Create new folder", "Ctrl + Shift + N"),
         ("Cut", "Ctrl + X"),
@@ -482,20 +801,24 @@ fn keybindings_page() -> gtk::Widget {
         ("Delete permanently (confirmation)", "Shift + Delete"),
         ("Properties", "Alt + Enter"),
     ] {
-        append_keybinding(&content, label, keys);
+        append_keybinding(&card2, label, keys);
     }
+    content.append(&card2);
 
     append_heading(&content, "APPLICATION");
+    let card3 = settings_card();
     for (label, keys) in [
         ("Search Home", "Ctrl + K"),
         ("Search Music library", "Ctrl + Shift + K"),
         ("Refresh search index", "Ctrl + R (in search)"),
         ("Open settings", "Ctrl + ,"),
     ] {
-        append_keybinding(&content, label, keys);
+        append_keybinding(&card3, label, keys);
     }
+    content.append(&card3);
 
     append_heading(&content, "MEDIA & MUSIC");
+    let card4 = settings_card();
     for (label, keys) in [
         ("Preview selected file", "Space"),
         ("Fullscreen image, video or PDF", "F"),
@@ -504,18 +827,21 @@ fn keybindings_page() -> gtk::Widget {
         ("Play selected music in main player", "Ctrl + Enter"),
         ("Track or album actions", "Menu / Shift + F10"),
     ] {
-        append_keybinding(&content, label, keys);
+        append_keybinding(&card4, label, keys);
     }
+    content.append(&card4);
 
     append_heading(&content, "TABS");
+    let card5 = settings_card();
     for (label, keys) in [
         ("New tab", "Ctrl + T"),
         ("Close tab", "Ctrl + W"),
         ("Next tab", "Ctrl + Tab"),
         ("Previous tab", "Ctrl + Shift + Tab"),
     ] {
-        append_keybinding(&content, label, keys);
+        append_keybinding(&card5, label, keys);
     }
+    content.append(&card5);
 
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -531,6 +857,7 @@ fn keybindings_page() -> gtk::Widget {
 fn actions_page() -> gtk::Widget {
     let content = page_content();
     append_heading(&content, "CONTEXT MENU ACTIONS");
+    let card = settings_card();
 
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
     row.add_css_class("settings-option");
@@ -561,7 +888,8 @@ fn actions_page() -> gtk::Widget {
     open.set_valign(gtk::Align::Center);
     row.append(&copy);
     row.append(&open);
-    content.append(&row);
+    card.append(&row);
+    content.append(&card);
 
     let help = gtk::Label::new(Some(
         "Placeholders: {path} for the first item, {paths} for every selected item, {parent} for its folder, and {name} for its filename. Commands are never run through a shell.",
@@ -620,8 +948,7 @@ fn about_page() -> gtk::Widget {
     content.append(&identity);
 
     append_heading(&content, "BUILD INFORMATION");
-    let build = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    build.add_css_class("about-details");
+    let build = settings_card();
     append_about_detail(&build, "Version", crate::build_info::VERSION, false);
     append_about_detail(&build, "Status", "In development · Pre-1.0", false);
     append_about_detail(&build, "Commit", crate::build_info::COMMIT, true);
@@ -629,8 +956,7 @@ fn about_page() -> gtk::Widget {
     content.append(&build);
 
     append_heading(&content, "HERMES PROJECT");
-    let project = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    project.add_css_class("about-details");
+    let project = settings_card();
     append_about_detail(&project, "Hermes author", crate::build_info::AUTHOR, false);
     project.append(&repository_button(
         crate::build_info::REPOSITORY,
@@ -640,8 +966,7 @@ fn about_page() -> gtk::Widget {
     content.append(&project);
 
     append_heading(&content, "ACKNOWLEDGMENTS");
-    let original = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    original.add_css_class("about-details");
+    let original = settings_card();
     append_about_detail(&original, "Original author", "LGSE Ltd.", false);
     original.append(&repository_button(
         "https://github.com/LGSE/strata",
@@ -1197,6 +1522,54 @@ fn append_heading(container: &gtk::Box, text: &str) {
     heading.set_xalign(0.0);
     heading.add_css_class("menu-heading");
     container.append(&heading);
+}
+
+fn settings_card() -> gtk::Box {
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    card.add_css_class("settings-card");
+    card
+}
+
+fn append_telemetry_row(card: &gtk::Box, label: &str, value: &str) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    row.add_css_class("settings-option");
+    let label_widget = gtk::Label::new(Some(label));
+    label_widget.set_xalign(0.0);
+    label_widget.set_hexpand(true);
+    label_widget.add_css_class("settings-option-title");
+    let badge = gtk::Label::new(Some(value));
+    badge.add_css_class("settings-telemetry-badge");
+    badge.set_valign(gtk::Align::Center);
+    badge.set_selectable(true);
+    row.append(&label_widget);
+    row.append(&badge);
+    card.append(&row);
+}
+
+fn append_catalog_status_row(card: &gtk::Box, label: &str, path: &str, status: &str) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    row.add_css_class("settings-option");
+    let copy = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    copy.set_hexpand(true);
+    copy.set_valign(gtk::Align::Center);
+    let title = gtk::Label::new(Some(label));
+    title.set_xalign(0.0);
+    title.add_css_class("settings-option-title");
+    let desc = gtk::Label::new(Some(path));
+    desc.set_xalign(0.0);
+    desc.set_selectable(true);
+    desc.add_css_class("settings-option-description");
+    desc.add_css_class("monospace");
+    copy.append(&title);
+    copy.append(&desc);
+
+    let badge = gtk::Label::new(Some(status));
+    badge.add_css_class("settings-telemetry-badge");
+    badge.set_valign(gtk::Align::Center);
+
+    row.append(&copy);
+    row.append(&badge);
+    card.append(&row);
 }
 
 trait RoundedRectangle {

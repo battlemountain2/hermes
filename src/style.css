@@ -1046,59 +1046,65 @@ headerbar menubutton.header-action > button:focus-visible image {
 .settings-dialog {
   background: @theme_surface;
   border: 1px solid alpha(@theme_accent, 0.22);
-  border-radius: 0;
+  border-radius: 6px;
   box-shadow: 0 18px 54px alpha(black, 0.6);
 }
 
 .settings-navigation {
   background: @theme_bg;
   border-right: 1px solid alpha(@theme_border, 0.26);
-  border-radius: 0;
+  border-radius: 6px 0 0 6px;
   min-width: 220px;
-  padding: 18px 12px;
+  padding: 16px 10px;
 }
 
 .settings-navigation button {
   background: transparent;
   border: none;
-  border-radius: 0;
+  border-left: 2px solid transparent;
+  border-radius: 4px;
   box-shadow: none;
   color: @theme_dim_text;
-  min-height: 38px;
-  padding: 5px 10px;
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 0.92em;
+  transition: all 120ms ease;
 }
 
 .settings-navigation button:hover {
-  background: alpha(@theme_muted, 0.62);
+  background: alpha(@theme_muted, 0.45);
   color: @theme_text;
 }
 
 .settings-navigation button.settings-nav-active {
-  background: alpha(@theme_highlight, 0.82);
-  color: @theme_accent;
+  background: alpha(@theme_highlight, 0.55);
+  border-left: 2px solid @theme_accent;
+  color: @theme_text;
+  font-weight: 600;
 }
 
 .settings-page {
   background: @theme_surface;
-  border-radius: 0;
+  border-radius: 0 6px 6px 0;
 }
 
 .settings-titlebar {
   border-bottom: 1px solid alpha(@theme_border, 0.24);
-  min-height: 46px;
-  padding: 0 14px 0 20px;
+  min-height: 48px;
+  padding: 0 16px 0 24px;
 }
 
 .settings-title {
   color: @theme_text;
-  font-size: 1.08em;
+  font-size: 1.06em;
   font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .settings-close {
   background: transparent;
   border: none;
-  border-radius: 0;
+  border-radius: 4px;
   box-shadow: none;
   min-height: 28px;
   min-width: 28px;
@@ -1107,17 +1113,111 @@ headerbar menubutton.header-action > button:focus-visible image {
 
 .settings-close:hover {
   background: alpha(@theme_muted, 0.62);
+  color: @theme_text;
 }
 
 .settings-preferences {
-  padding: 18px 24px 26px;
+  padding: 18px 26px 28px;
+}
+
+.settings-preferences .menu-heading {
+  color: @theme_dim_text;
+  font-size: 0.74em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin: 16px 4px 6px;
+}
+
+.settings-preferences .menu-heading:first-child {
+  margin-top: 2px;
+}
+
+.settings-card {
+  background: alpha(@theme_bg, 0.55);
+  border: 1px solid alpha(@theme_border, 0.24);
+  border-radius: 4px;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.settings-card .settings-option {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid alpha(@theme_border, 0.12);
+  border-radius: 0;
+  min-height: 52px;
+  padding: 10px 14px;
+  transition: background 100ms ease;
+}
+
+.settings-card .settings-option:last-child {
+  border-bottom: none;
+}
+
+.settings-card .settings-option:hover {
+  background: alpha(@theme_muted, 0.2);
+}
+
+.settings-card .keybinding-row {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid alpha(@theme_border, 0.12);
+  border-radius: 0;
+  min-height: 38px;
+  padding: 7px 14px;
+}
+
+.settings-card .keybinding-row:last-child {
+  border-bottom: none;
+}
+
+.settings-card .about-detail-row {
+  border-bottom: 1px solid alpha(@theme_border, 0.14);
+}
+
+.settings-card .about-detail-row:last-child {
+  border-bottom: none;
+}
+
+.settings-telemetry-badge {
+  font-family: monospace;
+  font-size: 0.82em;
+  padding: 3px 8px;
+  background: alpha(@theme_surface, 0.7);
+  border: 1px solid alpha(@theme_border, 0.25);
+  color: @theme_accent;
+  border-radius: 3px;
+  letter-spacing: 0.02em;
+}
+
+.settings-action-button {
+  background: alpha(@theme_surface, 0.9);
+  color: @theme_text;
+  border: 1px solid alpha(@theme_border, 0.5);
+  border-radius: 3px;
+  min-height: 28px;
+  padding: 4px 12px;
+  font-size: 0.88em;
+  font-weight: 600;
+  box-shadow: none;
+  transition: all 120ms ease;
+}
+
+.settings-action-button:hover {
+  background: @theme_accent;
+  color: @theme_bg;
+  border-color: @theme_accent;
+}
+
+.settings-action-button:disabled {
+  opacity: 0.5;
 }
 
 .settings-option {
   background: alpha(@theme_bg, 0.55);
   border: 1px solid alpha(@theme_border, 0.24);
-  border-radius: 0;
-  min-height: 60px;
+  border-radius: 4px;
+  min-height: 56px;
   padding: 10px 14px;
 }
 

@@ -101,6 +101,31 @@ theme = "azure-glow"
 }
 
 #[test]
+fn audio_and_search_preferences_default_safely_and_roundtrip() {
+    let preferences: Preferences = toml::from_str(
+        r#"
+mode = "theme"
+theme = "azure-glow"
+"#,
+    )
+    .expect("defaults should be applied when omitted");
+
+    assert!(preferences.audio_continuity);
+    assert!(preferences.audio_spin_animation);
+    assert_eq!(preferences.audio_spectrum_bands, 32);
+    assert_eq!(preferences.audio_spectrum_decay, "studio");
+    assert!(preferences.search_exclude_hidden);
+    assert!(preferences.search_exclude_build_artifacts);
+    assert!(preferences.search_reconcile_periodically);
+
+    let serialized = toml::to_string(&preferences).expect("Preferences must serialize cleanly");
+    let roundtripped: Preferences =
+        toml::from_str(&serialized).expect("Preferences must deserialize after roundtrip");
+    assert_eq!(roundtripped.audio_spectrum_bands, 32);
+    assert_eq!(roundtripped.audio_spectrum_decay, "studio");
+}
+
+#[test]
 fn interface_font_preference_can_select_jetbrains_mono() {
     let preferences: Preferences = toml::from_str(
         r#"

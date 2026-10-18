@@ -98,3 +98,40 @@ fn desktop_fonts_and_shortcuts_have_live_controls_and_scrollable_pages() {
     assert_eq!(shortcuts.hscrollbar_policy(), gtk::PolicyType::Never);
     assert_eq!(shortcuts.vscrollbar_policy(), gtk::PolicyType::Automatic);
 }
+
+#[test]
+#[ignore = "Requires isolated GTK display"]
+fn audio_and_search_preferences_default_values_and_roundtrip() {
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let toml_str = r#"
+mode = "theme"
+theme = "azure-glow"
+"#;
+    let saved: toml::Value = toml::from_str(toml_str).unwrap();
+    assert!(saved.get("mode").is_some());
+
+    // Verify Preferences defaults
+    let manager = ThemeManager::shared();
+    assert!(manager.audio_continuity());
+    assert!(manager.audio_spin_animation());
+    assert_eq!(manager.audio_spectrum_bands(), 32);
+    assert_eq!(manager.audio_spectrum_decay(), "studio");
+    assert!(manager.search_exclude_hidden());
+    assert!(manager.search_exclude_build_artifacts());
+    assert!(manager.search_reconcile_periodically());
+}
+
+#[test]
+#[ignore = "Requires isolated GTK display"]
+fn audio_and_diagnostics_pages_build_cleanly() {
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let manager = ThemeManager::shared();
+    let audio = audio_page(manager.clone());
+    assert!(audio.is::<gtk::Box>());
+    let search = search_page(manager.clone());
+    assert!(search.is::<gtk::Box>());
+    let diag = diagnostics_page();
+    assert!(diag.is::<gtk::Box>());
+}

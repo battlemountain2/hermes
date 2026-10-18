@@ -96,6 +96,20 @@ struct Preferences {
     interface_font_size: u32,
     #[serde(default)]
     context_menu: super::context_menu::Options,
+    #[serde(default = "default_enabled")]
+    audio_continuity: bool,
+    #[serde(default = "default_enabled")]
+    audio_spin_animation: bool,
+    #[serde(default = "default_spectrum_bands")]
+    audio_spectrum_bands: u32,
+    #[serde(default = "default_spectrum_decay")]
+    audio_spectrum_decay: String,
+    #[serde(default = "default_enabled")]
+    search_exclude_hidden: bool,
+    #[serde(default = "default_enabled")]
+    search_exclude_build_artifacts: bool,
+    #[serde(default = "default_enabled")]
+    search_reconcile_periodically: bool,
 }
 
 impl Default for Preferences {
@@ -115,12 +129,27 @@ impl Default for Preferences {
             interface_font: default_interface_font(),
             interface_font_size: default_font_size(),
             context_menu: super::context_menu::Options::default(),
+            audio_continuity: true,
+            audio_spin_animation: true,
+            audio_spectrum_bands: default_spectrum_bands(),
+            audio_spectrum_decay: default_spectrum_decay(),
+            search_exclude_hidden: true,
+            search_exclude_build_artifacts: true,
+            search_reconcile_periodically: true,
         }
     }
 }
 
 fn default_enabled() -> bool {
     true
+}
+
+fn default_spectrum_bands() -> u32 {
+    32
+}
+
+fn default_spectrum_decay() -> String {
+    "studio".to_owned()
 }
 
 fn default_recent_folders_limit() -> u32 {
@@ -323,6 +352,69 @@ impl ThemeManager {
 
     pub fn set_recent_folders_limit(&self, limit: u32) {
         self.preferences.borrow_mut().recent_folders_limit = limit;
+        self.save_preferences();
+    }
+
+    pub fn audio_continuity(&self) -> bool {
+        self.preferences.borrow().audio_continuity
+    }
+
+    pub fn set_audio_continuity(&self, enabled: bool) {
+        self.preferences.borrow_mut().audio_continuity = enabled;
+        self.save_preferences();
+    }
+
+    pub fn audio_spin_animation(&self) -> bool {
+        self.preferences.borrow().audio_spin_animation
+    }
+
+    pub fn set_audio_spin_animation(&self, enabled: bool) {
+        self.preferences.borrow_mut().audio_spin_animation = enabled;
+        self.save_preferences();
+    }
+
+    pub fn audio_spectrum_bands(&self) -> u32 {
+        self.preferences.borrow().audio_spectrum_bands
+    }
+
+    pub fn set_audio_spectrum_bands(&self, bands: u32) {
+        self.preferences.borrow_mut().audio_spectrum_bands = bands;
+        self.save_preferences();
+    }
+
+    pub fn audio_spectrum_decay(&self) -> String {
+        self.preferences.borrow().audio_spectrum_decay.clone()
+    }
+
+    pub fn set_audio_spectrum_decay(&self, decay: &str) {
+        self.preferences.borrow_mut().audio_spectrum_decay = decay.to_owned();
+        self.save_preferences();
+    }
+
+    pub fn search_exclude_hidden(&self) -> bool {
+        self.preferences.borrow().search_exclude_hidden
+    }
+
+    pub fn set_search_exclude_hidden(&self, exclude: bool) {
+        self.preferences.borrow_mut().search_exclude_hidden = exclude;
+        self.save_preferences();
+    }
+
+    pub fn search_exclude_build_artifacts(&self) -> bool {
+        self.preferences.borrow().search_exclude_build_artifacts
+    }
+
+    pub fn set_search_exclude_build_artifacts(&self, exclude: bool) {
+        self.preferences.borrow_mut().search_exclude_build_artifacts = exclude;
+        self.save_preferences();
+    }
+
+    pub fn search_reconcile_periodically(&self) -> bool {
+        self.preferences.borrow().search_reconcile_periodically
+    }
+
+    pub fn set_search_reconcile_periodically(&self, reconcile: bool) {
+        self.preferences.borrow_mut().search_reconcile_periodically = reconcile;
         self.save_preferences();
     }
 
