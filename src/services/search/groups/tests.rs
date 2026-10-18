@@ -69,6 +69,50 @@ fn group_keys(results: &[SearchResult], group: SearchGroup) -> Vec<SearchResultK
         .collect()
 }
 
+#[test]
+fn literal_album_names_survive_type_and_location_interpretation() {
+    for album in ["Video Games", "Lost in the Dream", "Photos of You"] {
+        let items = vec![song("01.flac", Some("An Artist"), Some(album), Some("An Artist"))];
+        let parsed = query(album);
+        let ranked: Vec<_> = items.iter().enumerate().filter_map(|(position, item)| {
+            crate::services::search::fuzzy_score(item, album, Path::new("/synthetic-groups"))
+                .map(|score| (score, position))
+        }).collect();
+        assert_eq!(ranked.len(), 1, "{album}");
+        let index = GroupIndex::build(&items, &ranked, &parsed, &|| false).unwrap();
+        assert_eq!(index.counts().songs, 1, "{album}");
+        assert_eq!(index.counts().albums, 1, "{album}");
+    }
+}
+
+#[test]
+fn literal_song_titles_do_not_invent_entities_from_reduced_inferred_terms() {
+    let mut track = song("01.flac", Some("Games"), Some("Games"), Some("Games"));
+    track.search_metadata = "video games".into();
+    let items = vec![track];
+    let parsed = query("Video Games");
+    let ranked = vec![(
+        crate::services::search::fuzzy_score(&items[0], "Video Games", Path::new("/synthetic-groups")).unwrap(),
+        0,
+    )];
+    let index = GroupIndex::build(&items, &ranked, &parsed, &|| false).unwrap();
+    assert_eq!(index.counts().songs, 1);
+    assert_eq!(index.counts().albums, 0);
+    assert_eq!(index.counts().artists, 0);
+}
+
+#[test]
+fn quoted_song_titles_do_not_fuzzy_match_unrelated_entity_labels() {
+    let mut track = song("01.flac", Some("Another Artist"), Some("Games Video"), Some("Another Artist"));
+    track.search_metadata = "video games".into();
+    let items = vec![track];
+    let parsed = query("\"Video Games\"");
+    let index = GroupIndex::build(&items, &[(0, 0)], &parsed, &|| false).unwrap();
+    assert_eq!(index.counts().songs, 1);
+    assert_eq!(index.counts().albums, 0);
+    assert_eq!(index.counts().artists, 0);
+}
+
 fn mixed_items() -> Vec<SearchItem> {
     let mut items = vec![item("folder.flac", true), item("notes.txt", false)];
     for position in 0..9 {

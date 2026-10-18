@@ -15,6 +15,7 @@ use crate::{
 
 mod vinyl;
 mod visualizer;
+mod layout;
 
 #[cfg(test)]
 mod tests;
@@ -28,6 +29,7 @@ pub(super) struct AudioPreview {
     artwork_load: RefCell<Option<LoadHandle>>,
     vinyl: Rc<VinylDisc>,
     visualizer: Rc<MicroSegmentVisualizer>,
+    refresh_handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
 impl AudioPreview {
@@ -40,10 +42,6 @@ impl AudioPreview {
         content.set_margin_end(16);
         content.set_margin_top(16);
         content.set_margin_bottom(16);
-
-        // Responsive Player Card (Hero + Controls)
-        let player_box = gtk::Box::new(gtk::Orientation::Vertical, 16);
-        player_box.add_css_class("preview-audio-player-card");
 
         // Artwork & Spinning Vinyl Record Hero
         let hero = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -84,7 +82,6 @@ impl AudioPreview {
 
         hero_overlay.add_overlay(&jacket);
         hero.append(&hero_overlay);
-        player_box.append(&hero);
 
         // Controls Panel (Track info, Visualizer, Scrub bar, Transport)
         let controls_panel = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -191,7 +188,7 @@ impl AudioPreview {
         transport.append(&volume_scale);
         controls_panel.append(&transport);
 
-        player_box.append(&controls_panel);
+        let player_box = layout::PlayerCard::new(&hero, &controls_panel);
         content.append(&player_box);
 
         // Status description
@@ -224,22 +221,6 @@ impl AudioPreview {
             expander.set_child(Some(&metadata_grid(additional)));
             content.append(&expander);
         }
-
-        // Responsive layout adapter: switch between stacked and side-by-side on width changes
-        let weak_player_box = player_box.downgrade();
-        let weak_hero = hero.downgrade();
-        content.connect_notify_local(Some("width"), move |content, _| {
-            let width = content.width();
-            if let (Some(player), Some(hero)) = (weak_player_box.upgrade(), weak_hero.upgrade()) {
-                if width >= 500 {
-                    player.set_orientation(gtk::Orientation::Horizontal);
-                    hero.set_valign(gtk::Align::Center);
-                } else {
-                    player.set_orientation(gtk::Orientation::Vertical);
-                    hero.set_valign(gtk::Align::Start);
-                }
-            }
-        });
 
         // Wire Up Transport Actions
         let weak_stream = stream.downgrade();
@@ -307,7 +288,7 @@ impl AudioPreview {
 
         // Sync State Refresh Loop
         let weak_stream = stream.downgrade();
-        let weak_vinyl = vinyl.clone();
+        let weak_vinyl = Rc::downgrade(&vinyl);
         let weak_play_btn = play_button.downgrade();
         let weak_mute_btn = mute_button.downgrade();
         let weak_vol_scale = volume_scale.downgrade();
@@ -334,7 +315,9 @@ impl AudioPreview {
             }
 
             // Sync vinyl rotation state
-            weak_vinyl.set_playing(is_playing);
+            if let Some(vinyl) = weak_vinyl.upgrade() {
+                vinyl.set_playing(is_playing);
+            }
 
             // Sync visualizer tick loop
             if is_playing {
@@ -406,7 +389,7 @@ impl AudioPreview {
         refresh_ui();
         let refresh_cb = Rc::new(refresh_ui);
         let cb_clone = refresh_cb.clone();
-        stream.connect_notify_local(None, move |_, _| {
+        let refresh_handler = stream.connect_notify_local(None, move |_, _| {
             cb_clone();
         });
 
@@ -462,12 +445,16 @@ impl AudioPreview {
             artwork_load: RefCell::new(Some(artwork_load)),
             vinyl,
             visualizer,
+            refresh_handler: RefCell::new(Some(refresh_handler)),
         })
     }
 
     pub fn stop(&self) {
+        if let Some(handler) = self.refresh_handler.borrow_mut().take() {
+            self.stream.disconnect(handler);
+        }
         self.artwork_load.borrow_mut().take();
-        self.vinyl.set_playing(false);
+        self.vinyl.stop();
         self.visualizer.stop();
         self.stream.stop();
     }

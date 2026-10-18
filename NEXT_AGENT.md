@@ -1,5 +1,173 @@
 # Next agent: Hermes performance, file features and media polish
 
+## Preview layout, search chrome stability & roadmap de-scoping — 2026-10-17
+
+User requested committing the pending working tree updates and pushing them so they can be
+pulled to their Mac, and explicitly directed leaving Smart Folders / saved searches out of the
+pre-1.0 roadmap.
+- Committed all pending preview and search stabilization work:
+  * Audio layout: `src/ui/preview/audio/layout.rs` (`PlayerCard` height-for-width container),
+    clean lifecycle teardown (weak references, `refresh_handler` disconnect on stop/unmap,
+    cached frame rendering to avoid redundant Goertzel analysis).
+  * Search UI: single permanently reserved status line, scroll-to-focus inferred chips viewport,
+    middle-ellipsized path labels, and clarified "Load more" pagination button.
+  * Parser fixes: removed missing-file imports from GTK CSS and dead code warning in `model_preview.rs`.
+- De-scoped Smart Folders / saved searches in `docs/1.0-roadmap.md`; next milestone is move/rename
+  continuity for playlists/favorites and local 5-star ratings for photos, videos, and documents.
+- Branch pushed cleanly to remote for macOS development. All 769 tests pass cleanly; warning-free build.
+
+
+User approved clarifying the search footer's vague More button alongside the earlier search
+updates. Renamed it Load more and clarified its tooltip: Load the next page of search results
+(up to 100). Kept its existing reserved position and disabled state when no next page is available;
+no dynamic labels or visibility changes that could reintroduce resizing. Existing updates preserved.
+Added exact label/tooltip assertions to the adjacent pagination UI regression. Test compilation and
+three connected, private Broadway checks pass: streamed geometry/row reuse, font/chip/notice matrix,
+and pagination/selection/footer stability. Logs: /tmp/hermes-search-copy-20261016-*; no live Hermes
+launch, restart or reposition. The older baseline selection-test issue documented below is unchanged.
+
+## Stable search chrome — 2026-10-16
+
+User approved the focused search-resizing fix. Changes in this pass are search.rs, search/tests.rs,
+style.css and documentation only; all earlier search/preview changes remain in the working tree.
+No live Hermes launch/restart/reposition, personal indexing/audio, preferences changes, commits,
+branches, pushes or version bump. Development validation remains sequential/low-priority/jobs2.
+
+Root cause: interpretation and notice containers appeared/disappeared as separate minimum-height
+rows, adding height above a360px-minimum results stack. Replaced them with ONE permanently reserved
+compact status line containing inferred chips plus the notice/hint/loading/count label. No two
+empty reserved rows, fixed-font hack, width-notify handler or resize timer. Loading/Refresh clear
+stale counts/tooltips in place. Long scope paths use bounded preferred width; actual available width
+still expands their label, with middle ellipsis/full tooltip. Long chips use single-line ellipsis,
+full tooltips and a420px-capped transparent viewport with scroll-to-focus, keeping remove buttons
+reachable without widening the panel. Existing semantic colors, typography and square geometry kept.
+
+The original connected-browser geometry regression now PASSES unchanged. New ignored GTK matrix
+checks panel/status/results/footer bounds at mono10px, Maple13px and sans22px across ordinary,
+Unicode and five-inference long queries, long paths, long partial-coverage notices, results/empty
+states and keyboard focus on every chip removal button. Optional Cairo screenshots are generated
+only when HERMES_SEARCH_LAYOUT_SHOTS points to a private fixture output directory. Reviewed normal
+and large-font synthetic screenshots; this is not full-theme/pixel-perfect QA or an FPS benchmark.
+Updated notice visibility assertions to verify the new persistent status-line contract; stale
+response tests compare the exact prior text rather than assume a hidden label.
+
+Validation:769 regular tests pass,118 optional ignored,0 filtered. Ten of eleven separate connected
+GTK search checks pass: original geometry/row reuse, new font/chip/notice matrix, paging, visible-only
+artwork/no game launching, filter round trips, stale responses, groups/type filters, grouped pages/
+drill/Back, scoped exports, interpretation/dismissal. All-target check passes with5 old test-only lint
+expectations; production check is warning-free. Diff whitespace checks pass. Hidden Broadway:97/
+18097 and private HOME/XDG/DBus used; temporary browser/server cleaned up, never the user's window.
+
+One older optional test remains FAILED: desktop_scope_selection_and_reentrant_rendering unwraps
+an absent selected ListBox row after reorder/unchanged rendering. Confirmed the SAME failure by
+archiving untouched HEAD7425bc4 into the private temp directory and compiling/running that exact
+baseline test, without changing/resetting/stashing this checkout or building/running its main app.
+Do not weaken/remove that assertion or attribute it to this layout change. Temporary attempts to
+mount/settle that fixture did not resolve it and were reverted. It is the next separate selection/
+test-isolation investigation; not yet proven which real-user action reproduces it.
+
+Logs/artifacts: /tmp/hermes-search-layout-20261016-75q4uJ/{compile,unit,ui,check,production-check}.log;
+baseline-selection.log and baseline-build.{log,jsonl}, baseline-test-path; shots/search-{mono-10,
+maple-13,sans-22}.png. Baseline used the same target cache and test executable path: its failure
+was logged BEFORE rebuilding CURRENT tests and verifying the new matrix case/887-test inventory.
+baseline-test-path now names the current executable, not a preserved baseline binary; rebuild the
+archived baseline to rerun that comparison. Final validation used current-tree tests. No main
+debug/release app build by this agent. There were no delegated agents in this pass.
+
+## Startup warnings and music-preview lifecycle/layout — 2026-10-16
+
+User accepted the next preview-stability pass and supplied startup logs. Hermes was starting
+normally (254ms to presented window,134ms directory load in the supplied run); INFO timings were
+not errors. Two GTK parser warnings came from the user's global gtk-4.0/gtk.css importing missing
+libadwaita.css and libadwaita-tweaks.css. Backed up the exact file beside it as
+/home/bry/.config/gtk-4.0/gtk.css.before-hermes-import-fix-20261016, removed ONLY those imports,
+preserved noctalia.css. Standalone GTK parser reproduces2 errors with backup and0 with repaired
+file; no provider was applied to the desktop by the probe. Removed the obsolete ModelFormat
+dead-code expectation in services/model_preview.rs; production cargo check now has NO warnings.
+
+Implemented the next preview fixes without launching/restarting/repositioning live Hermes:
+- Visualizer owns weak widget/stream handles, removable frame callback and disconnectable playing
+  signal. Stop/drop disconnect signals, clear bands and remove ticks. Unmap cancels immediately;
+  paused bands become silence and peak hold decays to rest. Rendering reads cached frame values
+  instead of running Goertzel analysis from each repaint. Repeated cleared/reduced refreshes do
+  not queue redundant redraws. Analysis is still on the frame caller and is NOT lock-free.
+- Vinyl now has one shared rotation/tick implementation, weak callback state, immediate terminal
+  stop/drop and unmap cleanup, and shared Hermes/GTK reduced-motion checks at startup AND active
+  frames. Preserve existing33RPM acceleration/deceleration and artwork drawing. Normal pause eases;
+  hidden/reduced/stopped motion stops immediately. No new idle resize/motion timers.
+- New audio/layout.rs PlayerCard is a real height-for-width GTK widget. At500px+ it uses a row
+  only if measured hero+controls+16px fit. Minimum width stays stacked so it can shrink back;
+  RTL mirrors wide children. Metadata remains in the existing scroller. Removed nonexistent
+  width-property notify and disconnect AudioPreview's general refresh signal during stop/drop.
+- Moved the formerly headless-crashing dimensions test to explicit private GTK execution and
+  use an unstarted stream, not new_audio("/tmp/test.flac") spawning a decoder. Headless suite no
+  longer requires a special exclusion. Added lifecycle, allocation and pure rotation/peak tests.
+
+Validation:769 normal tests pass,117 optional ignored,0 filtered (FULL headless suite). Ten exact
+private GTK preview processes pass, including formerly excluded dimensions, externally retained
+stream disposal,32 stream/widget release iterations, visualizer unmap/reduced/stop, actual narrow/
+wide/narrow/large-child/RTL allocation, vinyl unmap/repeated refresh/pause/drop and both live motion
+policies. Private Broadway:96/18096 used a HIDDEN in-app browser client to exercise real frames;
+all test streams were silent/unstarted and never opened personal files or audio devices. All-target
+check passes with5 pre-existing test-only lint expectations; production check warning-free. Scoped
+new-module formatting/diff checks pass. No release/debug-main build by this agent, no commits,
+branches, pushes, version/tag changes or file metadata edits. Existing search changes preserved.
+Delegated only vinyl.rs + adjacent tests to Mencius, reviewed/integrated and closed agent.
+
+IMPORTANT next issue: the existing desktop_search_geometry_and_rows_stay_stable_during_updates
+test FAILS with a CONNECTED Broadway client: showing indexing notice expands the search panel
+from538px to571px. Prior unconnected-display checks missed this. Search production code was not
+changed in this pass; don't claim the search resizing problem is fixed or all GUI checks green.
+Keep this as the next focused search-layout pass rather than hiding the failure or changing the
+test to accept jumps. Preview-only UI run is separately green; original failing log preserved.
+
+Logs: /tmp/hermes-preview-stability-20261016-t87uTb/{compile,unit,ui,check,production-check}.log;
+separate ui-with-search-regression.log. No pixel-level full-player/artwork QA claim; allocation
+and frame/motion behavior exercised with deterministic widgets, no physical-speaker audition.
+
+## Search correctness and sidebar stability — 2026-10-15
+
+User approved fixing the review's sidebar churn, Unicode chip crash and literal-safe search before
+more features. Changes are local/uncommitted on the existing checkout; no branches, commits, pushes,
+version bump, live-app launch/restart/reposition, desktop audio changes or personal Home indexing.
+
+Hidden Smart Folders now acknowledge store revisions without rebuilding sidebar rows. Visible
+folders acknowledge the snapshot actually rendered, leaving concurrent updates for the next poll.
+Two new private GTK regressions verify stable widget identities across idle/store-update ticks,
+visibility toggles, and a store update deliberately completed during rendering. Acknowledging
+hidden updates no longer allocates/recreates the sidebar every150ms.
+
+Search retains an explicit-filter-only literal alternative before phrase inference. Direct complete
+filename/tag-word matches rank ahead of inferred matches (including date-only recency scores), but
+explicit type/extension/location/date/music/content constraints remain strict. SQLite retrieves the
+explicit candidate superset, and inference alone no longer builds a useless exact-filter database.
+Grouped entities use only interpretations applicable to the song; title-only literal hits cannot
+invent album/artist matches from reduced terms. Protected phrases also stay literal in entity labels.
+Generic location phrases are trailing and reject articles, preserving Lost in the Dream; inferred
+locations can match the selected scope root itself without broadening that scope. Songs by an artist
+work without requiring the literal word songs. Existing catalog/metadata/content budgets unchanged.
+
+Tokenization retains original UTF-8 ranges. Chip dismissal quotes actual inferred token groups,
+preserving leading whitespace, repeated/protected words, escapes and interleaved explicit filters;
+stale chips do nothing. Quoted filter-looking words stay literal, do not typo-expand, and survive
+filter Apply/Clear. Repaired the interpretation-slot UI fixture to make the layer visible before
+changing its entry; it does not start an index. README and roadmap describe the matching contract.
+
+Validation:761 normal tests pass,107 optional ignored; the previously identified non-ignored
+micro_segment_visualizer_has_valid_dimensions GTK test is explicitly EXCLUDED from the headless
+suite because of its existing test-isolation crash. It is NOT fixed or newly claimed green here.
+Seven separate private Broadway/DBus UI processes pass: hidden sidebar, snapshot/toggle/sidebar
+updates, visible-folder rename/delete, Unicode/repeated chip dismissal and quoted filter controls,
+geometry/row reuse, paging, grouped drilling/Back. All-target check passes with six prior test lint
+warnings. Diff whitespace checks pass. No release/debug-main build or pixel-level visual QA claim.
+Build/tests were sequential, nice10/ionice-idle/jobs2/threads2; owned Broadway server stopped.
+Logs: /tmp/hermes-search-stability-20261015-FgwMES/{compile,unit,ui,check}.log.
+
+Delegated only the disjoint sidebar fix/tests to Jason, reviewed/integrated the patch, closed agent.
+Next approved priorities still pending: visualizer reference/tick cleanup, real responsive audio
+layout and shared Reduce Motion handling; then test-isolation cleanup and fuller visual search polish.
+The read-only review report /home/bry/hermes-review-2026-10-15.md describes the pre-fix snapshot.
+
 ## Music preview polish and live visualizer — 2026-10-15
 
 Successfully implemented **Milestone 2: Music Preview Polish & Live Visualizer** from `docs/1.0-roadmap.md`, incorporating the user-selected **Hi-Fi Micro-Segment Meter**:

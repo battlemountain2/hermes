@@ -114,17 +114,60 @@ fn micro_segment_bands_match_spectrum_bands() {
 }
 
 #[test]
+#[ignore = "Requires a private GTK display; no decoder or personal media"]
 fn micro_segment_visualizer_has_valid_dimensions() {
-    if gtk::init().is_err() {
-        return;
-    }
-    let stream = super::super::stream::PlaybackStream::new_audio(std::path::Path::new("/tmp/test.flac"));
+    gtk::init().unwrap();
+    let stream: super::super::stream::PlaybackStream = glib::Object::new();
     let vis = MicroSegmentVisualizer::new(&stream);
     let (_min_w, nat_w, _, _) = vis.widget().measure(gtk::Orientation::Horizontal, -1);
-    let (min_h, nat_h, _, _) = vis.widget().measure(gtk::Orientation::Vertical, 200);
+    let (min_h, nat_h, _, _) = vis.widget().measure(gtk::Orientation::Vertical, 220);
     assert!(nat_w >= 200, "Natural width must be >= 200, got {nat_w}");
     assert!(nat_h >= 50, "Natural height must be >= 50, got {nat_h}");
     assert_eq!(min_h, 54, "Minimum height must be 54, got {min_h}");
+}
+
+#[test]
+#[ignore = "Private GTK display; verifies preview disposal with an externally retained silent stream"]
+fn desktop_audio_preview_stop_disconnects_refresh_and_releases_widgets() {
+    gtk::init().unwrap();
+    let stream: super::super::stream::PlaybackStream = glib::Object::new();
+    let payload = Rc::new(Cell::new(0));
+    let weak_payload = Rc::downgrade(&payload);
+    let refresh_payload = payload.clone();
+    let handler = stream.connect_notify_local(None, move |_, _| {
+        refresh_payload.set(refresh_payload.get() + 1);
+    });
+    drop(payload);
+    let vinyl = Rc::new(VinylDisc::new());
+    let visualizer = Rc::new(MicroSegmentVisualizer::new(&stream));
+    let weak_vinyl = Rc::downgrade(&vinyl);
+    let weak_visualizer = Rc::downgrade(&visualizer);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.append(vinyl.widget());
+    content.append(visualizer.widget());
+    let widget = gtk::ScrolledWindow::builder().child(&content).build();
+    let weak_widget = widget.downgrade();
+    let cancelled = Rc::new(Cell::new(false));
+    let cancellation = cancelled.clone();
+    let preview = AudioPreview {
+        widget,
+        stream: stream.clone(),
+        artwork_load: RefCell::new(Some(LoadHandle::new(move || cancellation.set(true)))),
+        vinyl,
+        visualizer,
+        refresh_handler: RefCell::new(Some(handler)),
+    };
+    preview.stop();
+    preview.stop();
+    assert!(cancelled.get());
+    assert!(weak_payload.upgrade().is_none());
+    assert!(preview.refresh_handler.borrow().is_none());
+    drop(content);
+    drop(preview);
+    assert!(weak_vinyl.upgrade().is_none());
+    assert!(weak_visualizer.upgrade().is_none());
+    assert!(weak_widget.upgrade().is_none());
+    stream.notify("playing");
 }
 
 #[test]

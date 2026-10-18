@@ -160,6 +160,7 @@ impl GroupIndex {
         let mut metadata_bytes = size_of::<Self>();
         let mut album_count = 0;
         let terms = parsed.terms.trim().to_lowercase();
+        let literal_terms = parsed.literal.as_ref().map(|literal| literal.terms.to_lowercase());
         for &(_, position) in ranked {
             check_cancelled(cancelled)?;
             let item = items
@@ -173,11 +174,19 @@ impl GroupIndex {
             let Some(labels) = entity_labels(item) else {
                 continue;
             };
+            let inferred_matches = parsed.literal.is_none() || super::filter_bonus(item, parsed).is_some();
             for key in [album_key(&labels), artist_key(&labels)]
                 .into_iter()
                 .flatten()
             {
-                let Some(score) = entity_score(&key, &terms) else {
+                let literal_score = literal_terms.as_ref().and_then(|terms| {
+                    entity_score(&key, terms, &parsed.quoted_terms)
+                        .filter(|score| *score >= 8_000)
+                        .map(|score| score.saturating_add(super::LITERAL_MATCH_PRIORITY))
+                });
+                let Some(score) = literal_score.or_else(|| {
+                    inferred_matches.then(|| entity_score(&key, &terms, &parsed.quoted_terms)).flatten()
+                }) else {
                     continue;
                 };
                 if let Some(summary) = entities.get_mut(&key) {
@@ -374,11 +383,11 @@ fn artist_key(labels: &EntityLabels<'_>) -> Option<SearchEntityKey> {
     Some(SearchEntityKey::Artist(labels.artist?.to_lowercase()))
 }
 
-fn entity_score(key: &SearchEntityKey, terms: &str) -> Option<i64> {
+fn entity_score(key: &SearchEntityKey, terms: &str, quoted_terms: &[String]) -> Option<i64> {
     match key {
         SearchEntityKey::Album { artist, album } => {
             let label = format!("{album} {artist}");
-            label_score(&label, terms).map(|score| {
+            label_score(&label, terms, quoted_terms).map(|score| {
                 score
                     + if album == terms || artist == terms {
                         20_000
@@ -387,16 +396,19 @@ fn entity_score(key: &SearchEntityKey, terms: &str) -> Option<i64> {
                     }
             })
         }
-        SearchEntityKey::Artist(artist) => label_score(artist, terms),
+        SearchEntityKey::Artist(artist) => label_score(artist, terms, quoted_terms),
     }
 }
 
-fn label_score(label: &str, terms: &str) -> Option<i64> {
+fn label_score(label: &str, terms: &str, quoted_terms: &[String]) -> Option<i64> {
     if terms.is_empty() {
         return Some(0);
     }
     let folded_label = fold_diacritics(label);
     let folded_terms = fold_diacritics(terms);
+    if quoted_terms.iter().any(|term| !folded_label.contains(&fold_diacritics(term))) {
+        return None;
+    }
     if label == terms || folded_label == folded_terms {
         return Some(30_000 - label.len() as i64);
     }

@@ -682,3 +682,139 @@ fn calendar_week_bounds_vs_rolling_seven_days() {
     assert!(last_week_end < past_7_end);
 }
 
+#[test]
+fn inferred_types_preserve_literal_names_and_rank_them_first() {
+    let root = Path::new("/synthetic");
+    let literal = item("/synthetic/Video Games.flac");
+    let video = item("/synthetic/Games.mp4");
+    assert!(fuzzy_score(&literal, "Video Games", root).unwrap()
+        > fuzzy_score(&video, "Video Games", root).unwrap());
+    for name in ["Photos of You.flac", "Documents of Love.flac", "Yesterday songs.txt"] {
+        let candidate = item(&format!("/synthetic/{name}"));
+        let title = Path::new(name).file_stem().unwrap().to_str().unwrap();
+        assert!(fuzzy_score(&candidate, title, root).is_some(), "{title}");
+    }
+}
+
+#[test]
+fn inferred_filters_preserve_literal_metadata_without_matching_folder_noise() {
+    let root = Path::new("/synthetic");
+    let mut song = item("/synthetic/01.flac");
+    song.search_metadata = "video games lana del rey lost in the dream".into();
+    assert!(fuzzy_score(&song, "Video Games", root).is_some());
+    assert!(fuzzy_score(&song, "Lost in the Dream", root).is_some());
+    let (terms, filters) = search_filter_values("Lost in the Dream");
+    assert_eq!(terms, "Lost in the Dream");
+    assert_eq!(filters.within, None);
+    let noise = item("/synthetic/Video Games/other.flac");
+    assert!(fuzzy_score(&noise, "Video Games", root).is_none());
+}
+
+#[test]
+fn explicit_constraints_stay_strict_for_literal_and_inferred_matches() {
+    let root = Path::new("/synthetic");
+    let literal = item("/synthetic/Video Games.flac");
+    for query in ["Video Games type:video", "Video Games ext:mp3", "Video Games artist:Other"] {
+        assert!(fuzzy_score(&literal, query, root).is_none(), "{query}");
+    }
+    let mut directory = item("/synthetic/videos");
+    directory.is_directory = true;
+    let (terms, filters) = search_filter_values("type:folder videos");
+    assert_eq!(terms, "videos");
+    assert_eq!(filters.category, None);
+    assert!(fuzzy_score(&directory, "type:folder videos", root).is_some());
+    let (terms, filters) = search_filter_values("type:audio Video Games");
+    assert_eq!(terms, "Video Games");
+    assert_eq!(filters.category.as_deref(), Some("audio"));
+    assert!(filters.inferred.is_empty());
+}
+
+#[test]
+fn artist_phrase_matches_songs_without_a_literal_song_word() {
+    let root = Path::new("/synthetic");
+    let mut song = item("/synthetic/01.flac");
+    song.music_tags = Some(crate::model::MusicTags {
+        artist: Some("Cameron Winter".into()),
+        ..Default::default()
+    });
+    song.search_metadata = "cameron winter heavy metal".into();
+    for query in ["songs by Cameron Winter", "ext:flac songs by Cameron Winter"] {
+        let (terms, filters) = search_filter_values(query);
+        assert_eq!(terms, "", "{query}");
+        assert_eq!(filters.artist.as_deref(), Some("cameron winter"));
+        assert_eq!(filters.category.as_deref(), Some("audio"));
+        assert!(fuzzy_score(&song, query, root).is_some(), "{query}");
+    }
+}
+
+#[test]
+fn inferred_locations_include_the_current_scope_root() {
+    let root = Path::new("/synthetic/Downloads");
+    let pdf = SearchItem::from_path(root.join("report.pdf"), root, false, None);
+    assert!(fuzzy_score(&pdf, "PDFs in Downloads", root).is_some());
+    assert!(fuzzy_score(&pdf, "PDFs in Documents", root).is_none());
+}
+
+#[test]
+fn literal_titles_rank_above_inferred_date_only_results() {
+    let root = Path::new("/synthetic");
+    let literal = item("/synthetic/videos from last week.flac");
+    let mut video = item("/synthetic/clip.mp4");
+    let now = gio::glib::DateTime::now_local().unwrap();
+    let (start, _) = super::recent_bounds_at("modified:last-week", &now).unwrap();
+    video.modified_unix_seconds = Some(start + 1);
+    let query = "videos from last week";
+    assert!(fuzzy_score(&literal, query, root).unwrap()
+        > fuzzy_score(&video, query, root).unwrap());
+    assert!(fuzzy_score(&literal, "videos from last week modified:last-week", root).is_none());
+}
+
+#[test]
+fn quoted_terms_stay_literal_through_parsing_and_filter_reconstruction() {
+    let root = Path::new("/synthetic");
+    let candidate = item("/synthetic/Cameron Winter.flac");
+    assert!(fuzzy_score(&candidate, "Camerom", root).is_some());
+    assert!(fuzzy_score(&candidate, "\"Camerom\"", root).is_none());
+    assert!(fuzzy_score(&candidate, "\"Winter Cameron\"", root).is_none());
+    let (terms, filters) = search_filter_values("\"ext:flac\"");
+    assert_eq!(terms, "ext:flac");
+    assert_eq!(filters.extension, None);
+    let query = "\"Video Games\" type:audio \"ext:flac\"";
+    assert_eq!(super::search_filter_terms(query), "\"Video Games\" \"ext:flac\"");
+    let reconstructed = format!("{} type:audio", super::search_filter_terms(query));
+    assert!(search_filter_values(&reconstructed).1.inferred.is_empty());
+}
+
+#[test]
+fn inferred_chip_dismissal_uses_original_unicode_token_positions() {
+    for (query, expected) in [
+        ("İ songs", "İ \"songs\""),
+        ("  İ   songs  ", "  İ   \"songs\"  "),
+        ("\"songs\" songs", "\"songs\" \"songs\""),
+        ("songsong songs", "songsong \"songs\""),
+        ("İ from   last week", "İ \"from last week\""),
+    ] {
+        let (_, filters) = search_filter_values(query);
+        let chip = filters.inferred.first().unwrap();
+        assert_eq!(chip.literal_query(query).as_deref(), Some(expected), "{query}");
+        assert!(search_filter_values(expected).1.inferred.is_empty(), "{expected}");
+        assert_eq!(chip.literal_query("a different query"), None);
+    }
+}
+
+#[test]
+fn inferred_chip_dismissal_preserves_interleaved_explicit_filters_and_escapes() {
+    let query = "songs by Cameron ext:flac Winter";
+    let (_, filters) = search_filter_values(query);
+    let artist = filters.inferred.iter().find(|chip| chip.label.starts_with("Artist:")).unwrap();
+    let literal = artist.literal_query(query).unwrap();
+    assert_eq!(literal, "songs \"by Cameron\" ext:flac \"Winter\"");
+    assert_eq!(search_filter_values(&literal).1.extension.as_deref(), Some("flac"));
+    let escaped = "songs by Artist\\\"Name";
+    let (_, filters) = search_filter_values(escaped);
+    let artist = filters.inferred.iter().find(|chip| chip.label.starts_with("Artist:")).unwrap();
+    let literal = artist.literal_query(escaped).unwrap();
+    assert!(literal.contains("Artist\\\"Name"));
+    assert!(search_filter_values(&literal).1.artist.is_none());
+}
+

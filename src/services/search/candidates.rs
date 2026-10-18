@@ -152,6 +152,7 @@ impl Candidates {
         cancelled: &impl Fn() -> bool,
     ) -> Result<Vec<usize>, String> {
         check_cancelled(cancelled)?;
+        let query = query.candidate_query();
         let mut selects = Vec::with_capacity(6);
         let mut bindings = Vec::with_capacity(6);
         if let Some(directory) = query.directory {

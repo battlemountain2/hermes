@@ -98,6 +98,129 @@ fn desktop_search_geometry_and_rows_stay_stable_during_updates() {
 }
 
 #[test]
+#[ignore = "Private GTK display; stable search chrome across smart chips, notices, scopes and font sizes"]
+fn desktop_smart_search_chips_and_notices_keep_geometry_at_supported_fonts() {
+    fn settle() {
+        let deadline = std::time::Instant::now() + Duration::from_millis(100);
+        while std::time::Instant::now() < deadline {
+            glib::MainContext::default().iteration(false);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let theme = crate::ui::theme::ThemeManager::shared();
+    let styles = gtk::CssProvider::new();
+    styles.load_from_string(include_str!("../../style.css"));
+    gtk::style_context_add_provider_for_display(
+        &gdk::Display::default().unwrap(),
+        &styles,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let dialog = SearchDialog::new(Rc::new(|_| {}), Rc::new(|| {}));
+    dialog.state.root.replace(PathBuf::from("/synthetic"));
+    dialog.state.layer.set_visible(true);
+    dialog.state.open_results_button.set_visible(true);
+    let window = gtk::Window::builder()
+        .default_width(1200)
+        .default_height(950)
+        .child(&dialog.widget())
+        .build();
+    window.present();
+    let panel = dialog.state.notice_slot.parent().unwrap();
+    let footer = dialog.state.more_button.parent().unwrap();
+    let bounds = || {
+        (
+            panel.compute_bounds(&window).unwrap(),
+            dialog.state.notice_slot.compute_bounds(&window).unwrap(),
+            dialog.state.results.compute_bounds(&window).unwrap(),
+            footer.compute_bounds(&window).unwrap(),
+        )
+    };
+    let long_query = format!(
+        "FLAC songs by {} in Downloads from last week",
+        "An Artist ".repeat(24)
+    );
+    for (font, size) in [("mono", 10), ("maple", 13), ("sans", 22)] {
+        theme.set_interface_font(font);
+        theme.set_interface_font_size(size);
+        dialog.state.field.set_text("");
+        begin_query(&dialog.state, "");
+        settle();
+        let baseline = bounds();
+        assert!(baseline.0.x() >= 0.0);
+        assert!(baseline.0.width() <= window.width() as f32);
+        for query in ["needle", "Beach House songs", &long_query, "İ songs", ""] {
+            dialog.state.field.set_text(query);
+            settle();
+            assert_eq!(
+                bounds(), baseline,
+                "Query changed geometry: {font} {size}, {query}"
+            );
+            dialog.state.scope_label.set_text(&"/a long path/".repeat(80));
+            settle();
+            assert_eq!(bounds(), baseline, "Scope changed geometry: {font} {size}");
+            let item = SearchItem::from_path(
+                PathBuf::from("/synthetic/track.flac"),
+                Path::new("/synthetic"),
+                false,
+                None,
+            );
+            render_results(
+                &dialog.state,
+                vec![item],
+                true,
+                Some(&"Partial coverage ".repeat(80)),
+            );
+            settle();
+            assert_eq!(bounds(), baseline, "Notice changed geometry: {font} {size}");
+            if query == long_query
+                && let Ok(directory) = std::env::var("HERMES_SEARCH_LAYOUT_SHOTS")
+            {
+                let snapshot = gtk::Snapshot::new();
+                gtk::WidgetPaintable::new(Some(&window)).snapshot(
+                    &snapshot,
+                    window.width() as f64,
+                    window.height() as f64,
+                );
+                let node = snapshot.to_node().expect("Mapped search render node");
+                let renderer = gtk::gsk::CairoRenderer::new();
+                renderer.realize(window.surface().as_ref()).unwrap();
+                let texture = renderer.render_texture(&node, None);
+                texture
+                    .save_to_png(Path::new(&directory).join(format!("search-{font}-{size}.png")))
+                    .unwrap();
+                renderer.unrealize();
+            }
+            render_results(&dialog.state, Vec::new(), false, None);
+            settle();
+            assert_eq!(bounds(), baseline, "Empty state changed geometry: {font} {size}");
+            assert_eq!(dialog.state.notice.text(), SEARCH_NOTICE_HINT);
+            if query == long_query {
+                let mut chip = dialog.state.interpretation_slot.first_child();
+                let mut chip_count = 0;
+                while let Some(current) = chip {
+                    chip = current.next_sibling();
+                    assert!(current.tooltip_text().is_some());
+                    let remove = current.last_child().unwrap().downcast::<gtk::Button>().unwrap();
+                    assert!(remove.grab_focus());
+                    settle();
+                    let button_bounds = remove.compute_bounds(&dialog.state.interpretation_view).unwrap();
+                    assert!(button_bounds.x() >= 0.0);
+                    assert!(button_bounds.x() + button_bounds.width()
+                        <= dialog.state.interpretation_view.width() as f32);
+                    assert_eq!(bounds(), baseline, "Chip focus changed geometry: {font} {size}");
+                    chip_count += 1;
+                }
+                assert_eq!(chip_count, 5);
+            }
+        }
+    }
+    dialog.hide();
+    window.close();
+}
+
+#[test]
 #[ignore = "Requires isolated GTK display; verifies cumulative pages, stable geometry and stale revisions"]
 fn desktop_search_pages_preserve_rows_selection_and_footer() {
     fn settle() {
@@ -144,6 +267,11 @@ fn desktop_search_pages_preserve_rows_selection_and_footer() {
         )
     };
     let initial = bounds();
+    assert_eq!(dialog.state.more_button.label().as_deref(), Some("Load more"));
+    assert_eq!(
+        dialog.state.more_button.tooltip_text().as_deref(),
+        Some("Load the next page of search results (up to 100)")
+    );
     assert!(dialog.state.more_button.is_visible());
     assert!(!dialog.state.more_button.is_sensitive());
     let items: Vec<_> = (0..205)
@@ -256,7 +384,8 @@ fn desktop_search_pages_preserve_rows_selection_and_footer() {
     begin_query(&dialog.state, "needle");
     assert_eq!(dialog.state.page.get(), None);
     assert!(!dialog.state.more_button.is_sensitive());
-    assert!(!dialog.state.notice.is_visible());
+    assert!(dialog.state.notice.is_visible());
+    assert_eq!(dialog.state.notice.text(), "Searching…");
     apply_search_event(&dialog.state, 7, event(5, 205, false, None));
     assert!(dialog.state.visible_results.borrow().is_empty());
     dialog.state.expected_query_generation.set(Some(generation));
@@ -269,7 +398,8 @@ fn desktop_search_pages_preserve_rows_selection_and_footer() {
     restart_search(&dialog.state);
     assert_eq!(dialog.state.page.get(), None);
     assert!(!dialog.state.more_button.is_sensitive());
-    assert!(!dialog.state.notice.is_visible());
+    assert!(dialog.state.notice.is_visible());
+    assert_eq!(dialog.state.notice.text(), "Searching…");
     dialog.state.expected_query_generation.set(Some(generation));
     apply_search_event(
         &dialog.state,
@@ -609,10 +739,11 @@ fn desktop_search_rejects_old_query_and_session_results() {
         page: None,
         groups: None,
     };
+    let previous_notice = dialog.state.notice.text();
     apply_search_event(&dialog.state, 7, event(1, false, "Old query"));
     apply_search_event(&dialog.state, 6, event(3, false, "Old session"));
     assert!(dialog.state.visible_results.borrow().is_empty());
-    assert!(!dialog.state.notice.is_visible());
+    assert_eq!(dialog.state.notice.text(), previous_notice);
     apply_search_event(&dialog.state, 7, event(3, true, "Partial coverage"));
     assert_eq!(
         *dialog.state.visible_results.borrow(),
@@ -1463,9 +1594,7 @@ fn desktop_scope_selection_and_reentrant_rendering() {
 #[test]
 #[ignore = "Requires isolated GTK display; verifies interpretation slot chips, dismiss action, and filter panel sections"]
 fn desktop_interpretation_slot_and_filter_sections() {
-    if gtk::init().is_err() {
-        return;
-    }
+    gtk::init().unwrap();
     crate::assets::prepare().unwrap();
     let dialog = SearchDialog::new(Rc::new(|_| {}), Rc::new(|| {}));
 
@@ -1483,8 +1612,10 @@ fn desktop_interpretation_slot_and_filter_sections() {
     });
     assert_eq!(dialog.state.filters.modified.selected(), 4);
     assert!(!dialog.state.interpretation_slot.is_visible());
-    assert!(!dialog.state.notice_slot.is_visible());
+    assert_eq!(dialog.state.notice.text(), SEARCH_NOTICE_HINT);
 
+    dialog.state.layer.set_visible(true);
+    assert!(dialog.state.notice_slot.is_visible());
     dialog.state.field.set_text("Beach House songs");
     assert!(dialog.state.interpretation_slot.is_visible());
     assert!(dialog.state.interpretation_slot.first_child().is_some());
@@ -1496,5 +1627,25 @@ fn desktop_interpretation_slot_and_filter_sections() {
     assert!(dialog.state.field.text().contains("\"songs\""));
     assert!(dialog.state.interpretation_slot.first_child().is_none());
     assert!(!dialog.state.interpretation_slot.is_visible());
+
+    for (query, expected) in [
+        ("İ songs", "İ \"songs\""),
+        ("  İ   songs  ", "  İ   \"songs\"  "),
+        ("\"songs\" songs", "\"songs\" \"songs\""),
+        ("songsong songs", "songsong \"songs\""),
+    ] {
+        dialog.state.field.set_text(query);
+        let chip = dialog.state.interpretation_slot.first_child().unwrap();
+        let remove = chip.last_child().unwrap().downcast::<gtk::Button>().unwrap();
+        remove.emit_clicked();
+        assert_eq!(dialog.state.field.text(), expected);
+        assert!(!dialog.state.interpretation_slot.is_visible());
+    }
+    dialog.state.field.set_text("\"Video Games\" type:audio");
+    assert_eq!(dialog.state.filters.query(&dialog.state.field.text()), "\"Video Games\" type:audio");
+    dialog.state.filters.clear.emit_clicked();
+    assert_eq!(dialog.state.field.text(), "\"Video Games\"");
+    assert!(!dialog.state.interpretation_slot.is_visible());
+    dialog.hide();
 }
 

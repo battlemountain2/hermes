@@ -694,6 +694,7 @@ impl Worker {
 
     fn prepare_candidates(&mut self) {
         let parsed = ParsedSearchQuery::parse(&self.query.text.to_lowercase());
+        let parsed = parsed.candidate_query();
         let filtered = parsed.directory.is_some()
             || parsed.category.is_some()
             || parsed.extension.is_some()

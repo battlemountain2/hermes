@@ -48,6 +48,31 @@ fn finish(receiver: &SearchReceiver, expected: &str) -> (Vec<SearchItem>, Option
     panic!("Search did not finish: {expected}");
 }
 
+#[test]
+fn streamed_search_keeps_literal_titles_and_explicit_filters() {
+    let fixture = Fixture::new();
+    for name in ["Video Games.flac", "Games.mp4", "Lost in the Dream.flac"] {
+        fixture.file(name);
+    }
+    let (handle, events) = start(
+        fixture.0.clone(),
+        Arc::new(UnavailableTextExtraction),
+        Arc::new(|_, _| Some(MusicTags::default())),
+    );
+    for (query, expected) in [
+        ("Video Games", vec!["Video Games.flac", "Games.mp4"]),
+        ("Video Games ext:flac", vec!["Video Games.flac"]),
+        ("Video Games type:video", vec!["Games.mp4"]),
+        ("Lost in the Dream", vec!["Lost in the Dream.flac"]),
+    ] {
+        handle.query(query);
+        let (items, notice) = finish(&events, query);
+        assert!(notice.is_none(), "{notice:?}");
+        let names: Vec<_> = items.iter().map(|item| item.name.as_str()).collect();
+        assert_eq!(names, expected, "{query}");
+    }
+}
+
 fn reader() -> Arc<TagReader> {
     Arc::new(|path, cancellation| {
         if cancellation.is_cancelled() {

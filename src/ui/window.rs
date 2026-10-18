@@ -1324,6 +1324,8 @@ impl SidebarState {
 
         if self.theme_manager.show_smart_folders() {
             self.append_smart_folders();
+        } else {
+            self.saved_revision.set(self.saved_searches.revision());
         }
         self.append_separator();
 
@@ -2427,9 +2429,7 @@ fn build_sidebar_with_searches(
         let Some(state) = weak.upgrade() else {
             return glib::ControlFlow::Break;
         };
-        if state.saved_searches.revision() != state.saved_revision.get() {
-            state.rebuild();
-        }
+        state.refresh_saved_searches();
         glib::ControlFlow::Continue
     });
     SidebarView {

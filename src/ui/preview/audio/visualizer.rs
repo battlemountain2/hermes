@@ -1,5 +1,5 @@
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     rc::Rc,
 };
 
@@ -14,12 +14,23 @@ const NUM_SEGMENTS: usize = 14;
 const PEAK_DECAY: f32 = 0.92;
 const PEAK_HOLD_FRAMES: u8 = 10;
 
+#[cfg(test)]
+mod tests;
+
 pub struct MicroSegmentVisualizer {
     widget: gtk::DrawingArea,
-    peaks: Rc<Cell<[f32; SPECTRUM_BANDS]>>,
-    peak_hold: Rc<Cell<[u8; SPECTRUM_BANDS]>>,
-    tick_active: Rc<Cell<bool>>,
-    stream: PlaybackStream,
+    state: Rc<VisualizerState>,
+}
+
+struct VisualizerState {
+    widget: glib::WeakRef<gtk::DrawingArea>,
+    stream: glib::WeakRef<PlaybackStream>,
+    bands: Cell<[f32; SPECTRUM_BANDS]>,
+    peaks: Cell<[f32; SPECTRUM_BANDS]>,
+    peak_hold: Cell<[u8; SPECTRUM_BANDS]>,
+    tick: RefCell<Option<gtk::TickCallbackId>>,
+    playing_handler: RefCell<Option<glib::SignalHandlerId>>,
+    stopped: Cell<bool>,
 }
 
 impl MicroSegmentVisualizer {
@@ -32,63 +43,49 @@ impl MicroSegmentVisualizer {
         widget.set_hexpand(true);
         widget.set_vexpand(false);
 
-        let peaks = Rc::new(Cell::new([0.0_f32; SPECTRUM_BANDS]));
-        let peak_hold = Rc::new(Cell::new([0_u8; SPECTRUM_BANDS]));
-        let tick_active = Rc::new(Cell::new(false));
-
-        let draw_stream = stream.clone();
-        let draw_peaks = peaks.clone();
-        let draw_hold = peak_hold.clone();
-
+        let state = Rc::new(VisualizerState {
+            widget: widget.downgrade(),
+            stream: stream.downgrade(),
+            bands: Cell::new([0.0; SPECTRUM_BANDS]),
+            peaks: Cell::new([0.0; SPECTRUM_BANDS]),
+            peak_hold: Cell::new([0; SPECTRUM_BANDS]),
+            tick: RefCell::new(None),
+            playing_handler: RefCell::new(None),
+            stopped: Cell::new(false),
+        });
+        let draw_state = Rc::downgrade(&state);
         widget.set_draw_func(move |_, cr, width, height| {
-            let bands = draw_stream.spectrum_bands();
-            let mut current_peaks = draw_peaks.get();
-            let mut current_hold = draw_hold.get();
-
-            // Update peak hold logic
-            for i in 0..SPECTRUM_BANDS {
-                if bands[i] >= current_peaks[i] {
-                    current_peaks[i] = bands[i];
-                    current_hold[i] = PEAK_HOLD_FRAMES;
-                } else if current_hold[i] > 0 {
-                    current_hold[i] -= 1;
-                } else {
-                    current_peaks[i] = (current_peaks[i] * PEAK_DECAY).max(0.0);
-                }
-            }
-            draw_peaks.set(current_peaks);
-            draw_hold.set(current_hold);
-
-            draw_micro_segments(cr, width as f64, height as f64, &bands, &current_peaks);
-        });
-
-        let visualizer = Self {
-            widget,
-            peaks,
-            peak_hold,
-            tick_active,
-            stream: stream.clone(),
-        };
-
-        let weak_visualizer = visualizer.downgrade();
-        visualizer.widget.connect_map(move |_| {
-            if let Some(vis) = weak_visualizer.upgrade() {
-                if vis.stream.is_playing() {
-                    vis.ensure_tick_running();
-                }
+            if let Some(state) = draw_state.upgrade() {
+                draw_micro_segments(
+                    cr,
+                    width as f64,
+                    height as f64,
+                    &state.bands.get(),
+                    &state.peaks.get(),
+                );
             }
         });
-
-        let weak_vis = visualizer.downgrade();
-        stream.connect_playing_notify(move |s| {
-            if let Some(vis) = weak_vis.upgrade() {
-                if s.is_playing() {
-                    vis.ensure_tick_running();
-                }
+        let mapped_state = Rc::downgrade(&state);
+        widget.connect_map(move |_| {
+            if let Some(state) = mapped_state.upgrade() {
+                state.ensure_tick_running();
             }
         });
-
-        visualizer
+        let unmapped_state = Rc::downgrade(&state);
+        widget.connect_unmap(move |_| {
+            if let Some(state) = unmapped_state.upgrade() {
+                state.cancel_tick();
+                state.clear();
+            }
+        });
+        let playing_state = Rc::downgrade(&state);
+        let handler = stream.connect_playing_notify(move |_| {
+            if let Some(state) = playing_state.upgrade() {
+                state.ensure_tick_running();
+            }
+        });
+        state.playing_handler.replace(Some(handler));
+        Self { widget, state }
     }
 
     pub fn widget(&self) -> &gtk::DrawingArea {
@@ -96,89 +93,119 @@ impl MicroSegmentVisualizer {
     }
 
     pub fn ensure_tick_running(&self) {
-        Self::start_tick(&self.widget, &self.stream, &self.peaks, &self.tick_active);
+        self.state.ensure_tick_running();
     }
 
     pub fn stop(&self) {
-        self.tick_active.set(false);
+        self.state.stopped.set(true);
+        self.state.cancel_tick();
+        self.state.clear();
+        if let Some(handler) = self.state.playing_handler.borrow_mut().take()
+            && let Some(stream) = self.state.stream.upgrade()
+        {
+            stream.disconnect(handler);
+        }
+    }
+}
+
+impl Drop for MicroSegmentVisualizer {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+impl VisualizerState {
+    fn cancel_tick(&self) {
+        if let Some(tick) = self.tick.borrow_mut().take() {
+            tick.remove();
+        }
     }
 
-    fn start_tick(
-        widget: &gtk::DrawingArea,
-        stream: &PlaybackStream,
-        peaks: &Rc<Cell<[f32; SPECTRUM_BANDS]>>,
-        tick_active: &Rc<Cell<bool>>,
-    ) {
-        if tick_active.get() {
+    fn clear(&self) {
+        let bands_changed = self.bands.replace([0.0; SPECTRUM_BANDS]) != [0.0; SPECTRUM_BANDS];
+        let peaks_changed = self.peaks.replace([0.0; SPECTRUM_BANDS]) != [0.0; SPECTRUM_BANDS];
+        self.peak_hold.set([0; SPECTRUM_BANDS]);
+        if (bands_changed || peaks_changed)
+            && let Some(widget) = self.widget.upgrade()
+        {
+            widget.queue_draw();
+        }
+    }
+
+    fn ensure_tick_running(self: &Rc<Self>) {
+        let Some(widget) = self.widget.upgrade() else {
+            return;
+        };
+        if self.stopped.get() || !widget.is_mapped() || !crate::ui::motion::animations_enabled() {
+            self.cancel_tick();
+            self.clear();
             return;
         }
-        tick_active.set(true);
-
-        let w = widget.clone();
-        let s = stream.clone();
-        let p = peaks.clone();
-        let ta = tick_active.clone();
-
-        widget.add_tick_callback(move |_, _| {
-            w.queue_draw();
-
-            if s.is_playing() {
-                glib::ControlFlow::Continue
-            } else {
-                let current_peaks = p.get();
-                let has_residual_energy = current_peaks.iter().any(|&p| p > 0.02);
-                if has_residual_energy {
-                    glib::ControlFlow::Continue
-                } else {
-                    ta.set(false);
-                    glib::ControlFlow::Break
-                }
-            }
+        let playing = self
+            .stream
+            .upgrade()
+            .is_some_and(|stream| stream.is_playing());
+        if self.tick.borrow().is_some()
+            || (!playing && !self.peaks.get().iter().any(|peak| *peak > 0.02))
+        {
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        let tick = widget.add_tick_callback(move |widget, _| {
+            weak.upgrade()
+                .map_or(glib::ControlFlow::Break, |state| state.frame(widget))
         });
+        self.tick.replace(Some(tick));
     }
 
-    fn downgrade(&self) -> WeakVisualizer {
-        WeakVisualizer {
-            widget: self.widget.downgrade(),
-            stream: self.stream.clone(),
-            peaks: Rc::downgrade(&self.peaks),
-            peak_hold: Rc::downgrade(&self.peak_hold),
-            tick_active: Rc::downgrade(&self.tick_active),
+    fn frame(&self, widget: &gtk::DrawingArea) -> glib::ControlFlow {
+        if self.stopped.get() || !widget.is_mapped() || !crate::ui::motion::animations_enabled() {
+            self.tick.borrow_mut().take();
+            self.clear();
+            return glib::ControlFlow::Break;
+        }
+        let Some(stream) = self.stream.upgrade() else {
+            self.tick.borrow_mut().take();
+            self.clear();
+            return glib::ControlFlow::Break;
+        };
+        let playing = stream.is_playing();
+        let bands = if playing {
+            stream.spectrum_bands()
+        } else {
+            [0.0; SPECTRUM_BANDS]
+        };
+        self.bands.set(bands);
+        let mut peaks = self.peaks.get();
+        let mut hold = self.peak_hold.get();
+        update_peaks(&bands, &mut peaks, &mut hold);
+        self.peaks.set(peaks);
+        self.peak_hold.set(hold);
+        widget.queue_draw();
+        if !playing && peaks.iter().all(|peak| *peak <= 0.02) {
+            self.tick.borrow_mut().take();
+            self.clear();
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
         }
     }
 }
 
-struct WeakVisualizer {
-    widget: glib::WeakRef<gtk::DrawingArea>,
-    stream: PlaybackStream,
-    peaks: std::rc::Weak<Cell<[f32; SPECTRUM_BANDS]>>,
-    peak_hold: std::rc::Weak<Cell<[u8; SPECTRUM_BANDS]>>,
-    tick_active: std::rc::Weak<Cell<bool>>,
-}
-
-impl WeakVisualizer {
-    fn upgrade(&self) -> Option<VisualizerHandle> {
-        Some(VisualizerHandle {
-            widget: self.widget.upgrade()?,
-            stream: self.stream.clone(),
-            peaks: self.peaks.upgrade()?,
-            _peak_hold: self.peak_hold.upgrade()?,
-            tick_active: self.tick_active.upgrade()?,
-        })
-    }
-}
-
-struct VisualizerHandle {
-    widget: gtk::DrawingArea,
-    stream: PlaybackStream,
-    peaks: Rc<Cell<[f32; SPECTRUM_BANDS]>>,
-    _peak_hold: Rc<Cell<[u8; SPECTRUM_BANDS]>>,
-    tick_active: Rc<Cell<bool>>,
-}
-
-impl VisualizerHandle {
-    fn ensure_tick_running(&self) {
-        MicroSegmentVisualizer::start_tick(&self.widget, &self.stream, &self.peaks, &self.tick_active);
+fn update_peaks(
+    bands: &[f32; SPECTRUM_BANDS],
+    peaks: &mut [f32; SPECTRUM_BANDS],
+    hold: &mut [u8; SPECTRUM_BANDS],
+) {
+    for band in 0..SPECTRUM_BANDS {
+        if bands[band] >= peaks[band] {
+            peaks[band] = bands[band];
+            hold[band] = PEAK_HOLD_FRAMES;
+        } else if hold[band] > 0 {
+            hold[band] -= 1;
+        } else {
+            peaks[band] = (peaks[band] * PEAK_DECAY).max(0.0);
+        }
     }
 }
 
@@ -198,10 +225,14 @@ fn draw_micro_segments(
 
     let (accent, danger, text, dim_text) = if let Some(t) = tokens.as_ref() {
         (
-            gtk::gdk::RGBA::parse(&t.accent).unwrap_or_else(|_| gtk::gdk::RGBA::new(0.48, 0.64, 0.97, 1.0)),
-            gtk::gdk::RGBA::parse(&t.danger).unwrap_or_else(|_| gtk::gdk::RGBA::new(0.97, 0.46, 0.56, 1.0)),
-            gtk::gdk::RGBA::parse(&t.text).unwrap_or_else(|_| gtk::gdk::RGBA::new(0.95, 0.96, 0.98, 1.0)),
-            gtk::gdk::RGBA::parse(&t.dim_text).unwrap_or_else(|_| gtk::gdk::RGBA::new(0.60, 0.65, 0.72, 1.0)),
+            gtk::gdk::RGBA::parse(&t.accent)
+                .unwrap_or_else(|_| gtk::gdk::RGBA::new(0.48, 0.64, 0.97, 1.0)),
+            gtk::gdk::RGBA::parse(&t.danger)
+                .unwrap_or_else(|_| gtk::gdk::RGBA::new(0.97, 0.46, 0.56, 1.0)),
+            gtk::gdk::RGBA::parse(&t.text)
+                .unwrap_or_else(|_| gtk::gdk::RGBA::new(0.95, 0.96, 0.98, 1.0)),
+            gtk::gdk::RGBA::parse(&t.dim_text)
+                .unwrap_or_else(|_| gtk::gdk::RGBA::new(0.60, 0.65, 0.72, 1.0)),
         )
     } else {
         (

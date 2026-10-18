@@ -6,6 +6,49 @@ use crate::services::{
 };
 
 #[test]
+fn literal_smart_queries_keep_grouped_and_result_tab_matches_with_sql_candidates() {
+    let root = Path::new("/synthetic");
+    let mut literal = SearchItem::from_path(root.join("01.flac"), root, false, None);
+    literal.search_metadata = "video games an artist".into();
+    literal.music_tags = Some(MusicTags {
+        title: Some("Video Games".into()),
+        album: Some("Video Games".into()),
+        artist: Some("An Artist".into()),
+        ..Default::default()
+    });
+    let video = SearchItem::from_path(root.join("Games.mp4"), root, false, None);
+    let mut worker = super::pagination_tests::synthetic_worker(vec![literal, video]);
+    worker.query.text = "Video Games".into();
+    worker.prepare_candidates();
+    assert!(worker.candidates.is_none());
+    worker.candidates = Some(super::super::candidates::Candidates::build(&worker.shared_items, &|| false).unwrap());
+    for virtual_results in [true, false] {
+        worker.query.grouping = Some(Grouping {
+            group: SearchGroup::Songs,
+            entity: None,
+            virtual_results,
+        });
+        worker.rescore_shared();
+        let indexed = worker.ranked.clone();
+        let candidates = worker.candidates.take();
+        worker.rescore_shared();
+        assert_eq!(worker.ranked, indexed);
+        worker.candidates = candidates;
+        if virtual_results {
+            let groups = worker.groups.as_ref().unwrap();
+            assert_eq!(groups.counts().songs, 1);
+            assert_eq!(groups.counts().albums, 1);
+        } else {
+            assert_eq!(worker.ranked.len(), 1);
+            assert_eq!(worker.shared_items[worker.ranked[0].1].name, "01.flac");
+        }
+    }
+    worker.query.text = "Video Games type:video".into();
+    worker.rescore_shared();
+    assert!(worker.ranked.is_empty());
+}
+
+#[test]
 fn entity_pages_can_extend_past_the_source_entry_limit() {
     let root = Path::new("/synthetic");
     let items = (0..100)

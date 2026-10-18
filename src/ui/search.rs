@@ -16,10 +16,11 @@ mod results;
 use crate::services::{
     InferredFilterChip, ScopedSearch, SearchCounts, SearchEntityKey, SearchEvent,
     SearchFilterValues, SearchGroup, SearchGroups, SearchHandle, SearchItem, SearchPage,
-    SearchResult, SearchResultKey, SearchScope, index_tree, search_filter_values,
+    SearchResult, SearchResultKey, SearchScope, index_tree, search_filter_values, search_filter_terms,
 };
 
 const SEARCH_HELP: &str = "Find files, folders, songs, artists and albums across Home\nChoose This folder to search another drive or a specific location\nUse Filters for types, dates and optional document content\nHidden files and symlinks are excluded";
+const SEARCH_NOTICE_HINT: &str = "Names and metadata · Contents optional";
 const SEARCH_TYPES: [&str; 9] = [
     "All",
     "Files",
@@ -56,10 +57,12 @@ struct SearchState {
     layer: gtk::Box,
     field: gtk::Entry,
     interpretation_slot: gtk::Box,
+    interpretation_view: gtk::ScrolledWindow,
     list: gtk::ListBox,
     results: gtk::Stack,
     status: gtk::Label,
     notice: gtk::Label,
+    #[cfg(test)]
     notice_slot: gtk::Box,
     root: RefCell<PathBuf>,
     current_folder: RefCell<PathBuf>,
@@ -156,10 +159,23 @@ impl SearchDialog {
 
         let interpretation_slot = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         interpretation_slot.add_css_class("search-interpretation-slot");
-        interpretation_slot.set_size_request(-1, 32);
         interpretation_slot.set_valign(gtk::Align::Center);
+        interpretation_slot.set_hexpand(false);
         interpretation_slot.set_visible(false);
-        panel.append(&interpretation_slot);
+        let interpretation_view = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::External)
+            .vscrollbar_policy(gtk::PolicyType::Never)
+            .propagate_natural_width(true)
+            .max_content_width(420)
+            .min_content_width(0)
+            .hexpand(false)
+            .child(&interpretation_slot)
+            .build();
+        interpretation_view.add_css_class("search-interpretation-view");
+        interpretation_view.set_visible(false);
+        if let Some(viewport) = interpretation_view.child().and_downcast::<gtk::Viewport>() {
+            viewport.set_scroll_to_focus(true);
+        }
 
         let scope_bar = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         scope_bar.add_css_class("search-scope-bar");
@@ -171,7 +187,7 @@ impl SearchDialog {
         let scope_label = gtk::Label::new(None);
         scope_label.add_css_class("search-result-path");
         scope_label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-        scope_label.set_max_width_chars(40);
+        scope_label.set_max_width_chars(1);
         scope_label.set_hexpand(true);
         scope_label.set_xalign(0.0);
         scope_bar.append(&scope);
@@ -212,19 +228,18 @@ impl SearchDialog {
             .collect();
         panel.append(&category_bar);
 
-        let notice = gtk::Label::new(None);
+        let notice = gtk::Label::new(Some(SEARCH_NOTICE_HINT));
         notice.add_css_class("search-notice");
         notice.set_ellipsize(gtk::pango::EllipsizeMode::End);
         notice.set_single_line_mode(true);
         notice.set_hexpand(true);
         notice.set_max_width_chars(1);
         notice.set_xalign(0.0);
-        notice.set_visible(false);
-        let notice_slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let notice_slot = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         notice_slot.add_css_class("search-notice-slot");
         notice_slot.set_size_request(-1, 32);
         notice_slot.set_valign(gtk::Align::Center);
-        notice_slot.set_visible(false);
+        notice_slot.append(&interpretation_view);
         notice_slot.append(&notice);
         panel.append(&notice_slot);
 
@@ -262,12 +277,12 @@ impl SearchDialog {
         footer.append(&navigation);
         footer.append(&open);
         footer.append(&filter_hint);
-        let more_button = gtk::Button::with_label("More");
+        let more_button = gtk::Button::with_label("Load more");
         more_button.add_css_class("search-filter-clear");
         more_button.set_size_request(64, 32);
         more_button.set_valign(gtk::Align::Center);
         more_button.set_sensitive(false);
-        more_button.set_tooltip_text(Some("Show the next 100 matches"));
+        more_button.set_tooltip_text(Some("Load the next page of search results (up to 100)"));
         footer.append(&more_button);
         let open_results_button = gtk::Button::with_label("Show results in tab");
         open_results_button.add_css_class("search-filter-apply");
@@ -286,10 +301,12 @@ impl SearchDialog {
             layer,
             field,
             interpretation_slot,
+            interpretation_view,
             list,
             results,
             status,
             notice,
+            #[cfg(test)]
             notice_slot,
             refresh,
             save_button,
@@ -378,7 +395,7 @@ impl SearchDialog {
         let cleared_filters = Rc::downgrade(&state);
         state.filters.clear.connect_clicked(move |_| {
             if let Some(state) = cleared_filters.upgrade() {
-                let (terms, _) = search_filter_values(&state.field.text());
+                let terms = search_filter_terms(&state.field.text());
                 state.filters.set_values(&SearchFilterValues::default());
                 state.filters.update_active(false);
                 state.field.set_text(&terms);
@@ -768,7 +785,7 @@ impl SearchFilterPanel {
     }
 
     fn query(&self, current: &str) -> String {
-        let (terms, _) = search_filter_values(current);
+        let terms = search_filter_terms(current);
         let mut parts = Vec::new();
         if !terms.is_empty() {
             parts.push(terms);
@@ -842,6 +859,7 @@ fn render_inferred_chips(
     inferred: &[InferredFilterChip],
 ) {
     state.interpretation_slot.set_visible(!inferred.is_empty());
+    state.interpretation_view.set_visible(!inferred.is_empty());
     while let Some(child) = state.interpretation_slot.first_child() {
         state.interpretation_slot.remove(&child);
     }
@@ -849,8 +867,14 @@ fn render_inferred_chips(
         let pill = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         pill.add_css_class("search-inferred-chip");
         pill.set_valign(gtk::Align::Center);
+        pill.set_hexpand(false);
+        pill.set_tooltip_text(Some(&chip.label));
         let label = gtk::Label::new(Some(&chip.label));
         label.add_css_class("search-inferred-chip-label");
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        label.set_single_line_mode(true);
+        label.set_max_width_chars(18);
+        label.set_hexpand(true);
         pill.append(&label);
         let remove = gtk::Button::builder()
             .tooltip_text(format!("Dismiss filter and search for \"{}\"", &chip.token_text))
@@ -861,10 +885,10 @@ fn render_inferred_chips(
             10,
         )));
         let weak_state = Rc::downgrade(state);
-        let token_text = chip.token_text.clone();
+        let chip = chip.clone();
         remove.connect_clicked(move |_| {
             if let Some(state) = weak_state.upgrade() {
-                dismiss_inferred_chip(&state, &token_text);
+                dismiss_inferred_chip(&state, &chip);
             }
         });
         pill.append(&remove);
@@ -872,16 +896,10 @@ fn render_inferred_chips(
     }
 }
 
-fn dismiss_inferred_chip(state: &Rc<SearchState>, token_text: &str) {
+fn dismiss_inferred_chip(state: &Rc<SearchState>, chip: &InferredFilterChip) {
     let current = state.field.text().to_string();
-    let quoted_replacement = format!("\"{token_text}\"");
-    let lower_current = current.to_lowercase();
-    let lower_target = token_text.to_lowercase();
-    let new_query = if let Some(idx) = lower_current.find(&lower_target) {
-        let end = idx + token_text.len();
-        format!("{}{quoted_replacement}{}", &current[..idx], &current[end..])
-    } else {
-        format!("{current} {quoted_replacement}")
+    let Some(new_query) = chip.literal_query(&current) else {
+        return;
     };
     state.field.set_text(&new_query);
     state.field.set_position(-1);
@@ -974,8 +992,12 @@ fn start_query(state: &Rc<SearchState>, query: &str) {
         state.list.remove(&row);
     }
     state.rendering.set(false);
-    state.notice.set_visible(false);
-    state.notice_slot.set_visible(false);
+    state.notice.set_text(if query.trim().is_empty() {
+        SEARCH_NOTICE_HINT
+    } else {
+        "Searching…"
+    });
+    state.notice.set_tooltip_text(None);
     state.results.set_visible_child_name("status");
     if query.trim().is_empty() {
         state.status.set_text(SEARCH_HELP);
@@ -1093,12 +1115,14 @@ fn render_search_results(
     .collect::<Vec<_>>()
     .join(" · ");
     let has_notice = !notice.is_empty();
-    state.notice.set_text(&notice);
+    state.notice.set_text(if has_notice {
+        &notice
+    } else {
+        SEARCH_NOTICE_HINT
+    });
     state
         .notice
         .set_tooltip_text(has_notice.then_some(notice.as_str()));
-    state.notice.set_visible(has_notice);
-    state.notice_slot.set_visible(has_notice);
     if changed {
         let retained: HashSet<_> = rows.iter().cloned().collect();
         for current in existing_rows {
@@ -1233,7 +1257,8 @@ fn restart_search(state: &Rc<SearchState>) {
     let session_generation = state.session_generation.get();
     state.expected_query_generation.set(None);
     clear_page(state);
-    state.notice.set_visible(false);
+    state.notice.set_text("Searching…");
+    state.notice.set_tooltip_text(None);
     state.search.borrow_mut().take();
     let had_entity = state.entity_scope.borrow().is_some();
     clear_entity_scope(state);

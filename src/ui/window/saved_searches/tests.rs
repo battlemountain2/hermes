@@ -19,6 +19,211 @@ impl FileSource for EmptySource {
     }
 }
 
+fn sidebar_children(sidebar: &SidebarView) -> Vec<gtk::Widget> {
+    let mut children = Vec::new();
+    let mut child = sidebar.state.widget.first_child();
+    while let Some(current) = child {
+        child = current.next_sibling();
+        children.push(current);
+    }
+    children
+}
+
+fn wait_for_sidebar_revision(sidebar: &SidebarView, store: &Store) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while sidebar.state.saved_revision.get() != store.revision() {
+        assert!(Instant::now() < deadline, "Missing sidebar revision update");
+        glib::MainContext::default().iteration(false);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+fn assert_sidebar_idle(sidebar: &SidebarView) {
+    let children = sidebar_children(sidebar);
+    let deadline = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < deadline {
+        glib::MainContext::default().iteration(false);
+        assert_eq!(sidebar_children(sidebar), children);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+fn smart_folder_label(sidebar: &SidebarView, location: &Location) -> Option<String> {
+    sidebar
+        .state
+        .place_rows
+        .borrow()
+        .iter()
+        .find(|(entry, _)| entry == location)
+        .map(|(_, row)| {
+            row.child()
+                .unwrap()
+                .last_child()
+                .unwrap()
+                .downcast::<gtk::Label>()
+                .unwrap()
+                .text()
+                .to_string()
+        })
+}
+
+#[test]
+#[ignore = "Private GTK/XDG; hidden Smart Folders acknowledge store changes without rebuilding idle rows"]
+fn desktop_hidden_smart_folders_acknowledge_updates_without_rebuilding_rows() {
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let theme_manager = ThemeManager::shared();
+    theme_manager.set_show_smart_folders(false);
+    let root = std::env::temp_dir().join(format!("hermes-sidebar-hidden-{}", std::process::id()));
+    let store = Store::start(root.join("private/queries.json"));
+    assert!(store.flush(Duration::from_secs(3)));
+    let view = BrowserView::new(Rc::new(EmptySource), PeekBehavior::default());
+    let sidebar = build_sidebar_with_searches(view, theme_manager, store.clone());
+    assert!(store.revision() > 0);
+    assert_eq!(sidebar.state.saved_revision.get(), store.revision());
+    let children = sidebar_children(&sidebar);
+    assert!(!children.is_empty());
+    assert_sidebar_idle(&sidebar);
+    let request = ScopedSearch::new(
+        SearchScope::ThisFolder,
+        std::path::Path::new("/synthetic/photos"),
+        "type:image",
+    );
+    let location = Location::uri(request.to_uri());
+    store
+        .send(Command::Create {
+            name: "Photos".into(),
+            uri: request.to_uri(),
+        })
+        .unwrap();
+    assert!(store.flush(Duration::from_secs(3)));
+    let previous = store.snapshot().entries[0].clone();
+    for command in [
+        Command::Update {
+            previous: previous.clone(),
+            name: previous.name.clone(),
+            uri: previous.uri.clone(),
+        },
+        Command::Reload,
+        Command::Delete(previous),
+    ] {
+        assert_ne!(sidebar.state.saved_revision.get(), store.revision());
+        wait_for_sidebar_revision(&sidebar, &store);
+        assert_eq!(sidebar_children(&sidebar), children);
+        assert_eq!(smart_folder_label(&sidebar, &location), None);
+        assert_sidebar_idle(&sidebar);
+        store.send(command).unwrap();
+        assert!(store.flush(Duration::from_secs(3)));
+    }
+    wait_for_sidebar_revision(&sidebar, &store);
+    assert_eq!(sidebar_children(&sidebar), children);
+    assert_sidebar_idle(&sidebar);
+    sidebar.disconnect();
+    drop(sidebar);
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[ignore = "Private GTK/XDG; Smart Folder toggles render current snapshots and retain concurrent updates for polling"]
+fn desktop_smart_folders_toggle_visibility_and_poll_snapshot_revisions() {
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let theme_manager = ThemeManager::shared();
+    theme_manager.set_show_smart_folders(false);
+    let root = std::env::temp_dir().join(format!("hermes-sidebar-toggle-{}", std::process::id()));
+    let store = Store::start(root.join("private/queries.json"));
+    assert!(store.flush(Duration::from_secs(3)));
+    let request = ScopedSearch::new(
+        SearchScope::ThisFolder,
+        std::path::Path::new("/synthetic/photos"),
+        "type:image",
+    );
+    store
+        .send(Command::Create {
+            name: "Photos".into(),
+            uri: request.to_uri(),
+        })
+        .unwrap();
+    assert!(store.flush(Duration::from_secs(3)));
+    let location = Location::uri(request.to_uri());
+    let view = BrowserView::new(Rc::new(EmptySource), PeekBehavior::default());
+    let sidebar = build_sidebar_with_searches(view, theme_manager.clone(), store.clone());
+    assert_eq!(smart_folder_label(&sidebar, &location), None);
+    let rendered_revision = store.revision();
+    let previous = store.snapshot().entries[0].clone();
+    let children = sidebar.state.widget.observe_children();
+    let changed_during_render = Rc::new(Cell::new(false));
+    let changed = changed_during_render.clone();
+    let concurrent_store = store.clone();
+    let handler = children.connect_items_changed(move |children, position, _, added| {
+        for offset in 0..added {
+            if let Some(heading) = children
+                .item(position + offset)
+                .and_downcast::<gtk::Label>()
+                && heading.text() == "SMART FOLDERS"
+                && !changed.replace(true)
+            {
+                concurrent_store
+                    .send(Command::Update {
+                        previous: previous.clone(),
+                        name: "New photos".into(),
+                        uri: previous.uri.clone(),
+                    })
+                    .unwrap();
+                assert!(concurrent_store.flush(Duration::from_secs(3)));
+            }
+        }
+    });
+    theme_manager.set_show_smart_folders(true);
+    sidebar.state.rebuild();
+    children.disconnect(handler);
+    assert!(changed_during_render.get());
+    assert_eq!(
+        smart_folder_label(&sidebar, &location).as_deref(),
+        Some("Photos")
+    );
+    assert_eq!(sidebar.state.saved_revision.get(), rendered_revision);
+    assert_ne!(sidebar.state.saved_revision.get(), store.revision());
+    wait_for_sidebar_revision(&sidebar, &store);
+    assert_eq!(
+        smart_folder_label(&sidebar, &location).as_deref(),
+        Some("New photos")
+    );
+    assert_sidebar_idle(&sidebar);
+
+    theme_manager.set_show_smart_folders(false);
+    sidebar.state.rebuild();
+    assert_eq!(sidebar.state.saved_revision.get(), store.revision());
+    assert_eq!(smart_folder_label(&sidebar, &location), None);
+    let hidden_children = sidebar_children(&sidebar);
+    let previous = store.snapshot().entries[0].clone();
+    store
+        .send(Command::Update {
+            previous: previous.clone(),
+            name: "Latest photos".into(),
+            uri: previous.uri,
+        })
+        .unwrap();
+    assert!(store.flush(Duration::from_secs(3)));
+    wait_for_sidebar_revision(&sidebar, &store);
+    assert_eq!(sidebar_children(&sidebar), hidden_children);
+    assert_sidebar_idle(&sidebar);
+
+    theme_manager.set_show_smart_folders(true);
+    sidebar.state.rebuild();
+    assert_eq!(
+        smart_folder_label(&sidebar, &location).as_deref(),
+        Some("Latest photos")
+    );
+    assert_eq!(sidebar.state.saved_revision.get(), store.revision());
+    assert_sidebar_idle(&sidebar);
+    sidebar.disconnect();
+    drop(sidebar);
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 #[ignore = "Private GTK/XDG; search Save switches modal layers without indexing user folders"]
 fn desktop_search_save_opens_manager_and_dismisses_without_stacked_modals() {

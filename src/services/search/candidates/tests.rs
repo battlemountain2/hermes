@@ -112,6 +112,25 @@ fn every_category_alias_has_exact_candidate_parity_with_the_scorer() {
 }
 
 #[test]
+fn inferred_filters_do_not_prune_literal_matches_from_candidate_queries() {
+    let items = vec![
+        item("Video Games.flac", false),
+        item("Games.mp4", false),
+        item("Video Games.mp3", false),
+        item("videos", true),
+        item("other.flac", false),
+    ];
+    let candidates = Candidates::build(&items, &|| false).unwrap();
+    for text in ["Video Games", "Video Games ext:flac", "type:folder videos", "Video Games type:video"] {
+        let retrieved = matching(&candidates, text);
+        let scored = scored_indices(&items, text);
+        assert!(!scored.is_empty(), "{text}");
+        assert!(scored.iter().all(|position| retrieved.contains(position)), "{text}");
+    }
+    assert_eq!(matching(&candidates, "Video Games ext:flac"), vec![0, 4]);
+}
+
+#[test]
 #[ignore = "Generated 10k in-memory timing fixture; run explicitly with output; no end-to-end speed claim"]
 fn generated_10k_exact_filter_retrieval_timings() {
     let items: Vec<_> = (0..10_000)

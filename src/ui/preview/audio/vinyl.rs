@@ -1,5 +1,5 @@
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     f64::consts::PI,
     rc::Rc,
     time::Instant,
@@ -7,7 +7,7 @@ use std::{
 
 use gtk::{glib, prelude::*};
 
-use crate::ui::theme::ThemeManager;
+use crate::ui::{motion::animations_enabled, theme::ThemeManager};
 
 const TARGET_RPM: f64 = 33.3333333;
 const TARGET_ANGULAR_VELOCITY: f64 = TARGET_RPM * 2.0 * PI / 60.0; // ~3.49 rad/s
@@ -16,11 +16,49 @@ const DECELERATION_RATE: f64 = 4.5;
 
 pub struct VinylDisc {
     widget: gtk::DrawingArea,
-    angle: Rc<Cell<f64>>,
-    velocity: Rc<Cell<f64>>,
-    playing: Rc<Cell<bool>>,
-    tick_active: Rc<Cell<bool>>,
-    last_tick: Rc<Cell<Option<Instant>>>,
+    animation: Rc<VinylAnimation>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct Rotation {
+    angle: f64,
+    velocity: f64,
+}
+
+impl Rotation {
+    fn advance(&mut self, playing: bool, elapsed: f64) -> bool {
+        let elapsed = elapsed.min(0.1);
+        let target_velocity = if playing {
+            TARGET_ANGULAR_VELOCITY
+        } else {
+            0.0
+        };
+        let rate = if target_velocity > self.velocity {
+            ACCELERATION_RATE
+        } else {
+            DECELERATION_RATE
+        };
+        self.velocity += (target_velocity - self.velocity) * (elapsed * rate).min(1.0);
+
+        if self.velocity > 0.001 {
+            self.angle = (self.angle + self.velocity * elapsed) % (2.0 * PI);
+            true
+        } else if playing {
+            true
+        } else {
+            self.velocity = 0.0;
+            false
+        }
+    }
+}
+
+#[derive(Default)]
+struct VinylAnimation {
+    rotation: Cell<Rotation>,
+    playing: Cell<bool>,
+    stopped: Cell<bool>,
+    tick: RefCell<Option<gtk::TickCallbackId>>,
+    last_tick: Cell<Option<Instant>>,
 }
 
 impl VinylDisc {
@@ -35,37 +73,32 @@ impl VinylDisc {
         widget.set_halign(gtk::Align::Center);
         widget.set_valign(gtk::Align::Center);
 
-        let angle = Rc::new(Cell::new(0.0_f64));
-        let velocity = Rc::new(Cell::new(0.0_f64));
-        let playing = Rc::new(Cell::new(false));
-        let tick_active = Rc::new(Cell::new(false));
-        let last_tick = Rc::new(Cell::new(None));
+        let animation = Rc::new(VinylAnimation::default());
 
-        let draw_angle = angle.clone();
+        let draw_animation = Rc::downgrade(&animation);
         widget.set_draw_func(move |_, cr, width, height| {
-            draw_vinyl(cr, width as f64, height as f64, draw_angle.get());
+            let angle = draw_animation
+                .upgrade()
+                .map(|animation| animation.rotation.get().angle)
+                .unwrap_or_default();
+            draw_vinyl(cr, width as f64, height as f64, angle);
         });
 
-        let disc = Self {
-            widget,
-            angle,
-            velocity,
-            playing,
-            tick_active,
-            last_tick,
-        };
-
-        let weak_widget = disc.widget.downgrade();
-        let weak_disc = disc.downgrade();
-        disc.widget.connect_map(move |_| {
-            if let (Some(widget), Some(disc)) = (weak_widget.upgrade(), weak_disc.upgrade()) {
-                if disc.playing.get() {
-                    disc.ensure_tick_running(&widget);
-                }
+        let weak_animation = Rc::downgrade(&animation);
+        widget.connect_map(move |widget| {
+            if let Some(animation) = weak_animation.upgrade() {
+                animation.ensure_tick_running(widget);
             }
         });
 
-        disc
+        let weak_animation = Rc::downgrade(&animation);
+        widget.connect_unmap(move |_| {
+            if let Some(animation) = weak_animation.upgrade() {
+                animation.cancel_tick();
+            }
+        });
+
+        Self { widget, animation }
     }
 
     pub fn widget(&self) -> &gtk::DrawingArea {
@@ -73,174 +106,94 @@ impl VinylDisc {
     }
 
     pub fn set_playing(&self, is_playing: bool) {
-        self.playing.set(is_playing);
-        if is_playing && self.widget.is_mapped() {
-            self.ensure_tick_running(&self.widget);
+        if self.animation.stopped.get() {
+            return;
         }
+        self.animation.playing.set(is_playing);
+        self.animation.ensure_tick_running(&self.widget);
     }
 
-    fn ensure_tick_running(&self, widget: &gtk::DrawingArea) {
-        if self.tick_active.get() {
+    pub(super) fn stop(&self) {
+        self.animation.stopped.set(true);
+        self.animation.playing.set(false);
+        self.animation.cancel_tick();
+    }
+}
+
+impl Drop for VinylDisc {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+impl VinylAnimation {
+    fn should_animate(&self, mapped: bool, enabled: bool) -> bool {
+        !self.stopped.get()
+            && mapped
+            && enabled
+            && (self.playing.get() || self.rotation.get().velocity > 0.001)
+    }
+
+    fn reset_motion(&self) {
+        let mut rotation = self.rotation.get();
+        rotation.velocity = 0.0;
+        self.rotation.set(rotation);
+        self.last_tick.set(None);
+    }
+
+    fn cancel_tick(&self) {
+        let tick = self.tick.borrow_mut().take();
+        if let Some(tick) = tick {
+            tick.remove();
+        }
+        self.reset_motion();
+    }
+
+    fn ensure_tick_running(self: &Rc<Self>, widget: &gtk::DrawingArea) {
+        if !self.should_animate(widget.is_mapped(), animations_enabled()) {
+            self.cancel_tick();
+            return;
+        }
+        if self.tick.borrow().is_some() {
             return;
         }
 
-        // Check if animations are disabled
-        let animations_enabled = gtk::Settings::default()
-            .map(|s| s.is_gtk_enable_animations())
-            .unwrap_or(true);
-        if !animations_enabled {
-            self.velocity.set(0.0);
-            return;
-        }
-
-        self.tick_active.set(true);
+        let weak_animation = Rc::downgrade(self);
         self.last_tick.set(Some(Instant::now()));
-
-        let angle = self.angle.clone();
-        let velocity = self.velocity.clone();
-        let playing = self.playing.clone();
-        let tick_active = self.tick_active.clone();
-        let last_tick = self.last_tick.clone();
-
-        widget.add_tick_callback(move |widget, _| {
-            let now = Instant::now();
-            let dt = last_tick
-                .get()
-                .map(|prev| now.duration_since(prev).as_secs_f64().min(0.1))
-                .unwrap_or(0.016);
-            last_tick.set(Some(now));
-
-            let current_v = velocity.get();
-            let target_v = if playing.get() {
-                TARGET_ANGULAR_VELOCITY
-            } else {
-                0.0
+        let tick = widget.add_tick_callback(move |widget, _| {
+            let Some(animation) = weak_animation.upgrade() else {
+                return glib::ControlFlow::Break;
             };
-
-            let rate = if target_v > current_v {
-                ACCELERATION_RATE
-            } else {
-                DECELERATION_RATE
-            };
-            let new_v = current_v + (target_v - current_v) * (dt * rate).min(1.0);
-            velocity.set(new_v);
-
-            if new_v > 0.001 {
-                let new_angle = (angle.get() + new_v * dt) % (2.0 * PI);
-                angle.set(new_angle);
-                widget.queue_draw();
-                glib::ControlFlow::Continue
-            } else if playing.get() {
-                widget.queue_draw();
-                glib::ControlFlow::Continue
-            } else {
-                velocity.set(0.0);
-                tick_active.set(false);
-                widget.queue_draw();
-                glib::ControlFlow::Break
-            }
+            animation.advance(widget)
         });
+        *self.tick.borrow_mut() = Some(tick);
     }
 
-    fn downgrade(&self) -> WeakVinylDisc {
-        WeakVinylDisc {
-            angle: Rc::downgrade(&self.angle),
-            velocity: Rc::downgrade(&self.velocity),
-            playing: Rc::downgrade(&self.playing),
-            tick_active: Rc::downgrade(&self.tick_active),
-            last_tick: Rc::downgrade(&self.last_tick),
-        }
-    }
-}
-
-struct WeakVinylDisc {
-    angle: std::rc::Weak<Cell<f64>>,
-    velocity: std::rc::Weak<Cell<f64>>,
-    playing: std::rc::Weak<Cell<bool>>,
-    tick_active: std::rc::Weak<Cell<bool>>,
-    last_tick: std::rc::Weak<Cell<Option<Instant>>>,
-}
-
-impl WeakVinylDisc {
-    fn upgrade(&self) -> Option<VinylDiscHandle> {
-        Some(VinylDiscHandle {
-            _angle: self.angle.upgrade()?,
-            velocity: self.velocity.upgrade()?,
-            playing: self.playing.upgrade()?,
-            tick_active: self.tick_active.upgrade()?,
-            last_tick: self.last_tick.upgrade()?,
-        })
-    }
-}
-
-struct VinylDiscHandle {
-    _angle: Rc<Cell<f64>>,
-    velocity: Rc<Cell<f64>>,
-    playing: Rc<Cell<bool>>,
-    tick_active: Rc<Cell<bool>>,
-    last_tick: Rc<Cell<Option<Instant>>>,
-}
-
-impl VinylDiscHandle {
-    fn ensure_tick_running(&self, widget: &gtk::DrawingArea) {
-        if self.tick_active.get() {
-            return;
-        }
-        let animations_enabled = gtk::Settings::default()
-            .map(|s| s.is_gtk_enable_animations())
-            .unwrap_or(true);
-        if !animations_enabled {
-            self.velocity.set(0.0);
-            return;
+    fn advance(&self, widget: &gtk::DrawingArea) -> glib::ControlFlow {
+        if !self.should_animate(widget.is_mapped(), animations_enabled()) {
+            drop(self.tick.borrow_mut().take());
+            self.reset_motion();
+            return glib::ControlFlow::Break;
         }
 
-        self.tick_active.set(true);
-        self.last_tick.set(Some(Instant::now()));
+        let now = Instant::now();
+        let elapsed = self
+            .last_tick
+            .replace(Some(now))
+            .map(|previous| now.duration_since(previous).as_secs_f64())
+            .unwrap_or(0.016);
+        let mut rotation = self.rotation.get();
+        let running = rotation.advance(self.playing.get(), elapsed);
+        self.rotation.set(rotation);
+        widget.queue_draw();
 
-        let angle = self._angle.clone();
-        let velocity = self.velocity.clone();
-        let playing = self.playing.clone();
-        let tick_active = self.tick_active.clone();
-        let last_tick = self.last_tick.clone();
-
-        widget.add_tick_callback(move |widget, _| {
-            let now = Instant::now();
-            let dt = last_tick
-                .get()
-                .map(|prev| now.duration_since(prev).as_secs_f64().min(0.1))
-                .unwrap_or(0.016);
-            last_tick.set(Some(now));
-
-            let current_v = velocity.get();
-            let target_v = if playing.get() {
-                TARGET_ANGULAR_VELOCITY
-            } else {
-                0.0
-            };
-
-            let rate = if target_v > current_v {
-                ACCELERATION_RATE
-            } else {
-                DECELERATION_RATE
-            };
-            let new_v = current_v + (target_v - current_v) * (dt * rate).min(1.0);
-            velocity.set(new_v);
-
-            if new_v > 0.001 {
-                let new_angle = (angle.get() + new_v * dt) % (2.0 * PI);
-                angle.set(new_angle);
-                widget.queue_draw();
-                glib::ControlFlow::Continue
-            } else if playing.get() {
-                widget.queue_draw();
-                glib::ControlFlow::Continue
-            } else {
-                velocity.set(0.0);
-                tick_active.set(false);
-                widget.queue_draw();
-                glib::ControlFlow::Break
-            }
-        });
+        if running {
+            glib::ControlFlow::Continue
+        } else {
+            drop(self.tick.borrow_mut().take());
+            self.reset_motion();
+            glib::ControlFlow::Break
+        }
     }
 }
 
@@ -360,3 +313,6 @@ fn draw_vinyl(cr: &cairo::Context, width: f64, height: f64, angle: f64) {
     cr.set_line_width(0.75);
     let _ = cr.stroke();
 }
+
+#[cfg(test)]
+mod tests;

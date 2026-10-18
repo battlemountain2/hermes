@@ -39,6 +39,6 @@ pub use preview::{
 pub(crate) use search::{
     InferredFilterChip, SearchCounts, SearchEntity, SearchEntityKey, SearchEvent, SearchFilterValues, SearchGroup,
     SearchGroups, SearchHandle, SearchItem, SearchPage, SearchResult, SearchResultKey, SearchScope, ScopedSearch,
-    TextExtractionProvider, index_tree, search_filter_values,
+    TextExtractionProvider, index_tree, search_filter_values, search_filter_terms,
 };
 pub use trails::{StoredTrails, TRAIL_SCHEMA_VERSION, TrailStore};

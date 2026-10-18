@@ -663,10 +663,16 @@ headerbar menubutton.header-action > button:focus-visible image {
 }
 
 .search-interpretation-slot {
-  min-height: 32px;
-  padding: 0 16px;
-  background: alpha(@theme_highlight, 0.18);
-  border-bottom: 1px solid alpha(@theme_border, 0.45);
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.search-interpretation-view,
+.search-interpretation-view > viewport {
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 .search-inferred-chip {
@@ -706,13 +712,14 @@ headerbar menubutton.header-action > button:focus-visible image {
 
 .search-notice-slot {
   min-height: 32px;
+  padding: 0 16px;
   border-bottom: 1px solid alpha(@theme_border, 0.35);
   background: alpha(@theme_bg, 0.15);
 }
 
 .search-notice {
   color: @theme_dim_text;
-  padding: 0 16px;
+  padding: 0;
   font-size: 0.82em;
   font-family: inherit;
 }

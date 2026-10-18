@@ -104,6 +104,20 @@ Closing or replacing the drawer cancels metadata/artwork work and stops its own 
 never automatically resumes persistent music. Request IDs, weak UI references, cancellation
 and source identities prevent stale results from updating a replacement preview.
 
+The player card uses GTK height-for-width measurement/allocation, not a nonexistent `width`
+property notification or an idle resize poll. Artwork and controls share a row at widths of at
+least500px only when both children's measured widths fit with16px spacing; otherwise they stack.
+The minimum width remains the stacked width, so widening does not prevent shrinking again.
+Metadata stays below the player in the existing scroller, and wide layout follows text direction.
+
+The vinyl and PCM spectrum own removable frame callbacks with weak widget/stream references.
+Unmapping removes animation callbacks immediately; pause permits bounded peak/rotation decay,
+then no animation callbacks remain. Both obey Hermes Reduce Motion and GTK animation settings
+at startup and on active frames. Preview stop/drop cancels artwork, disconnects playback refresh
+and visualizer signal handlers, removes frame callbacks, and stops only its own session. The
+visualizer draw function reads the latest frame's bands; repainting does not re-run spectrum
+analysis. This does not claim the playback stream's separate polling has zero idle CPU.
+
 Playback has the same namespace isolation, empty environment, read-only selected input, and private
 temporary filesystem. A read-only host GStreamer plugin registry may also be mounted to avoid
 rescanning installed plugins for each selection; it does not expose the user's cache directory.

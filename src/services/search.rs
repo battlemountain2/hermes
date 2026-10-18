@@ -24,6 +24,7 @@ pub(crate) use scope::{SearchScope, ScopedSearch};
 pub(crate) use worker::{SearchHandle, index_tree};
 
 const RESULT_LIMIT: usize = 100;
+const LITERAL_MATCH_PRIORITY: i64 = 1 << 48;
 const MAX_CONTENT_FILE_SIZE: u64 = 1024 * 1024;
 const MAX_DOCUMENT_FILE_SIZE: u64 = 32 * 1024 * 1024;
 const MAX_DOCUMENT_EXTRACTIONS_PER_QUERY: usize = 32;
@@ -83,6 +84,50 @@ impl SearchItem {
 pub struct InferredFilterChip {
     pub label: String,
     pub token_text: String,
+    source_tokens: Vec<QueryToken>,
+}
+
+impl InferredFilterChip {
+    fn new(label: impl Into<String>, tokens: &[QueryToken]) -> Self {
+        Self {
+            label: label.into(),
+            token_text: tokens
+                .iter()
+                .map(|token| token.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+            source_tokens: tokens.to_vec(),
+        }
+    }
+
+    pub(crate) fn literal_query(&self, query: &str) -> Option<String> {
+        let parsed = ParsedSearchQuery::parse(query);
+        if !parsed.inferred.contains(self) {
+            return None;
+        }
+        let mut groups: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+        for token in &self.source_tokens {
+            if let Some((range, text)) = groups.last_mut()
+                && query
+                    .get(range.end..token.source_range.start)?
+                    .trim()
+                    .is_empty()
+            {
+                range.end = token.source_range.end;
+                text.push(' ');
+                text.push_str(&token.text);
+            } else {
+                groups.push((token.source_range.clone(), token.text.clone()));
+            }
+        }
+        let mut literal = query.to_owned();
+        for (range, text) in groups.into_iter().rev() {
+            literal.get(range.clone())?;
+            let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
+            literal.replace_range(range, &format!("\"{escaped}\""));
+        }
+        Some(literal)
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -100,7 +145,7 @@ pub struct SearchFilterValues {
 }
 
 pub fn search_filter_values(query: &str) -> (String, SearchFilterValues) {
-    let parsed = ParsedSearchQuery::parse(query.trim());
+    let parsed = ParsedSearchQuery::parse(query);
     (
         parsed.terms.clone(),
         SearchFilterValues {
@@ -116,6 +161,10 @@ pub fn search_filter_values(query: &str) -> (String, SearchFilterValues) {
             inferred: parsed.inferred.clone(),
         },
     )
+}
+
+pub(crate) fn search_filter_terms(query: &str) -> String {
+    ParsedSearchQuery::parse(query).terms_query
 }
 
 pub enum SearchEvent {
@@ -184,9 +233,22 @@ fn score_item(
     query: &ParsedSearchQuery,
     content_search: &mut ContentSearchContext<'_>,
 ) -> Option<i64> {
-    if query.is_empty() {
-        return None;
+    if let Some(literal) = &query.literal {
+        let name = folded_text(&item.search_name);
+        let metadata = folded_text(&item.search_metadata);
+        if literal
+            .folded_terms
+            .split_whitespace()
+            .all(|term| name.contains(term) || metadata.contains(term))
+        {
+            return score_parsed_item(item, literal, content_search)
+                .map(|score| score.saturating_add(LITERAL_MATCH_PRIORITY));
+        }
     }
+    score_parsed_item(item, query, content_search)
+}
+
+fn filter_bonus(item: &SearchItem, query: &ParsedSearchQuery) -> Option<i64> {
     if let Some(directory) = query.directory
         && item.is_directory != directory
     {
@@ -208,6 +270,9 @@ fn score_item(
     }
     if let Some(within) = query.within.as_deref()
         && !item.search_path.contains(within)
+        && !item.path.parent().is_some_and(|parent| {
+            parent.to_string_lossy().to_lowercase().contains(within)
+        })
     {
         return None;
     }
@@ -242,9 +307,21 @@ fn score_item(
         if modified < start || modified >= end {
             return None;
         }
-        if query.terms.is_empty() && query.content.is_none() {
-            return (!item.is_directory).then_some(modified + inferred_artist_bonus);
-        }
+    }
+    Some(inferred_artist_bonus)
+}
+
+fn score_parsed_item(
+    item: &SearchItem,
+    query: &ParsedSearchQuery,
+    content_search: &mut ContentSearchContext<'_>,
+) -> Option<i64> {
+    if query.is_empty() {
+        return None;
+    }
+    let inferred_artist_bonus = filter_bonus(item, query)?;
+    if query.modified.is_some() && query.terms.is_empty() && query.content.is_none() {
+        return (!item.is_directory).then_some(item.modified_unix_seconds? + inferred_artist_bonus);
     }
     let content_score = if let Some(needle) = query.content.as_deref() {
         Some(search_file_content(item, needle, content_search)?)
@@ -260,6 +337,15 @@ fn score_item(
     let folded_name = fold_diacritics(&item.search_name);
     let folded_path = fold_diacritics(&item.search_path);
     let folded_metadata = fold_diacritics(&item.search_metadata);
+
+    if query.quoted_terms.iter().any(|term| {
+        let folded = fold_diacritics(term);
+        !folded_name.contains(&folded)
+            && !folded_metadata.contains(&folded)
+            && !folded_path.contains(&folded)
+    }) {
+        return None;
+    }
 
     let exact_name = item.search_name == raw_terms || folded_name == folded_terms;
 
@@ -356,6 +442,14 @@ pub(crate) fn fold_diacritics(input: &str) -> String {
     folded
 }
 
+fn folded_text(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.is_ascii() {
+        std::borrow::Cow::Borrowed(text)
+    } else {
+        std::borrow::Cow::Owned(fold_diacritics(text))
+    }
+}
+
 fn edit_distance_at_most_1(a: &str, b: &str) -> bool {
     let a_chars: Vec<char> = a.chars().collect();
     let b_chars: Vec<char> = b.chars().collect();
@@ -420,6 +514,7 @@ fn matches_word_with_typo(term: &str, target: &str) -> bool {
 struct QueryToken {
     text: String,
     quoted: bool,
+    source_range: std::ops::Range<usize>,
 }
 
 fn tokenize_query(query: &str) -> Vec<QueryToken> {
@@ -428,8 +523,12 @@ fn tokenize_query(query: &str) -> Vec<QueryToken> {
     let mut quote = None;
     let mut escaped = false;
     let mut token_starts_with_quote = false;
+    let mut token_start = None;
 
-    for character in query.chars() {
+    for (offset, character) in query.char_indices() {
+        if token_start.is_none() && !character.is_whitespace() {
+            token_start = Some(offset);
+        }
         if escaped {
             token.push(character);
             escaped = false;
@@ -447,9 +546,11 @@ fn tokenize_query(query: &str) -> Vec<QueryToken> {
                 tokens.push(QueryToken {
                     text: std::mem::take(&mut token),
                     quoted: token_starts_with_quote,
+                    source_range: token_start.unwrap_or(offset)..offset,
                 });
-                token_starts_with_quote = false;
             }
+            token_starts_with_quote = false;
+            token_start = None;
         } else {
             token.push(character);
         }
@@ -461,6 +562,7 @@ fn tokenize_query(query: &str) -> Vec<QueryToken> {
         tokens.push(QueryToken {
             text: token,
             quoted: token_starts_with_quote,
+            source_range: token_start.unwrap_or(query.len())..query.len(),
         });
     }
     tokens
@@ -469,6 +571,10 @@ fn tokenize_query(query: &str) -> Vec<QueryToken> {
 #[derive(Clone, Default)]
 struct ParsedSearchQuery {
     terms: String,
+    folded_terms: String,
+    terms_query: String,
+    quoted_terms: Vec<String>,
+    literal: Option<Box<ParsedSearchQuery>>,
     directory: Option<bool>,
     category: Option<String>,
     extension: Option<String>,
@@ -497,6 +603,10 @@ impl ParsedSearchQuery {
         let mut remaining = Vec::new();
 
         for token in tokens {
+            if token.quoted {
+                remaining.push(token);
+                continue;
+            }
             let lower = token.text.to_lowercase();
             if let Some(value) = lower.strip_prefix("type:") {
                 match value {
@@ -557,14 +667,41 @@ impl ParsedSearchQuery {
             remaining.push(token);
         }
 
+        parsed.set_terms(&remaining, query);
+        let literal = parsed.clone();
         parse_date_phrases(&mut remaining, &mut parsed, now);
         parse_location_phrases(&mut remaining, &mut parsed);
         parse_artist_phrases(&mut remaining, &mut parsed);
         parse_type_and_format_phrases(&mut remaining, &mut parsed);
 
-        let terms: Vec<String> = remaining.into_iter().map(|t| t.text).collect();
-        parsed.terms = terms.join(" ");
+        parsed.set_terms(&remaining, query);
+        if !parsed.inferred.is_empty() && !literal.terms.is_empty() {
+            parsed.literal = Some(Box::new(literal));
+        }
         parsed
+    }
+
+    fn set_terms(&mut self, tokens: &[QueryToken], query: &str) {
+        self.terms = tokens
+            .iter()
+            .map(|token| token.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.folded_terms = fold_diacritics(&self.terms);
+        self.terms_query = tokens
+            .iter()
+            .map(|token| &query[token.source_range.clone()])
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.quoted_terms = tokens
+            .iter()
+            .filter(|token| token.quoted)
+            .map(|token| token.text.clone())
+            .collect();
+    }
+
+    fn candidate_query(&self) -> &Self {
+        self.literal.as_deref().unwrap_or(self)
     }
 
     fn is_empty(&self) -> bool {
@@ -603,10 +740,7 @@ fn parse_date_phrases(
             if let Some(bounds) = recent_bounds_at("modified:last-week", now) {
                 parsed.modified = Some(bounds);
                 parsed.modified_name = Some("last-week".to_owned());
-                parsed.inferred.push(InferredFilterChip {
-                    label: "Modified: last week".to_owned(),
-                    token_text: format!("{} last week", tokens[i].text),
-                });
+                parsed.inferred.push(InferredFilterChip::new("Modified: last week", &tokens[i..=i + 2]));
                 tokens.drain(i..=i + 2);
                 return;
             }
@@ -624,10 +758,7 @@ fn parse_date_phrases(
             if let Some(bounds) = recent_bounds_at("modified:past-7-days", now) {
                 parsed.modified = Some(bounds);
                 parsed.modified_name = Some("past-7-days".to_owned());
-                parsed.inferred.push(InferredFilterChip {
-                    label: "Modified: past 7 days".to_owned(),
-                    token_text: "past 7 days".to_owned(),
-                });
+                parsed.inferred.push(InferredFilterChip::new("Modified: past 7 days", &tokens[i..=i + 3]));
                 tokens.drain(i..=i + 3);
                 return;
             }
@@ -643,10 +774,7 @@ fn parse_date_phrases(
             if let Some(bounds) = recent_bounds_at("modified:past-7-days", now) {
                 parsed.modified = Some(bounds);
                 parsed.modified_name = Some("past-7-days".to_owned());
-                parsed.inferred.push(InferredFilterChip {
-                    label: "Modified: past 7 days".to_owned(),
-                    token_text: "past 7 days".to_owned(),
-                });
+                parsed.inferred.push(InferredFilterChip::new("Modified: past 7 days", &tokens[i..=i + 2]));
                 tokens.drain(i..=i + 2);
                 return;
             }
@@ -660,10 +788,7 @@ fn parse_date_phrases(
             if let Some(bounds) = recent_bounds_at("modified:last-week", now) {
                 parsed.modified = Some(bounds);
                 parsed.modified_name = Some("last-week".to_owned());
-                parsed.inferred.push(InferredFilterChip {
-                    label: "Modified: last week".to_owned(),
-                    token_text: "last week".to_owned(),
-                });
+                parsed.inferred.push(InferredFilterChip::new("Modified: last week", &tokens[i..=i + 1]));
                 tokens.drain(i..=i + 1);
                 return;
             }
@@ -678,10 +803,7 @@ fn parse_date_phrases(
             if let Some(bounds) = recent_bounds_at(&format!("modified:{target}"), now) {
                 parsed.modified = Some(bounds);
                 parsed.modified_name = Some(target.clone());
-                parsed.inferred.push(InferredFilterChip {
-                    label: format!("Modified: {target}"),
-                    token_text: format!("{} {}", tokens[i].text, tokens[i + 1].text),
-                });
+                parsed.inferred.push(InferredFilterChip::new(format!("Modified: {target}"), &tokens[i..=i + 1]));
                 tokens.drain(i..=i + 1);
                 return;
             }
@@ -697,15 +819,13 @@ fn parse_location_phrases(tokens: &mut Vec<QueryToken>, parsed: &mut ParsedSearc
     for i in 0..tokens.len() {
         if (tokens[i].text.eq_ignore_ascii_case("in") || tokens[i].text.eq_ignore_ascii_case("within"))
             && !tokens[i].quoted
-            && i + 1 < tokens.len()
+            && i + 2 == tokens.len()
             && !tokens[i + 1].quoted
+            && !matches!(tokens[i + 1].text.to_ascii_lowercase().as_str(), "the" | "a" | "an")
         {
             let folder = tokens[i + 1].text.clone();
             parsed.within = Some(folder.to_lowercase());
-            parsed.inferred.push(InferredFilterChip {
-                label: format!("In: {folder}"),
-                token_text: format!("{} {folder}", tokens[i].text),
-            });
+            parsed.inferred.push(InferredFilterChip::new(format!("In: {folder}"), &tokens[i..=i + 1]));
             tokens.drain(i..=i + 1);
             return;
         }
@@ -717,16 +837,13 @@ fn parse_artist_phrases(tokens: &mut Vec<QueryToken>, parsed: &mut ParsedSearchQ
         return;
     }
     for i in 0..tokens.len() {
-        if tokens[i].text.eq_ignore_ascii_case("by") && !tokens[i].quoted && i + 1 < tokens.len() {
-            let artist_tokens: Vec<String> = tokens.drain(i + 1..).map(|t| t.text).collect();
-            let artist_display = artist_tokens.join(" ");
-            let artist_token_text = format!("by {artist_display}");
-            tokens.remove(i);
+        if tokens[i].text.eq_ignore_ascii_case("by") && !tokens[i].quoted && i + 1 < tokens.len()
+            && tokens[i + 1..].iter().all(|token| !token.quoted)
+        {
+            let artist_display = tokens[i + 1..].iter().map(|token| token.text.as_str()).collect::<Vec<_>>().join(" ");
+            parsed.inferred.push(InferredFilterChip::new(format!("Artist: {artist_display}"), &tokens[i..]));
+            tokens.drain(i..);
             parsed.inferred_artist = Some(artist_display.to_lowercase());
-            parsed.inferred.push(InferredFilterChip {
-                label: format!("Artist: {artist_display}"),
-                token_text: artist_token_text,
-            });
             return;
         }
     }
@@ -735,60 +852,50 @@ fn parse_artist_phrases(tokens: &mut Vec<QueryToken>, parsed: &mut ParsedSearchQ
 const AUDIO_EXTS: [&str; 8] = ["flac", "mp3", "wav", "ogg", "m4a", "aac", "alac", "aiff"];
 
 fn parse_type_and_format_phrases(tokens: &mut Vec<QueryToken>, parsed: &mut ParsedSearchQuery) {
+    if parsed.directory == Some(true) {
+        return;
+    }
     for i in 0..tokens.len() {
         let is_audio_ext = !tokens[i].quoted
             && AUDIO_EXTS.iter().any(|ext| tokens[i].text.eq_ignore_ascii_case(ext));
-        if is_audio_ext && i + 1 < tokens.len() && !tokens[i + 1].quoted {
+        if is_audio_ext && i + 1 < tokens.len() && !tokens[i + 1].quoted
+            && parsed.category.as_deref().is_none_or(|category| category == "audio")
+            && parsed.extension.as_deref().is_none_or(|extension| tokens[i].text.eq_ignore_ascii_case(extension))
+        {
             let next = &tokens[i + 1].text;
             if matches!(next.to_ascii_lowercase().as_str(), "songs" | "song" | "tracks" | "track" | "audio") {
                 let ext = tokens[i].text.to_lowercase();
-                if parsed.extension.is_none() {
-                    parsed.extension = Some(ext.clone());
-                    parsed.inferred.push(InferredFilterChip {
-                        label: format!("Format: {}", ext.to_uppercase()),
-                        token_text: tokens[i].text.clone(),
-                    });
-                }
-                if parsed.category.is_none() {
-                    parsed.category = Some("audio".to_owned());
-                    parsed.inferred.push(InferredFilterChip {
-                        label: "Audio".to_owned(),
-                        token_text: next.clone(),
-                    });
-                }
+                parsed.extension = Some(ext.clone());
+                parsed.inferred.push(InferredFilterChip::new(format!("Format: {}", ext.to_uppercase()), &tokens[i..=i]));
+                parsed.category = Some("audio".to_owned());
+                parsed.inferred.push(InferredFilterChip::new("Audio", &tokens[i + 1..=i + 1]));
                 tokens.drain(i..=i + 1);
                 return;
             }
         }
     }
 
-    if tokens.len() >= 2 {
+    if tokens.len() >= 2 || (tokens.len() == 1 && parsed.inferred_artist.is_some()) {
         let last_idx = tokens.len() - 1;
         let last = &tokens[last_idx];
-        if !last.quoted && matches!(last.text.to_ascii_lowercase().as_str(), "songs" | "song" | "tracks" | "track") {
-            let token_text = last.text.clone();
-            if parsed.category.is_none() {
-                parsed.category = Some("audio".to_owned());
-                parsed.inferred.push(InferredFilterChip {
-                    label: "Audio".to_owned(),
-                    token_text,
-                });
-            }
+        if !last.quoted && matches!(last.text.to_ascii_lowercase().as_str(), "songs" | "song" | "tracks" | "track")
+            && parsed.category.as_deref().is_none_or(|category| category == "audio")
+        {
+            parsed.category = Some("audio".to_owned());
+            parsed.inferred.push(InferredFilterChip::new("Audio", &tokens[last_idx..]));
             tokens.pop();
             return;
         }
     }
 
     for i in 0..tokens.len() {
-        if !tokens[i].quoted {
+        if !tokens[i].quoted
+            && parsed.category.as_deref().is_none_or(|category| category == "document")
+            && parsed.extension.as_deref().is_none_or(|extension| extension == "pdf")
+        {
             if tokens[i].text.eq_ignore_ascii_case("pdfs") {
-                if parsed.extension.is_none() {
-                    parsed.extension = Some("pdf".to_owned());
-                    parsed.inferred.push(InferredFilterChip {
-                        label: "Format: PDF".to_owned(),
-                        token_text: tokens[i].text.clone(),
-                    });
-                }
+                parsed.extension = Some("pdf".to_owned());
+                parsed.inferred.push(InferredFilterChip::new("Format: PDF", &tokens[i..=i]));
                 if parsed.category.is_none() {
                     parsed.category = Some("document".to_owned());
                 }
@@ -797,13 +904,8 @@ fn parse_type_and_format_phrases(tokens: &mut Vec<QueryToken>, parsed: &mut Pars
             } else if tokens[i].text.eq_ignore_ascii_case("pdf") && i + 1 < tokens.len() && !tokens[i + 1].quoted {
                 let next = tokens[i + 1].text.to_ascii_lowercase();
                 if matches!(next.as_str(), "files" | "file" | "documents" | "document") {
-                    if parsed.extension.is_none() {
-                        parsed.extension = Some("pdf".to_owned());
-                        parsed.inferred.push(InferredFilterChip {
-                            label: "Format: PDF".to_owned(),
-                            token_text: format!("{} {}", tokens[i].text, tokens[i + 1].text),
-                        });
-                    }
+                    parsed.extension = Some("pdf".to_owned());
+                    parsed.inferred.push(InferredFilterChip::new("Format: PDF", &tokens[i..=i + 1]));
                     if parsed.category.is_none() {
                         parsed.category = Some("document".to_owned());
                     }
@@ -815,69 +917,56 @@ fn parse_type_and_format_phrases(tokens: &mut Vec<QueryToken>, parsed: &mut Pars
     }
 
     for i in 0..tokens.len() {
-        if !tokens[i].quoted && (tokens[i].text.eq_ignore_ascii_case("videos") || tokens[i].text.eq_ignore_ascii_case("video")) {
-            if parsed.category.is_none() {
-                parsed.category = Some("video".to_owned());
-                parsed.inferred.push(InferredFilterChip {
-                    label: "Video".to_owned(),
-                    token_text: tokens[i].text.clone(),
-                });
-            }
+        if !tokens[i].quoted && (tokens[i].text.eq_ignore_ascii_case("videos") || tokens[i].text.eq_ignore_ascii_case("video"))
+            && parsed.category.as_deref().is_none_or(|category| category == "video")
+        {
+            parsed.category = Some("video".to_owned());
+            parsed.inferred.push(InferredFilterChip::new("Video", &tokens[i..=i]));
             tokens.remove(i);
             return;
         }
     }
 
     for i in 0..tokens.len() {
-        if !tokens[i].quoted && matches!(tokens[i].text.to_ascii_lowercase().as_str(), "photos" | "images") {
-            if parsed.category.is_none() {
-                parsed.category = Some("image".to_owned());
-                parsed.inferred.push(InferredFilterChip {
-                    label: "Image".to_owned(),
-                    token_text: tokens[i].text.clone(),
-                });
-            }
+        if !tokens[i].quoted && matches!(tokens[i].text.to_ascii_lowercase().as_str(), "photos" | "images")
+            && parsed.category.as_deref().is_none_or(|category| category == "image")
+        {
+            parsed.category = Some("image".to_owned());
+            parsed.inferred.push(InferredFilterChip::new("Image", &tokens[i..=i]));
             tokens.remove(i);
             return;
         }
     }
 
     for i in 0..tokens.len() {
-        if !tokens[i].quoted && tokens[i].text.eq_ignore_ascii_case("documents") {
-            if parsed.category.is_none() {
-                parsed.category = Some("document".to_owned());
-                parsed.inferred.push(InferredFilterChip {
-                    label: "Document".to_owned(),
-                    token_text: tokens[i].text.clone(),
-                });
-            }
+        if !tokens[i].quoted && tokens[i].text.eq_ignore_ascii_case("documents")
+            && parsed.category.as_deref().is_none_or(|category| category == "document")
+        {
+            parsed.category = Some("document".to_owned());
+            parsed.inferred.push(InferredFilterChip::new("Document", &tokens[i..=i]));
             tokens.remove(i);
             return;
         }
     }
 
     for i in 0..tokens.len() {
-        if !tokens[i].quoted && matches!(tokens[i].text.to_ascii_lowercase().as_str(), "archives" | "zips") {
-            if parsed.category.is_none() {
-                parsed.category = Some("archive".to_owned());
-                parsed.inferred.push(InferredFilterChip {
-                    label: "Archive".to_owned(),
-                    token_text: tokens[i].text.clone(),
-                });
-            }
+        if !tokens[i].quoted && matches!(tokens[i].text.to_ascii_lowercase().as_str(), "archives" | "zips")
+            && parsed.category.as_deref().is_none_or(|category| category == "archive")
+        {
+            parsed.category = Some("archive".to_owned());
+            parsed.inferred.push(InferredFilterChip::new("Archive", &tokens[i..=i]));
             tokens.remove(i);
             return;
         }
     }
 
     for i in 0..tokens.len() {
-        if !tokens[i].quoted && matches!(tokens[i].text.to_ascii_lowercase().as_str(), "folders" | "directories") {
+        if !tokens[i].quoted && matches!(tokens[i].text.to_ascii_lowercase().as_str(), "folders" | "directories")
+            && parsed.directory.is_none() && parsed.category.is_none() && parsed.extension.is_none()
+        {
             if parsed.directory.is_none() {
                 parsed.directory = Some(true);
-                parsed.inferred.push(InferredFilterChip {
-                    label: "Folders".to_owned(),
-                    token_text: tokens[i].text.clone(),
-                });
+                parsed.inferred.push(InferredFilterChip::new("Folders", &tokens[i..=i]));
             }
             tokens.remove(i);
             return;

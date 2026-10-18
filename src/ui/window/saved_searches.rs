@@ -35,6 +35,18 @@ pub(super) fn install(
 }
 
 impl SidebarState {
+    pub(super) fn refresh_saved_searches(self: &Rc<Self>) {
+        let revision = self.saved_searches.revision();
+        if revision == self.saved_revision.get() {
+            return;
+        }
+        if self.theme_manager.show_smart_folders() {
+            self.rebuild();
+        } else {
+            self.saved_revision.set(revision);
+        }
+    }
+
     pub(super) fn append_smart_folders(self: &Rc<Self>) {
         let snapshot = self.saved_searches.snapshot();
         self.saved_revision.set(snapshot.revision);
