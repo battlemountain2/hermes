@@ -1,5 +1,44 @@
 # Next agent: Hermes performance, file features and media polish
 
+## Settings Page UI/UX Overhaul & Subtle TE Card Craft — 2026-10-17
+
+Completed on branch `feat/6-spreadsheet-and-settings-polish` (commit `2cd72e0`):
+
+1. **Expanded Settings Navigation (10 Distinct Sections)**:
+   - Added dedicated `Audio & DSP`, `Search & index`, and `Diagnostics` pages alongside `General`, `Context menu`, `Custom actions`, `Themes`, `Fonts`, `Keyboard shortcuts`, and `About`.
+   - Updated navigation sidebar with Lucide iconography (`icons::MUSIC`, `icons::SEARCH`, `icons::TERMINAL`, `icons::LIST`).
+   - Sized dialog comfortably to 940x640 with responsive layout.
+
+2. **Subtle Teenage Engineering / Dieter Rams Card Craft**:
+   - Structured options across sections into clean hairline `.settings-card` groups (`border: 1px solid alpha(@theme_border, 0.24)` with subtle row dividers).
+   - Micro-typography for section headings (`font-size: 0.74em; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase`).
+   - Precision monospace telemetry badges (`.settings-telemetry-badge`) displaying live technical specs and statuses.
+   - Minimalist action buttons (`.settings-action-button`) with responsive feedback states.
+   - 100% semantic `@theme_*` design tokens utilized throughout; zero static hex/RGB colors.
+
+3. **Audio & DSP Control Center (`src/ui/settings.rs`)**:
+   - Playback continuity toggle: keeps audio playing smoothly when switching between files, folders, and tabs.
+   - Mechanical hero animation toggle: subtle vinyl disc / tape reel rotation in the player during playback.
+   - Spectrum frequency resolution dropdown: 16 bands (Low CPU), 32 bands (Studio default), 64 bands (High definition).
+   - Ballistics & meter falloff dropdown: Studio ballistics, Fast response, Smooth cinematic glide.
+   - Hardware telemetry plate: Symphonia core decoder, Rodio output, 32-bit float PCM stereo, 32-band log filterbank, lossless/lossy codec support.
+
+4. **Search & Indexing Management (`src/ui/settings.rs`)**:
+   - Catalog status: Live path status for Music library (`~/Music`, SQLite snapshot) and Home fast-search candidate cache (`~`).
+   - Exclusions & filters: Toggles for hidden files/folders (`.*`) and development build artifacts (`node_modules`, `target`, `dist`, `.venv`).
+   - Re-index trigger button: Rebuilds catalog with live status feedback badge.
+
+5. **Diagnostics & System Dashboard (`src/ui/settings.rs`)**:
+   - Display & Compositor: Session protocol (Wayland / X11), desktop compositor, GTK runtime version (`gtk::major_version()`), Cairo 2D engine.
+   - Storage paths: Displays resolved XDG configuration, cache, and data directories.
+   - Cache maintenance: Live thumbnail cache status with one-click "Clear thumbnails" action.
+
+6. **Preserved Test Invariants & Comprehensive Verification**:
+   - Preserved exact widget hierarchies in `context_menu_page` (8 direct toggles), `fonts_page` (dropdown, spinbutton, reset), and `keybindings_page` (`gtk::ScrolledWindow`).
+   - All 780 binary unit tests pass (`cargo test --bin strata --jobs 2 -- --test-threads=2`).
+   - All 20 stress tests pass in `tests/challenger_m4_2_stress.rs`.
+   - Clean `cargo check` and `git diff --check`.
+
 ## Multi-Sheet Spreadsheet Engine & Scrollable Fullscreen Viewer — 2026-10-17
 
 Completed on branch `feat/6-spreadsheet-and-settings-polish` (commit `f841dc7`):
