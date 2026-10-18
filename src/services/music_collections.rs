@@ -87,6 +87,133 @@ impl Collections {
             .collect()
     }
 
+    fn relocate_path(path: &Path, from: &Path, to: &Path) -> Option<PathBuf> {
+        if path == from {
+            Some(to.to_path_buf())
+        } else if let Ok(suffix) = path.strip_prefix(from) {
+            Some(to.join(suffix))
+        } else {
+            None
+        }
+    }
+
+    fn relocate(&mut self, from: &Path, to: &Path) -> bool {
+        if from == to {
+            return false;
+        }
+        let mut changed = false;
+
+        let mut seen_favorites = BTreeSet::new();
+        let mut new_favorites = Vec::new();
+        for loc in self.favorites.drain(..) {
+            let native = loc.native_path().map(Path::to_owned);
+            let updated = if let Some(p) = native.as_deref() {
+                if let Some(target) = Self::relocate_path(p, from, to) {
+                    if valid_path(&target) {
+                        changed = true;
+                        Location::local(target)
+                    } else {
+                        loc
+                    }
+                } else {
+                    loc
+                }
+            } else {
+                loc
+            };
+            if let Some(p) = updated.native_path() {
+                if seen_favorites.insert(p.to_owned()) {
+                    new_favorites.push(updated);
+                } else {
+                    changed = true;
+                }
+            } else {
+                new_favorites.push(updated);
+            }
+        }
+        self.favorites = new_favorites;
+
+        for playlist in &mut self.playlists {
+            for track in &mut playlist.tracks {
+                if let Some(p) = track.native_path() {
+                    if let Some(target) = Self::relocate_path(p, from, to) {
+                        if valid_path(&target) {
+                            *track = Location::local(target);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut seen_indexed = BTreeSet::new();
+        let mut new_indexed = Vec::new();
+        for entry in self.indexed.drain(..) {
+            let native = entry.path.native_path().map(Path::to_owned);
+            let updated_path = if let Some(p) = native.as_deref() {
+                if let Some(target) = Self::relocate_path(p, from, to) {
+                    if valid_path(&target) {
+                        changed = true;
+                        Location::local(target)
+                    } else {
+                        entry.path
+                    }
+                } else {
+                    entry.path
+                }
+            } else {
+                entry.path
+            };
+            if let Some(p) = updated_path.native_path() {
+                if seen_indexed.insert(p.to_owned()) {
+                    new_indexed.push(Indexed {
+                        path: updated_path,
+                        added: entry.added,
+                    });
+                } else {
+                    changed = true;
+                }
+            } else {
+                new_indexed.push(Indexed {
+                    path: updated_path,
+                    added: entry.added,
+                });
+            }
+        }
+        self.indexed = new_indexed;
+
+        let mut new_played: Vec<PlayCount> = Vec::new();
+        for entry in self.played.drain(..) {
+            let native = entry.path.native_path().map(Path::to_owned);
+            let updated_path = if let Some(p) = native.as_deref() {
+                if let Some(target) = Self::relocate_path(p, from, to) {
+                    if valid_path(&target) {
+                        changed = true;
+                        Location::local(target)
+                    } else {
+                        entry.path
+                    }
+                } else {
+                    entry.path
+                }
+            } else {
+                entry.path
+            };
+            if let Some(existing) = new_played.iter_mut().find(|e| e.path == updated_path) {
+                existing.count = existing.count.saturating_add(entry.count);
+                changed = true;
+            } else {
+                new_played.push(PlayCount {
+                    path: updated_path,
+                    count: entry.count,
+                });
+            }
+        }
+        self.played = new_played;
+
+        changed
+    }
+
     fn apply(&mut self, command: Command) -> Result<bool, String> {
         match command {
             Command::Create(name) => {
@@ -276,6 +403,12 @@ impl Collections {
                     });
                 }
             }
+            Command::Relocate { from, to } => {
+                if !valid_relocate_path(&from) || !valid_relocate_path(&to) {
+                    return Err("Invalid relocate path".into());
+                }
+                return Ok(self.relocate(&from, &to));
+            }
             Command::Flush(_) => return Ok(false),
         }
         Ok(true)
@@ -294,6 +427,7 @@ pub(crate) enum Command {
     MoveBefore(u64, PathBuf, PathBuf, bool),
     Observe(Vec<PathBuf>, u64),
     Played(PathBuf),
+    Relocate { from: PathBuf, to: PathBuf },
     Flush(mpsc::SyncSender<Result<(), String>>),
 }
 
@@ -349,6 +483,13 @@ impl Store {
         }
         self.send(Command::Played(path))?;
         Ok(true)
+    }
+
+    pub fn relocate(&self, from: PathBuf, to: PathBuf) -> Result<(), String> {
+        if from == to {
+            return Ok(());
+        }
+        self.send(Command::Relocate { from, to })
     }
 
     pub fn shared() -> Self {
@@ -415,6 +556,11 @@ impl Store {
             }
             Command::MoveBefore(_, path, anchor, _) if !valid_path(path) || !valid_path(anchor) => {
                 return Err("Invalid playlist reorder path".into());
+            }
+            Command::Relocate { from, to }
+                if !valid_relocate_path(from) || !valid_relocate_path(to) =>
+            {
+                return Err("Invalid relocate path".into());
             }
             _ => {}
         }
@@ -571,6 +717,14 @@ fn valid_path(path: &Path) -> bool {
             .components()
             .any(|part| matches!(part, Component::ParentDir))
         && super::classify_by_name(path.as_os_str()) == super::FormatFamily::Audio
+}
+
+fn valid_relocate_path(path: &Path) -> bool {
+    path.is_absolute()
+        && path.as_os_str().len() <= 4096
+        && !path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir))
 }
 
 fn validate(data: &Collections) -> Result<(), String> {

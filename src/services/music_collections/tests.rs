@@ -310,3 +310,81 @@ fn explicit_shutdown_flush_acknowledges_background_save_without_waiting_for_debo
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn relocate_updates_favorites_playlists_and_history_for_single_file_and_directory() {
+    let mut data = Collections::default();
+    let track1 = PathBuf::from("/Music/Artist/Album/track1.flac");
+    let track2 = PathBuf::from("/Music/Artist/Album/track2.flac");
+    let other = PathBuf::from("/Music/Other/single.mp3");
+
+    // Populate favorites, playlist, indexed and played
+    data.apply(Command::Favorite(vec![track1.clone(), other.clone()], true)).unwrap();
+    data.apply(Command::Create("Favorites Mix".into())).unwrap();
+    data.apply(Command::Add(1, vec![track1.clone(), track2.clone()])).unwrap();
+    data.apply(Command::Observe(vec![track1.clone()], 1000)).unwrap();
+    data.apply(Command::Played(track1.clone())).unwrap();
+
+    // 1. Single file rename: track1 -> track1_remastered
+    let track1_new = PathBuf::from("/Music/Artist/Album/track1_remastered.flac");
+    let changed = data.apply(Command::Relocate {
+        from: track1.clone(),
+        to: track1_new.clone(),
+    }).unwrap();
+    assert!(changed);
+
+    assert_eq!(
+        data.favorite_paths(),
+        [track1_new.clone(), other.clone()].into_iter().collect()
+    );
+    let playlist = data.playlist(1).unwrap();
+    assert_eq!(
+        playlist.tracks.iter().filter_map(|l| l.native_path()).collect::<Vec<_>>(),
+        vec![track1_new.as_path(), track2.as_path()]
+    );
+    assert_eq!(data.added_dates().get(&track1_new), Some(&1000));
+    assert_eq!(data.added_dates().get(&track1), None);
+    assert_eq!(data.play_counts().get(&track1_new), Some(&1));
+    assert_eq!(data.play_counts().get(&track1), None);
+
+    // 2. Directory move/rename: entire "/Music/Artist/Album" -> "/Archive/Music/Album"
+    let old_album = PathBuf::from("/Music/Artist/Album");
+    let new_album = PathBuf::from("/Archive/Music/Album");
+    let changed = data.apply(Command::Relocate {
+        from: old_album,
+        to: new_album,
+    }).unwrap();
+    assert!(changed);
+
+    let expected_t1 = PathBuf::from("/Archive/Music/Album/track1_remastered.flac");
+    let expected_t2 = PathBuf::from("/Archive/Music/Album/track2.flac");
+
+    assert_eq!(
+        data.favorite_paths(),
+        [expected_t1.clone(), other.clone()].into_iter().collect()
+    );
+    let playlist = data.playlist(1).unwrap();
+    assert_eq!(
+        playlist.tracks.iter().filter_map(|l| l.native_path()).collect::<Vec<_>>(),
+        vec![expected_t1.as_path(), expected_t2.as_path()]
+    );
+    assert_eq!(data.added_dates().get(&expected_t1), Some(&1000));
+    assert_eq!(data.play_counts().get(&expected_t1), Some(&1));
+}
+
+#[test]
+fn relocate_deduplicates_when_target_already_in_favorites() {
+    let mut data = Collections::default();
+    let track1 = PathBuf::from("/Music/track1.flac");
+    let track2 = PathBuf::from("/Music/track2.flac");
+    data.apply(Command::Favorite(vec![track1.clone(), track2.clone()], true)).unwrap();
+    assert_eq!(data.favorite_paths().len(), 2);
+
+    // Relocate track1 to track2 -> should deduplicate cleanly
+    let changed = data.apply(Command::Relocate {
+        from: track1,
+        to: track2.clone(),
+    }).unwrap();
+    assert!(changed);
+    assert_eq!(data.favorite_paths(), [track2].into_iter().collect());
+}

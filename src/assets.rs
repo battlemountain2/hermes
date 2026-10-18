@@ -69,6 +69,8 @@ pub mod icons {
     pub const TRASH: &str = "strata-trash";
     pub const VIDEOS: &str = "strata-video";
     pub const X: &str = "strata-x";
+    pub const STAR: &str = "strata-star";
+    pub const STAR_FILLED: &str = "strata-star-filled";
 }
 
 const FONT_VERSION: &str = "jetbrains-2.304-maple-7.9";

@@ -8,7 +8,7 @@ use std::{
 };
 
 use super::{
-    SearchEvent, SearchItem, TextExtractionProvider, UnavailableTextExtraction, fuzzy_score,
+    RatingFilter, SearchEvent, SearchItem, TextExtractionProvider, UnavailableTextExtraction, fuzzy_score,
     index_tree, recent_bounds, search_filter_values,
 };
 use crate::services::TextExtractor;
@@ -818,3 +818,121 @@ fn inferred_chip_dismissal_preserves_interleaved_explicit_filters_and_escapes() 
     assert!(search_filter_values(&literal).1.artist.is_none());
 }
 
+#[test]
+fn rating_filter_parsing_and_matching() {
+    assert_eq!(RatingFilter::parse("5"), Some(RatingFilter::Exact(5)));
+    assert_eq!(RatingFilter::parse("=5"), Some(RatingFilter::Exact(5)));
+    assert_eq!(RatingFilter::parse("5-star"), Some(RatingFilter::Exact(5)));
+    assert_eq!(RatingFilter::parse("5stars"), Some(RatingFilter::Exact(5)));
+    assert_eq!(RatingFilter::parse(">=4"), Some(RatingFilter::AtLeast(4)));
+    assert_eq!(RatingFilter::parse(">=4-stars"), Some(RatingFilter::AtLeast(4)));
+    assert_eq!(RatingFilter::parse(">3"), Some(RatingFilter::GreaterThan(3)));
+    assert_eq!(RatingFilter::parse("<=2"), Some(RatingFilter::AtMost(2)));
+    assert_eq!(RatingFilter::parse("<3"), Some(RatingFilter::LessThan(3)));
+    assert_eq!(RatingFilter::parse("unrated"), Some(RatingFilter::Unrated));
+    assert_eq!(RatingFilter::parse("none"), Some(RatingFilter::Unrated));
+    assert_eq!(RatingFilter::parse("0"), Some(RatingFilter::Unrated));
+
+    assert_eq!(RatingFilter::parse("6"), None);
+    assert_eq!(RatingFilter::parse("invalid"), None);
+    assert_eq!(RatingFilter::parse(""), None);
+
+    let photo = Path::new("/photos/sunset.jpg");
+    let song = Path::new("/music/track.mp3");
+
+    // Exact
+    assert!(RatingFilter::Exact(5).matches(photo, Some(5)));
+    assert!(!RatingFilter::Exact(5).matches(photo, Some(4)));
+    assert!(!RatingFilter::Exact(5).matches(photo, None));
+
+    // Comparison
+    assert!(RatingFilter::AtLeast(4).matches(photo, Some(4)));
+    assert!(RatingFilter::AtLeast(4).matches(photo, Some(5)));
+    assert!(!RatingFilter::AtLeast(4).matches(photo, Some(3)));
+    assert!(!RatingFilter::AtLeast(4).matches(photo, None));
+
+    assert!(RatingFilter::GreaterThan(3).matches(photo, Some(4)));
+    assert!(!RatingFilter::GreaterThan(3).matches(photo, Some(3)));
+
+    assert!(RatingFilter::AtMost(2).matches(photo, Some(2)));
+    assert!(RatingFilter::AtMost(2).matches(photo, Some(1)));
+    assert!(!RatingFilter::AtMost(2).matches(photo, Some(3)));
+
+    assert!(RatingFilter::LessThan(3).matches(photo, Some(2)));
+    assert!(!RatingFilter::LessThan(3).matches(photo, Some(3)));
+
+    // Unrated (only ratable format and None)
+    assert!(RatingFilter::Unrated.matches(photo, None));
+    assert!(!RatingFilter::Unrated.matches(photo, Some(1)));
+    assert!(!RatingFilter::Unrated.matches(song, None)); // music is excluded from ratings
+}
+
+#[test]
+fn search_filter_values_parses_rating_queries() {
+    let (terms, values) = search_filter_values("sunset rating:5");
+    assert_eq!(terms, "sunset");
+    assert_eq!(values.rating, Some(RatingFilter::Exact(5)));
+    assert_eq!(values.rating_raw.as_deref(), Some("5"));
+
+    let (terms, values) = search_filter_values("rating:>=4 vacation");
+    assert_eq!(terms, "vacation");
+    assert_eq!(values.rating, Some(RatingFilter::AtLeast(4)));
+
+    let (terms, values) = search_filter_values("rating:unrated");
+    assert_eq!(terms, "");
+    assert_eq!(values.rating, Some(RatingFilter::Unrated));
+}
+
+#[test]
+fn search_evaluates_rating_filters_and_excludes_non_matching_items() {
+    let root = Path::new("/test_search_ratings");
+    let rated_photo_path = root.join("sunset.jpg");
+    let rated_photo = SearchItem::from_path(rated_photo_path.clone(), root, false, None);
+
+    let unrated_photo_path = root.join("beach.jpg");
+    let unrated_photo = SearchItem::from_path(unrated_photo_path.clone(), root, false, None);
+
+    let directory_path = root.join("photos_folder");
+    let directory = SearchItem::from_path(directory_path.clone(), root, true, None);
+
+    let audio_path = root.join("track.flac");
+    let audio = SearchItem::from_path(audio_path.clone(), root, false, None);
+
+    // Set rating in ratings store
+    let store = crate::services::ratings::Store::shared();
+    assert!(store.set(rated_photo_path.clone(), Some(5)).is_ok());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while store.get(&rated_photo_path) != Some(5) {
+        assert!(std::time::Instant::now() < deadline, "store update timed out");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    // Matches exact rating
+    assert!(fuzzy_score(&rated_photo, "rating:5", root).is_some());
+    assert!(fuzzy_score(&rated_photo, "rating:4", root).is_none());
+
+    // Matches comparison rating
+    assert!(fuzzy_score(&rated_photo, "rating:>=4", root).is_some());
+    assert!(fuzzy_score(&rated_photo, "rating:>3", root).is_some());
+    assert!(fuzzy_score(&rated_photo, "rating:<=2", root).is_none());
+    assert!(fuzzy_score(&rated_photo, "rating:<3", root).is_none());
+
+    // Matches unrated
+    assert!(fuzzy_score(&unrated_photo, "rating:unrated", root).is_some());
+    assert!(fuzzy_score(&unrated_photo, "rating:none", root).is_some());
+    assert!(fuzzy_score(&rated_photo, "rating:unrated", root).is_none());
+
+    // Rating queries strictly reject directories and audio files
+    assert!(fuzzy_score(&directory, "rating:5", root).is_none());
+    assert!(fuzzy_score(&directory, "rating:unrated", root).is_none());
+    assert!(fuzzy_score(&audio, "rating:5", root).is_none());
+    assert!(fuzzy_score(&audio, "rating:unrated", root).is_none());
+
+    // Clean up
+    let _ = store.set(rated_photo_path.clone(), None);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while store.get(&rated_photo_path).is_some() {
+        assert!(std::time::Instant::now() < deadline, "store cleanup timed out");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}

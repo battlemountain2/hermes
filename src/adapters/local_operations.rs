@@ -171,9 +171,15 @@ impl OperationProvider for LocalOperationProvider {
                 .set_display_name_future(&request.new_name, glib::Priority::DEFAULT)
                 .await
             {
-                Ok(_) => emit(OperationEvent::Renamed {
-                    request_id: request.id,
-                }),
+                Ok(new_file) => {
+                    if let (Some(from), Some(to)) = (request.entry.location.native_path(), new_file.path()) {
+                        let _ = crate::services::music_collections::Store::shared().relocate(from.to_path_buf(), to.clone());
+                        let _ = crate::services::ratings::Store::shared().relocate(from.to_path_buf(), to);
+                    }
+                    emit(OperationEvent::Renamed {
+                        request_id: request.id,
+                    });
+                }
                 Err(error) => emit(OperationEvent::Failed {
                     request_id: request.id,
                     message: error.to_string(),
@@ -277,18 +283,26 @@ impl OperationProvider for LocalOperationProvider {
                 }
                 match transfer::transfer_item(
                     source,
-                    target,
+                    target.clone(),
                     request.move_sources,
                     request.overwrite_existing,
                     worker_cancellable.clone(),
                 )
                 .await
                 {
-                    Ok(()) => emit(OperationEvent::TransferItemCompleted {
-                        request_id: request.id,
-                        source: location.clone(),
-                        move_source: request.move_sources,
-                    }),
+                    Ok(()) => {
+                        if request.move_sources {
+                            if let (Some(from), Some(to)) = (location.native_path(), target.path()) {
+                                let _ = crate::services::music_collections::Store::shared().relocate(from.to_path_buf(), to.clone());
+                                let _ = crate::services::ratings::Store::shared().relocate(from.to_path_buf(), to);
+                            }
+                        }
+                        emit(OperationEvent::TransferItemCompleted {
+                            request_id: request.id,
+                            source: location.clone(),
+                            move_source: request.move_sources,
+                        });
+                    }
                     Err(error) => errors.push(format!("{}: {error}", name.to_string_lossy())),
                 }
                 emit(OperationEvent::TransferProgress {

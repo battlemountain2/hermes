@@ -813,6 +813,10 @@ impl SearchFilterPanel {
         if self.content_enabled.is_active() {
             push_filter(&mut parts, "content", &self.content.text());
         }
+        let (_, current_values) = search_filter_values(current);
+        if let Some(rating_raw) = current_values.rating_raw {
+            parts.push(format!("rating:{rating_raw}"));
+        }
         let active = parts.iter().any(|part| part.contains(':'));
         self.update_active(active);
         parts.join(" ")

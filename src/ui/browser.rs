@@ -4367,6 +4367,41 @@ pub(super) fn install_item_context_menu(
     music_actions.set_visible(false);
     content.append(&music_actions);
 
+    let rating_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    rating_row.add_css_class("item-context-rating-row");
+    let rating_label = gtk::Label::new(Some("Rating"));
+    rating_label.add_css_class("item-context-rating-label");
+    rating_label.set_xalign(0.0);
+    rating_label.set_hexpand(true);
+    rating_row.append(&rating_label);
+
+    let stars_box = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    stars_box.set_valign(gtk::Align::Center);
+    let mut rating_buttons = Vec::with_capacity(5);
+    let mut rating_images = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let btn = gtk::Button::new();
+        btn.add_css_class("preview-rating-star");
+        btn.add_css_class("flat");
+        let img = crate::assets::text_icon(crate::assets::icons::STAR, 13);
+        btn.set_child(Some(&img));
+        stars_box.append(&btn);
+        rating_buttons.push(btn);
+        rating_images.push(img);
+    }
+    let clear_rating_btn = gtk::Button::new();
+    clear_rating_btn.add_css_class("preview-rating-star");
+    clear_rating_btn.add_css_class("flat");
+    let clear_img = crate::assets::text_icon(crate::assets::icons::X, 11);
+    clear_rating_btn.set_child(Some(&clear_img));
+    clear_rating_btn.set_tooltip_text(Some("Clear rating"));
+    stars_box.append(&clear_rating_btn);
+
+    rating_row.append(&stars_box);
+    rating_row.set_visible(false);
+    content.append(&rating_row);
+    content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+
     let single = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let open = item_context_option(crate::assets::icons::EXTERNAL_LINK, "Open", "↵");
     let open_with = item_context_option(crate::assets::icons::EXTERNAL_LINK, "Open With…", "");
@@ -4481,6 +4516,41 @@ pub(super) fn install_item_context_menu(
             }
         });
     }
+
+    let target_ratable_paths: Rc<RefCell<Vec<PathBuf>>> = Rc::new(RefCell::new(Vec::new()));
+    for (idx, btn) in rating_buttons.iter().enumerate() {
+        let star_num = (idx + 1) as u8;
+        let paths_target = target_ratable_paths.clone();
+        let popover_weak = popover.downgrade();
+        btn.connect_clicked(move |_| {
+            if let Some(popover) = popover_weak.upgrade() {
+                popover.popdown();
+            }
+            let paths = paths_target.borrow().clone();
+            if !paths.is_empty() {
+                let store = crate::services::ratings::Store::shared();
+                let all_have_same = paths.iter().all(|p| store.get(p) == Some(star_num));
+                let new_rating = if all_have_same { None } else { Some(star_num) };
+                if let Err(error) = store.set_many(paths, new_rating) {
+                    tracing::warn!(%error, "failed to update rating from context menu");
+                }
+            }
+        });
+    }
+
+    let paths_target = target_ratable_paths.clone();
+    let popover_weak = popover.downgrade();
+    clear_rating_btn.connect_clicked(move |_| {
+        if let Some(popover) = popover_weak.upgrade() {
+            popover.popdown();
+        }
+        let paths = paths_target.borrow().clone();
+        if !paths.is_empty() {
+            if let Err(error) = crate::services::ratings::Store::shared().set_many(paths, None) {
+                tracing::warn!(%error, "failed to clear rating from context menu");
+            }
+        }
+    });
 
     let target = Rc::new(RefCell::new(None::<(usize, FileEntry)>));
     let weak = Rc::downgrade(state);
@@ -4702,6 +4772,52 @@ pub(super) fn install_item_context_menu(
         let entries = state.browser.selected_entries();
         let options = super::theme::ThemeManager::shared().context_menu_options();
         music_actions.set_visible(options.music && !in_trash && audio_context_actions_visible(&entries));
+        let ratable_paths = entries
+            .iter()
+            .filter_map(|entry| {
+                let path = entry.location.native_path()?;
+                if crate::services::ratings::is_ratable_format(path) {
+                    Some(path.to_path_buf())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        let rating_visible = !in_trash && !ratable_paths.is_empty();
+        rating_row.set_visible(rating_visible);
+        if rating_visible {
+            target_ratable_paths.replace(ratable_paths.clone());
+            let store = crate::services::ratings::Store::shared();
+            let common_rating = {
+                let first = store.get(&ratable_paths[0]);
+                if ratable_paths.iter().all(|p| store.get(p) == first) {
+                    first
+                } else {
+                    None
+                }
+            };
+            let active = common_rating.unwrap_or(0);
+            for (i, img) in rating_images.iter().enumerate() {
+                if (i as u8) < active {
+                    crate::assets::set_primary_icon(img, crate::assets::icons::STAR_FILLED);
+                } else {
+                    crate::assets::set_text_icon(img, crate::assets::icons::STAR);
+                }
+            }
+            for (i, btn) in rating_buttons.iter().enumerate() {
+                let star_num = i + 1;
+                btn.set_tooltip_text(Some(&if active == star_num as u8 {
+                    format!("Click to remove {star_num}-star rating")
+                } else {
+                    format!("Rate {star_num} star{}", if star_num == 1 { "" } else { "s" })
+                }));
+            }
+            clear_rating_btn.set_sensitive(
+                common_rating.is_some() || ratable_paths.iter().any(|p| store.get(p).is_some()),
+            );
+        } else {
+            target_ratable_paths.replace(Vec::new());
+        }
         open_with.set_visible(options.open_with && !entry.is_directory() && !in_trash);
         for button in [&move_to, &copy_to, &move_multiple, &copy_multiple] {
             button.set_visible(options.transfer_destinations && !in_trash);

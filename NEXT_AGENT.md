@@ -1,5 +1,26 @@
 # Next agent: Hermes performance, file features and media polish
 
+## Milestone 4: File Continuity & 5-Star Local Ratings — 2026-10-17
+
+Completed Milestone 4 of the roadmap on branch `feat/4-file-continuity-and-ratings`:
+
+1. **Music Collection Continuity across Moves and Renames**:
+   - Implemented `relocate(&mut self, from: &Path, to: &Path)` across `music_collections`: automatically updates favorites, playlists, recently added (`indexed`), and listening history counts (`played`) for single files and directory trees.
+   - Connected relocate handlers in `src/adapters/local_operations.rs` during both file/folder renames and folder drag-and-drop / paste moves (`move_sources == true`).
+   - Added native file chooser repair track option ("Locate missing file…") in the playlist context menu for unavailable tracks.
+
+2. **Local 5-Star Rating System**:
+   - Built thread-safe, atomically synced, persistent `ratings::Store` in `src/services/ratings.rs` writing to `gio::glib::user_data_dir().join("strata/ratings-v1.json")`.
+   - Strictly validates rating range (1..=5 stars, or None to clear).
+   - Strictly limited to photos, videos, and documents (`is_ratable_format`); directories and audio files are rejected (music uses favorites/hearts).
+   - Automatically tracks moves and renames via `relocate`.
+   - Registered Lucide `strata-star` and `strata-star-filled` SVG icons in GResource and `src/assets.rs`.
+   - Wired interactive 5-star rating widget in the Preview drawer metadata header (`src/ui/preview.rs`) with live theme updates (`@theme_primary` / `@theme_muted`).
+   - Added interactive rating action row in the browser item context menu (`src/ui/browser.rs`) for single and multi-selection of ratable files.
+   - Integrated search rating filters (`src/services/search.rs`): parses `rating:5`, `rating:>=4`, `rating:>3`, `rating:<=2`, `rating:<3`, `rating:unrated` / `rating:none`. Evaluated in candidate scoring (`filter_bonus` / `score_parsed_item`).
+   - Unit tests added and passing in `src/services/ratings/tests.rs`, `src/services/music_collections/tests.rs`, and `src/services/search/tests.rs`.
+   - Clean `cargo check` and `git diff --check`.
+
 ## Preview layout, search chrome stability & roadmap de-scoping — 2026-10-17
 
 User requested committing the pending working tree updates and pushing them so they can be

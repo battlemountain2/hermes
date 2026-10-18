@@ -3,6 +3,7 @@
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
@@ -58,6 +59,11 @@ struct PreviewState {
     size: gtk::Label,
     modified: gtk::Label,
     content_type: gtk::Label,
+    rating_group: gtk::Box,
+    star_buttons: Vec<gtk::Button>,
+    star_images: Vec<gtk::Image>,
+    current_rating: Cell<Option<u8>>,
+    current_path: RefCell<Option<PathBuf>>,
     content: gtk::Box,
     media: RefCell<Option<media::MediaPreview>>,
     audio: RefCell<Option<audio::AudioPreview>>,
@@ -131,9 +137,11 @@ impl PreviewDrawer {
         let (size_group, size) = metadata_value("SIZE");
         let (modified_group, modified) = metadata_value("MODIFIED");
         let (type_group, content_type) = metadata_value("TYPE");
+        let (rating_group, star_buttons, star_images) = metadata_rating("RATING");
         metadata.append(&size_group);
         metadata.append(&modified_group);
         metadata.append(&type_group);
+        metadata.append(&rating_group);
         pane.append(&metadata);
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -156,6 +164,11 @@ impl PreviewDrawer {
             size,
             modified,
             content_type,
+            rating_group,
+            star_buttons,
+            star_images,
+            current_rating: Cell::new(None),
+            current_path: RefCell::new(None),
             content,
             media: RefCell::new(None),
             audio: RefCell::new(None),
@@ -177,6 +190,24 @@ impl PreviewDrawer {
             animating: Cell::new(false),
             animation_generation: Rc::new(Cell::new(0)),
         });
+
+        for (idx, btn) in state.star_buttons.iter().enumerate() {
+            let weak_state = Rc::downgrade(&state);
+            btn.connect_clicked(move |_| {
+                let Some(state) = weak_state.upgrade() else { return };
+                let star = (idx + 1) as u8;
+                let new_rating = if state.current_rating.get() == Some(star) {
+                    None
+                } else {
+                    Some(star)
+                };
+                if let Some(path) = state.current_path.borrow().clone() {
+                    if crate::services::ratings::Store::shared().set(path, new_rating).is_ok() {
+                        state.update_rating_display(new_rating);
+                    }
+                }
+            });
+        }
         let weak = Rc::downgrade(&state);
         open.connect_clicked(move |_| {
             let Some(state) = weak.upgrade() else {
@@ -297,6 +328,26 @@ impl PreviewDrawer {
 }
 
 impl PreviewState {
+    fn update_rating_display(&self, rating: Option<u8>) {
+        self.current_rating.set(rating);
+        let active = rating.unwrap_or(0);
+        for (i, img) in self.star_images.iter().enumerate() {
+            if (i as u8) < active {
+                crate::assets::set_primary_icon(img, crate::assets::icons::STAR_FILLED);
+            } else {
+                crate::assets::set_text_icon(img, crate::assets::icons::STAR);
+            }
+        }
+        for (i, btn) in self.star_buttons.iter().enumerate() {
+            let star_num = i + 1;
+            btn.set_tooltip_text(Some(&if active == star_num as u8 {
+                format!("Click to remove {star_num}-star rating")
+            } else {
+                format!("Rate {star_num} star{}", if star_num == 1 { "" } else { "s" })
+            }));
+        }
+    }
+
     fn show(self: &Rc<Self>, entry: FileEntry) {
         let was_open = self.opened.replace(true);
         let already_showing = self.current.borrow().as_ref() == Some(&entry);
@@ -460,6 +511,17 @@ impl PreviewState {
         }
         self.content_type.set_text(family.display_label());
         self.clear_content();
+        let path = preview.entry.location.native_path().map(Path::to_owned);
+        let ratable = path.as_deref().is_some_and(crate::services::ratings::is_ratable_format);
+        self.rating_group.set_visible(ratable);
+        if ratable {
+            self.current_path.replace(path.clone());
+            let rating = path.as_deref().and_then(|p| crate::services::ratings::Store::shared().get(p));
+            self.update_rating_display(rating);
+        } else {
+            self.current_path.replace(None);
+            self.update_rating_display(None);
+        }
         let is_audio = preview.content_type.starts_with("audio/");
         match preview.content {
             PreviewContent::Text { content, truncated } => {
@@ -1164,6 +1226,9 @@ impl PreviewState {
         if let Some(preview) = self.media.borrow_mut().take() {
             preview.stop();
         }
+        self.current_path.replace(None);
+        self.update_rating_display(None);
+        self.rating_group.set_visible(false);
         clear_box(&self.content);
     }
 
@@ -1570,6 +1635,34 @@ fn metadata_value(label: &str) -> (gtk::Box, gtk::Label) {
     group.append(&heading);
     group.append(&value);
     (group, value)
+}
+
+fn metadata_rating(label: &str) -> (gtk::Box, Vec<gtk::Button>, Vec<gtk::Image>) {
+    let group = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    group.set_hexpand(true);
+    group.set_valign(gtk::Align::Center);
+    let heading = gtk::Label::new(Some(label));
+    heading.add_css_class("preview-metadata-label");
+    heading.set_xalign(0.0);
+    let stars_box = gtk::Box::new(gtk::Orientation::Horizontal, 1);
+    stars_box.set_valign(gtk::Align::Center);
+    let mut buttons = Vec::with_capacity(5);
+    let mut images = Vec::with_capacity(5);
+    for i in 0..5 {
+        let btn = gtk::Button::new();
+        btn.add_css_class("preview-rating-star");
+        btn.add_css_class("flat");
+        let img = crate::assets::text_icon(crate::assets::icons::STAR, 13);
+        btn.set_child(Some(&img));
+        btn.set_tooltip_text(Some(&format!("Rate {} star{}", i + 1, if i == 0 { "" } else { "s" })));
+        stars_box.append(&btn);
+        buttons.push(btn);
+        images.push(img);
+    }
+    group.append(&heading);
+    group.append(&stars_box);
+    group.set_visible(false);
+    (group, buttons, images)
 }
 
 fn set_pdf_page_texture(

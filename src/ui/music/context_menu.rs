@@ -243,6 +243,47 @@ fn show(
                 CollectionCommand::Remove(id, paths.clone()),
             );
             if let Some(path) = paths.first() {
+                if !path.exists() {
+                    let repair_path = path.clone();
+                    let repair_state = state.clone();
+                    let repair_popover = popover.downgrade();
+                    let control = gtk::Button::with_label("Locate missing file…");
+                    control.set_child(Some(&control_contents(icons::SEARCH, "Locate missing file…")));
+                    control.add_css_class("music-control");
+                    control.connect_clicked(move |btn| {
+                        if let Some(menu) = repair_popover.upgrade() {
+                            menu.popdown();
+                        }
+                        let Some(root) = btn.root().and_downcast::<gtk::Window>() else {
+                            return;
+                        };
+                        #[allow(deprecated)]
+                        let dialog = gtk::FileChooserNative::new(
+                            Some("Locate Track File"),
+                            Some(&root),
+                            gtk::FileChooserAction::Open,
+                            Some("Select"),
+                            Some("Cancel"),
+                        );
+                        let old_path = repair_path.clone();
+                        let state = repair_state.clone();
+                        #[allow(deprecated)]
+                        dialog.connect_response(move |dialog, response| {
+                            if response == gtk::ResponseType::Accept {
+                                if let Some(new_path) = dialog.file().and_then(|f| f.path()) {
+                                    if let Some(state) = state.upgrade().filter(|s| !s.disposed.get()) {
+                                        state.collection_command(CollectionCommand::Relocate {
+                                            from: old_path.clone(),
+                                            to: new_path,
+                                        });
+                                    }
+                                }
+                            }
+                        });
+                        dialog.show();
+                    });
+                    contents.append(&control);
+                }
                 collection_action(
                     &contents,
                     &popover,

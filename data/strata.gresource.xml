@@ -58,5 +58,7 @@
     <file>icons/scalable/actions/strata-trash.svg</file>
     <file>icons/scalable/actions/strata-video.svg</file>
     <file>icons/scalable/actions/strata-x.svg</file>
+    <file>icons/scalable/actions/strata-star.svg</file>
+    <file>icons/scalable/actions/strata-star-filled.svg</file>
   </gresource>
 </gresources>

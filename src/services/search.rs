@@ -130,6 +130,91 @@ impl InferredFilterChip {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RatingFilter {
+    Exact(u8),
+    AtLeast(u8),
+    GreaterThan(u8),
+    AtMost(u8),
+    LessThan(u8),
+    Unrated,
+}
+
+impl RatingFilter {
+    pub fn parse(input: &str) -> Option<Self> {
+        let trimmed = input.trim();
+        if trimmed.eq_ignore_ascii_case("unrated") || trimmed.eq_ignore_ascii_case("none") {
+            return Some(Self::Unrated);
+        }
+
+        fn clean_num(s: &str) -> &str {
+            let s = s.trim();
+            let s = s
+                .strip_suffix("-stars")
+                .or_else(|| s.strip_suffix("-star"))
+                .or_else(|| s.strip_suffix("stars"))
+                .or_else(|| s.strip_suffix("star"))
+                .unwrap_or(s);
+            s.trim_end_matches('-').trim()
+        }
+
+        if let Some(rest) = trimmed.strip_prefix(">=") {
+            let n = clean_num(rest).parse::<u8>().ok()?;
+            if (1..=5).contains(&n) {
+                return Some(Self::AtLeast(n));
+            }
+            return None;
+        }
+
+        if let Some(rest) = trimmed.strip_prefix('>') {
+            let n = clean_num(rest).parse::<u8>().ok()?;
+            if (0..=5).contains(&n) {
+                return Some(Self::GreaterThan(n));
+            }
+            return None;
+        }
+
+        if let Some(rest) = trimmed.strip_prefix("<=") {
+            let n = clean_num(rest).parse::<u8>().ok()?;
+            if (1..=5).contains(&n) {
+                return Some(Self::AtMost(n));
+            }
+            return None;
+        }
+
+        if let Some(rest) = trimmed.strip_prefix('<') {
+            let n = clean_num(rest).parse::<u8>().ok()?;
+            if (1..=6).contains(&n) {
+                return Some(Self::LessThan(n));
+            }
+            return None;
+        }
+
+        let num_str = trimmed.strip_prefix('=').unwrap_or(trimmed);
+        let cleaned = clean_num(num_str);
+        if cleaned == "0" {
+            return Some(Self::Unrated);
+        }
+        let n = cleaned.parse::<u8>().ok()?;
+        if (1..=5).contains(&n) {
+            Some(Self::Exact(n))
+        } else {
+            None
+        }
+    }
+
+    pub fn matches(&self, path: &Path, rating: Option<u8>) -> bool {
+        match self {
+            Self::Exact(target) => rating == Some(*target),
+            Self::AtLeast(min) => rating.is_some_and(|r| r >= *min),
+            Self::GreaterThan(min) => rating.is_some_and(|r| r > *min),
+            Self::AtMost(max) => rating.is_some_and(|r| r <= *max),
+            Self::LessThan(max) => rating.is_some_and(|r| r < *max),
+            Self::Unrated => rating.is_none() && crate::services::ratings::is_ratable_format(path),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SearchFilterValues {
     pub directory: Option<bool>,
@@ -141,6 +226,8 @@ pub struct SearchFilterValues {
     pub artist: Option<String>,
     pub album: Option<String>,
     pub title: Option<String>,
+    pub rating: Option<RatingFilter>,
+    pub rating_raw: Option<String>,
     pub inferred: Vec<InferredFilterChip>,
 }
 
@@ -158,6 +245,8 @@ pub fn search_filter_values(query: &str) -> (String, SearchFilterValues) {
             artist: parsed.artist.clone().or_else(|| parsed.inferred_artist.clone()),
             album: parsed.album.clone(),
             title: parsed.title.clone(),
+            rating: parsed.rating,
+            rating_raw: parsed.rating_raw.clone(),
             inferred: parsed.inferred.clone(),
         },
     )
@@ -254,6 +343,15 @@ fn filter_bonus(item: &SearchItem, query: &ParsedSearchQuery) -> Option<i64> {
     {
         return None;
     }
+    if let Some(rating_filter) = &query.rating {
+        if item.is_directory {
+            return None;
+        }
+        let current_rating = crate::services::ratings::Store::shared().get(&item.path);
+        if !rating_filter.matches(&item.path, current_rating) {
+            return None;
+        }
+    }
     if let Some(extension) = query.extension.as_deref()
         && (item.is_directory
             || item
@@ -329,7 +427,16 @@ fn score_parsed_item(
         None
     };
     if query.terms.is_empty() {
-        return content_score.or(Some(if item.is_directory { 20 } else { 0 } + inferred_artist_bonus));
+        let rating_bonus = if query.rating.is_some() {
+            crate::services::ratings::Store::shared()
+                .get(&item.path)
+                .map_or(0, |r| r as i64 * 100)
+        } else {
+            0
+        };
+        return content_score.or(Some(
+            if item.is_directory { 20 } else { 0 } + inferred_artist_bonus + rating_bonus,
+        ));
     }
 
     let raw_terms = query.terms.as_str();
@@ -398,7 +505,14 @@ fn score_parsed_item(
     if item.is_directory {
         score += 20;
     }
-    Some(score + content_score.unwrap_or_default() + inferred_artist_bonus)
+    let rating_bonus = if query.rating.is_some() {
+        crate::services::ratings::Store::shared()
+            .get(&item.path)
+            .map_or(0, |r| r as i64 * 100)
+    } else {
+        0
+    };
+    Some(score + content_score.unwrap_or_default() + inferred_artist_bonus + rating_bonus)
 }
 
 pub(crate) fn fold_diacritics(input: &str) -> String {
@@ -586,6 +700,8 @@ struct ParsedSearchQuery {
     inferred_artist: Option<String>,
     album: Option<String>,
     title: Option<String>,
+    rating: Option<RatingFilter>,
+    rating_raw: Option<String>,
     inferred: Vec<InferredFilterChip>,
 }
 
@@ -647,6 +763,14 @@ impl ParsedSearchQuery {
                 } else {
                     parsed.content = Some(value.to_owned());
                     parsed.directory = Some(false);
+                }
+                continue;
+            } else if let Some(value) = lower.strip_prefix("rating:") {
+                if let Some(filter) = RatingFilter::parse(value) {
+                    parsed.rating = Some(filter);
+                    parsed.rating_raw = Some(value.to_owned());
+                } else {
+                    remaining.push(token);
                 }
                 continue;
             } else if let Some((field, value)) = lower.split_once(':') {
@@ -716,6 +840,7 @@ impl ParsedSearchQuery {
             && self.inferred_artist.is_none()
             && self.album.is_none()
             && self.title.is_none()
+            && self.rating.is_none()
     }
 }
 

@@ -32,6 +32,16 @@ pub(crate) fn initialize_saved_searches(application: &gtk::Application) {
     });
 }
 
+pub(crate) fn initialize_ratings(application: &gtk::Application) {
+    use gtk::prelude::*;
+    let store = crate::services::ratings::Store::shared();
+    application.connect_shutdown(move |_| {
+        if let Err(error) = store.flush(std::time::Duration::from_secs(1)) {
+            tracing::warn!("Ratings changes did not finish cleanly before shutdown: {error}");
+        }
+    });
+}
+
 pub(crate) fn initialize_music(application: &gtk::Application) {
     use gtk::prelude::*;
     let controller = music::controller::Controller::for_application(application);

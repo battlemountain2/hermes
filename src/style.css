@@ -1430,6 +1430,20 @@ paned > separator {
   font-size: 0.86em;
 }
 
+.preview-rating-star {
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  box-shadow: none;
+  min-height: 18px;
+  min-width: 18px;
+  padding: 0 1px;
+}
+
+.preview-rating-star:hover {
+  background: alpha(@theme_muted, 0.6);
+}
+
 .preview-content,
 .preview-content scrolledwindow,
 .preview-content viewport {
@@ -2180,6 +2194,19 @@ menubutton.column-header-action > button:focus-visible image {
 .item-context-summary {
   color: @theme_dim_text;
   font-size: 0.82em;
+}
+
+.item-context-rating-row {
+  align-items: center;
+  padding: 3px 6px;
+}
+
+.item-context-rating-label {
+  color: @theme_dim_text;
+  font-size: 0.82em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .item-context-menu separator {
