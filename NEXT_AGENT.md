@@ -1,5 +1,32 @@
 # Next agent: Hermes performance, file features and media polish
 
+## Multi-Sheet Spreadsheet Engine & Scrollable Fullscreen Viewer — 2026-10-17
+
+Completed on branch `feat/6-spreadsheet-and-settings-polish` (commit `f841dc7`):
+
+1. **Multi-Sheet Workbook Parsing (`src/services/table.rs`)**:
+   - Upgraded `SpreadsheetData` to read up to 16 worksheets (`TABLE_SHEET_LIMIT = 16`) into `sheets: Vec<SheetData>`, tracking independent row/column counts and truncation states per sheet.
+   - Enforced backward compatibility for single-sheet consumers and tests while ensuring zero extra disk I/O.
+   - Formatted cells with proper integer representation (`Data::Int`), formatted floats, ISO timestamps, and highlighted formula error values (`#ERROR`).
+
+2. **Interactive Sheet Tabs (`src/ui/table_view.rs`)**:
+   - Replaced static text labels with tactile interactive notebook tab buttons (`.spreadsheet-sheet-button` with `.active-sheet-tab` indicators).
+   - Utilizes a crossfading `gtk::Stack` to transition between worksheets without factory rebinding or unneeded re-parsing.
+   - Retains independent column sorting (`SortKey` / `CustomSorter`) and scroll positions per sheet.
+   - Integrated monospace technical dimension badge (`142 rows · 12 cols · Sheet 1 of 3`).
+
+3. **Scrollable In & Out Fullscreen Viewer**:
+   - Designed `SpreadsheetView` with full fullscreen lifecycle controller, mirroring `PdfFullscreen`.
+   - Dedicated Maximize/Minimize header button (`icons::MAXIMIZE` / `icons::MINIMIZE`).
+   - Seamless keyboard navigation: `F` opens/exits fullscreen, `Escape` exits fullscreen.
+   - Reparents the viewer cleanly back into the preview drawer upon exit, preserving scroll position.
+   - Styled using 100% semantic `@theme_*` tokens in `src/style.css`.
+
+4. **Validation**:
+   - All 779 binary unit tests pass (`cargo test --bin strata --jobs 2 -- --test-threads=2`).
+   - Stress tests in `tests/challenger_m4_2_stress.rs` pass cleanly (fixed whitespace XML parsing in `generate_massive_ods`).
+   - Warning-free build; `cargo check` and `git diff --check` clean.
+
 ## Music Context Menus, Dynamic Open Targets & Sidebar Flashing Fix — 2026-10-17
 
 Completed on branch `feat/5-music-context-menu-and-open-targets` (commit `5898f3b`):
