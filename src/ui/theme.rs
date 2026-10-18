@@ -266,6 +266,7 @@ pub struct ThemeManager {
     pending_noctalia_refresh: RefCell<Option<glib::SourceId>>,
     noctalia_poll: RefCell<Option<glib::SourceId>>,
     previewing: Cell<bool>,
+    layout_observers: RefCell<Vec<Rc<dyn Fn()>>>,
 }
 
 impl ThemeManager {
@@ -312,6 +313,7 @@ impl ThemeManager {
             pending_noctalia_refresh: RefCell::new(None),
             noctalia_poll: RefCell::new(None),
             previewing: Cell::new(false),
+            layout_observers: RefCell::new(Vec::new()),
         });
         manager.noctalia.borrow_mut().refresh();
         manager.install_provider();
@@ -589,6 +591,10 @@ impl ThemeManager {
         self.save_preferences();
     }
 
+    pub fn observe_layout<F: Fn() + 'static>(&self, callback: F) {
+        self.layout_observers.borrow_mut().push(Rc::new(callback));
+    }
+
     pub fn music_player_layout(&self) -> String {
         self.preferences.borrow().music_player_layout.clone()
     }
@@ -596,6 +602,10 @@ impl ThemeManager {
     pub fn set_music_player_layout(&self, layout: &str) {
         self.preferences.borrow_mut().music_player_layout = layout.to_owned();
         self.save_preferences();
+        let observers = self.layout_observers.borrow().clone();
+        for observer in observers {
+            observer();
+        }
     }
 
     pub fn interface_font(&self) -> &str {

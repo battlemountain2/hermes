@@ -36,6 +36,7 @@ pub struct ImmersiveView {
 
 struct ImmersiveState {
     controller: Rc<Controller>,
+    _observer: RefCell<Option<Rc<dyn Fn()>>>,
     on_open_library: Rc<dyn Fn()>,
     visualizer_canvas: gtk::DrawingArea,
     visualizer_active: Cell<bool>,
@@ -238,7 +239,7 @@ impl ImmersiveView {
         // Hover-Revealed Playback & Volume Controls
         let hover_controls = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         hover_controls.add_css_class("immersive-hover-controls");
-        hover_controls.set_visible(false);
+        hover_controls.set_opacity(0.0);
 
         let shuffle_button = gtk::ToggleButton::new();
         shuffle_button.set_child(Some(&assets::primary_icon(icons::SHUFFLE, 16)));
@@ -335,6 +336,7 @@ impl ImmersiveView {
 
         let state = Rc::new(ImmersiveState {
             controller: controller.clone(),
+            _observer: RefCell::new(None),
             on_open_library: on_open_library.clone(),
             visualizer_canvas: visualizer_canvas.clone(),
             visualizer_active: Cell::new(false),
@@ -376,21 +378,21 @@ impl ImmersiveView {
             syncing: Cell::new(false),
         });
 
-        // Motion Controller for Hover Reveal
+        // Motion Controller for Hover Reveal (Controls fade in smoothly without layout jumping)
         let motion = gtk::EventControllerMotion::new();
         let hover_state = Rc::downgrade(&state);
         motion.connect_enter(move |_, _, _| {
             if let Some(state) = hover_state.upgrade() {
-                state.hover_controls.set_visible(true);
+                state.hover_controls.set_opacity(1.0);
             }
         });
         let leave_state = Rc::downgrade(&state);
         motion.connect_leave(move |_| {
             if let Some(state) = leave_state.upgrade() {
-                state.hover_controls.set_visible(false);
+                state.hover_controls.set_opacity(0.0);
             }
         });
-        deck_container.add_controller(motion);
+        overlay.add_controller(motion);
 
         // Visualizer Canvas Drawing
         let vis_state = Rc::downgrade(&state);
@@ -566,6 +568,7 @@ impl ImmersiveView {
             }
         });
         controller.observe(&obs_cb);
+        state._observer.replace(Some(obs_cb));
 
         state.sync();
 
@@ -596,8 +599,8 @@ impl ImmersiveState {
                     &self.art_image,
                     &file_entry(track),
                     icons::MUSIC,
-                    160,
-                    160,
+                    384,
+                    384,
                 );
                 // Load lyrics
                 let lyrics = find_lyrics_for_audio_file(&track.path);
@@ -726,10 +729,10 @@ impl ImmersiveState {
                     label.add_css_class("active-lyric");
                     // Auto-scroll into center view
                     let adj = self.lyrics_scroll.vadjustment();
-                    if let Some(bounds) = label.compute_bounds(&self.lyrics_scroll) {
+                    if let Some(bounds) = label.compute_bounds(&self.lyrics_box) {
                         let target = bounds.y() as f64 - (self.lyrics_scroll.height() as f64 / 2.0)
                             + (bounds.height() as f64 / 2.0);
-                        adj.set_value(target.clamp(adj.lower(), adj.upper() - adj.page_size()));
+                        adj.set_value(target.clamp(adj.lower(), (adj.upper() - adj.page_size()).max(0.0)));
                     }
                 }
                 self.active_lyric_index.set(active_idx);

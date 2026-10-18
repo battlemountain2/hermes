@@ -162,6 +162,27 @@ theme = "azure-glow"
 }
 
 #[test]
+#[ignore = "requires a GTK display; tests theme manager layout observer"]
+fn layout_observer_notified_on_music_player_layout_change() {
+    gtk::init().unwrap();
+    use super::ThemeManager;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let manager = ThemeManager::shared();
+    let notified = Rc::new(Cell::new(false));
+    let flag = notified.clone();
+    manager.observe_layout(move || {
+        flag.set(true);
+    });
+    let original = manager.music_player_layout();
+    let new_layout = if original == "top" { "bottom" } else { "top" };
+    manager.set_music_player_layout(new_layout);
+    assert!(notified.get());
+    manager.set_music_player_layout(&original);
+}
+
+#[test]
 fn interface_font_preference_can_select_jetbrains_mono() {
     let preferences: Preferences = toml::from_str(
         r#"
@@ -237,6 +258,7 @@ fn noctalia_monitor_debounces_replacement_and_recovers_without_overriding_other_
         pending_noctalia_refresh: RefCell::new(None),
         noctalia_poll: RefCell::new(None),
         previewing: Cell::new(false),
+        layout_observers: RefCell::new(Vec::new()),
     });
     assert!(
         manager.waveform_colors().is_none(),

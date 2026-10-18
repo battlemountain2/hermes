@@ -24,6 +24,7 @@ pub struct MiniPlayer {
 
 struct MiniPlayerState {
     controller: Rc<Controller>,
+    _observer: RefCell<Option<Rc<dyn Fn()>>>,
     cover: gtk::Image,
     title: gtk::Label,
     artist: gtk::Label,
@@ -154,6 +155,7 @@ impl MiniPlayer {
 
         let state = Rc::new(MiniPlayerState {
             controller: controller.clone(),
+            _observer: RefCell::new(None),
             cover,
             title,
             artist,
@@ -243,6 +245,7 @@ impl MiniPlayer {
             }
         });
         controller.observe(&obs_cb);
+        state._observer.replace(Some(obs_cb));
 
         state.sync();
 

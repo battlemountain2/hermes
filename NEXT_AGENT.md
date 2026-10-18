@@ -6,21 +6,25 @@ Completed on branch `feat/6-spreadsheet-and-settings-polish`:
 
 1. **Subtle & Polished Music Player Upgrades (Top Hero Deck vs Persistent Bottom Dock)**:
    - Configured cleanly in `Settings > Audio & DSP > Player layout` with visual choice cards for `"top"` (Top Hero Deck) and `"bottom"` (Bottom Dock), stored in `preferences.music_player_layout`.
-   - Zero layout toggle clutter on the music workspace itself.
+   - Real-time reactivity via `ThemeManager::observe_layout`: switches between layouts immediately without restarting or reopening windows.
+   - Top Hero Deck positioned cleanly directly beneath the header and above navigation tabs, with zero duplicate bottom bar controls in "top" layout.
+   - Persistent bottom dock bar cleanly hidden during immersive mode and when viewing Music workspace in "top" layout, while remaining reachable in the Files workspace.
    - Clean tabular track queue listing with dedicated track numbering (`.music-track-num`).
    - Integrated header mode action button to open Immersive Listening Mode directly.
 
 2. **Cider-Inspired Immersive Listening Mode (`src/ui/music/immersive.rs`)**:
    - Dynamic ambient color aura canvas rendered via Cairo with soft radial gradients following live theme accent/highlight tokens and artwork tones.
-   - Hover-revealed playback and volume controls: during resting playback, controls disappear smoothly to highlight cover art, song title, artist, and scrub bar.
-   - Clean synchronized LRC lyrics parser (`src/services/lyrics.rs`) with binary-search active line activation, interactive click-to-seek, and smooth auto-centering scroll. Labeled concisely as "Lyrics".
-   - Automatic solo centered artwork scaling when no lyrics are available.
-   - Aesthetic full-screen visualizer mode with 3 user-selectable generative styles: `Ribbons` (neon harmonic waveforms), `Tunnel` (warp speed bass tunnel), and `Cosmic` (orbital particle dust). Labeled concisely as "Visualizer", hiding lyrics and artwork for a focused ambient experience.
+   - Observer retention fix: strong observer handle retained in state (`_observer: RefCell<Option<Rc<dyn Fn()>>>`), ensuring continuous track change notifications.
+   - Hover-revealed playback and volume controls: smooth opacity transition (`set_opacity(0.0 / 1.0)`) without layout displacement or vertical jumping.
+   - Clean synchronized LRC lyrics parser (`src/services/lyrics.rs`) with stable coordinate calculation relative to `lyrics_box` for smooth centering during auto-scroll.
+   - Automatic solo centered artwork scaling (384x384 request) when no lyrics are available.
+   - Aesthetic full-screen visualizer mode with 3 user-selectable generative styles: `Ribbons` (neon harmonic waveforms), `Tunnel` (warp speed bass tunnel), and `Cosmic` (orbital particle dust), hiding lyrics and artwork for a focused ambient experience.
    - Floating pill transport dock active during visualizer mode with compact playback, volume, and timing info.
-   - Keyboard navigation: `<Control>i` toggles immersive view; `Escape` returns to Library.
+   - Keyboard navigation: `<Control>i` toggles immersive view; `Escape` returns to Library without clobbering views.
 
 3. **Floating Mini-Player Micro-Deck (`src/ui/music/mini.rs`)**:
    - Secondary GTK window titled `"Hermes Mini"` ($380 \times 128$).
+   - Observer retention fix ensuring metadata and progress bars stay alive and responsive.
    - Minimalist, subtle monochrome badges (`AUDIO`, `48kHz FLAC`), compact title/artist row, scrub slider, and volume slider.
    - Expand-to-immersive button (`Ctrl+I`).
    - Keyboard shortcut `<Control><Shift>m` wired to `win.mini-player`.
@@ -32,8 +36,10 @@ Completed on branch `feat/6-spreadsheet-and-settings-polish`:
      ```
 
 4. **Code Quality, Theming & Test Organization**:
+   - Cleaned GTK CSS properties: eliminated unsupported `max-width`, `overflow`, `align-items`, `justify-content`, and `margin: auto`.
+   - Re-entrant loop prevention in `sync_controller`: `self.syncing.set(false)` deferred until after updating hero transport and volume controls.
    - Strictly 100% semantic `@theme_*` tokens applied across all CSS and Cairo renderers; zero static hex/RGB colors.
-   - Adjacent test modules (`#[cfg(test)] mod tests;`): `src/services/lyrics/tests.rs`, `src/ui/music/immersive/tests.rs`, `src/ui/music/mini/tests.rs`.
+   - Adjacent test modules (`#[cfg(test)] mod tests;`): `src/services/lyrics/tests.rs`, `src/ui/music/immersive/tests.rs`, `src/ui/music/mini/tests.rs`, `src/ui/music/tests.rs`, and `src/ui/theme/tests.rs`.
    - Zero compiler warnings; 786 binary unit tests pass cleanly (`cargo test --bin strata --jobs 2 -- --test-threads=2`).
    - Clean `git diff --check` and clean `cargo check`.
 

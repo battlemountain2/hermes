@@ -953,3 +953,34 @@ fn desktop_real_folder_full_song_and_auto_next() {
     player.shutdown();
     window.close();
 }
+
+#[test]
+#[ignore = "Requires isolated GTK display"]
+fn desktop_workspace_switching_and_layout_changes_update_bar_visibility() {
+    gtk::init().unwrap();
+    let player = MusicPlayer::with_session(None);
+    player.controller().transport_visible.set(true);
+
+    // Initial state in files workspace with top layout
+    player.set_workspace("files");
+    assert!(player.bar().is_visible(), "bottom dock visible in files view");
+
+    // Switching to music with top layout hides bottom dock and shows hero deck
+    super::super::theme::ThemeManager::shared().set_music_player_layout("top");
+    player.set_workspace("music");
+    assert!(!player.bar().is_visible(), "bottom dock hidden in music view with top layout");
+    assert!(player.state.hero_deck.is_visible(), "hero deck visible in music view with top layout");
+
+    // Switching to bottom layout shows bottom dock and hides hero deck
+    super::super::theme::ThemeManager::shared().set_music_player_layout("bottom");
+    assert!(player.bar().is_visible(), "bottom dock visible with bottom layout");
+    assert!(!player.state.hero_deck.is_visible(), "hero deck hidden with bottom layout");
+
+    // Entering immersive mode hides bottom dock regardless of layout
+    player.set_workspace("immersive");
+    assert!(!player.bar().is_visible(), "bottom dock hidden in immersive mode");
+
+    // Restore top layout
+    super::super::theme::ThemeManager::shared().set_music_player_layout("top");
+    player.shutdown();
+}

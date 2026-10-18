@@ -104,6 +104,7 @@ struct State {
     pending_observation: RefCell<Option<collections::PendingObservation>>,
     mini_player: RefCell<Option<mini::MiniPlayer>>,
     open_immersive: RefCell<Option<Rc<dyn Fn()>>>,
+    current_workspace: RefCell<String>,
     hero_deck: gtk::Box,
     hero_cover: gtk::Image,
     hero_title: gtk::Label,
@@ -261,49 +262,6 @@ impl MusicPlayer {
         mini_btn.add_css_class("music-panel-toggle");
         header.append(&mini_btn);
         view.append(&header);
-        let navigation_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        navigation_row.add_css_class("music-navigation");
-        let mut navigation = Vec::new();
-        for (section, label) in [
-            (Section::Albums, "Albums"),
-            (Section::Artists, "Artists"),
-            (Section::Songs, "Songs"),
-            (Section::Favorites, "Favorites"),
-            (Section::Playlists, "Playlists"),
-        ] {
-            let control = gtk::ToggleButton::with_label(label);
-            control.add_css_class("music-control");
-            control.add_css_class("music-panel-toggle");
-            if section == Section::Favorites {
-                control.set_child(Some(&control_contents(icons::HEART, label)));
-            }
-            if let Some((_, first)) = navigation.first() {
-                control.set_group(Some(first));
-            }
-            navigation_row.append(&control);
-            navigation.push((section, control));
-        }
-        navigation[0].1.set_active(true);
-        view.append(&navigation_row);
-        let playlist_editor = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        playlist_editor.add_css_class("music-playlist-actions");
-        let create_playlist = gtk::Button::with_label("Create playlist");
-        let edit_playlist = gtk::Button::with_label("Edit playlist");
-        for control in [&create_playlist, &edit_playlist] {
-            control.add_css_class("music-control");
-            playlist_editor.append(control);
-        }
-        view.append(&playlist_editor);
-        playlist_editor.set_visible(false);
-        let collection_status = text("", "music-detail");
-        collection_status.set_wrap(true);
-        collection_status.set_visible(false);
-        view.append(&collection_status);
-        let status = text(
-            "Single-click to browse · double-click an album or song to play",
-            "music-detail",
-        );
-        view.append(&status);
 
         let hero_deck = gtk::Box::new(gtk::Orientation::Horizontal, 14);
         hero_deck.add_css_class("music-hero-deck");
@@ -337,6 +295,7 @@ impl MusicPlayer {
         let hero_seek = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
         hero_seek.set_draw_value(false);
         hero_seek.set_hexpand(true);
+        hero_seek.set_sensitive(false);
         hero_seek.add_css_class("music-hero-seek");
         let hero_clock = text("0:00 / 0:00", "music-detail");
         hero_scrub_row.append(&hero_seek);
@@ -397,6 +356,50 @@ impl MusicPlayer {
         hero_right.append(&hero_bottom_row);
         hero_deck.append(&hero_right);
         view.append(&hero_deck);
+
+        let navigation_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        navigation_row.add_css_class("music-navigation");
+        let mut navigation = Vec::new();
+        for (section, label) in [
+            (Section::Albums, "Albums"),
+            (Section::Artists, "Artists"),
+            (Section::Songs, "Songs"),
+            (Section::Favorites, "Favorites"),
+            (Section::Playlists, "Playlists"),
+        ] {
+            let control = gtk::ToggleButton::with_label(label);
+            control.add_css_class("music-control");
+            control.add_css_class("music-panel-toggle");
+            if section == Section::Favorites {
+                control.set_child(Some(&control_contents(icons::HEART, label)));
+            }
+            if let Some((_, first)) = navigation.first() {
+                control.set_group(Some(first));
+            }
+            navigation_row.append(&control);
+            navigation.push((section, control));
+        }
+        navigation[0].1.set_active(true);
+        view.append(&navigation_row);
+        let playlist_editor = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        playlist_editor.add_css_class("music-playlist-actions");
+        let create_playlist = gtk::Button::with_label("Create playlist");
+        let edit_playlist = gtk::Button::with_label("Edit playlist");
+        for control in [&create_playlist, &edit_playlist] {
+            control.add_css_class("music-control");
+            playlist_editor.append(control);
+        }
+        view.append(&playlist_editor);
+        playlist_editor.set_visible(false);
+        let collection_status = text("", "music-detail");
+        collection_status.set_wrap(true);
+        collection_status.set_visible(false);
+        view.append(&collection_status);
+        let status = text(
+            "Single-click to browse · double-click an album or song to play",
+            "music-detail",
+        );
+        view.append(&status);
         let album_model = gtk::StringList::new(&[]);
         let album_selection = gtk::SingleSelection::new(Some(album_model.clone()));
         let albums = gtk::ListView::new(Some(album_selection.clone()), Some(label_factory()));
@@ -651,6 +654,7 @@ impl MusicPlayer {
             pending_observation: RefCell::new(None),
             mini_player: RefCell::new(None),
             open_immersive: RefCell::new(None),
+            current_workspace: RefCell::new("files".to_owned()),
             hero_deck,
             hero_cover,
             hero_title,
@@ -1097,7 +1101,40 @@ impl MusicPlayer {
         });
         state.controller.attach(&state);
         state.sync_actions();
+        let weak_state = Rc::downgrade(&state);
+        super::theme::ThemeManager::shared().observe_layout(move || {
+            if let Some(state) = weak_state.upgrade() {
+                state.sync_bar_visibility();
+                let layout = super::theme::ThemeManager::shared().music_player_layout();
+                let is_top = layout == "top";
+                let ws = state.current_workspace.borrow();
+                state.hero_deck.set_visible(
+                    is_top && state.transport_visible.get() && ws.as_str() == "music",
+                );
+            }
+        });
         Self { state }
+    }
+
+    pub fn set_workspace(&self, workspace_name: &str) {
+        self.state.current_workspace.replace(workspace_name.to_owned());
+        self.state.sync_bar_visibility();
+        let layout = super::theme::ThemeManager::shared().music_player_layout();
+        let is_top = layout == "top";
+        self.state.hero_deck.set_visible(
+            is_top && self.state.transport_visible.get() && workspace_name == "music",
+        );
+    }
+
+    #[expect(dead_code, reason = "Public layout refresh hook")]
+    pub fn refresh_layout(&self) {
+        self.state.sync_bar_visibility();
+        let layout = super::theme::ThemeManager::shared().music_player_layout();
+        let is_top = layout == "top";
+        let ws = self.state.current_workspace.borrow();
+        self.state.hero_deck.set_visible(
+            is_top && self.state.transport_visible.get() && ws.as_str() == "music",
+        );
     }
 
     pub fn bar(&self) -> gtk::Widget {
@@ -1464,7 +1501,6 @@ impl State {
         } else {
             self.repeat.add_css_class("repeat-enabled");
         }
-        self.syncing.set(false);
         let muted = stream.as_ref().is_some_and(|stream| stream.is_muted());
         if self.muted_icon.replace(muted) != muted {
             self.speaker.set_child(Some(&assets::primary_icon(
@@ -1474,7 +1510,8 @@ impl State {
         }
         let layout = super::theme::ThemeManager::shared().music_player_layout();
         let is_top = layout == "top";
-        self.hero_deck.set_visible(is_top && self.transport_visible.get());
+        let is_music_ws = self.current_workspace.borrow().as_str() == "music";
+        self.hero_deck.set_visible(is_top && self.transport_visible.get() && is_music_ws);
         if let Some(track) = track.as_ref() {
             self.hero_title.set_text(&track.title());
             self.hero_detail.set_text(&format!("{} · {}", track.artist(), track.album()));
@@ -1517,12 +1554,31 @@ impl State {
             if muted { icons::MUTED } else { icons::VOLUME },
             16,
         )));
+        self.syncing.set(false);
 
-        self.bar.set_visible(self.transport_visible.get());
+        self.sync_bar_visibility();
         if self.displayed_revision.replace(self.queue_revision.get()) != self.queue_revision.get() {
             self.render_queue();
         }
         self.sync_transport();
+    }
+
+    fn sync_bar_visibility(&self) {
+        if !self.transport_visible.get() {
+            self.bar.set_visible(false);
+            return;
+        }
+        let ws = self.current_workspace.borrow();
+        if ws.as_str() == "immersive" {
+            self.bar.set_visible(false);
+            return;
+        }
+        let layout = super::theme::ThemeManager::shared().music_player_layout();
+        if ws.as_str() == "music" && layout == "top" {
+            self.bar.set_visible(false);
+            return;
+        }
+        self.bar.set_visible(true);
     }
 
     fn render_queue(&self) {
@@ -1579,6 +1635,7 @@ impl State {
         );
         self.syncing.set(true);
         self.seek_control.sync();
+        self.hero_seek.set_sensitive(stream.is_some());
         if let Some(stream) = stream {
             self.play
                 .set_tooltip_text(Some(if stream.error().is_some() {

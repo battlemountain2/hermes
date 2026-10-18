@@ -1055,7 +1055,6 @@ headerbar menubutton.header-action > button:focus-visible image {
   border-right: 1px solid alpha(@theme_border, 0.26);
   border-radius: 6px 0 0 6px;
   min-width: 236px;
-  max-width: 236px;
   padding: 14px 10px 10px;
 }
 
@@ -1171,7 +1170,6 @@ headerbar menubutton.header-action > button:focus-visible image {
   border: 1px solid alpha(@theme_border, 0.24);
   border-radius: 4px;
   margin-bottom: 12px;
-  overflow: hidden;
 }
 
 .settings-card .settings-option {
@@ -1308,8 +1306,6 @@ headerbar menubutton.header-action > button:focus-visible image {
 
 .settings-choice-icon-box {
   min-height: 44px;
-  align-items: center;
-  justify-content: center;
   margin: 4px 0;
 }
 
@@ -1368,8 +1364,6 @@ headerbar menubutton.header-action > button:focus-visible image {
   border-radius: 4px;
   min-width: 36px;
   min-height: 36px;
-  align-items: center;
-  justify-content: center;
 }
 
 .settings-format-ext {
@@ -2470,7 +2464,6 @@ menubutton.column-header-action > button:focus-visible image {
 }
 
 .item-context-rating-row {
-  align-items: center;
   padding: 3px 6px;
 }
 
@@ -4016,9 +4009,6 @@ button.music-cover-button:focus-visible {
   color: @theme_accent;
 }
 
-.immersive-stage {
-  margin: auto;
-}
 
 .immersive-stage-solo .immersive-art-img {
   border-radius: 12px;
@@ -4029,7 +4019,6 @@ button.music-cover-button:focus-visible {
   border: 1px solid alpha(@theme_border, 0.3);
   box-shadow: 0 16px 40px alpha(@theme_bg, 0.6);
   background: alpha(@theme_surface, 0.8);
-  overflow: hidden;
 }
 
 .immersive-art-img {
@@ -4065,6 +4054,8 @@ button.music-cover-button:focus-visible {
 
 .immersive-hover-controls {
   padding-top: 8px;
+  opacity: 0.0;
+  transition: opacity 200ms ease;
 }
 
 .immersive-control-btn {
