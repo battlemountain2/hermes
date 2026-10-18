@@ -134,6 +134,8 @@ struct Preferences {
     preview_spreadsheets: bool,
     #[serde(default = "default_enabled")]
     preview_code: bool,
+    #[serde(default = "default_music_player_layout")]
+    music_player_layout: String,
 }
 
 impl Default for Preferences {
@@ -172,8 +174,13 @@ impl Default for Preferences {
             preview_pdf: true,
             preview_spreadsheets: true,
             preview_code: true,
+            music_player_layout: default_music_player_layout(),
         }
     }
+}
+
+fn default_music_player_layout() -> String {
+    "top".to_owned()
 }
 
 fn default_startup_location() -> String {
@@ -579,6 +586,15 @@ impl ThemeManager {
 
     pub fn set_preview_code(&self, enabled: bool) {
         self.preferences.borrow_mut().preview_code = enabled;
+        self.save_preferences();
+    }
+
+    pub fn music_player_layout(&self) -> String {
+        self.preferences.borrow().music_player_layout.clone()
+    }
+
+    pub fn set_music_player_layout(&self, layout: &str) {
+        self.preferences.borrow_mut().music_player_layout = layout.to_owned();
         self.save_preferences();
     }
 

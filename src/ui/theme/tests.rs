@@ -147,6 +147,7 @@ theme = "azure-glow"
     assert!(preferences.preview_pdf);
     assert!(preferences.preview_spreadsheets);
     assert!(preferences.preview_code);
+    assert_eq!(preferences.music_player_layout, "top");
 
     let serialized = toml::to_string(&preferences).expect("Preferences must serialize cleanly");
     let roundtripped: Preferences =
@@ -157,6 +158,7 @@ theme = "azure-glow"
     assert_eq!(roundtripped.date_format, "relative");
     assert_eq!(roundtripped.size_unit, "decimal");
     assert!(!roundtripped.show_hidden_default);
+    assert_eq!(roundtripped.music_player_layout, "top");
 }
 
 #[test]

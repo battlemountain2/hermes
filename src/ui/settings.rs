@@ -815,6 +815,35 @@ fn previews_page(browser: &BrowserView, manager: Rc<ThemeManager>) -> gtk::Widge
 fn audio_page(manager: Rc<ThemeManager>) -> gtk::Widget {
     let content = page_content();
 
+    append_heading(&content, "PLAYER LAYOUT");
+    let layout_cards = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    layout_cards.add_css_class("settings-choice-cards");
+
+    let current_layout = manager.music_player_layout();
+    let layout_options = [
+        ("top", "HERO DECK", "Top Hero Deck", "Integrated player card above library.", "hero"),
+        ("bottom", "BOTTOM DOCK", "Bottom Dock", "Full library with persistent bottom dock.", "dock"),
+    ];
+
+    let layout_buttons = Rc::new(RefCell::new(Vec::<gtk::Button>::new()));
+    for (id, tag, title, desc, wf) in layout_options {
+        let is_selected = id == current_layout;
+        let card = visual_choice_card(tag, title, desc, Some(wf), None, is_selected);
+        let buttons = layout_buttons.clone();
+        let manager_for_layout = manager.clone();
+        let layout_id = id.to_owned();
+        card.connect_clicked(move |clicked| {
+            for btn in buttons.borrow().iter() {
+                btn.remove_css_class("selected");
+            }
+            clicked.add_css_class("selected");
+            manager_for_layout.set_music_player_layout(&layout_id);
+        });
+        layout_buttons.borrow_mut().push(card.clone());
+        layout_cards.append(&card);
+    }
+    content.append(&layout_cards);
+
     append_heading(&content, "PLAYBACK CONTINUITY");
     let card1 = settings_card();
     let (continuity_row, continuity) = settings_option(
@@ -2120,6 +2149,44 @@ fn build_wireframe(wf_type: &str) -> gtk::Widget {
                 col.append(&bar);
             }
             container.append(&col);
+        }
+        "hero" => {
+            let layout = gtk::Box::new(gtk::Orientation::Vertical, 3);
+            layout.set_hexpand(true);
+            let hero_card = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            hero_card.add_css_class("settings-wireframe-bar");
+            hero_card.add_css_class("accent");
+            hero_card.set_size_request(-1, 8);
+            layout.append(&hero_card);
+            let cols = gtk::Box::new(gtk::Orientation::Horizontal, 3);
+            cols.set_hexpand(true);
+            for _ in 0..3 {
+                let col = gtk::Box::new(gtk::Orientation::Vertical, 2);
+                col.add_css_class("settings-wireframe-col");
+                col.set_hexpand(true);
+                cols.append(&col);
+            }
+            layout.append(&cols);
+            container.append(&layout);
+        }
+        "dock" => {
+            let layout = gtk::Box::new(gtk::Orientation::Vertical, 3);
+            layout.set_hexpand(true);
+            let cols = gtk::Box::new(gtk::Orientation::Horizontal, 3);
+            cols.set_hexpand(true);
+            for _ in 0..3 {
+                let col = gtk::Box::new(gtk::Orientation::Vertical, 2);
+                col.add_css_class("settings-wireframe-col");
+                col.set_hexpand(true);
+                cols.append(&col);
+            }
+            layout.append(&cols);
+            let dock_bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            dock_bar.add_css_class("settings-wireframe-bar");
+            dock_bar.add_css_class("accent");
+            dock_bar.set_size_request(-1, 8);
+            layout.append(&dock_bar);
+            container.append(&layout);
         }
         _ => {
             let tree_col = gtk::Box::new(gtk::Orientation::Vertical, 3);
