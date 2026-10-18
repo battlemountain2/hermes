@@ -4010,36 +4010,38 @@ button.music-cover-button:focus-visible {
 }
 
 
-.immersive-stage-solo .immersive-art-img {
-  border-radius: 12px;
+.immersive-stage-solo .immersive-art-box {
+  border-radius: 18px;
 }
 
 .immersive-art-box {
-  border-radius: 12px;
-  border: 1px solid alpha(@theme_border, 0.3);
-  box-shadow: 0 16px 40px alpha(@theme_bg, 0.6);
-  background: alpha(@theme_surface, 0.8);
+  border-radius: 16px;
+  border: 1px solid alpha(@theme_border, 0.35);
+  box-shadow: 0 20px 50px alpha(@theme_bg, 0.65);
+  background: alpha(@theme_surface, 0.85);
+  overflow: hidden;
 }
 
+.immersive-art-pic,
 .immersive-art-img {
-  border-radius: 10px;
+  border-radius: 14px;
 }
 
 .immersive-title {
   color: @theme_text;
-  font-size: 1.35em;
+  font-size: 1.5em;
   font-weight: 800;
   letter-spacing: -0.01em;
 }
 
 .immersive-artist {
   color: @theme_dim_text;
-  font-size: 0.95em;
+  font-size: 1.05em;
 }
 
 .immersive-time {
   color: @theme_dim_text;
-  font-size: 0.8em;
+  font-size: 0.85em;
   font-family: inherit;
 }
 
@@ -4052,10 +4054,8 @@ button.music-cover-button:focus-visible {
   background: @theme_accent;
 }
 
-.immersive-hover-controls {
-  padding-top: 8px;
-  opacity: 0.0;
-  transition: opacity 200ms ease;
+.immersive-controls {
+  padding-top: 10px;
 }
 
 .immersive-control-btn {
@@ -4077,6 +4077,8 @@ button.music-cover-button:focus-visible {
   border: 1px solid @theme_accent;
   border-radius: 50%;
   padding: 10px;
+  min-width: 44px;
+  min-height: 44px;
 }
 
 .immersive-play-btn:hover {

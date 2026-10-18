@@ -6,14 +6,15 @@ use std::{
     time::Duration,
 };
 
-use gtk::{gdk, glib, prelude::*};
+use gtk::{gdk, gio, glib, prelude::*};
 
 use crate::{
     assets::{self, icons},
     music::Track,
+    sandbox::{Cancellation, ParseOperation},
     services::lyrics::{find_lyrics_for_audio_file, Lyrics},
     ui::{
-        music::{controller::Controller, file_entry, time_label},
+        music::{controller::Controller, time_label},
         theme::ThemeManager,
     },
 };
@@ -49,13 +50,15 @@ struct ImmersiveState {
     lyrics_box: gtk::Box,
     lyrics_scroll: gtk::ScrolledWindow,
     stage_box: gtk::Box,
-    art_image: gtk::Image,
+    art_box: gtk::Box,
+    art_stack: gtk::Stack,
+    art_picture: gtk::Picture,
+    art_fallback: gtk::Image,
     title_label: gtk::Label,
     artist_label: gtk::Label,
     scrub_scale: gtk::Scale,
     elapsed_label: gtk::Label,
     remaining_label: gtk::Label,
-    hover_controls: gtk::Box,
     play_button: gtk::Button,
     speaker_button: gtk::Button,
     volume_scale: gtk::Scale,
@@ -70,12 +73,20 @@ struct ImmersiveState {
     floating_dock: gtk::Box,
     floating_title: gtk::Label,
     floating_artist: gtk::Label,
+    floating_shuffle: gtk::ToggleButton,
+    floating_prev: gtk::Button,
     floating_play: gtk::Button,
+    floating_next: gtk::Button,
+    floating_repeat: gtk::Button,
+    floating_speaker: gtk::Button,
+    floating_volume: gtk::Scale,
     floating_time: gtk::Label,
     vis_t: Cell<f64>,
     playing_icon: Cell<bool>,
     muted_icon: Cell<bool>,
     syncing: Cell<bool>,
+    last_tick_us: Cell<i64>,
+    last_second: Cell<i64>,
 }
 
 impl ImmersiveView {
@@ -193,10 +204,25 @@ impl ImmersiveView {
         // Artwork Frame
         let art_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
         art_box.add_css_class("immersive-art-box");
-        let art_image = assets::primary_icon(icons::MUSIC, 160);
-        art_image.set_size_request(320, 320);
-        art_image.add_css_class("immersive-art-img");
-        art_box.append(&art_image);
+        art_box.set_size_request(420, 420);
+
+        let art_stack = gtk::Stack::new();
+        art_stack.set_transition_type(gtk::StackTransitionType::Crossfade);
+        art_stack.set_transition_duration(200);
+
+        let art_picture = gtk::Picture::new();
+        art_picture.set_can_shrink(true);
+        art_picture.set_content_fit(gtk::ContentFit::Cover);
+        art_picture.add_css_class("immersive-art-pic");
+        art_picture.set_size_request(420, 420);
+        art_stack.add_named(&art_picture, Some("picture"));
+
+        let art_fallback = assets::primary_icon(icons::MUSIC, 160);
+        art_fallback.add_css_class("immersive-art-img");
+        art_stack.add_named(&art_fallback, Some("fallback"));
+        art_stack.set_visible_child_name("fallback");
+
+        art_box.append(&art_stack);
         deck_container.append(&art_box);
 
         // Scrubber Scale & Times
@@ -236,10 +262,9 @@ impl ImmersiveView {
         meta_box.append(&artist_label);
         deck_container.append(&meta_box);
 
-        // Hover-Revealed Playback & Volume Controls
-        let hover_controls = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        hover_controls.add_css_class("immersive-hover-controls");
-        hover_controls.set_opacity(0.0);
+        // Permanently Visible Playback & Volume Controls
+        let controls_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        controls_row.add_css_class("immersive-controls");
 
         let shuffle_button = gtk::ToggleButton::new();
         shuffle_button.set_child(Some(&assets::primary_icon(icons::SHUFFLE, 16)));
@@ -262,29 +287,29 @@ impl ImmersiveView {
         repeat_button.set_child(Some(&assets::primary_icon(icons::REPEAT, 16)));
         repeat_button.add_css_class("immersive-control-btn");
 
-        hover_controls.append(&shuffle_button);
-        hover_controls.append(&prev_button);
-        hover_controls.append(&play_button);
-        hover_controls.append(&next_button);
-        hover_controls.append(&repeat_button);
+        controls_row.append(&shuffle_button);
+        controls_row.append(&prev_button);
+        controls_row.append(&play_button);
+        controls_row.append(&next_button);
+        controls_row.append(&repeat_button);
 
-        let hover_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        hover_spacer.set_hexpand(true);
-        hover_controls.append(&hover_spacer);
+        let controls_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        controls_spacer.set_hexpand(true);
+        controls_row.append(&controls_spacer);
 
         let speaker_button = gtk::Button::builder().tooltip_text("Mute / Unmute").build();
         speaker_button.set_child(Some(&assets::primary_icon(icons::VOLUME, 16)));
         speaker_button.add_css_class("immersive-control-btn");
-        hover_controls.append(&speaker_button);
+        controls_row.append(&speaker_button);
 
         let volume_scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.05);
         volume_scale.set_draw_value(false);
         volume_scale.set_value(0.75);
         volume_scale.set_size_request(80, -1);
         volume_scale.add_css_class("immersive-vol-scale");
-        hover_controls.append(&volume_scale);
+        controls_row.append(&volume_scale);
 
-        deck_container.append(&hover_controls);
+        deck_container.append(&controls_row);
         stage_box.append(&deck_container);
 
         // Synced Lyrics Scrollable Panel
@@ -304,7 +329,7 @@ impl ImmersiveView {
         content_box.append(&stage_box);
 
         // Floating Pill Dock (Shown during Visualizer mode)
-        let floating_dock = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+        let floating_dock = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         floating_dock.add_css_class("immersive-floating-dock");
         floating_dock.set_halign(gtk::Align::Center);
         floating_dock.set_valign(gtk::Align::End);
@@ -315,21 +340,56 @@ impl ImmersiveView {
         let floating_title = gtk::Label::new(Some(""));
         floating_title.add_css_class("immersive-floating-title");
         floating_title.set_xalign(0.0);
+        floating_title.set_ellipsize(gtk::pango::EllipsizeMode::End);
         let floating_artist = gtk::Label::new(Some(""));
         floating_artist.add_css_class("immersive-floating-artist");
         floating_artist.set_xalign(0.0);
+        floating_artist.set_ellipsize(gtk::pango::EllipsizeMode::End);
         floating_meta.append(&floating_title);
         floating_meta.append(&floating_artist);
         floating_dock.append(&floating_meta);
 
-        let floating_play = gtk::Button::builder().build();
-        floating_play.set_child(Some(&assets::primary_icon(icons::PLAY, 16)));
-        floating_play.add_css_class("immersive-control-btn");
-        floating_dock.append(&floating_play);
-
         let floating_time = gtk::Label::new(Some("0:00 / 0:00"));
         floating_time.add_css_class("immersive-time");
         floating_dock.append(&floating_time);
+
+        let floating_shuffle = gtk::ToggleButton::new();
+        floating_shuffle.set_child(Some(&assets::primary_icon(icons::SHUFFLE, 14)));
+        floating_shuffle.add_css_class("immersive-control-btn");
+        floating_shuffle.set_tooltip_text(Some("Shuffle"));
+        floating_dock.append(&floating_shuffle);
+
+        let floating_prev = gtk::Button::builder().tooltip_text("Previous").build();
+        floating_prev.set_child(Some(&assets::primary_icon(icons::ARROW_LEFT, 14)));
+        floating_prev.add_css_class("immersive-control-btn");
+        floating_dock.append(&floating_prev);
+
+        let floating_play = gtk::Button::builder().tooltip_text("Play / Pause").build();
+        floating_play.set_child(Some(&assets::primary_icon(icons::PLAY, 16)));
+        floating_play.add_css_class("immersive-play-btn");
+        floating_dock.append(&floating_play);
+
+        let floating_next = gtk::Button::builder().tooltip_text("Next").build();
+        floating_next.set_child(Some(&assets::primary_icon(icons::ARROW_RIGHT, 14)));
+        floating_next.add_css_class("immersive-control-btn");
+        floating_dock.append(&floating_next);
+
+        let floating_repeat = gtk::Button::builder().tooltip_text("Repeat").build();
+        floating_repeat.set_child(Some(&assets::primary_icon(icons::REPEAT, 14)));
+        floating_repeat.add_css_class("immersive-control-btn");
+        floating_dock.append(&floating_repeat);
+
+        let floating_speaker = gtk::Button::builder().tooltip_text("Mute / Unmute").build();
+        floating_speaker.set_child(Some(&assets::primary_icon(icons::VOLUME, 14)));
+        floating_speaker.add_css_class("immersive-control-btn");
+        floating_dock.append(&floating_speaker);
+
+        let floating_volume = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.05);
+        floating_volume.set_draw_value(false);
+        floating_volume.set_value(0.75);
+        floating_volume.set_size_request(70, -1);
+        floating_volume.add_css_class("immersive-vol-scale");
+        floating_dock.append(&floating_volume);
 
         content_box.append(&floating_dock);
         overlay.add_overlay(&content_box);
@@ -349,13 +409,15 @@ impl ImmersiveView {
             lyrics_box,
             lyrics_scroll,
             stage_box,
-            art_image,
+            art_box,
+            art_stack,
+            art_picture,
+            art_fallback,
             title_label,
             artist_label,
             scrub_scale,
             elapsed_label,
             remaining_label,
-            hover_controls,
             play_button,
             speaker_button,
             volume_scale,
@@ -370,29 +432,21 @@ impl ImmersiveView {
             floating_dock,
             floating_title,
             floating_artist,
+            floating_shuffle,
+            floating_prev,
             floating_play,
+            floating_next,
+            floating_repeat,
+            floating_speaker,
+            floating_volume,
             floating_time,
             vis_t: Cell::new(0.0),
             playing_icon: Cell::new(false),
             muted_icon: Cell::new(false),
             syncing: Cell::new(false),
+            last_tick_us: Cell::new(0),
+            last_second: Cell::new(-1),
         });
-
-        // Motion Controller for Hover Reveal (Controls fade in smoothly without layout jumping)
-        let motion = gtk::EventControllerMotion::new();
-        let hover_state = Rc::downgrade(&state);
-        motion.connect_enter(move |_, _, _| {
-            if let Some(state) = hover_state.upgrade() {
-                state.hover_controls.set_opacity(1.0);
-            }
-        });
-        let leave_state = Rc::downgrade(&state);
-        motion.connect_leave(move |_| {
-            if let Some(state) = leave_state.upgrade() {
-                state.hover_controls.set_opacity(0.0);
-            }
-        });
-        overlay.add_controller(motion);
 
         // Visualizer Canvas Drawing
         let vis_state = Rc::downgrade(&state);
@@ -417,20 +471,27 @@ impl ImmersiveView {
 
         // Tick Callback for Visualizer and Smooth Scrubbing
         let tick_state = Rc::downgrade(&state);
-        overlay.add_tick_callback(move |_, clock| {
+        overlay.add_tick_callback(move |widget, clock| {
+            if !widget.is_mapped() {
+                return glib::ControlFlow::Continue;
+            }
             let Some(state) = tick_state.upgrade() else {
                 return glib::ControlFlow::Break;
             };
             if !state.visualizer_active.get() && !state.lyrics_active.get() {
                 return glib::ControlFlow::Continue;
             }
+            let frame_time = clock.frame_time();
             if state.visualizer_active.get() {
-                let frame_time = clock.frame_time();
                 let seconds = frame_time as f64 / 1_000_000.0;
                 state.vis_t.set(seconds);
                 state.visualizer_canvas.queue_draw();
             }
-            state.sync_lyrics_and_time();
+            let prev_us = state.last_tick_us.get();
+            if frame_time - prev_us >= 100_000 {
+                state.last_tick_us.set(frame_time);
+                state.sync_lyrics_and_time();
+            }
             glib::ControlFlow::Continue
         });
 
@@ -499,31 +560,44 @@ impl ImmersiveView {
         }
 
         let ctrl = controller.clone();
-        next_button.connect_clicked(move |_| {
-            ctrl.next();
-        });
+        for btn in [&prev_button, &state.floating_prev] {
+            let ctrl = ctrl.clone();
+            btn.connect_clicked(move |_| {
+                ctrl.previous();
+            });
+        }
 
         let ctrl = controller.clone();
-        prev_button.connect_clicked(move |_| {
-            ctrl.previous();
-        });
+        for btn in [&next_button, &state.floating_next] {
+            let ctrl = ctrl.clone();
+            btn.connect_clicked(move |_| {
+                ctrl.next();
+            });
+        }
 
         let ctrl = controller.clone();
-        state.speaker_button.connect_clicked(move |_| {
-            if let Some(stream) = ctrl.stream() {
-                stream.set_muted(!stream.is_muted());
-            }
-        });
+        for btn in [&state.speaker_button, &state.floating_speaker] {
+            let ctrl = ctrl.clone();
+            btn.connect_clicked(move |_| {
+                if let Some(stream) = ctrl.stream() {
+                    stream.set_muted(!stream.is_muted());
+                }
+            });
+        }
 
         let ctrl = controller.clone();
         let vol_state = Rc::downgrade(&state);
-        state.volume_scale.connect_value_changed(move |scale| {
-            if let Some(state) = vol_state.upgrade()
-                && !state.syncing.get()
-            {
-                ctrl.set_volume(scale.value());
-            }
-        });
+        for scale in [&state.volume_scale, &state.floating_volume] {
+            let ctrl = ctrl.clone();
+            let vol_state = vol_state.clone();
+            scale.connect_value_changed(move |scale| {
+                if let Some(state) = vol_state.upgrade()
+                    && !state.syncing.get()
+                {
+                    ctrl.set_volume(scale.value());
+                }
+            });
+        }
 
         let ctrl = controller.clone();
         let scrub_state = Rc::downgrade(&state);
@@ -542,23 +616,30 @@ impl ImmersiveView {
 
         let ctrl = controller.clone();
         let shuff_state = Rc::downgrade(&state);
-        state.shuffle_button.connect_toggled(move |btn| {
-            if let Some(state) = shuff_state.upgrade()
-                && !state.syncing.get()
-            {
-                ctrl.set_shuffle(btn.is_active());
-            }
-        });
+        for btn in [&state.shuffle_button, &state.floating_shuffle] {
+            let ctrl = ctrl.clone();
+            let shuff_state = shuff_state.clone();
+            btn.connect_toggled(move |btn| {
+                if let Some(state) = shuff_state.upgrade()
+                    && !state.syncing.get()
+                {
+                    ctrl.set_shuffle(btn.is_active());
+                }
+            });
+        }
 
         let ctrl = controller.clone();
-        state.repeat_button.connect_clicked(move |_| {
-            let next_repeat = match ctrl.repeat() {
-                crate::music::Repeat::Off => crate::music::Repeat::All,
-                crate::music::Repeat::All => crate::music::Repeat::One,
-                crate::music::Repeat::One => crate::music::Repeat::Off,
-            };
-            ctrl.set_repeat(next_repeat);
-        });
+        for btn in [&state.repeat_button, &state.floating_repeat] {
+            let ctrl = ctrl.clone();
+            btn.connect_clicked(move |_| {
+                let next_repeat = match ctrl.repeat() {
+                    crate::music::Repeat::Off => crate::music::Repeat::All,
+                    crate::music::Repeat::All => crate::music::Repeat::One,
+                    crate::music::Repeat::One => crate::music::Repeat::Off,
+                };
+                ctrl.set_repeat(next_repeat);
+            });
+        }
 
         // Controller Observation Handler
         let obs_state = Rc::downgrade(&state);
@@ -595,13 +676,7 @@ impl ImmersiveState {
                 let subtitle = format!("{} · {}", track.artist(), track.album());
                 self.artist_label.set_text(&subtitle);
                 self.floating_artist.set_text(&track.artist());
-                crate::ui::thumbnail::set_thumbnail_or_icon(
-                    &self.art_image,
-                    &file_entry(track),
-                    icons::MUSIC,
-                    384,
-                    384,
-                );
+                self.load_artwork(Some(track));
                 // Load lyrics
                 let lyrics = find_lyrics_for_audio_file(&track.path);
                 self.current_lyrics.replace(lyrics);
@@ -611,7 +686,7 @@ impl ImmersiveState {
                 self.artist_label.set_text("Choose a track in Music");
                 self.floating_title.set_text("");
                 self.floating_artist.set_text("");
-                assets::set_primary_icon(&self.art_image, icons::MUSIC);
+                self.load_artwork(None);
                 self.current_lyrics.replace(None);
                 self.rebuild_lyrics_ui();
             }
@@ -620,7 +695,10 @@ impl ImmersiveState {
 
         self.syncing.set(true);
         self.volume_scale.set_value(self.controller.volume());
+        self.floating_volume.set_value(self.controller.volume());
+
         self.shuffle_button.set_active(self.controller.shuffle());
+        self.floating_shuffle.set_active(self.controller.shuffle());
 
         let playing = self.controller.status() == super::controller::PlaybackStatus::Playing;
         if self.playing_icon.replace(playing) != playing {
@@ -634,29 +712,87 @@ impl ImmersiveState {
             .stream()
             .is_some_and(|stream| stream.is_muted());
         if self.muted_icon.replace(muted) != muted {
-            self.speaker_button.set_child(Some(&assets::primary_icon(
-                if muted { icons::MUTED } else { icons::VOLUME },
-                16,
-            )));
+            let icon = if muted { icons::MUTED } else { icons::VOLUME };
+            self.speaker_button.set_child(Some(&assets::primary_icon(icon, 16)));
+            self.floating_speaker.set_child(Some(&assets::primary_icon(icon, 16)));
         }
 
         let repeat = self.controller.repeat();
-        self.repeat_button.set_child(Some(&assets::primary_icon(
-            if repeat == crate::music::Repeat::One {
-                icons::REPEAT_ONE
-            } else {
-                icons::REPEAT
-            },
-            16,
-        )));
+        let rep_icon = if repeat == crate::music::Repeat::One {
+            icons::REPEAT_ONE
+        } else {
+            icons::REPEAT
+        };
+        self.repeat_button.set_child(Some(&assets::primary_icon(rep_icon, 16)));
+        self.floating_repeat.set_child(Some(&assets::primary_icon(rep_icon, 16)));
         if repeat == crate::music::Repeat::Off {
             self.repeat_button.remove_css_class("repeat-enabled");
+            self.floating_repeat.remove_css_class("repeat-enabled");
         } else {
             self.repeat_button.add_css_class("repeat-enabled");
+            self.floating_repeat.add_css_class("repeat-enabled");
         }
 
         self.syncing.set(false);
         self.sync_lyrics_and_time();
+    }
+
+    fn load_artwork(&self, track: Option<&Track>) {
+        let Some(track) = track else {
+            self.art_picture.set_paintable(Option::<&gdk::Paintable>::None);
+            assets::set_primary_icon(&self.art_fallback, icons::MUSIC);
+            self.art_stack.set_visible_child_name("fallback");
+            return;
+        };
+
+        // 1. Direct folder artwork check (highest quality native image file)
+        let parent = track.path.parent();
+        let folder_art = parent.and_then(crate::ui::thumbnail::folder_album_art);
+        if let Some((cover_path, ParseOperation::ThumbnailImage)) = folder_art {
+            let file = gio::File::for_path(&cover_path);
+            self.art_picture.set_file(Some(&file));
+            self.art_stack.set_visible_child_name("picture");
+            return;
+        }
+
+        // 2. Embedded artwork extraction via sandbox helper
+        let path = track.path.clone();
+        let weak_pic = self.art_picture.downgrade();
+        let weak_stack = self.art_stack.downgrade();
+        let weak_fallback = self.art_fallback.downgrade();
+        let cancellation = Cancellation::default();
+
+        glib::MainContext::default().spawn_local(async move {
+            let worker_cancel = cancellation.clone();
+            let track_path = path.clone();
+            let output = gio::spawn_blocking(move || {
+                crate::sandbox::parse(
+                    &track_path,
+                    ParseOperation::ThumbnailVideo,
+                    512,
+                    &worker_cancel,
+                )
+                .ok()
+                .map(|out| out.data)
+            })
+            .await;
+
+            if let (Some(pic), Some(stack), Some(fallback)) = (
+                weak_pic.upgrade(),
+                weak_stack.upgrade(),
+                weak_fallback.upgrade(),
+            ) {
+                if let Ok(Some(bytes)) = output
+                    && let Ok(texture) = gdk::Texture::from_bytes(&glib::Bytes::from_owned(bytes))
+                {
+                    pic.set_paintable(Some(&texture));
+                    stack.set_visible_child_name("picture");
+                } else {
+                    assets::set_primary_icon(&fallback, icons::MUSIC);
+                    stack.set_visible_child_name("fallback");
+                }
+            }
+        });
     }
 
     fn rebuild_lyrics_ui(&self) {
@@ -705,11 +841,14 @@ impl ImmersiveState {
         self.scrub_scale.set_value(fraction);
         self.syncing.set(false);
 
-        self.elapsed_label.set_text(&time_label(position));
-        let rem = duration - position;
-        self.remaining_label.set_text(&format!("-{}", time_label(rem.max(0))));
-        self.floating_time
-            .set_text(&format!("{} / {}", time_label(position), time_label(duration)));
+        let current_sec = position / 1_000_000;
+        if self.last_second.replace(current_sec) != current_sec {
+            self.elapsed_label.set_text(&time_label(position));
+            let rem = duration - position;
+            self.remaining_label.set_text(&format!("-{}", time_label(rem.max(0))));
+            self.floating_time
+                .set_text(&format!("{} / {}", time_label(position), time_label(duration)));
+        }
 
         // Update active lyric line
         if let Some(ref lyrics) = *self.current_lyrics.borrow() {
@@ -747,10 +886,12 @@ impl ImmersiveState {
         self.lyrics_scroll.set_visible(show_lyrics);
         if show_lyrics {
             self.stage_box.remove_css_class("immersive-stage-solo");
-            self.art_image.set_size_request(320, 320);
+            self.art_box.set_size_request(420, 420);
+            self.art_picture.set_size_request(420, 420);
         } else {
             self.stage_box.add_css_class("immersive-stage-solo");
-            self.art_image.set_size_request(380, 380);
+            self.art_box.set_size_request(520, 520);
+            self.art_picture.set_size_request(520, 520);
         }
     }
 }
@@ -838,7 +979,7 @@ pub fn draw_generative_visualizer(
                 cr.set_line_width(2.5);
 
                 let mut x = 0.0;
-                let step = 10.0;
+                let step = 20.0;
                 cr.new_path();
                 let y0 = base_y + amp * (x * freq + phase).sin();
                 cr.move_to(x, y0);
@@ -857,8 +998,8 @@ pub fn draw_generative_visualizer(
             let cy = height / 2.0;
             let bass = (spectrum[0] + spectrum[1] + spectrum[2] + spectrum[3]) as f64 / 4.0;
 
-            for k in 0..12 {
-                let p = (t * 0.75 + k as f64 / 12.0) % 1.0;
+            for k in 0..8 {
+                let p = (t * 0.75 + k as f64 / 8.0) % 1.0;
                 let r = p * p * (width.max(height) * 0.68) + 12.0 * bass;
                 let alpha = (p * std::f64::consts::PI).sin() * (0.28 + 0.6 * bass);
 
@@ -877,7 +1018,7 @@ pub fn draw_generative_visualizer(
             // Cosmic Dust
             let cx = width / 2.0;
             let cy = height / 2.0;
-            let num_particles = 48;
+            let num_particles = 32;
 
             for j in 0..num_particles {
                 let theta_base = (j as f64) * (2.0 * std::f64::consts::PI / num_particles as f64);

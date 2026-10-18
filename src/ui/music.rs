@@ -339,20 +339,6 @@ impl MusicPlayer {
         hero_volume.add_css_class("music-vol-scale");
         hero_bottom_row.append(&hero_volume);
 
-        let hero_immersive_btn = gtk::Button::builder()
-            .tooltip_text("Immersive listening mode · Ctrl+I")
-            .build();
-        hero_immersive_btn.set_child(Some(&control_contents(icons::MAXIMIZE, "Immersive")));
-        hero_immersive_btn.add_css_class("music-control");
-        hero_bottom_row.append(&hero_immersive_btn);
-
-        let hero_mini_btn = gtk::Button::builder()
-            .tooltip_text("Floating mini-player")
-            .build();
-        hero_mini_btn.set_child(Some(&control_contents(icons::EXTERNAL_LINK, "Mini")));
-        hero_mini_btn.add_css_class("music-control");
-        hero_bottom_row.append(&hero_mini_btn);
-
         hero_right.append(&hero_bottom_row);
         hero_deck.append(&hero_right);
         view.append(&hero_deck);
@@ -682,7 +668,7 @@ impl MusicPlayer {
         state.mini_player.replace(Some(mini));
 
         let weak = Rc::downgrade(&state);
-        for btn in [&immersive_btn, &hero_cover_btn, &hero_immersive_btn] {
+        for btn in [&immersive_btn, &hero_cover_btn] {
             let weak = weak.clone();
             btn.connect_clicked(move |_| {
                 if let Some(state) = weak.upgrade()
@@ -694,16 +680,13 @@ impl MusicPlayer {
         }
 
         let weak = Rc::downgrade(&state);
-        for btn in [&mini_btn, &hero_mini_btn] {
-            let weak = weak.clone();
-            btn.connect_clicked(move |_| {
-                if let Some(state) = weak.upgrade()
-                    && let Some(ref mini) = *state.mini_player.borrow()
-                {
-                    mini.toggle();
-                }
-            });
-        }
+        mini_btn.connect_clicked(move |_| {
+            if let Some(state) = weak.upgrade()
+                && let Some(ref mini) = *state.mini_player.borrow()
+            {
+                mini.toggle();
+            }
+        });
 
         let weak = Rc::downgrade(&state);
         state.hero_play.connect_clicked(move |_| {
@@ -1428,7 +1411,8 @@ impl State {
 
     fn sync_controller(&self) {
         let track = self.current_track();
-        if *self.displayed_track.borrow() != track {
+        let track_changed = *self.displayed_track.borrow() != track;
+        if track_changed {
             self.displayed_track.replace(track.clone());
             if let Some(track) = track.as_ref() {
                 self.title.set_text(&track.title());
@@ -1512,28 +1496,30 @@ impl State {
         let is_top = layout == "top";
         let is_music_ws = self.current_workspace.borrow().as_str() == "music";
         self.hero_deck.set_visible(is_top && self.transport_visible.get() && is_music_ws);
-        if let Some(track) = track.as_ref() {
-            self.hero_title.set_text(&track.title());
-            self.hero_detail.set_text(&format!("{} · {}", track.artist(), track.album()));
-            let ext = track
-                .path
-                .extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("AUDIO")
-                .to_uppercase();
-            self.hero_badge.set_text(&ext);
-            super::thumbnail::set_thumbnail_or_icon(
-                &self.hero_cover,
-                &file_entry(track),
-                icons::MUSIC,
-                56,
-                64,
-            );
-        } else {
-            self.hero_title.set_text("Nothing playing");
-            self.hero_detail.set_text("Choose a track in Music");
-            self.hero_badge.set_text("AUDIO");
-            assets::set_primary_icon(&self.hero_cover, icons::MUSIC);
+        if track_changed {
+            if let Some(track) = track.as_ref() {
+                self.hero_title.set_text(&track.title());
+                self.hero_detail.set_text(&format!("{} · {}", track.artist(), track.album()));
+                let ext = track
+                    .path
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("AUDIO")
+                    .to_uppercase();
+                self.hero_badge.set_text(&ext);
+                super::thumbnail::set_thumbnail_or_icon(
+                    &self.hero_cover,
+                    &file_entry(track),
+                    icons::MUSIC,
+                    56,
+                    64,
+                );
+            } else {
+                self.hero_title.set_text("Nothing playing");
+                self.hero_detail.set_text("Choose a track in Music");
+                self.hero_badge.set_text("AUDIO");
+                assets::set_primary_icon(&self.hero_cover, icons::MUSIC);
+            }
         }
         self.hero_volume.set_value(self.controller.volume());
         self.hero_shuffle.set_active(self.controller.shuffle());

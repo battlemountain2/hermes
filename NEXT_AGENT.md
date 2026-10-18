@@ -1,45 +1,31 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Immersive Listening Mode, Dual Selectable Layouts & Floating Mini Player — 2026-10-18
+## Immersive Listening Mode Polish & Performance Optimization — 2026-10-18
 
 Completed on branch `feat/6-spreadsheet-and-settings-polish`:
 
-1. **Subtle & Polished Music Player Upgrades (Top Hero Deck vs Persistent Bottom Dock)**:
-   - Configured cleanly in `Settings > Audio & DSP > Player layout` with visual choice cards for `"top"` (Top Hero Deck) and `"bottom"` (Bottom Dock), stored in `preferences.music_player_layout`.
-   - Real-time reactivity via `ThemeManager::observe_layout`: switches between layouts immediately without restarting or reopening windows.
-   - Top Hero Deck positioned cleanly directly beneath the header and above navigation tabs, with zero duplicate bottom bar controls in "top" layout.
-   - Persistent bottom dock bar cleanly hidden during immersive mode and when viewing Music workspace in "top" layout, while remaining reachable in the Files workspace.
-   - Clean tabular track queue listing with dedicated track numbering (`.music-track-num`).
-   - Integrated header mode action button to open Immersive Listening Mode directly.
+1. **Album Artwork Flickering & Double Controls Fix (`src/ui/music.rs`)**:
+   - Zero-flicker track synchronization: wrapped hero deck metadata, badges, and `set_thumbnail_or_icon` updates in an explicit `track_changed` guard, preventing periodic tick callbacks from clearing and reloading cover textures while playback continues.
+   - Eliminated duplicate buttons: removed redundant "Immersive" and "Mini" buttons from `hero_bottom_row`, leaving them cleanly located in the top header row and keeping the Hero Deck focused on volume and transport.
 
-2. **Cider-Inspired Immersive Listening Mode (`src/ui/music/immersive.rs`)**:
-   - Dynamic ambient color aura canvas rendered via Cairo with soft radial gradients following live theme accent/highlight tokens and artwork tones.
-   - Observer retention fix: strong observer handle retained in state (`_observer: RefCell<Option<Rc<dyn Fn()>>>`), ensuring continuous track change notifications.
-   - Hover-revealed playback and volume controls: smooth opacity transition (`set_opacity(0.0 / 1.0)`) without layout displacement or vertical jumping.
-   - Clean synchronized LRC lyrics parser (`src/services/lyrics.rs`) with stable coordinate calculation relative to `lyrics_box` for smooth centering during auto-scroll.
-   - Automatic solo centered artwork scaling (384x384 request) when no lyrics are available.
-   - Aesthetic full-screen visualizer mode with 3 user-selectable generative styles: `Ribbons` (neon harmonic waveforms), `Tunnel` (warp speed bass tunnel), and `Cosmic` (orbital particle dust), hiding lyrics and artwork for a focused ambient experience.
-   - Floating pill transport dock active during visualizer mode with compact playback, volume, and timing info.
-   - Keyboard navigation: `<Control>i` toggles immersive view; `Escape` returns to Library without clobbering views.
+2. **Heroic High-Resolution Album Artwork (`src/ui/music/immersive.rs`)**:
+   - Replaced clamped $256\text{px}$ `gtk::Image` thumbnail with `gtk::Picture` inside a crossfading `gtk::Stack`.
+   - Direct native file loading: `load_artwork` resolves folder album art (`cover.jpg`, `folder.png`, etc.) directly via `gio::File::for_path` at full original resolution (e.g. $1000 \times 1000$ or higher) with GPU hardware scaling (`gtk::ContentFit::Cover`), bypassing the $256\text{px}$ thumbnail clamp.
+   - Asynchronous sandbox extraction ($512\text{px}$) for embedded audio ID3/FLAC tags with clean fallback to `assets::primary_icon(icons::MUSIC)`.
+   - Massive focus dimensions: enlarged to $520 \times 520$ in solo mode (when lyrics are hidden or unavailable) and $420 \times 420$ in lyrics split mode, with deep elevation drop shadow (`box-shadow: 0 20px 50px alpha(@theme_bg, 0.65)`) and $16\text{px}$ border radius.
 
-3. **Floating Mini-Player Micro-Deck (`src/ui/music/mini.rs`)**:
-   - Secondary GTK window titled `"Hermes Mini"` ($380 \times 128$).
-   - Observer retention fix ensuring metadata and progress bars stay alive and responsive.
-   - Minimalist, subtle monochrome badges (`AUDIO`, `48kHz FLAC`), compact title/artist row, scrub slider, and volume slider.
-   - Expand-to-immersive button (`Ctrl+I`).
-   - Keyboard shortcut `<Control><Shift>m` wired to `win.mini-player`.
-   - Hyprland window rules ready:
-     ```ini
-     windowrulev2 = float, class:^(strata)$, title:^(Hermes Mini)$
-     windowrulev2 = size 380 128, class:^(strata)$, title:^(Hermes Mini)$
-     windowrulev2 = pin, class:^(strata)$, title:^(Hermes Mini)$
-     ```
+3. **Permanently Tactile Transport & Full Floating Visualizer Dock**:
+   - Removed hover opacity mask (`opacity: 0.0`) on stage playback controls: shuffle, previous, prominent $44\text{px}$ play button, next, repeat, mute, and volume slider are now always visible and immediately clickable.
+   - Comprehensive floating dock in Visualizer mode: added previous, play/pause, next, repeat, shuffle, mute, and volume slider directly to the floating pill dock.
 
-4. **Code Quality, Theming & Test Organization**:
-   - Cleaned GTK CSS properties: eliminated unsupported `max-width`, `overflow`, `align-items`, `justify-content`, and `margin: auto`.
-   - Re-entrant loop prevention in `sync_controller`: `self.syncing.set(false)` deferred until after updating hero transport and volume controls.
+4. **Zero-Lag Throttling & Cairo Optimization**:
+   - `is_mapped()` gating on `add_tick_callback`: visualizer rendering and time tracking pause entirely when the immersive workspace is not visible.
+   - Throttled time synchronization: tick callback now throttles `sync_lyrics_and_time` to 10 Hz ($100\text{ms}$), and only invokes `gtk::Label::set_text` when the playback second integer (`position / 1_000_000`) actually changes, eliminating continuous Pango text measurement and layout churn.
+   - Optimized Cairo generative visualizer paths: Ribbons step increment increased to $20\text{px}$ (cutting trigonometry and path operations in half), Tunnel rings optimized to 8 rings, and Cosmic particles streamlined to 32 orbital stars.
+
+5. **Code Quality, Theming & Test Organization**:
    - Strictly 100% semantic `@theme_*` tokens applied across all CSS and Cairo renderers; zero static hex/RGB colors.
-   - Adjacent test modules (`#[cfg(test)] mod tests;`): `src/services/lyrics/tests.rs`, `src/ui/music/immersive/tests.rs`, `src/ui/music/mini/tests.rs`, `src/ui/music/tests.rs`, and `src/ui/theme/tests.rs`.
+   - Adjacent test modules (`#[cfg(test)] mod tests;`): all tests pass cleanly.
    - Zero compiler warnings; 786 binary unit tests pass cleanly (`cargo test --bin strata --jobs 2 -- --test-threads=2`).
    - Clean `git diff --check` and clean `cargo check`.
 
