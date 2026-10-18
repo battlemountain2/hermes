@@ -1,5 +1,46 @@
 # Next agent: Hermes performance, file features and media polish
 
+## Dolphin-Inspired Settings Overhaul & Instant Search Navigation — 2026-10-17
+
+Completed on branch `feat/6-spreadsheet-and-settings-polish` (commits `2cd72e0`, `8fc4e27`, `c81eea8`):
+
+1. **Instant Settings Filter Bar (Dolphin Inspiration)**:
+   - Added `gtk::SearchEntry` (`.settings-nav-filter`) directly above the navigation list.
+   - Real-time keyword filter across all 12 sections matching titles and rich synonym keywords (`preview`, `date`, `size`, `delete`, `font`, `cache`, `units`, `flac`, etc.).
+   - Dynamically highlights and auto-selects the first matching section if the currently visible page is filtered out.
+   - Responsive keyboard handling: `Esc` clears filter first if active, or dismisses dialog if empty.
+   - Vertically scrolled navigation viewport (`.settings-nav-scroll`) ensuring compact, overflow-free navigation across all screen sizes.
+
+2. **Dedicated "View & formats" Page (`src/ui/settings.rs`)**:
+   - Dolphin-style layout configuration: Default browser layout dropdown (Columns, Grid, Explorer).
+   - Information density: Compact (high density), Standard, Airy.
+   - Hidden items visibility: Default toggle to show dotfiles and hidden folders upon navigating to new directories.
+   - Timestamp presentation: Dropdown switching between Relative natural language ("5m ago", "Today", "Yesterday") and Absolute ISO-8601 standardized format ("2026-10-18 04:30").
+   - Byte measurement units: Decimal SI (1 KB = 1,000 bytes) vs Binary IEC (1 KiB = 1,024 bytes).
+
+3. **Dedicated "Previews & files" Page (`src/ui/settings.rs`)**:
+   - Preview ceiling & limits: SpinButton ceiling (1-500 MB) preventing decoding overhead or hangs on oversized media.
+   - Peeking & selection controls: Single-click preview drawer toggle and folder peeking switch.
+   - Format toggles for embedded decoders: Audio waveforms & ID3 tags, Images & photographic EXIF, Video keyframes & durations, PDF & PostScript vector pages, Spreadsheets & tabular data, and Source code & Markdown syntax highlighting.
+
+4. **Enriched "General" Page (`src/ui/settings.rs`)**:
+   - Startup location dropdown: Home folder, Music library (instant jukebox mode), or Last active location (resume session).
+   - Confirmations & Safety: Confirmation dialog toggle for permanent deletion (Shift+Delete) or emptying trash; Reduce motion toggle.
+   - Sidebar history & folder limits: Recent files, recent folders, and folder limit spinbutton (1-12).
+
+5. **Preferences & Persistence (`src/ui/theme.rs`)**:
+   - Added serde-backed persistent fields to `Preferences`: `startup_location`, `confirm_permanent_delete`, `date_format`, `size_unit`, `show_hidden_default`, `max_preview_size_mb`, `preview_audio`, `preview_images`, `preview_videos`, `preview_pdf`, `preview_spreadsheets`, `preview_code`.
+   - All fields equipped with `#[serde(default = "...")]` to ensure 100% backward compatibility with legacy `settings.toml`.
+   - Accessors and mutators added to `ThemeManager` with automatic atomic persistence.
+
+6. **Validation & Tests**:
+   - Added headless roundtrip tests in `src/ui/theme/tests.rs` (`dolphin_preferences_default_safely_and_roundtrip`).
+   - Added page build assertions in `src/ui/settings/tests.rs` (`audio_and_diagnostics_pages_build_cleanly`).
+   - Preserved exact test invariants for `context_menu_page` (8 switches + reset button), `fonts_page` (dropdown + spinbutton + reset button), and `keybindings_page` (`gtk::ScrolledWindow`).
+   - 781 unit tests pass (`cargo test --bin strata --jobs 2 -- --test-threads=2`).
+   - 20 stress tests pass in `tests/challenger_m4_2_stress.rs`.
+   - Clean `cargo check` and `git diff --check`.
+
 ## Settings Page UI/UX Overhaul & Subtle TE Card Craft — 2026-10-17
 
 Completed on branch `feat/6-spreadsheet-and-settings-polish` (commit `2cd72e0`):
