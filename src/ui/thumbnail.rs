@@ -180,7 +180,7 @@ pub(super) fn set_thumbnail_or_icon(
     let Some(path) = entry.location.native_path().map(Path::to_path_buf) else {
         return;
     };
-    if entry.is_directory() {
+    if entry.is_directory() && fallback_icon != crate::assets::icons::MUSIC {
         mark_nonempty_folder(image, image_id, request, path.clone());
     }
     if path.extension().and_then(std::ffi::OsStr::to_str) == Some("desktop") {

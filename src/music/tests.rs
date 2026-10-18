@@ -174,3 +174,17 @@ fn folder_queue_uses_metadata_and_does_not_include_previous_discs() {
         vec![track(2)]
     );
 }
+
+#[test]
+fn folder_queue_with_folder_path_returns_all_tracks_in_order() {
+    let t1 = track(1);
+    let t2 = track(2);
+    let t3 = track(3);
+    let mut other = track(1);
+    other.path = PathBuf::from("/other-album/1.flac");
+    let tracks = folder_queue(
+        vec![t3.clone(), other, t1.clone(), t2.clone()],
+        std::path::Path::new("/album"),
+    );
+    assert_eq!(tracks, vec![t1, t2, t3]);
+}

@@ -429,7 +429,7 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         }
     }));
     let music_action = gio::SimpleAction::new("music", None);
-    let toggled_music = music_toggle;
+    let toggled_music = music_toggle.clone();
     music_action.connect_activate(move |_, _| toggled_music.set_active(!toggled_music.is_active()));
     window.add_action(&music_action);
     application.set_accels_for_action("win.music", &["<Control>m"]);
@@ -437,11 +437,18 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     let selected_music = music_player.clone();
     let selected_controller = controller.clone();
     let selected_preview = preview.clone();
+    let selected_music_toggle = music_toggle.clone();
     play_music.connect_activate(move |_, _| {
         let entries = selected_controller.selected_entries();
         if entries.iter().any(crate::app::music_order::is_audio) {
             selected_preview.close();
             selected_music.play_files(entries);
+        } else if entries.len() == 1 && entries[0].is_directory() {
+            if let Some(path) = entries[0].location.native_path() {
+                selected_preview.close();
+                selected_music.play_folder(path.to_path_buf());
+                selected_music_toggle.set_active(true);
+            }
         }
     });
     window.add_action(&play_music);

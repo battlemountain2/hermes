@@ -4403,7 +4403,13 @@ pub(super) fn install_item_context_menu(
     content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
 
     let single = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let open = item_context_option(crate::assets::icons::EXTERNAL_LINK, "Open", "↵");
+    let (open, open_label) =
+        item_context_option_labeled(crate::assets::icons::EXTERNAL_LINK, "Open", "↵");
+    let open_in_hermes_player = item_context_option(
+        crate::assets::icons::PLAY,
+        "Open in Hermes Player",
+        "Ctrl+Enter",
+    );
     let open_with = item_context_option(crate::assets::icons::EXTERNAL_LINK, "Open With…", "");
     let preview = item_context_option(crate::assets::icons::EYE, "Quick preview", "Space");
     let extract_here = item_context_option(crate::assets::icons::FILE_ARCHIVE, "Extract Here", "");
@@ -4429,6 +4435,7 @@ pub(super) fn install_item_context_menu(
     move_to_trash.add_css_class("danger");
     let properties = item_context_option(crate::assets::icons::INFO, "Properties", "Alt+Enter");
     single.append(&open);
+    single.append(&open_in_hermes_player);
     single.append(&open_with);
     single.append(&preview);
     single.append(&restore);
@@ -4502,6 +4509,7 @@ pub(super) fn install_item_context_menu(
     for (button, action) in [
         (&play_music, "win.play-music-selection"),
         (&queue_music, "win.queue-music-selection"),
+        (&open_in_hermes_player, "win.play-music-selection"),
     ] {
         let parent = widget.downgrade();
         let popover = popover.downgrade();
@@ -4858,11 +4866,36 @@ pub(super) fn install_item_context_menu(
         if entries.len() > 1 {
             heading.set_text(&format!("{} items selected", entries.len()));
             summary.set_text(&selected_items_summary(&entries));
+            if entries.iter().all(FileEntry::is_directory) {
+                open_label.set_text("Open folders");
+            } else {
+                open_label.set_text("Open items");
+            }
+            open_in_hermes_player.set_visible(false);
             single.set_visible(false);
             multiple.set_visible(true);
         } else {
             heading.set_text(&entry.display_name);
             summary.set_text(&compact_display_path(&entry.location));
+            if entry.is_directory() {
+                open_label.set_text("Open folder");
+                let show_open_in_hermes =
+                    options.music && !in_trash && folder_has_audio_or_is_music(&entry);
+                open_in_hermes_player.set_visible(show_open_in_hermes);
+            } else {
+                open_in_hermes_player.set_visible(false);
+                let (content_type, _) = gio::content_type_guess(
+                    entry.location.native_path().map(Path::new),
+                    None::<&[u8]>,
+                );
+                let app_name = gio::AppInfo::default_for_type(&content_type, false)
+                    .map(|app| app.display_name().to_string());
+                if let Some(app) = app_name {
+                    open_label.set_text(&format!("Open in {app}"));
+                } else {
+                    open_label.set_text("Open");
+                }
+            }
             single.set_visible(true);
             multiple.set_visible(false);
         }
@@ -5774,6 +5807,55 @@ fn same_locations(left: &[Location], right: &[Location]) -> bool {
 
 fn item_context_option(icon: &str, label: &str, accelerator: &str) -> gtk::Button {
     item_context_option_with_icon(crate::assets::text_icon(icon, 15), label, accelerator)
+}
+
+fn item_context_option_labeled(icon: &str, label: &str, accelerator: &str) -> (gtk::Button, gtk::Label) {
+    let button = gtk::Button::new();
+    button.add_css_class("item-context-option");
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let icon_img = crate::assets::text_icon(icon, 15);
+    icon_img.add_css_class("item-context-icon");
+    let title = gtk::Label::new(Some(label));
+    title.set_xalign(0.0);
+    title.set_hexpand(true);
+    row.append(&icon_img);
+    row.append(&title);
+    if !accelerator.is_empty() {
+        let shortcut = gtk::Label::new(Some(accelerator));
+        shortcut.add_css_class("item-context-shortcut");
+        row.append(&shortcut);
+    }
+    button.set_child(Some(&row));
+    (button, title)
+}
+
+fn folder_has_audio_or_is_music(entry: &FileEntry) -> bool {
+    let Some(path) = entry.location.native_path() else {
+        return false;
+    };
+    if let Some(music_dir) = glib::user_special_dir(glib::UserDirectory::Music) {
+        if path.starts_with(&music_dir) {
+            return true;
+        }
+    }
+    if path
+        .components()
+        .any(|c| c.as_os_str().to_string_lossy().eq_ignore_ascii_case("music"))
+    {
+        return true;
+    }
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for item in entries.flatten() {
+            let item_path = item.path();
+            if item_path.is_file()
+                && crate::services::classify_by_name(item_path.as_os_str())
+                    == crate::services::FormatFamily::Audio
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn item_context_danger_option(icon: &str, label: &str, accelerator: &str) -> gtk::Button {

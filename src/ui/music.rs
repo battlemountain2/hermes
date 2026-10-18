@@ -1309,7 +1309,11 @@ fn read_folder_queue(
     selected: &std::path::Path,
     cancellation: &Cancellation,
 ) -> Result<Vec<Track>, String> {
-    let folder = selected.parent().ok_or("Song has no parent folder")?;
+    let folder = if selected.is_dir() {
+        selected
+    } else {
+        selected.parent().ok_or("Song has no parent folder")?
+    };
     let entries = std::fs::read_dir(folder).map_err(|error| error.to_string())?;
     let mut tracks = Vec::new();
     for (index, entry) in entries.enumerate() {
@@ -1321,15 +1325,29 @@ fn read_folder_queue(
         }
         let entry = entry.map_err(|error| error.to_string())?;
         let path = entry.path();
-        if !path.is_file()
-            || crate::services::classify_by_name(path.as_os_str())
-                != crate::services::FormatFamily::Audio
-        {
-            continue;
+        if path.is_file() {
+            if crate::services::classify_by_name(path.as_os_str())
+                == crate::services::FormatFamily::Audio
+            {
+                let tags =
+                    crate::adapters::music_metadata::read_tags(&path, cancellation).unwrap_or_default();
+                tracks.push(Track { path, tags });
+            }
+        } else if path.is_dir() && selected.is_dir() {
+            if let Ok(sub_entries) = std::fs::read_dir(&path) {
+                for sub_entry in sub_entries.flatten() {
+                    let sub_path = sub_entry.path();
+                    if sub_path.is_file()
+                        && crate::services::classify_by_name(sub_path.as_os_str())
+                            == crate::services::FormatFamily::Audio
+                    {
+                        let tags = crate::adapters::music_metadata::read_tags(&sub_path, cancellation)
+                            .unwrap_or_default();
+                        tracks.push(Track { path: sub_path, tags });
+                    }
+                }
+            }
         }
-        let tags =
-            crate::adapters::music_metadata::read_tags(&path, cancellation).unwrap_or_default();
-        tracks.push(Track { path, tags });
     }
     Ok(crate::music::folder_queue(tracks, selected))
 }
@@ -1559,8 +1577,21 @@ fn track_factory(state: std::rc::Weak<State>) -> gtk::SignalListItemFactory {
 }
 
 fn replace_model(model: &gtk::StringList, values: &[String]) {
-    let values: Vec<_> = values.iter().map(String::as_str).collect();
-    model.splice(0, model.n_items(), &values);
+    let old_len = model.n_items();
+    let new_len = values.len() as u32;
+    let min_len = old_len.min(new_len);
+    for i in 0..min_len {
+        let new_str = &values[i as usize];
+        if model.string(i).as_deref() != Some(new_str.as_str()) {
+            model.splice(i, 1, &[new_str.as_str()]);
+        }
+    }
+    if old_len > new_len {
+        model.splice(new_len, old_len - new_len, &[]);
+    } else if new_len > old_len {
+        let added: Vec<&str> = values[(old_len as usize)..].iter().map(String::as_str).collect();
+        model.splice(old_len, 0, &added);
+    }
 }
 
 fn time_label(microseconds: i64) -> String {

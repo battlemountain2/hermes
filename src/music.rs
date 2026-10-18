@@ -65,6 +65,14 @@ pub(crate) fn compare_tracks(left: &Track, right: &Track) -> Ordering {
 }
 
 pub(crate) fn folder_queue(tracks: Vec<Track>, selected: &std::path::Path) -> Vec<Track> {
+    if selected.is_dir() || (selected.extension().is_none() && !selected.as_os_str().is_empty()) {
+        let mut tracks: Vec<_> = tracks
+            .into_iter()
+            .filter(|track| track.path.starts_with(selected))
+            .collect();
+        tracks.sort_by(compare_tracks);
+        return tracks;
+    }
     let folder = selected.parent();
     let mut tracks: Vec<_> = tracks
         .into_iter()
