@@ -126,6 +126,40 @@ theme = "azure-glow"
 }
 
 #[test]
+fn dolphin_preferences_default_safely_and_roundtrip() {
+    let preferences: Preferences = toml::from_str(
+        r#"
+mode = "theme"
+theme = "azure-glow"
+"#,
+    )
+    .expect("defaults should be applied when omitted");
+
+    assert_eq!(preferences.startup_location, "home");
+    assert!(preferences.confirm_permanent_delete);
+    assert_eq!(preferences.date_format, "relative");
+    assert_eq!(preferences.size_unit, "decimal");
+    assert!(!preferences.show_hidden_default);
+    assert_eq!(preferences.max_preview_size_mb, 50);
+    assert!(preferences.preview_audio);
+    assert!(preferences.preview_images);
+    assert!(preferences.preview_videos);
+    assert!(preferences.preview_pdf);
+    assert!(preferences.preview_spreadsheets);
+    assert!(preferences.preview_code);
+
+    let serialized = toml::to_string(&preferences).expect("Preferences must serialize cleanly");
+    let roundtripped: Preferences =
+        toml::from_str(&serialized).expect("Preferences must deserialize after roundtrip");
+    assert_eq!(roundtripped.startup_location, "home");
+    assert_eq!(roundtripped.max_preview_size_mb, 50);
+    assert!(roundtripped.confirm_permanent_delete);
+    assert_eq!(roundtripped.date_format, "relative");
+    assert_eq!(roundtripped.size_unit, "decimal");
+    assert!(!roundtripped.show_hidden_default);
+}
+
+#[test]
 fn interface_font_preference_can_select_jetbrains_mono() {
     let preferences: Preferences = toml::from_str(
         r#"

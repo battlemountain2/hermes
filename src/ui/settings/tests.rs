@@ -120,6 +120,18 @@ theme = "azure-glow"
     assert!(manager.search_exclude_hidden());
     assert!(manager.search_exclude_build_artifacts());
     assert!(manager.search_reconcile_periodically());
+    assert_eq!(manager.startup_location(), "home");
+    assert!(manager.confirm_permanent_delete());
+    assert_eq!(manager.date_format(), "relative");
+    assert_eq!(manager.size_unit(), "decimal");
+    assert!(!manager.show_hidden_default());
+    assert_eq!(manager.max_preview_size_mb(), 50);
+    assert!(manager.preview_audio());
+    assert!(manager.preview_images());
+    assert!(manager.preview_videos());
+    assert!(manager.preview_pdf());
+    assert!(manager.preview_spreadsheets());
+    assert!(manager.preview_code());
 }
 
 #[test]
@@ -134,4 +146,14 @@ fn audio_and_diagnostics_pages_build_cleanly() {
     assert!(search.is::<gtk::Box>());
     let diag = diagnostics_page();
     assert!(diag.is::<gtk::Box>());
+    let browser = BrowserView::new(
+        std::rc::Rc::new(crate::adapters::RoutedFileSource::new()),
+        crate::ui::browser::PeekBehavior::default(),
+    );
+    let view_formats = view_formats_page(&browser, manager.clone(), std::rc::Rc::new(|| {}));
+    assert!(view_formats.is::<gtk::Box>());
+    let previews = previews_page(&browser, manager.clone());
+    assert!(previews.is::<gtk::Box>());
+    let general = general_page(&browser, manager, std::rc::Rc::new(|| {}));
+    assert!(general.is::<gtk::Box>());
 }

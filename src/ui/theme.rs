@@ -110,6 +110,30 @@ struct Preferences {
     search_exclude_build_artifacts: bool,
     #[serde(default = "default_enabled")]
     search_reconcile_periodically: bool,
+    #[serde(default = "default_startup_location")]
+    startup_location: String,
+    #[serde(default = "default_confirm_delete")]
+    confirm_permanent_delete: bool,
+    #[serde(default = "default_date_format")]
+    date_format: String,
+    #[serde(default = "default_size_unit")]
+    size_unit: String,
+    #[serde(default)]
+    show_hidden_default: bool,
+    #[serde(default = "default_max_preview_size")]
+    max_preview_size_mb: u32,
+    #[serde(default = "default_enabled")]
+    preview_audio: bool,
+    #[serde(default = "default_enabled")]
+    preview_images: bool,
+    #[serde(default = "default_enabled")]
+    preview_videos: bool,
+    #[serde(default = "default_enabled")]
+    preview_pdf: bool,
+    #[serde(default = "default_enabled")]
+    preview_spreadsheets: bool,
+    #[serde(default = "default_enabled")]
+    preview_code: bool,
 }
 
 impl Default for Preferences {
@@ -136,8 +160,40 @@ impl Default for Preferences {
             search_exclude_hidden: true,
             search_exclude_build_artifacts: true,
             search_reconcile_periodically: true,
+            startup_location: default_startup_location(),
+            confirm_permanent_delete: default_confirm_delete(),
+            date_format: default_date_format(),
+            size_unit: default_size_unit(),
+            show_hidden_default: false,
+            max_preview_size_mb: default_max_preview_size(),
+            preview_audio: true,
+            preview_images: true,
+            preview_videos: true,
+            preview_pdf: true,
+            preview_spreadsheets: true,
+            preview_code: true,
         }
     }
+}
+
+fn default_startup_location() -> String {
+    "home".to_owned()
+}
+
+fn default_confirm_delete() -> bool {
+    true
+}
+
+fn default_date_format() -> String {
+    "relative".to_owned()
+}
+
+fn default_size_unit() -> String {
+    "decimal".to_owned()
+}
+
+fn default_max_preview_size() -> u32 {
+    50
 }
 
 fn default_enabled() -> bool {
@@ -415,6 +471,114 @@ impl ThemeManager {
 
     pub fn set_search_reconcile_periodically(&self, reconcile: bool) {
         self.preferences.borrow_mut().search_reconcile_periodically = reconcile;
+        self.save_preferences();
+    }
+
+    pub fn startup_location(&self) -> String {
+        self.preferences.borrow().startup_location.clone()
+    }
+
+    pub fn set_startup_location(&self, location: &str) {
+        self.preferences.borrow_mut().startup_location = location.to_owned();
+        self.save_preferences();
+    }
+
+    pub fn confirm_permanent_delete(&self) -> bool {
+        self.preferences.borrow().confirm_permanent_delete
+    }
+
+    pub fn set_confirm_permanent_delete(&self, confirm: bool) {
+        self.preferences.borrow_mut().confirm_permanent_delete = confirm;
+        self.save_preferences();
+    }
+
+    pub fn date_format(&self) -> String {
+        self.preferences.borrow().date_format.clone()
+    }
+
+    pub fn set_date_format(&self, format: &str) {
+        self.preferences.borrow_mut().date_format = format.to_owned();
+        self.save_preferences();
+    }
+
+    pub fn size_unit(&self) -> String {
+        self.preferences.borrow().size_unit.clone()
+    }
+
+    pub fn set_size_unit(&self, unit: &str) {
+        self.preferences.borrow_mut().size_unit = unit.to_owned();
+        self.save_preferences();
+    }
+
+    pub fn show_hidden_default(&self) -> bool {
+        self.preferences.borrow().show_hidden_default
+    }
+
+    pub fn set_show_hidden_default(&self, show: bool) {
+        self.preferences.borrow_mut().show_hidden_default = show;
+        self.save_preferences();
+    }
+
+    pub fn max_preview_size_mb(&self) -> u32 {
+        self.preferences.borrow().max_preview_size_mb
+    }
+
+    pub fn set_max_preview_size_mb(&self, size: u32) {
+        self.preferences.borrow_mut().max_preview_size_mb = size;
+        self.save_preferences();
+    }
+
+    pub fn preview_audio(&self) -> bool {
+        self.preferences.borrow().preview_audio
+    }
+
+    pub fn set_preview_audio(&self, enabled: bool) {
+        self.preferences.borrow_mut().preview_audio = enabled;
+        self.save_preferences();
+    }
+
+    pub fn preview_images(&self) -> bool {
+        self.preferences.borrow().preview_images
+    }
+
+    pub fn set_preview_images(&self, enabled: bool) {
+        self.preferences.borrow_mut().preview_images = enabled;
+        self.save_preferences();
+    }
+
+    pub fn preview_videos(&self) -> bool {
+        self.preferences.borrow().preview_videos
+    }
+
+    pub fn set_preview_videos(&self, enabled: bool) {
+        self.preferences.borrow_mut().preview_videos = enabled;
+        self.save_preferences();
+    }
+
+    pub fn preview_pdf(&self) -> bool {
+        self.preferences.borrow().preview_pdf
+    }
+
+    pub fn set_preview_pdf(&self, enabled: bool) {
+        self.preferences.borrow_mut().preview_pdf = enabled;
+        self.save_preferences();
+    }
+
+    pub fn preview_spreadsheets(&self) -> bool {
+        self.preferences.borrow().preview_spreadsheets
+    }
+
+    pub fn set_preview_spreadsheets(&self, enabled: bool) {
+        self.preferences.borrow_mut().preview_spreadsheets = enabled;
+        self.save_preferences();
+    }
+
+    pub fn preview_code(&self) -> bool {
+        self.preferences.borrow().preview_code
+    }
+
+    pub fn set_preview_code(&self, enabled: bool) {
+        self.preferences.borrow_mut().preview_code = enabled;
         self.save_preferences();
     }
 

@@ -42,11 +42,28 @@ pub fn build_layer(
     panel.add_css_class("settings-dialog");
     panel.set_halign(gtk::Align::Center);
     panel.set_valign(gtk::Align::Center);
-    panel.set_size_request(940, 640);
+    panel.set_size_request(980, 680);
 
     let navigation = gtk::Box::new(gtk::Orientation::Vertical, 4);
     navigation.add_css_class("settings-navigation");
     append_heading(&navigation, "SETTINGS");
+
+    let filter_entry = gtk::SearchEntry::builder()
+        .placeholder_text("Filter settings...")
+        .build();
+    filter_entry.add_css_class("settings-nav-filter");
+    navigation.append(&filter_entry);
+
+    let nav_list = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    let nav_scroll = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .hexpand(true)
+        .vexpand(true)
+        .child(&nav_list)
+        .build();
+    nav_scroll.add_css_class("settings-nav-scroll");
+    navigation.append(&nav_scroll);
 
     let page = gtk::Box::new(gtk::Orientation::Vertical, 0);
     page.add_css_class("settings-page");
@@ -74,8 +91,16 @@ pub fn build_layer(
         .vexpand(true)
         .build();
     stack.add_named(
-        &scroll_page(&general_page(browser, themes.clone(), refresh_sidebar)),
+        &scroll_page(&general_page(browser, themes.clone(), refresh_sidebar.clone())),
         Some("general"),
+    );
+    stack.add_named(
+        &scroll_page(&view_formats_page(browser, themes.clone(), refresh_sidebar)),
+        Some("view-formats"),
+    );
+    stack.add_named(
+        &scroll_page(&previews_page(browser, themes.clone())),
+        Some("previews"),
     );
     stack.add_named(
         &scroll_page(&audio_page(themes.clone())),
@@ -97,38 +122,143 @@ pub fn build_layer(
     stack.add_named(&scroll_page(&about_page()), Some("about"));
     page.append(&stack);
 
-    let nav_buttons: Rc<RefCell<Vec<gtk::Button>>> = Rc::new(RefCell::new(Vec::new()));
-    for (label, icon, name) in [
-        ("General", icons::SLIDERS, "general"),
-        ("Audio & DSP", icons::MUSIC, "audio"),
-        ("Search & index", icons::SEARCH, "search"),
-        ("Context menu", icons::LIST, "context-menu"),
-        ("Custom actions", icons::SETTINGS_2, "actions"),
-        ("Themes", icons::PALETTE, "theme"),
-        ("Fonts", icons::FILE_CODE, "fonts"),
-        ("Keyboard shortcuts", icons::KEYBOARD, "keybindings"),
-        ("Diagnostics", icons::TERMINAL, "diagnostics"),
-        ("About", icons::INFO, "about"),
-    ] {
+    let items: &[(&str, &str, &str, &[&str])] = &[
+        (
+            "General",
+            icons::SLIDERS,
+            "general",
+            &["general", "startup", "delete", "safety", "history", "recent", "confirm", "motion"],
+        ),
+        (
+            "View & formats",
+            icons::GRID,
+            "view-formats",
+            &["view", "format", "layout", "density", "columns", "grid", "date", "time", "iso", "size", "units", "decimal", "binary", "hidden"],
+        ),
+        (
+            "Previews & files",
+            icons::EYE,
+            "previews",
+            &["preview", "previews", "files", "thumbnail", "audio", "image", "video", "pdf", "spreadsheet", "xlsx", "code", "size limit", "mb", "peek"],
+        ),
+        (
+            "Audio & DSP",
+            icons::MUSIC,
+            "audio",
+            &["audio", "dsp", "music", "playback", "continuous", "sound", "spectrum", "equalizer", "decay", "bands", "flac", "symphonia", "lossless"],
+        ),
+        (
+            "Search & index",
+            icons::SEARCH,
+            "search",
+            &["search", "index", "catalog", "sqlite", "query", "exclude", "reconcile", "rebuild", "find"],
+        ),
+        (
+            "Context menu",
+            icons::LIST,
+            "context-menu",
+            &["context", "menu", "right click", "actions", "open with", "pin", "copy", "compress"],
+        ),
+        (
+            "Custom actions",
+            icons::SETTINGS_2,
+            "actions",
+            &["custom", "actions", "commands", "scripts", "bash", "execute", "tools"],
+        ),
+        (
+            "Themes",
+            icons::PALETTE,
+            "theme",
+            &["theme", "themes", "color", "palette", "dark", "light", "noctalia", "omarchy", "accent", "surface"],
+        ),
+        (
+            "Fonts",
+            icons::FILE_CODE,
+            "fonts",
+            &["font", "fonts", "typography", "monospace", "size", "jet-brains", "maple", "fira", "hack"],
+        ),
+        (
+            "Keyboard shortcuts",
+            icons::KEYBOARD,
+            "keybindings",
+            &["keyboard", "shortcuts", "hotkeys", "keybindings", "keys"],
+        ),
+        (
+            "Diagnostics",
+            icons::TERMINAL,
+            "diagnostics",
+            &["diagnostics", "system", "wayland", "x11", "gtk", "paths", "cache", "thumbnails", "storage", "telemetry"],
+        ),
+        (
+            "About",
+            icons::INFO,
+            "about",
+            &["about", "version", "strata", "hermes", "license", "release", "credits"],
+        ),
+    ];
+
+    let nav_buttons: Rc<RefCell<Vec<(gtk::Button, &'static str, &'static str, &'static [&'static str])>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    for (label, icon, name, keywords) in items {
         let button = navigation_button(icon, label);
-        if name == "general" {
+        if *name == "general" {
             button.add_css_class("settings-nav-active");
         }
-        nav_buttons.borrow_mut().push(button.clone());
+        nav_buttons.borrow_mut().push((button.clone(), *name, *label, *keywords));
         let buttons = nav_buttons.clone();
         let stack = stack.clone();
         let title = title.clone();
-        let page_title = label.to_owned();
+        let page_title = (*label).to_owned();
+        let page_name = *name;
         button.connect_clicked(move |clicked| {
-            for candidate in buttons.borrow().iter() {
+            for (candidate, _, _, _) in buttons.borrow().iter() {
                 candidate.remove_css_class("settings-nav-active");
             }
             clicked.add_css_class("settings-nav-active");
-            stack.set_visible_child_name(name);
+            stack.set_visible_child_name(page_name);
             title.set_text(&page_title);
         });
-        navigation.append(&button);
+        nav_list.append(&button);
     }
+
+    let buttons_for_filter = nav_buttons.clone();
+    let stack_for_filter = stack.clone();
+    let title_for_filter = title.clone();
+    filter_entry.connect_search_changed(move |entry| {
+        let query = entry.text().trim().to_lowercase();
+        let buttons = buttons_for_filter.borrow();
+        let mut first_match: Option<(&gtk::Button, &str, &str)> = None;
+        let mut current_visible_matched = false;
+        let current_name = stack_for_filter.visible_child_name();
+
+        for (btn, name, label, keywords) in buttons.iter() {
+            let matched = query.is_empty()
+                || label.to_lowercase().contains(&query)
+                || keywords.iter().any(|kw| kw.contains(&query));
+            btn.set_visible(matched);
+            if matched {
+                if first_match.is_none() {
+                    first_match = Some((btn, *name, *label));
+                }
+                if let Some(ref cur) = current_name {
+                    if cur == name {
+                        current_visible_matched = true;
+                    }
+                }
+            }
+        }
+
+        if !current_visible_matched && !query.is_empty() {
+            if let Some((btn, name, label)) = first_match {
+                for (candidate, _, _, _) in buttons.iter() {
+                    candidate.remove_css_class("settings-nav-active");
+                }
+                btn.add_css_class("settings-nav-active");
+                stack_for_filter.set_visible_child_name(name);
+                title_for_filter.set_text(label);
+            }
+        }
+    });
 
     panel.append(&navigation);
     panel.append(&page);
@@ -143,14 +273,23 @@ pub fn build_layer(
     let hidden_layer = layer.clone();
     let inactive_settings = settings_button.clone();
     let unblurred_root = root.clone();
-    close.connect_clicked(move |_| hide(&hidden_layer, &inactive_settings, &unblurred_root));
+    let filter_for_hide = filter_entry.clone();
+    close.connect_clicked(move |_| {
+        filter_for_hide.set_text("");
+        hide(&hidden_layer, &inactive_settings, &unblurred_root);
+    });
     let hidden_layer = layer.clone();
     let inactive_settings = settings_button.clone();
     let unblurred_root = root.clone();
+    let filter_for_key = filter_entry;
     let keys = gtk::EventControllerKey::new();
     keys.connect_key_pressed(move |_, key, _, _| {
         if key != gdk::Key::Escape {
             return gtk::glib::Propagation::Proceed;
+        }
+        if !filter_for_key.text().is_empty() {
+            filter_for_key.set_text("");
+            return gtk::glib::Propagation::Stop;
         }
         hide(&hidden_layer, &inactive_settings, &unblurred_root);
         gtk::glib::Propagation::Stop
@@ -270,36 +409,37 @@ fn general_page(
     refresh_sidebar: Rc<dyn Fn()>,
 ) -> gtk::Widget {
     let preferences = page_content();
+    browser.set_single_click_previews(manager.single_click_previews());
 
-    append_heading(&preferences, "BROWSING");
-    let browsing_card = settings_card();
+    append_heading(&preferences, "STARTUP & NAVIGATION");
+    let startup_card = settings_card();
 
-    let (peeking_row, peeking) = settings_option(
-        "Folder peeking",
-        "Preview folders automatically while moving through a pane.",
-        true,
+    let startup_choices = [
+        "Home folder · Default user directory",
+        "Music library · Instant jukebox mode",
+        "Last active location · Resume previous session",
+    ];
+    let selected_startup_idx = match manager.startup_location().as_str() {
+        "music" => 1,
+        "last" => 2,
+        _ => 0,
+    };
+    let (startup_row, startup_choice) = settings_choice(
+        "Startup location",
+        "Initial folder or view opened when Hermes launches.",
+        &startup_choices,
+        selected_startup_idx,
     );
-    let browser_for_peeking = browser.clone();
-    peeking.connect_active_notify(move |toggle| {
-        browser_for_peeking.set_peek_enabled(toggle.is_active())
+    let manager_for_startup = manager.clone();
+    startup_choice.connect_selected_notify(move |dropdown| {
+        let loc = match dropdown.selected() {
+            1 => "music",
+            2 => "last",
+            _ => "home",
+        };
+        manager_for_startup.set_startup_location(loc);
     });
-    browsing_card.append(&peeking_row);
-
-    let single_click_enabled = manager.single_click_previews();
-    browser.set_single_click_previews(single_click_enabled);
-    let (preview_row, single_click_previews) = settings_option(
-        "Single-click file previews",
-        "Show a quick preview when selecting a supported file.",
-        single_click_enabled,
-    );
-    let browser_for_previews = browser.clone();
-    let manager_for_previews = manager.clone();
-    single_click_previews.connect_active_notify(move |toggle| {
-        let enabled = toggle.is_active();
-        browser_for_previews.set_single_click_previews(enabled);
-        manager_for_previews.set_single_click_previews(enabled);
-    });
-    browsing_card.append(&preview_row);
+    startup_card.append(&startup_row);
 
     let direct_open_enabled = manager.search_open_files_directly();
     let (search_open_row, search_open_files) = settings_option(
@@ -311,8 +451,31 @@ fn general_page(
     search_open_files.connect_active_notify(move |toggle| {
         manager_for_search.set_search_open_files_directly(toggle.is_active());
     });
-    browsing_card.append(&search_open_row);
-    preferences.append(&browsing_card);
+    startup_card.append(&search_open_row);
+    preferences.append(&startup_card);
+
+    append_heading(&preferences, "CONFIRMATIONS & SAFETY");
+    let safety_card = settings_card();
+
+    let (confirm_delete_row, confirm_delete) = settings_option(
+        "Confirm permanent deletion",
+        "Display confirmation dialog when permanently deleting files (Shift+Delete) or emptying trash.",
+        manager.confirm_permanent_delete(),
+    );
+    let manager_for_delete = manager.clone();
+    confirm_delete.connect_active_notify(move |toggle| {
+        manager_for_delete.set_confirm_permanent_delete(toggle.is_active());
+    });
+    safety_card.append(&confirm_delete_row);
+
+    let (motion_row, reduce_motion) = settings_option(
+        "Reduce motion",
+        "Disable nonessential interface animations and transitions.",
+        false,
+    );
+    reduce_motion.connect_active_notify(|toggle| set_reduce_motion(toggle.is_active()));
+    safety_card.append(&motion_row);
+    preferences.append(&safety_card);
 
     append_heading(&preferences, "SIDEBAR & HISTORY");
     let sidebar_card = settings_card();
@@ -361,10 +524,6 @@ fn general_page(
         refresh_sidebar_recent_limit();
     });
     sidebar_card.append(&recent_folders_limit_row);
-    preferences.append(&sidebar_card);
-
-    append_heading(&preferences, "LAYOUT & MOTION");
-    let layout_card = settings_card();
 
     let folder_tree_enabled = manager.show_folder_tree();
     let (folder_tree_row, folder_tree) = settings_option(
@@ -378,18 +537,236 @@ fn general_page(
         manager_for_tree.set_show_folder_tree(toggle.is_active());
         refresh_sidebar_tree();
     });
-    layout_card.append(&folder_tree_row);
-
-    let (motion_row, reduce_motion) = settings_option(
-        "Reduce motion",
-        "Disable nonessential interface animations.",
-        false,
-    );
-    reduce_motion.connect_active_notify(|toggle| set_reduce_motion(toggle.is_active()));
-    layout_card.append(&motion_row);
-    preferences.append(&layout_card);
+    sidebar_card.append(&folder_tree_row);
+    preferences.append(&sidebar_card);
 
     preferences.upcast()
+}
+
+fn view_formats_page(
+    _browser: &BrowserView,
+    manager: Rc<ThemeManager>,
+    _refresh_sidebar: Rc<dyn Fn()>,
+) -> gtk::Widget {
+    let content = page_content();
+
+    append_heading(&content, "DEFAULT VIEW & DENSITY");
+    let card1 = settings_card();
+
+    let view_mode_choices = [
+        "Columns · Miller columns hierarchy",
+        "Grid · Visual gallery layout",
+        "Explorer · Tree split view",
+    ];
+    let (view_row, _view_choice) = settings_choice(
+        "Default browser layout",
+        "Preferred presentation style when opening new folder panes.",
+        &view_mode_choices,
+        0,
+    );
+    card1.append(&view_row);
+
+    let density_choices = [
+        "Compact · Maximum data density",
+        "Standard · Balanced spacing",
+        "Airy · Generous line heights & touch targets",
+    ];
+    let (density_row, _density_choice) = settings_choice(
+        "Information density",
+        "Row spacing, icon sizing, and padding in Miller columns and file lists.",
+        &density_choices,
+        0,
+    );
+    card1.append(&density_row);
+
+    let (hidden_row, hidden_toggle) = settings_option(
+        "Show hidden files by default",
+        "Display dotfiles and hidden directories (e.g. .config, .local) on folder navigation.",
+        manager.show_hidden_default(),
+    );
+    let manager_for_hidden = manager.clone();
+    hidden_toggle.connect_active_notify(move |toggle| {
+        manager_for_hidden.set_show_hidden_default(toggle.is_active());
+    });
+    card1.append(&hidden_row);
+    content.append(&card1);
+
+    append_heading(&content, "DATE & TIME DISPLAY");
+    let card2 = settings_card();
+    let date_format_choices = [
+        "Relative · Natural language (e.g. 5m ago, Today, Yesterday)",
+        "Absolute ISO-8601 · Standardized (e.g. 2026-10-18 04:30)",
+    ];
+    let selected_date_idx = match manager.date_format().as_str() {
+        "iso" => 1,
+        _ => 0,
+    };
+    let (date_row, date_choice) = settings_choice(
+        "Timestamp presentation",
+        "Governs modified and accessed dates across file listings and inspect panels.",
+        &date_format_choices,
+        selected_date_idx,
+    );
+    let manager_for_date = manager.clone();
+    date_choice.connect_selected_notify(move |dropdown| {
+        let fmt = match dropdown.selected() {
+            1 => "iso",
+            _ => "relative",
+        };
+        manager_for_date.set_date_format(fmt);
+    });
+    card2.append(&date_row);
+    content.append(&card2);
+
+    append_heading(&content, "FILE SIZE MEASUREMENT");
+    let card3 = settings_card();
+    let size_unit_choices = [
+        "Decimal (SI) · 1 KB = 1,000 bytes (macOS / GNOME standard)",
+        "Binary (IEC) · 1 KiB = 1,024 bytes (KDE / Windows standard)",
+    ];
+    let selected_unit_idx = match manager.size_unit().as_str() {
+        "binary" => 1,
+        _ => 0,
+    };
+    let (unit_row, unit_choice) = settings_choice(
+        "Byte unit prefixes",
+        "Governs byte conversion calculations across file items, properties, and status cards.",
+        &size_unit_choices,
+        selected_unit_idx,
+    );
+    let manager_for_unit = manager.clone();
+    unit_choice.connect_selected_notify(move |dropdown| {
+        let unit = match dropdown.selected() {
+            1 => "binary",
+            _ => "decimal",
+        };
+        manager_for_unit.set_size_unit(unit);
+    });
+    card3.append(&unit_row);
+    content.append(&card3);
+
+    content.upcast()
+}
+
+fn previews_page(browser: &BrowserView, manager: Rc<ThemeManager>) -> gtk::Widget {
+    let content = page_content();
+
+    append_heading(&content, "PREVIEW CEILING & BEHAVIOR");
+    let card1 = settings_card();
+
+    let (peeking_row, peeking) = settings_option(
+        "Folder peeking",
+        "Preview child directory contents automatically while moving through a pane.",
+        true,
+    );
+    let browser_for_peeking = browser.clone();
+    peeking.connect_active_notify(move |toggle| {
+        browser_for_peeking.set_peek_enabled(toggle.is_active())
+    });
+    card1.append(&peeking_row);
+
+    let single_click_enabled = manager.single_click_previews();
+    let (preview_row, single_click_previews) = settings_option(
+        "Single-click file previews",
+        "Show a quick preview drawer or card when selecting a supported file.",
+        single_click_enabled,
+    );
+    let browser_for_previews = browser.clone();
+    let manager_for_previews = manager.clone();
+    single_click_previews.connect_active_notify(move |toggle| {
+        let enabled = toggle.is_active();
+        browser_for_previews.set_single_click_previews(enabled);
+        manager_for_previews.set_single_click_previews(enabled);
+    });
+    card1.append(&preview_row);
+
+    let max_mb = manager.max_preview_size_mb();
+    let (max_size_row, max_size_spin) = settings_spin(
+        "Maximum preview file size (MB)",
+        "Do not generate rich previews or decode media for files exceeding this limit (1-500 MB).",
+        f64::from(max_mb),
+        1.0,
+        500.0,
+        5.0,
+    );
+    let manager_for_max_size = manager.clone();
+    max_size_spin.connect_value_changed(move |spin| {
+        manager_for_max_size.set_max_preview_size_mb(spin.value_as_int() as u32);
+    });
+    card1.append(&max_size_row);
+    content.append(&card1);
+
+    append_heading(&content, "FILE FORMAT GENERATORS");
+    let card2 = settings_card();
+
+    let (audio_row, audio_toggle) = settings_option(
+        "Audio waveforms & ID3 tags",
+        "Decode FLAC, MP3, WAV, OGG, and AAC files for live waveform previews and album metadata.",
+        manager.preview_audio(),
+    );
+    let manager_for_audio = manager.clone();
+    audio_toggle.connect_active_notify(move |toggle| {
+        manager_for_audio.set_preview_audio(toggle.is_active());
+    });
+    card2.append(&audio_row);
+
+    let (images_row, images_toggle) = settings_option(
+        "Images & photographic EXIF",
+        "Generate high-resolution thumbnails and display camera aperture, ISO, and dimension telemetry.",
+        manager.preview_images(),
+    );
+    let manager_for_images = manager.clone();
+    images_toggle.connect_active_notify(move |toggle| {
+        manager_for_images.set_preview_images(toggle.is_active());
+    });
+    card2.append(&images_row);
+
+    let (videos_row, videos_toggle) = settings_option(
+        "Video keyframes & durations",
+        "Extract representative keyframes and container specs for MP4, MKV, and WebM files.",
+        manager.preview_videos(),
+    );
+    let manager_for_videos = manager.clone();
+    videos_toggle.connect_active_notify(move |toggle| {
+        manager_for_videos.set_preview_videos(toggle.is_active());
+    });
+    card2.append(&videos_row);
+
+    let (pdf_row, pdf_toggle) = settings_option(
+        "PDF documents & PostScript",
+        "Render vector first-page covers and inspect document page counts.",
+        manager.preview_pdf(),
+    );
+    let manager_for_pdf = manager.clone();
+    pdf_toggle.connect_active_notify(move |toggle| {
+        manager_for_pdf.set_preview_pdf(toggle.is_active());
+    });
+    card2.append(&pdf_row);
+
+    let (spreadsheets_row, spreadsheets_toggle) = settings_option(
+        "Spreadsheets & tabular data",
+        "Render interactive scrollable tables and sheet tabs for XLSX, CSV, and TSV files.",
+        manager.preview_spreadsheets(),
+    );
+    let manager_for_spreadsheets = manager.clone();
+    spreadsheets_toggle.connect_active_notify(move |toggle| {
+        manager_for_spreadsheets.set_preview_spreadsheets(toggle.is_active());
+    });
+    card2.append(&spreadsheets_row);
+
+    let (code_row, code_toggle) = settings_option(
+        "Source code & Markdown syntax",
+        "Provide syntax-highlighted peeks and line counts for source code and text files.",
+        manager.preview_code(),
+    );
+    let manager_for_code = manager.clone();
+    code_toggle.connect_active_notify(move |toggle| {
+        manager_for_code.set_preview_code(toggle.is_active());
+    });
+    card2.append(&code_row);
+    content.append(&card2);
+
+    content.upcast()
 }
 
 fn audio_page(manager: Rc<ThemeManager>) -> gtk::Widget {
