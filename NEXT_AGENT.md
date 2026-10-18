@@ -1,5 +1,31 @@
 # Next agent: Hermes performance, file features and media polish
 
+## Music Context Menus, Dynamic Open Targets & Sidebar Flashing Fix — 2026-10-17
+
+Completed on branch `feat/5-music-context-menu-and-open-targets` (commit `5898f3b`):
+
+1. **Music Sidebar Flashing Diagnosis & Resolution**:
+   - Diagnosed 500ms periodic artwork flicker in `recording_20261017_195349.mp4`: periodic indexing triggers `render_library()`, which called `replace_model(&self.album_model, &labels)`. Full splice wiped and rebound all visible rows.
+   - On rebind, `thumbnail::set_thumbnail_or_icon` called `mark_nonempty_folder` on directory entries, which asynchronously set `icons::FOLDER_FILLED`, dropping album art for 1 frame before thumbnail cache re-applied.
+   - Fixed in `src/ui/thumbnail.rs` by checking `fallback_icon != icons::MUSIC` before applying folder icons.
+   - Refactored `replace_model` in `src/ui/music.rs` to perform in-place diffing rather than full `splice(0, n)`, preserving intact rows and avoiding unneeded widget rebinds.
+
+2. **Folder Context Menu: "Open in Hermes Player"**:
+   - Added `Open in Hermes Player` directly beneath `Open` in `src/ui/browser.rs` for folders in `~/Music` or folders containing audio files (`folder_has_audio_or_is_music`).
+   - Wired `win.play-music-selection` in `src/ui/window.rs` to queue folder tracks starting from track 1 and switch workspace view to Hermes Music (`selected_music_toggle.set_active(true)`).
+   - Enhanced `read_folder_queue` in `src/music.rs` and `src/ui/music.rs` to handle directory paths directly, including multi-disc subfolder traversal (`CD1`, `Disc 1`).
+
+3. **Dynamic App Open Targets**:
+   - Replaced generic "Open" in `src/ui/browser.rs` with context-aware labels:
+     - Single folder: `Open folder`.
+     - Multiple folders: `Open folders`.
+     - Files: Queries default application via `gio::AppInfo::default_for_type` and formats as `Open in <App Name>` (e.g. `Open in SoundCraft`, `Open in Elisa`).
+     - Multiple mixed files: `Open <N> items`.
+
+4. **Validation**:
+   - All 779 binary unit tests pass (`cargo test --bin strata --jobs 2 -- --test-threads=2`).
+   - Warning-free build; `cargo check` and `git diff --check` clean.
+
 ## Milestone 4: File Continuity & 5-Star Local Ratings — 2026-10-17
 
 Completed Milestone 4 of the roadmap on branch `feat/4-file-continuity-and-ratings`:
