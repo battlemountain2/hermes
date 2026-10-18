@@ -3571,3 +3571,54 @@ button.music-cover-button:focus-visible {
 .music-queue-action {
   padding: 4px;
 }
+
+/* Spreadsheet viewer & multi-sheet tabs */
+.spreadsheet-container {
+  background: @theme_surface;
+  border: 1px solid alpha(@theme_border, 0.4);
+}
+
+.spreadsheet-header {
+  background: @theme_bg;
+  border-bottom: 1px solid alpha(@theme_border, 0.3);
+  padding: 6px 12px;
+  min-height: 38px;
+}
+
+.spreadsheet-sheet-bar {
+  background: @theme_bg;
+  border-bottom: 1px solid alpha(@theme_border, 0.3);
+  padding: 4px 8px;
+}
+
+.spreadsheet-sheet-button {
+  background: transparent;
+  color: @theme_dim_text;
+  border: 1px solid transparent;
+  border-radius: 0;
+  padding: 4px 12px;
+  font-size: 0.88em;
+  font-weight: 500;
+}
+
+.spreadsheet-sheet-button:hover {
+  background: alpha(@theme_muted, 0.5);
+  color: @theme_text;
+}
+
+.spreadsheet-sheet-button.active-sheet-tab {
+  background: @theme_surface;
+  color: @theme_accent;
+  border: 1px solid alpha(@theme_border, 0.4);
+  border-bottom: 2px solid @theme_accent;
+  font-weight: 700;
+}
+
+.spreadsheet-dimension-pill {
+  color: @theme_dim_text;
+  font-size: 0.82em;
+  font-family: monospace;
+  padding: 2px 6px;
+  background: alpha(@theme_bg, 0.6);
+  border: 1px solid alpha(@theme_border, 0.2);
+}

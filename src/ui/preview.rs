@@ -71,6 +71,7 @@ struct PreviewState {
     image: RefCell<Option<image::ImagePreview>>,
     image_context_menu_handler: RefCell<Option<ImageContextMenuHandler>>,
     pdf: RefCell<Option<pdf_fullscreen::PdfFullscreen>>,
+    table: RefCell<Option<super::table_view::SpreadsheetView>>,
     split: RefCell<Option<gtk::Paned>>,
     occupied_width: RefCell<Option<Rc<dyn Fn() -> i32>>>,
     current: RefCell<Option<FileEntry>>,
@@ -176,6 +177,7 @@ impl PreviewDrawer {
             image: RefCell::new(None),
             image_context_menu_handler: RefCell::new(None),
             pdf: RefCell::new(None),
+            table: RefCell::new(None),
             split: RefCell::new(None),
             occupied_width: RefCell::new(None),
             current: RefCell::new(None),
@@ -293,7 +295,13 @@ impl PreviewDrawer {
                     .pdf
                     .borrow()
                     .as_ref()
-                    .is_some_and(pdf_fullscreen::PdfFullscreen::open_fullscreen))
+                    .is_some_and(pdf_fullscreen::PdfFullscreen::open_fullscreen)
+                || self
+                    .state
+                    .table
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(super::table_view::SpreadsheetView::open_fullscreen))
     }
 
     pub fn show(&self, entry: FileEntry) {
@@ -623,8 +631,9 @@ impl PreviewState {
                 self.render_pdf_viewer(preview.entry, png, page, pages, text_layer);
             }
             PreviewContent::Spreadsheet { table } => {
-                let view = crate::ui::table_view::build_spreadsheet_view(&table);
-                self.content.append(&view);
+                let view = crate::ui::table_view::build_spreadsheet_view(&table, &preview.entry.display_name);
+                self.content.append(&view.widget);
+                self.table.replace(Some(view));
             }
             PreviewContent::Audio { metadata } => {
                 self.render_audio(&preview.entry, &metadata);
@@ -1219,6 +1228,10 @@ impl PreviewState {
         let pdf = self.pdf.borrow_mut().take();
         if let Some(pdf) = pdf {
             pdf.stop();
+        }
+        let table = self.table.borrow_mut().take();
+        if let Some(table) = table {
+            table.stop();
         }
         if let Some(image) = self.image.borrow_mut().take() {
             image.stop();

@@ -389,32 +389,29 @@ pub fn generate_massive_ods(num_rows: usize, num_cols: usize) -> Vec<u8> {
 "#);
 
     // Header row
-    xml.push_str("        <table:table-row>\n");
+    xml.push_str("<table:table-row>");
     for c in 0..num_cols {
         xml.push_str(&format!(
-            "          <table:table-cell office:value-type=\"string\"><text:p>Col_{}</text:p></table:table-cell>\n",
+            "<table:table-cell office:value-type=\"string\"><text:p>Col_{}</text:p></table:table-cell>",
             c
         ));
     }
-    xml.push_str("        </table:table-row>\n");
+    xml.push_str("</table:table-row>");
 
     // Data rows
     for r in 0..num_rows {
-        xml.push_str("        <table:table-row>\n");
+        xml.push_str("<table:table-row>");
         for c in 0..num_cols {
             xml.push_str(&format!(
-                "          <table:table-cell office:value-type=\"float\" office:value=\"{}\"><text:p>{}</text:p></table:table-cell>\n",
+                "<table:table-cell office:value-type=\"float\" office:value=\"{}\"><text:p>{}</text:p></table:table-cell>",
                 r * 100 + c,
                 r * 100 + c
             ));
         }
-        xml.push_str("        </table:table-row>\n");
+        xml.push_str("</table:table-row>");
     }
 
-    xml.push_str(r#"      </table:table>
-    </office:spreadsheet>
-  </office:body>
-</office:document-content>"#);
+    xml.push_str(r#"</table:table></office:spreadsheet></office:body></office:document-content>"#);
 
     create_zip(&[
         ("mimetype", b"application/vnd.oasis.opendocument.spreadsheet"),
