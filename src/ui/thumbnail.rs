@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, VecDeque},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
@@ -14,10 +14,98 @@ mod disk;
 mod scheduling;
 
 use crate::{
-    model::FileEntry,
+    model::{FileEntry, MetadataValue},
     sandbox::{Cancellation, ParseOperation},
-    services::{FormatCapabilities, ThumbnailHandler, capabilities_by_name},
+    services::{FormatCapabilities, FormatFamily, ThumbnailHandler, capabilities_by_name, classify_by_name, classify_by_mime},
 };
+
+#[derive(Clone, Copy)]
+pub(crate) struct PreviewPolicy {
+    pub max_bytes: u64,
+    pub audio: bool,
+    pub images: bool,
+    pub videos: bool,
+    pub pdf: bool,
+    pub spreadsheets: bool,
+    pub code: bool,
+}
+
+impl PreviewPolicy {
+    pub(crate) fn current() -> Self {
+        let manager = super::theme::ThemeManager::shared();
+        Self {
+            max_bytes: u64::from(manager.max_preview_size_mb().clamp(1, 500)) * 1_000_000,
+            audio: manager.preview_audio(),
+            images: manager.preview_images(),
+            videos: manager.preview_videos(),
+            pdf: manager.preview_pdf(),
+            spreadsheets: manager.preview_spreadsheets(),
+            code: manager.preview_code(),
+        }
+    }
+
+    pub(crate) fn check(self, family: FormatFamily, size: Option<u64>) -> Result<(), String> {
+        let enabled = match family {
+            FormatFamily::Audio => self.audio,
+            FormatFamily::Image
+            | FormatFamily::Svg
+            | FormatFamily::GeoTiff
+            | FormatFamily::Heif
+            | FormatFamily::RawImage => self.images,
+            FormatFamily::Video => self.videos,
+            FormatFamily::Pdf => self.pdf,
+            FormatFamily::Spreadsheet => self.spreadsheets,
+            FormatFamily::PlainText => self.code,
+            _ => true,
+        };
+        if !enabled {
+            return Err("Previews for this file format are disabled in Settings".into());
+        }
+        if size.is_some_and(|size| size > self.max_bytes) {
+            return Err(format!(
+                "File exceeds the maximum preview size ({} MB)",
+                self.max_bytes / 1_000_000
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn check_entry(self, entry: &FileEntry, content_type: Option<&str>) -> Result<(), String> {
+        if entry.is_directory() {
+            return Ok(());
+        }
+        let size = match entry.size {
+            MetadataValue::Known(size) => Some(size),
+            _ => None,
+        };
+        self.check(classify_by_name(&entry.native_name), size)?;
+        if let Some(content_type) = content_type {
+            let family = classify_by_mime(content_type);
+            let family = if family == FormatFamily::Unknown && gio::content_type_is_a(content_type, "text/plain") {
+                FormatFamily::PlainText
+            } else {
+                family
+            };
+            self.check(family, size)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn check_source(
+        self,
+        entry: &FileEntry,
+        content_type: &str,
+        size: Option<u64>,
+    ) -> Result<(), String> {
+        self.check_entry(entry, Some(content_type))?;
+        if entry.is_directory() {
+            return Ok(());
+        }
+        let size = size.ok_or_else(|| "File size is unavailable; preview was not loaded".to_owned())?;
+        self.check(classify_by_name(&entry.native_name), Some(size))?;
+        self.check(classify_by_mime(content_type), Some(size))
+    }
+}
 
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
 const MAX_CACHE_ENTRIES: usize = 256;
@@ -27,6 +115,40 @@ thread_local! {
     static ACTIVE_REQUESTS: RefCell<HashMap<usize, ActiveRequest>> =
         RefCell::new(HashMap::new());
     static THUMBNAIL_CACHE: RefCell<ThumbnailCache> = RefCell::new(ThumbnailCache::default());
+    static CACHE_GENERATION: Cell<u64> = const { Cell::new(0) };
+    static CLEARING_CACHE: Cell<bool> = const { Cell::new(false) };
+}
+
+pub(super) fn cache_directory() -> PathBuf {
+    disk::root()
+}
+
+fn invalidate_memory_cache() {
+    CACHE_GENERATION.with(|generation| generation.set(generation.get().wrapping_add(1)));
+    THUMBNAIL_CACHE.with(|cache| *cache.borrow_mut() = ThumbnailCache::default());
+    ACTIVE_REQUESTS.with(|requests| {
+        for (_, request) in requests.borrow_mut().drain() {
+            request.cancellation.cancel();
+            if let Some(image) = request.image.upgrade() {
+                for handler in request.wake_handlers {
+                    image.disconnect(handler);
+                }
+            }
+        }
+    });
+    scheduling::wake();
+}
+
+pub(super) async fn clear_cache() -> Result<usize, String> {
+    if CLEARING_CACHE.with(|clearing| clearing.replace(true)) {
+        return Err("Thumbnail cache clear is already running".into());
+    }
+    invalidate_memory_cache();
+    let result = gio::spawn_blocking(disk::clear).await
+        .map_err(|_| "Thumbnail cache worker did not complete".to_owned())
+        .and_then(|result| result);
+    CLEARING_CACHE.with(|clearing| clearing.set(false));
+    result
 }
 
 struct ActiveRequest {
@@ -146,20 +268,49 @@ enum ThumbnailKind {
 }
 
 pub(super) async fn cached_preview_bytes(path: &Path) -> Option<glib::Bytes> {
+    cached_preview_bytes_with_policy(path, PreviewPolicy::current).await
+}
+
+async fn cached_preview_bytes_with_policy(
+    path: &Path,
+    current_policy: impl Fn() -> PreviewPolicy,
+) -> Option<glib::Bytes> {
+    if CLEARING_CACHE.with(Cell::get) {
+        return None;
+    }
+    let family = classify_by_name(path.as_os_str());
+    current_policy().check(family, None).ok()?;
+    let generation = CACHE_GENERATION.with(Cell::get);
     if let Some((key, bytes)) = THUMBNAIL_CACHE.with(|cache| cache.borrow_mut().preview(path)) {
+        let size = key.identity.size;
+        current_policy().check(family, Some(size)).ok()?;
         let unchanged =
             gio::spawn_blocking(move || SourceIdentity::read(&key.path) == Some(key.identity))
                 .await
                 .ok()?;
+        if CACHE_GENERATION.with(Cell::get) != generation {
+            return None;
+        }
         if unchanged {
+            current_policy().check(family, Some(size)).ok()?;
             return Some(bytes);
         }
     }
     let path = path.to_owned();
-    gio::spawn_blocking(move || disk::preview(&path))
+    let worker_path = path.clone();
+    let policy = current_policy();
+    let (bytes, size) = gio::spawn_blocking(move || {
+        let size = SourceIdentity::read(&worker_path)?.size;
+        policy.check(classify_by_name(worker_path.as_os_str()), Some(size)).ok()?;
+        Some((disk::preview(&worker_path)?, size))
+    })
         .await
-        .ok()?
-        .map(glib::Bytes::from_owned)
+        .ok()??;
+    if CACHE_GENERATION.with(Cell::get) != generation {
+        return None;
+    }
+    current_policy().check(family, Some(size)).ok()?;
+    Some(glib::Bytes::from_owned(bytes))
 }
 
 pub(super) fn set_thumbnail_or_icon(
@@ -176,6 +327,9 @@ pub(super) fn set_thumbnail_or_icon(
         fallback_icon
     };
     let (image_id, request, cancellation) = set_fallback_icon(image, fallback_icon, icon_size);
+    if CLEARING_CACHE.with(Cell::get) {
+        return;
+    }
 
     let Some(path) = entry.location.native_path().map(Path::to_path_buf) else {
         return;

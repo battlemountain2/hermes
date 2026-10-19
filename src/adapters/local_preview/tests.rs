@@ -7,6 +7,95 @@ use crate::services::{FormatFamily, classify_by_name};
 #[path = "tests/generated_probe.rs"]
 mod generated_probe;
 
+fn policy() -> super::PreviewPolicy {
+    super::PreviewPolicy {
+        max_bytes: 1_000_000,
+        audio: true,
+        images: true,
+        videos: true,
+        pdf: true,
+        spreadsheets: true,
+        code: true,
+    }
+}
+
+fn entry(name: &str, size: crate::model::MetadataValue<u64>) -> crate::model::FileEntry {
+    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner {
+        music_tags: None,
+        location: crate::model::Location::local(std::path::Path::new("/generated").join(name)),
+        native_name: name.into(),
+        display_name: name.into(),
+        kind: crate::model::EntryKind::File,
+        size,
+        modified_unix_seconds: crate::model::MetadataValue::Unknown,
+    }))
+}
+
+#[test]
+fn preview_policy_enforces_each_format_switch_and_image_subfamily() {
+    let enabled = policy();
+    let cases = [
+        (super::PreviewPolicy { audio: false, ..enabled }, vec![FormatFamily::Audio]),
+        (super::PreviewPolicy { images: false, ..enabled }, vec![
+            FormatFamily::Image, FormatFamily::Svg, FormatFamily::Heif,
+            FormatFamily::RawImage, FormatFamily::GeoTiff,
+        ]),
+        (super::PreviewPolicy { videos: false, ..enabled }, vec![FormatFamily::Video]),
+        (super::PreviewPolicy { pdf: false, ..enabled }, vec![FormatFamily::Pdf]),
+        (super::PreviewPolicy { spreadsheets: false, ..enabled }, vec![FormatFamily::Spreadsheet]),
+        (super::PreviewPolicy { code: false, ..enabled }, vec![FormatFamily::PlainText]),
+    ];
+    for (disabled, families) in cases {
+        for family in families {
+            assert!(enabled.check(family, Some(12)).is_ok(), "{family:?}");
+            assert!(disabled.check(family, Some(12)).is_err(), "{family:?}");
+            assert!(disabled.check(family, None).is_err(), "{family:?}");
+        }
+        assert!(disabled.check(FormatFamily::Archive, Some(12)).is_ok());
+    }
+}
+
+#[test]
+fn preview_policy_ceiling_is_inclusive_and_applies_to_all_payloads() {
+    for family in [
+        FormatFamily::PlainText, FormatFamily::Image, FormatFamily::Audio,
+        FormatFamily::Video, FormatFamily::Pdf, FormatFamily::Spreadsheet,
+        FormatFamily::Archive, FormatFamily::OfficeDocument, FormatFamily::Model,
+        FormatFamily::Comic, FormatFamily::Unknown,
+    ] {
+        assert!(policy().check(family, Some(0)).is_ok());
+        assert!(policy().check(family, Some(1_000_000)).is_ok());
+        assert!(policy().check(family, Some(1_000_001)).is_err());
+        assert!(policy().check(family, Some(u64::MAX)).is_err());
+    }
+}
+
+#[test]
+fn preview_policy_requires_actual_size_and_checks_both_name_and_detected_format() {
+    use crate::model::MetadataValue;
+    let unknown_size = entry("photo.png", MetadataValue::Unknown);
+    assert!(policy().check_entry(&unknown_size, None).is_ok());
+    assert!(policy().check_source(&unknown_size, "image/png", None).is_err());
+    assert!(policy().check_source(&unknown_size, "image/png", Some(1_000_001)).is_err());
+    assert!(policy().check_source(&unknown_size, "image/png", Some(100)).is_ok());
+    let disabled = super::PreviewPolicy { images: false, ..policy() };
+    assert!(disabled.check_entry(&unknown_size, None).is_err());
+    let disguised = entry("renamed.bin", MetadataValue::Known(100));
+    assert!(disabled.check_source(&disguised, "image/png", Some(100)).is_err());
+    let misleading = entry("photo.png", MetadataValue::Known(100));
+    assert!(disabled.check_source(&misleading, "text/plain", Some(100)).is_err());
+    let stale_size = entry("photo.png", MetadataValue::Known(100));
+    assert!(policy().check_source(&stale_size, "image/png", Some(1_000_001)).is_err());
+}
+
+#[test]
+fn preview_policy_directory_metadata_is_not_a_payload_size() {
+    let mut directory = entry("album.pdf", crate::model::MetadataValue::Known(u64::MAX));
+    std::rc::Rc::make_mut(&mut directory.0).kind = crate::model::EntryKind::Directory;
+    assert!(policy().check_source(&directory, "inode/directory", None).is_ok());
+    assert!(policy().check(FormatFamily::Image, Some(1_000_001)).is_err());
+}
+
 #[test]
 fn preview_values_keep_page_numbers_text_limits_and_render_sizes_separate() {
     use crate::sandbox::ParseOperation;

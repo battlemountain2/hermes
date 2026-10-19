@@ -60,6 +60,63 @@ fn item(key: ThumbnailKey) -> Save {
 }
 
 #[test]
+fn clear_cache_removes_only_owned_records_without_following_links() {
+    let fixture = Fixture::new();
+    let key = fixture.key(Path::new("source.jpg"));
+    assert_eq!(clear_at(&fixture.cache()).unwrap(), 0);
+    save(&fixture.cache(), item(key.clone())).unwrap();
+    let unrelated = fixture.cache().join("unrelated.txt");
+    fs::write(&unrelated, b"keep").unwrap();
+    fs::write(fixture.cache().join(".tmp-123-456"), b"staged").unwrap();
+    let outside = fixture.0.join("outside.txt");
+    fs::write(&outside, b"never delete").unwrap();
+    symlink(&outside, fixture.cache().join(format!("{:064x}.rgba", 1))).unwrap();
+    assert_eq!(clear_at(&fixture.cache()).unwrap(), 3);
+    assert!(load_at(&fixture.cache(), &key).is_none());
+    assert_eq!(fs::read(&unrelated).unwrap(), b"keep");
+    assert_eq!(fs::read(&outside).unwrap(), b"never delete");
+    assert_eq!(clear_at(&fixture.cache()).unwrap(), 0);
+    save(&fixture.cache(), item(key.clone())).unwrap();
+    assert!(load_at(&fixture.cache(), &key).is_some());
+}
+
+#[test]
+fn clear_cache_reports_unsafe_directories_and_removal_errors() {
+    let fixture = Fixture::new();
+    fs::create_dir(fixture.cache()).unwrap();
+    fs::set_permissions(fixture.cache(), fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(clear_at(&fixture.cache()).is_err());
+    fs::set_permissions(fixture.cache(), fs::Permissions::from_mode(0o700)).unwrap();
+    let alias = fixture.0.join("alias");
+    symlink(fixture.cache(), &alias).unwrap();
+    assert!(clear_at(&alias).is_err());
+    fs::create_dir(fixture.cache().join(format!("{:064x}.rgba", 1))).unwrap();
+    assert!(clear_at(&fixture.cache()).is_err());
+}
+
+#[test]
+fn clear_cache_is_ordered_after_queued_saves_and_allows_later_writes() {
+    let fixture = Fixture::new();
+    let key = fixture.key(Path::new("source.jpg"));
+    let root = fixture.cache();
+    let (sender, receiver) = mpsc::sync_channel(8);
+    let worker_root = root.clone();
+    let worker = std::thread::spawn(move || run_writer(&worker_root, receiver));
+    sender.send(Command::Save(item(key.clone()))).unwrap();
+    let (reply, result) = mpsc::channel();
+    sender.send(Command::Clear(reply)).unwrap();
+    assert_eq!(result.recv().unwrap().unwrap(), 1);
+    assert!(load_at(&root, &key).is_none());
+    sender.send(Command::Save(item(key.clone()))).unwrap();
+    let (reply, result) = mpsc::channel();
+    sender.send(Command::Clear(reply)).unwrap();
+    assert_eq!(result.recv().unwrap().unwrap(), 1);
+    drop(sender);
+    worker.join().unwrap();
+    assert!(load_at(&root, &key).is_none());
+}
+
+#[test]
 fn cache_survives_a_fresh_process_without_redecoding_the_source() {
     let fixture = Fixture::new();
     let key = fixture.key(Path::new("source.jpg"));

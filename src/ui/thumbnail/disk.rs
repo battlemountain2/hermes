@@ -66,6 +66,11 @@ struct Save {
     stride: usize,
 }
 
+enum Command {
+    Save(Save),
+    Clear(mpsc::Sender<Result<usize, String>>),
+}
+
 struct DirectoryHandle(File);
 
 impl DirectoryHandle {
@@ -101,6 +106,43 @@ pub(super) fn root() -> PathBuf {
     glib::user_cache_dir()
         .join("strata")
         .join("thumbnails-rgba-v1")
+}
+
+fn owned_record(name: &str) -> bool {
+    (name.len() == 69
+        && name.ends_with(".rgba")
+        && name.as_bytes()[..64].iter().all(u8::is_ascii_hexdigit))
+        || name.strip_prefix(".tmp-").is_some_and(|suffix| {
+            let parts = suffix.split('-').collect::<Vec<_>>();
+            parts.len() == 2 && parts.iter().all(|part| part.parse::<u64>().is_ok())
+        })
+}
+
+fn clear_at(root: &Path) -> Result<usize, String> {
+    match fs::symlink_metadata(root) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.to_string()),
+        Ok(_) => {}
+    }
+    let directory = DirectoryHandle::open(root, false)
+        .ok_or_else(|| "Thumbnail cache is not a private, owned directory".to_owned())?;
+    directory.0.lock().map_err(|error| error.to_string())?;
+    let mut removed = 0;
+    for entry in fs::read_dir(directory.path()).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if entry.file_name().to_str().is_some_and(owned_record) {
+            fs::remove_file(entry.path()).map_err(|error| error.to_string())?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+pub(super) fn clear() -> Result<usize, String> {
+    let (sender, receiver) = mpsc::channel();
+    writer().send(Command::Clear(sender))
+        .map_err(|_| "Thumbnail cache writer is unavailable".to_owned())?;
+    receiver.recv().map_err(|_| "Thumbnail cache clear did not complete".to_owned())?
 }
 
 pub(super) fn filename(path: &Path) -> Option<String> {
@@ -347,31 +389,39 @@ fn save(root: &Path, item: Save) -> Option<()> {
     result
 }
 
+fn writer() -> &'static mpsc::SyncSender<Command> {
+    static WRITER: OnceLock<mpsc::SyncSender<Command>> = OnceLock::new();
+    WRITER.get_or_init(|| {
+        let (sender, receiver) = mpsc::sync_channel(8);
+        let root = root();
+        std::thread::spawn(move || run_writer(&root, receiver));
+        sender
+    })
+}
+
+fn run_writer(root: &Path, receiver: mpsc::Receiver<Command>) {
+    while let Ok(item) = receiver.recv() {
+        match item {
+            Command::Save(item) => { let _saved = save(root, item); }
+            Command::Clear(reply) => { let _sent = reply.send(clear_at(root)); }
+        }
+    }
+}
+
 pub(super) fn persist(key: ThumbnailKey, texture: &gdk::Texture) {
-    static WRITER: OnceLock<mpsc::SyncSender<Save>> = OnceLock::new();
     if dimensions(texture.width(), texture.height()).is_none() {
         return;
     }
-    let writer = WRITER.get_or_init(|| {
-        let (sender, receiver) = mpsc::sync_channel(8);
-        let root = root();
-        std::thread::spawn(move || {
-            while let Ok(item) = receiver.recv() {
-                let _saved = save(&root, item);
-            }
-        });
-        sender
-    });
     let mut downloader = gdk::TextureDownloader::new(texture);
     downloader.set_format(gdk::MemoryFormat::R8g8b8a8);
     let (pixels, stride) = downloader.download_bytes();
-    let _queued = writer.try_send(Save {
+    let _queued = writer().try_send(Command::Save(Save {
         key,
         pixels,
         stride,
         width: texture.width(),
         height: texture.height(),
-    });
+    }));
 }
 
 #[cfg(test)]

@@ -91,6 +91,69 @@ fn preview_cache_only_reuses_the_requested_file_not_adjacent_album_art() {
     assert!(cache.preview(Path::new("/generated/other.flac")).is_none());
 }
 
+fn preview_policy() -> super::PreviewPolicy {
+    super::PreviewPolicy {
+        max_bytes: 1_000_000,
+        audio: true,
+        images: true,
+        videos: true,
+        pdf: true,
+        spreadsheets: true,
+        code: true,
+    }
+}
+
+#[test]
+fn cached_previews_obey_format_size_and_policy_changes_without_decoding() {
+    let fixture = Fixture::new();
+    let path = fixture.write("source.png", b"generated source");
+    let bytes = glib::Bytes::from_static(b"already rendered preview");
+    cache_fixture(&path, bytes.clone());
+    let context = glib::MainContext::new();
+    let disabled = super::PreviewPolicy { images: false, ..preview_policy() };
+    assert!(context.block_on(super::cached_preview_bytes_with_policy(&path, || disabled)).is_none());
+    let too_small = super::PreviewPolicy { max_bytes: 1, ..preview_policy() };
+    assert!(context.block_on(super::cached_preview_bytes_with_policy(&path, || too_small)).is_none());
+    assert_eq!(context.block_on(super::cached_preview_bytes_with_policy(&path, preview_policy)), Some(bytes));
+    let calls = std::cell::Cell::new(0);
+    let changed = context.block_on(super::cached_preview_bytes_with_policy(&path, || {
+        let count = calls.get() + 1;
+        calls.set(count);
+        if count >= 3 { disabled } else { preview_policy() }
+    }));
+    assert!(changed.is_none());
+    assert!(calls.get() >= 3);
+    THUMBNAIL_CACHE.with(|cache| *cache.borrow_mut() = ThumbnailCache::default());
+}
+
+#[test]
+fn clearing_memory_cancels_inflight_results_and_prevents_cache_repopulation() {
+    let cancellation = Cancellation::default();
+    let request = 9_100;
+    let image_id = 9_100;
+    ACTIVE_REQUESTS.with(|requests| {
+        requests.borrow_mut().insert(image_id, ActiveRequest {
+            id: request,
+            image: glib::WeakRef::new(),
+            cancellation: cancellation.clone(),
+            wake_handlers: Vec::new(),
+        });
+    });
+    THUMBNAIL_CACHE.with(|cache| cache.borrow_mut().insert(key("cached.png"), glib::Bytes::from_static(b"cached")));
+    let before = super::CACHE_GENERATION.with(std::cell::Cell::get);
+    super::invalidate_memory_cache();
+    assert!(cancellation.is_cancelled());
+    assert_ne!(before, super::CACHE_GENERATION.with(std::cell::Cell::get));
+    assert!(ACTIVE_REQUESTS.with(|requests| requests.borrow().is_empty()));
+    complete_thumbnail(image_id, request, &cancellation, key("late.png"), glib::Bytes::from_static(b"late"), |_| panic!("cancelled result must not paint"));
+    THUMBNAIL_CACHE.with(|cache| {
+        let cache = cache.borrow();
+        assert!(cache.entries.is_empty());
+        assert!(cache.recent.is_empty());
+        assert_eq!(cache.byte_count, 0);
+    });
+}
+
 #[test]
 fn audio_thumbnails_prefer_embedded_art_then_track_identity_checked_folder_covers() {
     let fixture = Fixture::new();
