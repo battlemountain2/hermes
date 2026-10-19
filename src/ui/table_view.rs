@@ -130,7 +130,7 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
     };
 
     let dim_label_for_tabs = dim_label.clone();
-    let sheet_buttons: Rc<RefCell<Vec<gtk::Button>>> = Rc::new(RefCell::new(Vec::new()));
+    let sheet_buttons: Rc<RefCell<Vec<glib::WeakRef<gtk::Button>>>> = Rc::new(RefCell::new(Vec::new()));
 
     if sheets.len() > 1 {
         let sheet_bar = gtk::Box::new(gtk::Orientation::Horizontal, 4);
@@ -152,7 +152,7 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
             let sheets_count = sheets.len();
 
             btn.connect_clicked(move |clicked| {
-                for candidate in buttons.borrow().iter() {
+                for candidate in buttons.borrow().iter().filter_map(glib::WeakRef::upgrade) {
                     candidate.remove_css_class("active-sheet-tab");
                 }
                 clicked.add_css_class("active-sheet-tab");
@@ -163,7 +163,7 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
                 ));
             });
 
-            sheet_buttons.borrow_mut().push(btn.clone());
+            sheet_buttons.borrow_mut().push(btn.downgrade());
             sheet_bar.append(&btn);
         }
         viewer.append(&sheet_bar);
@@ -239,8 +239,9 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
         let weak_button = button.downgrade();
 
         window.connect_close_request(move |window| {
+            let viewer = weak_viewer.upgrade();
             window.set_child(None::<&gtk::Widget>);
-            if let (Some(home), Some(viewer)) = (weak_home.upgrade(), weak_viewer.upgrade()) {
+            if let (Some(home), Some(viewer)) = (weak_home.upgrade(), viewer) {
                 if viewer.parent().is_none() {
                     home.append(&viewer);
                 }

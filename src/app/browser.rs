@@ -490,8 +490,16 @@ impl Browser {
     }
 
     pub fn toggle_hidden(self: &Rc<Self>) {
+        self.set_show_hidden(!self.preferences.get().show_hidden);
+    }
+
+    pub fn set_show_hidden(self: &Rc<Self>, show_hidden: bool) {
+        if self.preferences.get().show_hidden == show_hidden {
+            return;
+        }
+        self.close_peek();
         let mut preferences = self.preferences.get();
-        preferences.show_hidden = !preferences.show_hidden;
+        preferences.show_hidden = show_hidden;
         self.preferences.set(preferences);
 
         let locations = {

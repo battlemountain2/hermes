@@ -12,6 +12,9 @@ use std::{
 use gtk::{gio, glib, prelude::*};
 use sourceview5::prelude::*;
 
+#[cfg(test)]
+use super::formatting::format_size as format_file_size;
+
 use crate::{
     model::{FileEntry, MetadataValue},
     sandbox_helper::geotiff::GeoTiffMetadata,
@@ -320,6 +323,9 @@ impl PreviewDrawer {
         if let Some(preview) = self.state.audio.borrow().as_ref() {
             preview.stream.pause();
         }
+        if let Some(preview) = self.state.media.borrow().as_ref() {
+            preview.pause_for_music();
+        }
     }
 
     pub fn close(&self) {
@@ -437,6 +443,8 @@ impl PreviewState {
         self.animation_generation
             .set(self.animation_generation.get().saturating_add(1));
         self.current_request.set(None);
+        super::formatting::clear(&self.size, "—");
+        super::formatting::clear(&self.modified, "—");
         self.load.borrow_mut().take();
         self.pdf_loads.borrow_mut().clear();
         self.clear_content();
@@ -453,8 +461,14 @@ impl PreviewState {
         self.title.set_text(&entry.display_name);
         self.title
             .set_tooltip_text(Some(&entry.location.display_path()));
-        self.size.set_text(&metadata_size(&entry));
-        self.modified.set_text(&metadata_modified(&entry));
+        match entry.size {
+            MetadataValue::Known(bytes) => super::formatting::bind(&self.size, super::formatting::Value::Size(bytes)),
+            _ => super::formatting::clear(&self.size, "—"),
+        }
+        match entry.modified_unix_seconds {
+            MetadataValue::Known(seconds) => super::formatting::bind(&self.modified, super::formatting::Value::Timestamp(seconds)),
+            _ => super::formatting::clear(&self.modified, "—"),
+        }
         self.content_type.set_text(file_extension(&entry));
         self.show_loading();
         self.load.borrow_mut().take();
@@ -464,7 +478,9 @@ impl PreviewState {
         self.next_request
             .set(self.next_request.get().saturating_add(1));
         self.current_request.set(Some(request_id));
-        self.show_cached_image(&entry, request_id);
+        if crate::adapters::LocalPreviewProvider::check_policy(&entry, None).is_ok() {
+            self.show_cached_image(&entry, request_id);
+        }
         let weak = Rc::downgrade(self);
         let emit = Rc::new(move |event| {
             let Some(state) = weak.upgrade() else {
@@ -509,6 +525,13 @@ impl PreviewState {
     }
 
     fn render(self: &Rc<Self>, preview: Preview) {
+        if let Err(message) = crate::adapters::LocalPreviewProvider::check_policy(
+            &preview.entry,
+            Some(&preview.content_type),
+        ) {
+            self.show_message("Preview unavailable", &message);
+            return;
+        }
         let mut family = classify_by_mime(&preview.content_type);
         if family == FormatFamily::Unknown {
             if gio::content_type_is_a(&preview.content_type, "text/plain") {
@@ -596,14 +619,12 @@ impl PreviewState {
                 let stream = gio::MemoryInputStream::from_bytes(&bytes);
                 let media = gtk::MediaFile::for_input_stream(&stream);
                 let preview = media::MediaPreview::new(&media, is_audio);
-                self.content.append(&preview.widget);
-                self.media.replace(Some(preview));
+                self.render_video(preview);
             }
             PreviewContent::StreamingMedia { path } => {
                 let stream = stream::PlaybackStream::new(&path);
                 let preview = media::MediaPreview::new_full(&stream);
-                self.content.append(&preview.widget);
-                self.media.replace(Some(preview));
+                self.render_video(preview);
             }
             PreviewContent::SandboxedAnimation { data } => {
                 let bytes = glib::Bytes::from_owned(data);
@@ -1193,6 +1214,20 @@ impl PreviewState {
         self.pdf.replace(Some(pdf));
     }
 
+    fn render_video(self: &Rc<Self>, preview: media::MediaPreview) {
+        let weak = Rc::downgrade(self);
+        preview.set_play_handler(Rc::new(move || {
+            if let Some(state) = weak.upgrade() {
+                let handler = state.audio_play_handler.borrow().clone();
+                if let Some(handler) = handler {
+                    handler();
+                }
+            }
+        }));
+        self.content.append(&preview.widget);
+        self.media.replace(Some(preview));
+    }
+
     fn render_audio(
         self: &Rc<Self>,
         entry: &FileEntry,
@@ -1767,23 +1802,6 @@ fn clear_box(box_: &gtk::Box) {
     }
 }
 
-fn metadata_size(entry: &FileEntry) -> String {
-    match entry.size {
-        MetadataValue::Known(bytes) => format_file_size(bytes),
-        MetadataValue::Unknown | MetadataValue::Unavailable => "—".to_owned(),
-    }
-}
-
-fn metadata_modified(entry: &FileEntry) -> String {
-    let MetadataValue::Known(seconds) = entry.modified_unix_seconds else {
-        return "—".to_owned();
-    };
-    glib::DateTime::from_unix_local(seconds)
-        .and_then(|date| date.format("%Y-%m-%d %H:%M"))
-        .map(|value| value.to_string())
-        .unwrap_or_else(|_| "—".to_owned())
-}
-
 fn file_extension(entry: &FileEntry) -> &str {
     entry
         .location
@@ -1791,21 +1809,6 @@ fn file_extension(entry: &FileEntry) -> &str {
         .and_then(|path| path.extension())
         .and_then(|extension| extension.to_str())
         .unwrap_or("file")
-}
-
-fn format_file_size(bytes: u64) -> String {
-    const UNITS: [&str; 4] = ["B", "kB", "MB", "GB"];
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1000.0 && unit < UNITS.len() - 1 {
-        value /= 1000.0;
-        unit += 1;
-    }
-    if unit == 0 || value >= 10.0 {
-        format!("{value:.0} {}", UNITS[unit])
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

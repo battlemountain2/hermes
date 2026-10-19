@@ -25,6 +25,7 @@ use crate::{
 use super::{
     blur::BlurBin,
     browser_modes::{BrowserDensity, BrowserMode, ModeViews},
+    formatting::{self, Value},
     motion::{animations_enabled, emphasized_deceleration},
 };
 
@@ -320,6 +321,10 @@ impl BrowserView {
         location_stack.set_valign(gtk::Align::Center);
 
         let browser = Browser::new(source);
+        browser.set_preferences(crate::model::ViewPreferences {
+            show_hidden: super::theme::ThemeManager::shared().show_hidden_default(),
+            ..crate::model::ViewPreferences::default()
+        });
         let mode_views = ModeViews::new(&scroller, browser.clone());
         let presentations = gtk::Stack::builder().hexpand(true).vexpand(true)
             .hhomogeneous(false).vhomogeneous(false).build();
@@ -1775,13 +1780,19 @@ impl ViewState {
         let title = gtk::Label::new(Some("Empty Trash?"));
         title.add_css_class("delete-confirmation-title");
         title.set_xalign(0.0);
-        let subtitle = gtk::Label::new(Some(&format!(
-            "{} · {} will be reclaimed",
-            item_count_label(summary.item_count),
-            format_file_size(summary.total_size)
+        let subtitle = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let count = gtk::Label::new(Some(&format!(
+            "{} ·",
+            item_count_label(summary.item_count)
         )));
-        subtitle.add_css_class("delete-confirmation-subtitle");
-        subtitle.set_xalign(0.0);
+        let reclaimed = gtk::Label::new(None);
+        formatting::bind(&reclaimed, Value::Size(summary.total_size));
+        let explanation = gtk::Label::new(Some("will be reclaimed"));
+        for label in [&count, &reclaimed, &explanation] {
+            label.add_css_class("delete-confirmation-subtitle");
+            label.set_xalign(0.0);
+            subtitle.append(label);
+        }
         heading.append(&title);
         heading.append(&subtitle);
         let close = gtk::Button::new();
@@ -1859,6 +1870,13 @@ impl ViewState {
     }
 
     fn show_delete_confirmation(self: &Rc<Self>, entries: Vec<FileEntry>, permanent: bool) {
+        if entries.is_empty() {
+            return;
+        }
+        if permanent && !super::theme::ThemeManager::shared().confirm_permanent_delete() {
+            self.browser.delete(entries, true);
+            return;
+        }
         let Some(window_overlay) = self
             .overlay
             .root()
@@ -1924,15 +1942,12 @@ impl ViewState {
             name.set_hexpand(true);
             name.set_xalign(0.0);
             name.set_tooltip_text(Some(&entry.location.display_path()));
-            let metadata = gtk::Label::new(Some(&if entry.is_directory() {
-                "Folder".to_owned()
-            } else {
-                match entry.size {
-                    crate::model::MetadataValue::Known(size) => format_file_size(size),
-                    crate::model::MetadataValue::Unknown
-                    | crate::model::MetadataValue::Unavailable => "—".to_owned(),
-                }
-            }));
+            let metadata = gtk::Label::new(None);
+            bind_entry_size(
+                &metadata,
+                Some(entry),
+                if entry.is_directory() { "Folder" } else { "—" },
+            );
             metadata.add_css_class("delete-confirmation-file-metadata");
             row.append(&icon);
             row.append(&name);
@@ -2103,27 +2118,16 @@ impl ViewState {
         let location_value = properties_row(&details, "LOCATION", &compact_display_path(&location));
         location_value.set_tooltip_text(Some(&location.display_path()));
         let trash_root = is_trash_root(&location);
-        let initial_size = if trash_root {
-            "Calculating…".to_owned()
+        let size = properties_row(&details, "SIZE", "—");
+        if trash_root {
+            formatting::clear(&size, "Calculating…");
+        } else if let Some(crate::model::MetadataValue::Known(bytes)) = entry.as_ref().map(|entry| &entry.size) {
+            formatting::bind(&size, Value::Size(*bytes));
         } else {
-            entry
-                .as_ref()
-                .and_then(|entry| match entry.size {
-                    crate::model::MetadataValue::Known(size) => Some(format_file_size(size)),
-                    crate::model::MetadataValue::Unknown
-                    | crate::model::MetadataValue::Unavailable => None,
-                })
-                .unwrap_or_else(|| "—".to_owned())
-        };
-        let size = properties_row(&details, "SIZE", &initial_size);
-        let modified = properties_row(
-            &details,
-            "MODIFIED",
-            &entry
-                .as_ref()
-                .map(metadata_modified)
-                .unwrap_or_else(|| "—".to_owned()),
-        );
+            formatting::clear(&size, "—");
+        }
+        let modified = properties_row(&details, "MODIFIED", "—");
+        bind_entry_modified(&modified, entry.as_ref(), "—");
         let opens_with = properties_row(&details, "OPENS WITH", "—");
         let hidden = properties_row(
             &details,
@@ -2227,10 +2231,10 @@ impl ViewState {
                 };
                 match summary {
                     Ok(summary) => {
-                        size.set_text(&format_file_size(summary.total_size));
+                        formatting::bind(&size, Value::Size(summary.total_size));
                         size.set_tooltip_text(Some(&item_count_label(summary.item_count)));
                     }
-                    Err(_) => size.set_text("Unavailable"),
+                    Err(_) => formatting::clear(&size, "Unavailable"),
                 }
             });
         }
@@ -2247,17 +2251,7 @@ impl ViewState {
             else {
                 return;
             };
-            if !is_directory {
-                size.set_text(&format_file_size(info.size().max(0) as u64));
-            }
-            if let Some(time) = info.modification_date_time() {
-                modified.set_text(
-                    &time
-                        .format("%Y-%m-%d %H:%M")
-                        .map(|value| value.to_string())
-                        .unwrap_or_else(|_| "—".to_owned()),
-                );
-            }
+            bind_properties_metadata(&size, &modified, &info, is_directory);
             hidden.set_text(if info.is_hidden() { "Yes" } else { "No" });
             if let Some(content_type) = info.content_type() {
                 kind.set_text(&gio::content_type_get_description(&content_type));
@@ -3358,16 +3352,18 @@ impl ViewState {
                 icon.set_opacity(0.72);
                 chevron.set_visible(false);
             }
-            let size_text = entry
-                .as_ref()
-                .filter(|entry| !entry.is_directory())
-                .and_then(|entry| match entry.size {
-                    crate::model::MetadataValue::Known(bytes) => Some(format_file_size(bytes)),
-                    crate::model::MetadataValue::Unknown
-                    | crate::model::MetadataValue::Unavailable => None,
-                })
-                .unwrap_or_default();
-            size.set_label(&size_text);
+            bind_entry_size(&size, entry.as_ref(), "");
+        });
+        factory.connect_unbind(|_, item| {
+            if let Some(size) = item
+                .downcast_ref::<gtk::ListItem>()
+                .and_then(|item| item.child())
+                .and_then(|row| row.last_child())
+                .and_then(|chevron| chevron.prev_sibling())
+                .and_downcast::<gtk::Label>()
+            {
+                formatting::clear(&size, "");
+            }
         });
 
         let list = gtk::ListView::new(Some(selection.clone()), Some(factory));
@@ -4052,20 +4048,49 @@ fn basic_label_factory() -> gtk::SignalListItemFactory {
     factory
 }
 
+#[cfg(test)]
 pub(super) fn format_file_size(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "kB", "MB", "GB", "TB"];
-    if bytes < 1_000 {
-        return format!("{bytes} B");
-    }
+    formatting::format_size(bytes)
+}
 
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1_000.0 && unit < UNITS.len() - 1 {
-        value /= 1_000.0;
-        unit += 1;
+pub(super) fn bind_entry_size(label: &gtk::Label, entry: Option<&FileEntry>, fallback: &str) {
+    if let Some(entry) = entry.filter(|entry| !entry.is_directory())
+        && let crate::model::MetadataValue::Known(bytes) = entry.size
+    {
+        formatting::bind(label, Value::Size(bytes));
+    } else {
+        formatting::clear(label, fallback);
     }
-    let formatted = format!("{value:.1}");
-    format!("{} {}", formatted.trim_end_matches(".0"), UNITS[unit])
+}
+
+pub(super) fn bind_entry_modified(label: &gtk::Label, entry: Option<&FileEntry>, fallback: &str) {
+    if let Some(entry) = entry
+        && let crate::model::MetadataValue::Known(seconds) = entry.modified_unix_seconds
+    {
+        formatting::bind(label, Value::Timestamp(seconds));
+    } else {
+        formatting::clear(label, fallback);
+    }
+}
+
+fn bind_properties_metadata(
+    size: &gtk::Label,
+    modified: &gtk::Label,
+    info: &gio::FileInfo,
+    is_directory: bool,
+) {
+    if !is_directory {
+        if info.has_attribute("standard::size") && info.size() >= 0 {
+            formatting::bind(size, Value::Size(info.size() as u64));
+        } else {
+            formatting::clear(size, "—");
+        }
+    }
+    if let Some(time) = info.modification_date_time() {
+        formatting::bind(modified, Value::Timestamp(time.to_unix()));
+    } else {
+        formatting::clear(modified, "—");
+    }
 }
 
 fn set_filter_placeholder(column: &ColumnView, count: usize) {
@@ -6395,16 +6420,6 @@ fn compact_native_path(path: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
-fn metadata_modified(entry: &FileEntry) -> String {
-    let crate::model::MetadataValue::Known(seconds) = entry.modified_unix_seconds else {
-        return "—".to_owned();
-    };
-    glib::DateTime::from_unix_local(seconds)
-        .and_then(|date| date.format("%Y-%m-%d %H:%M"))
-        .map(|value| value.to_string())
-        .unwrap_or_else(|_| "—".to_owned())
-}
-
 fn properties_row(parent: &gtk::Box, label: &str, value: &str) -> gtk::Label {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     row.add_css_class("properties-row");
@@ -6648,3 +6663,6 @@ mod clipboard_tests;
 
 #[cfg(test)]
 mod layout_tests;
+
+#[cfg(test)]
+mod formatting_tests;

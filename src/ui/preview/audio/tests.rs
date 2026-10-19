@@ -1,6 +1,22 @@
 use super::*;
 
 #[test]
+#[ignore = "Requires an isolated GTK display; validates preview transport icon contrast"]
+fn desktop_preview_play_pause_icons_use_the_filled_control_palette() {
+    gtk::init().unwrap();
+    assets::prepare().unwrap();
+    assets::set_on_accent_icon_color("#182838");
+    let button = icon_button(icons::PLAY, "Play");
+    button.add_css_class("preview-audio-play-button");
+    set_button_icon(&button, icons::PAUSE);
+    let image = button.child().and_downcast::<gtk::Image>().unwrap();
+    let expected = assets::on_accent_icon(icons::PAUSE, 18);
+    assert_eq!(image.paintable(), expected.paintable());
+    assets::set_primary_icon_color("#abcdef");
+    assert_eq!(image.paintable(), expected.paintable());
+}
+
+#[test]
 fn metadata_rows_show_required_fields_and_unknowns_honestly() {
     let rows = metadata_rows(&AudioMetadata::default());
     for name in [
@@ -427,8 +443,7 @@ fn desktop_audio_preview_playback_metadata_artwork_and_cancellation() {
     assert_eq!(music.current_track(), music_track);
     drawer.show(entry.clone());
     assert_eq!(drawer.state.audio.borrow().as_ref().unwrap().stream, stream);
-    drawer.pause_audio_preview();
-    assert!(!stream.is_playing());
+    assert!(stream.is_playing());
     assert_eq!(play_count.get(), 1);
     music.play();
     pump_until(&|| music.status() == PlaybackStatus::Playing);

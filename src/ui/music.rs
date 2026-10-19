@@ -32,6 +32,16 @@ pub(crate) struct MusicPlayer {
     state: Rc<State>,
 }
 
+pub(super) struct WeakMusicPlayer {
+    state: std::rc::Weak<State>,
+}
+
+impl WeakMusicPlayer {
+    pub(super) fn upgrade(&self) -> Option<MusicPlayer> {
+        self.state.upgrade().map(|state| MusicPlayer { state })
+    }
+}
+
 struct State {
     controller: Rc<Controller>,
     displayed_revision: Cell<u64>,
@@ -136,6 +146,12 @@ impl std::ops::Deref for State {
 }
 
 impl MusicPlayer {
+    pub(super) fn downgrade(&self) -> WeakMusicPlayer {
+        WeakMusicPlayer {
+            state: Rc::downgrade(&self.state),
+        }
+    }
+
     pub(crate) fn for_application(application: &gtk::Application) -> Self {
         Self::with_controller(Controller::for_application(application))
     }
@@ -1191,6 +1207,10 @@ impl MusicPlayer {
     pub(crate) fn dispose_view(&self) {
         self.state.disposed.set(true);
         self.state.scan.borrow_mut().take();
+        self.state.open_immersive.borrow_mut().take();
+        if let Some(mini) = self.state.mini_player.borrow_mut().take() {
+            mini.close();
+        }
         self.state.queue_button.popdown();
     }
 
@@ -1503,6 +1523,10 @@ impl State {
                 },
                 17,
             )));
+            self.hero_repeat.set_child(Some(&assets::primary_icon(
+                if repeat == Repeat::One { icons::REPEAT_ONE } else { icons::REPEAT },
+                16,
+            )));
         }
         if repeat == Repeat::Off {
             self.repeat.remove_css_class("repeat-enabled");
@@ -1514,6 +1538,10 @@ impl State {
             self.speaker.set_child(Some(&assets::primary_icon(
                 if muted { icons::MUTED } else { icons::VOLUME },
                 17,
+            )));
+            self.hero_speaker.set_child(Some(&assets::primary_icon(
+                if muted { icons::MUTED } else { icons::VOLUME },
+                16,
             )));
         }
         let layout = super::theme::ThemeManager::shared().music_player_layout();
@@ -1547,23 +1575,11 @@ impl State {
         }
         self.hero_volume.set_value(self.controller.volume());
         self.hero_shuffle.set_active(self.controller.shuffle());
-        self.hero_repeat.set_child(Some(&assets::primary_icon(
-            if repeat == Repeat::One {
-                icons::REPEAT_ONE
-            } else {
-                icons::REPEAT
-            },
-            16,
-        )));
         if repeat == Repeat::Off {
             self.hero_repeat.remove_css_class("repeat-enabled");
         } else {
             self.hero_repeat.add_css_class("repeat-enabled");
         }
-        self.hero_speaker.set_child(Some(&assets::primary_icon(
-            if muted { icons::MUTED } else { icons::VOLUME },
-            16,
-        )));
         self.syncing.set(false);
 
         self.sync_bar_visibility();
@@ -1687,7 +1703,9 @@ impl State {
             )));
         }
         self.syncing.set(false);
-        self.waveform.queue_draw();
+        if self.waveform.is_mapped() {
+            self.waveform.queue_draw();
+        }
     }
 }
 

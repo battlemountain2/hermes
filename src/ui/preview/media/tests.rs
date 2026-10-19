@@ -1,6 +1,133 @@
 use super::format_time;
 
 #[test]
+#[ignore = "Requires isolated GTK display; fake animation stream, no decoder, audio or source files"]
+fn desktop_fake_media_focus_ignores_animation_playback() {
+    use super::super::tests::coordination_stream::Stream;
+    use gtk::{glib, prelude::*};
+    use std::{cell::Cell, rc::Rc};
+
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let stream: Stream = glib::Object::new();
+    stream.stream_prepared(false, true, true, 60_000_000);
+    let preview = super::MediaPreview::build(stream.upcast_ref(), false, true, false);
+    let claims = Rc::new(Cell::new(0));
+    let observed = claims.clone();
+    preview.set_play_handler(Rc::new(move || observed.set(observed.get() + 1)));
+    assert!(preview.play_handler.borrow().is_none());
+    stream.play();
+    assert!(stream.is_playing());
+    preview.pause_for_music();
+    assert!(stream.is_playing());
+    assert_eq!(claims.get(), 0);
+    preview.stop();
+    assert!(!stream.is_playing());
+    assert_eq!(claims.get(), 0);
+}
+
+#[test]
+#[ignore = "Requires isolated GTK display; default PlaybackStream only, no decoder or source files"]
+fn desktop_default_media_focus_disconnects_on_stop_and_drop() {
+    use gtk::{glib, prelude::*};
+    use std::{cell::Cell, rc::Rc};
+
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    for stop_first in [false, true] {
+        let stream: super::super::stream::PlaybackStream = glib::Object::new();
+        let weak_stream = stream.downgrade();
+        let preview = super::MediaPreview::new_full(&stream);
+        let weak_widget = preview.widget.downgrade();
+        let payload = Rc::new(Cell::new(0));
+        let weak_payload = Rc::downgrade(&payload);
+        preview.set_play_handler(Rc::new(move || payload.set(payload.get() + 1)));
+        assert!(weak_payload.upgrade().is_some());
+        if stop_first {
+            preview.stop();
+            preview.stop();
+            assert!(preview.play_handler.borrow().is_none());
+            assert!(weak_payload.upgrade().is_none());
+            let late_payload = Rc::new(Cell::new(0));
+            let weak_late_payload = Rc::downgrade(&late_payload);
+            preview.set_play_handler(Rc::new(move || {
+                late_payload.set(late_payload.get() + 1);
+            }));
+            assert!(weak_late_payload.upgrade().is_none());
+        }
+        drop(preview);
+        assert!(weak_widget.upgrade().is_none());
+        assert!(weak_payload.upgrade().is_none());
+        stream.notify("playing");
+        drop(stream);
+        assert!(weak_stream.upgrade().is_none());
+    }
+}
+
+#[test]
+#[ignore = "Requires isolated GTK display; fake fullscreen stream, no decoder, audio or source files"]
+fn desktop_fake_media_fullscreen_shares_stream_and_playback_focus() {
+    use super::super::tests::coordination_stream::Stream;
+    use gtk::{glib, prelude::*};
+    use std::{cell::Cell, rc::Rc};
+
+    fn play_button(controls: &gtk::Widget) -> gtk::Button {
+        controls
+            .last_child()
+            .unwrap()
+            .first_child()
+            .and_downcast::<gtk::Button>()
+            .unwrap()
+    }
+
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let stream: Stream = glib::Object::new();
+    stream.stream_prepared(true, true, true, 60_000_000);
+    stream.set_muted(true);
+    let preview = super::MediaPreview::new_full(&stream);
+    let claims = Rc::new(Cell::new(0));
+    let observed = claims.clone();
+    preview.set_play_handler(Rc::new(move || observed.set(observed.get() + 1)));
+    assert!(preview.open_fullscreen());
+    assert_eq!(claims.get(), 0);
+    let fullscreen = preview.fullscreen.borrow().as_ref().unwrap().clone();
+    let overlay = fullscreen.child().and_downcast::<gtk::Overlay>().unwrap();
+    let picture = overlay.child().and_downcast::<gtk::Picture>().unwrap();
+    assert_eq!(
+        picture.paintable(),
+        Some(stream.clone().upcast::<gtk::gdk::Paintable>())
+    );
+    let controls = overlay
+        .last_child()
+        .and_downcast::<gtk::Revealer>()
+        .unwrap()
+        .child()
+        .unwrap();
+    let fullscreen_play = play_button(&controls);
+    let drawer_controls = preview
+        .widget
+        .first_child()
+        .unwrap()
+        .next_sibling()
+        .unwrap();
+    let drawer_play = play_button(&drawer_controls);
+    fullscreen_play.emit_clicked();
+    assert!(stream.is_playing());
+    assert_eq!(claims.get(), 1);
+    drawer_play.emit_clicked();
+    assert!(!stream.is_playing());
+    assert_eq!(claims.get(), 1);
+    fullscreen_play.emit_clicked();
+    assert!(stream.is_playing());
+    assert_eq!(claims.get(), 2);
+    preview.stop();
+    assert!(preview.fullscreen.borrow().is_none());
+    assert!(!stream.is_playing());
+    assert_eq!(claims.get(), 2);
+}
+
+#[test]
 #[ignore = "Requires a desktop display and FFmpeg; run explicitly"]
 fn desktop_animation_loops_and_stops_cleanly() {
     use gtk::{glib, prelude::*};

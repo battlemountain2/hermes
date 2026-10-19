@@ -164,6 +164,7 @@ impl AudioPreview {
 
         let play_button = icon_button(icons::PLAY, "Play");
         play_button.add_css_class("preview-audio-play-button");
+        play_button.set_child(Some(&assets::on_accent_icon(icons::PLAY, 18)));
 
         let next_button = icon_button(icons::ARROW_RIGHT, "Next track");
         next_button.add_css_class("preview-audio-transport-button");
@@ -498,7 +499,11 @@ fn set_button_icon(button: &gtk::Button, icon: &str) {
         .child()
         .and_then(|child| child.downcast::<gtk::Image>().ok())
     {
-        assets::set_primary_icon(&image, icon);
+        if button.has_css_class("preview-audio-play-button") {
+            assets::set_on_accent_icon(&image, icon);
+        } else {
+            assets::set_primary_icon(&image, icon);
+        }
     }
 }
 

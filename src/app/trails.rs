@@ -36,39 +36,6 @@ impl Trails {
         self.stored.borrow().collection.active.clone()
     }
 
-    pub fn active_location(&self) -> Option<Location> {
-        self.stored
-            .borrow()
-            .collection
-            .active_trail()
-            .and_then(Trail::active_location)
-            .cloned()
-    }
-
-    pub fn active_view(&self) -> Option<TrailViewState> {
-        self.stored
-            .borrow()
-            .collection
-            .active_trail()
-            .map(|trail| trail.view.clone())
-    }
-
-    pub fn ensure_default(&self, location: Location) -> io::Result<()> {
-        if !self.stored.borrow().collection.trails.is_empty() {
-            return Ok(());
-        }
-        let trail = Trail::new(
-            TrailId::new("default").expect("static Trail identifier is valid"),
-            location.display_name(),
-            location.breadcrumbs(),
-        )
-        .expect("a location produces a valid Trail");
-        let mut stored = self.stored.borrow_mut();
-        stored.collection.active = Some(trail.id.clone());
-        stored.collection.trails.push(trail);
-        self.store.save(&stored)
-    }
-
     pub fn create(
         &self,
         name: impl Into<String>,

@@ -35,6 +35,7 @@ const MIN_SIDEBAR_WIDTH: i32 = 176;
 const SIDEBAR_TRANSITION: Duration = Duration::from_millis(300);
 
 mod saved_searches;
+mod startup;
 
 pub fn present(application: &gtk::Application) {
     present_location(application, None);
@@ -48,29 +49,21 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         tracing::warn!(%error, "unable to load saved Trails");
         Trails::empty(trail_store.clone())
     });
-    let location = location
-        .or_else(|| {
-            trails
-                .active_location()?
-                .native_path()
-                .map(std::path::Path::to_path_buf)
-        })
-        .unwrap_or_else(home_directory);
-    let had_saved_trail = trails.active_view().is_some();
-    if let Err(error) = trails.ensure_default(Location::local(&location)) {
-        tracing::warn!(%error, "unable to save initial Trail");
-    }
-    if !had_saved_trail {
-        let initial_view = TrailViewState {
-            browser_mode: trail_browser_mode(theme_manager.browser_mode()),
-            density: trail_browser_density(theme_manager.browser_density()),
-            sidebar_open: true,
-            ..TrailViewState::default()
-        };
-        if let Err(error) = trails.update_active_view(initial_view) {
-            tracing::warn!(%error, "unable to save initial Trail view state");
-        }
-    }
+    let home = Location::local(home_directory());
+    let fresh_view = startup::fresh_view(
+        trail_browser_mode(theme_manager.browser_mode()),
+        trail_browser_density(theme_manager.browser_density()),
+        theme_manager.show_hidden_default(),
+    );
+    let startup = startup::select(
+        &trails,
+        location.map(Location::local),
+        &theme_manager.startup_location(),
+        &home,
+        &fresh_view,
+    );
+    let startup_restore = Rc::new(RefCell::new(startup::Restore::new(&startup.trail)));
+    let applying_startup = Rc::new(Cell::new(false));
     load_styles();
 
     let window = gtk::ApplicationWindow::builder()
@@ -81,7 +74,7 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         .build();
 
     let browser = BrowserView::new(Rc::new(RoutedFileSource::new()), PeekBehavior::default());
-    let initial_view = trails.active_view().unwrap_or_default();
+    let initial_view = startup.trail.view.clone();
     browser.set_view_mode(browser_mode(initial_view.browser_mode));
     browser.set_density(browser_density(initial_view.density));
     browser.set_operation_provider(Rc::new(LocalOperationProvider));
@@ -105,6 +98,8 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     let preview_for_selection = preview.clone();
     let weak_controller = Rc::downgrade(&controller);
     let observed_trails = trails.clone();
+    let observed_startup = startup_restore.clone();
+    let observed_applying_startup = applying_startup.clone();
     controller.observe(move |event| match event {
         BrowserEvent::ColumnAdded { .. } | BrowserEvent::ColumnsTruncated { .. }
         | BrowserEvent::TabRestored { .. } => {
@@ -114,6 +109,14 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
             let Some(active_location) = browser.active_location() else {
                 return;
             };
+            if observed_applying_startup.get()
+                || observed_startup.borrow_mut().preserves(
+                    observed_trails.active_id().as_ref(),
+                    Some(&active_location),
+                )
+            {
+                return;
+            }
             if let Err(error) = observed_trails.update_active_location(active_location) {
                 tracing::warn!(%error, "unable to save active Trail");
             }
@@ -220,9 +223,13 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     let context_view = capture_view.clone();
     let context_tab_bar = tab_bar.clone();
     let status_bar = Rc::new(super::status_bar::StatusBar::new());
-    status_bar.update_free_space(&location);
+    if let Some(path) = startup.trail.active_location().and_then(Location::native_path) {
+        status_bar.update_free_space(path);
+    }
     let context_status_bar = status_bar.clone();
     let context_controller = controller.clone();
+    let context_startup = startup_restore.clone();
+    let context_applying_startup = applying_startup.clone();
     controller.observe(move |event| {
         if matches!(
             event,
@@ -233,8 +240,15 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
                 | BrowserEvent::PreviewRequested { .. }
                 | BrowserEvent::FocusChanged { .. }
         ) {
-            if let Err(error) = context_trails.update_active_view(context_view()) {
-                tracing::warn!(%error, "unable to save Trail view state");
+            if !context_applying_startup.get()
+                && !context_startup.borrow_mut().preserves(
+                    context_trails.active_id().as_ref(),
+                    context_controller.active_location().as_ref(),
+                )
+            {
+                if let Err(error) = context_trails.update_active_view(context_view()) {
+                    tracing::warn!(%error, "unable to save Trail view state");
+                }
             }
             context_tab_bar.refresh();
         }
@@ -376,6 +390,7 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     let animated_sidebar = sidebar.widget.clone();
     let sidebar_trails = trails.clone();
     let sidebar_view = capture_view.clone();
+    let sidebar_applying_startup = applying_startup.clone();
     sidebar_toggle.connect_toggled(move |toggle| {
         animate_sidebar(
             &animated_content,
@@ -384,8 +399,10 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
             &sidebar_animating,
             toggle.is_active(),
         );
-        if let Err(error) = sidebar_trails.update_active_view(sidebar_view()) {
-            tracing::warn!(%error, "unable to save Trail sidebar state");
+        if !sidebar_applying_startup.get() {
+            if let Err(error) = sidebar_trails.update_active_view(sidebar_view()) {
+                tracing::warn!(%error, "unable to save Trail sidebar state");
+            }
         }
     });
     let preview_split = gtk::Paned::new(gtk::Orientation::Horizontal);
@@ -416,23 +433,35 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     workspace.add_named(&preview_split, Some("files"));
     workspace.add_named(&music_player.view(), Some("music"));
 
-    let ws_for_imm_close = workspace.clone();
-    let ws_for_imm_lib = workspace.clone();
-    let toggle_for_imm_close = music_toggle.clone();
-    let toggle_for_imm_lib = music_toggle.clone();
-    let music_for_imm_close = music_player.clone();
-    let music_for_imm_lib = music_player.clone();
+    let ws_for_imm_close = workspace.downgrade();
+    let ws_for_imm_lib = workspace.downgrade();
+    let toggle_for_imm_close = music_toggle.downgrade();
+    let toggle_for_imm_lib = music_toggle.downgrade();
+    let music_for_imm_close = music_player.downgrade();
+    let music_for_imm_lib = music_player.downgrade();
     let immersive_view = super::music::immersive::ImmersiveView::new(
         music_player.controller(),
         Rc::new(move || {
-            toggle_for_imm_close.set_active(true);
-            ws_for_imm_close.set_visible_child_name("music");
-            music_for_imm_close.set_workspace("music");
+            if let (Some(toggle), Some(workspace), Some(music)) = (
+                toggle_for_imm_close.upgrade(),
+                ws_for_imm_close.upgrade(),
+                music_for_imm_close.upgrade(),
+            ) {
+                toggle.set_active(true);
+                workspace.set_visible_child_name("music");
+                music.set_workspace("music");
+            }
         }),
         Rc::new(move || {
-            toggle_for_imm_lib.set_active(true);
-            ws_for_imm_lib.set_visible_child_name("music");
-            music_for_imm_lib.set_workspace("music");
+            if let (Some(toggle), Some(workspace), Some(music)) = (
+                toggle_for_imm_lib.upgrade(),
+                ws_for_imm_lib.upgrade(),
+                music_for_imm_lib.upgrade(),
+            ) {
+                toggle.set_active(true);
+                workspace.set_visible_child_name("music");
+                music.set_workspace("music");
+            }
         }),
     );
     workspace.add_named(immersive_view.widget(), Some("immersive"));
@@ -440,15 +469,21 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     root.append(&workspace);
     root.append(&music_player.bar());
 
-    let ws_for_imm_open = workspace.clone();
-    let toggle_for_imm_open = music_toggle.clone();
+    let ws_for_imm_open = workspace.downgrade();
+    let toggle_for_imm_open = music_toggle.downgrade();
     let imm_for_open = immersive_view.clone();
-    let music_for_imm_open = music_player.clone();
+    let music_for_imm_open = music_player.downgrade();
     music_player.connect_open_immersive(Rc::new(move || {
-        ws_for_imm_open.set_visible_child_name("immersive");
-        music_for_imm_open.set_workspace("immersive");
-        toggle_for_imm_open.set_active(false);
-        imm_for_open.sync();
+        if let (Some(workspace), Some(toggle), Some(music)) = (
+            ws_for_imm_open.upgrade(),
+            toggle_for_imm_open.upgrade(),
+            music_for_imm_open.upgrade(),
+        ) {
+            workspace.set_visible_child_name("immersive");
+            music.set_workspace("immersive");
+            toggle.set_active(false);
+            imm_for_open.sync();
+        }
     }));
 
     let shown_workspace = workspace.clone();
@@ -705,14 +740,28 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         &music_player,
     );
     install_mouse_navigation(&window, &controller);
-    if let Some(id) = trails.active_id()
-        && let Some(mut trail) = trails.all().into_iter().find(|trail| trail.id == id)
-    {
-        trail.locations = Location::local(&location).breadcrumbs();
-        browser.activate_tab(&trail);
-    } else {
-        browser.navigate(location);
-    }
+    let restored_browser = browser.clone();
+    let restored_sidebar = sidebar_toggle.clone();
+    let restored_tabs = tab_bar.clone();
+    let restored_startup = startup_restore.clone();
+    let restore_startup: Rc<dyn Fn(Trail)> = Rc::new(move |trail| {
+        applying_startup.set(true);
+        restored_startup.replace(startup::Restore::new(&trail));
+        restored_sidebar.set_active(trail.view.sidebar_open);
+        restored_browser.activate_tab(&trail);
+        restored_tabs.refresh();
+        applying_startup.set(false);
+    });
+    startup::install_fallback(
+        &controller,
+        trails.clone(),
+        startup_restore,
+        home,
+        fresh_view,
+        restore_startup.clone(),
+    );
+    restore_startup(startup.trail);
+    music_toggle.set_active(startup.workspace == startup::Workspace::Music);
 
     let browser_controller = browser.browser();
     window.connect_destroy(move |_| {
@@ -894,14 +943,6 @@ fn install_keyboard_navigation(
         let Some(browser) = weak_browser.upgrade() else {
             return glib::Propagation::Proceed;
         };
-        if key == gtk::gdk::Key::Escape
-            && workspace.visible_child_name().as_deref() == Some("immersive")
-        {
-            music_toggle.set_active(true);
-            workspace.set_visible_child_name("music");
-            music_player.set_workspace("music");
-            return glib::Propagation::Stop;
-        }
         if let Some(layer) = visible_modal_layer(&dialog_parent) {
             let focus_is_inside = gtk::prelude::RootExt::focus(&dialog_parent)
                 .is_some_and(|focus| focus == layer || focus.is_ancestor(&layer));
@@ -910,6 +951,14 @@ fn install_keyboard_navigation(
                 return glib::Propagation::Stop;
             }
             return glib::Propagation::Proceed;
+        }
+        if key == gtk::gdk::Key::Escape
+            && workspace.visible_child_name().as_deref() == Some("immersive")
+        {
+            music_toggle.set_active(true);
+            workspace.set_visible_child_name("music");
+            music_player.set_workspace("music");
+            return glib::Propagation::Stop;
         }
         let alt = modifiers.contains(gtk::gdk::ModifierType::ALT_MASK);
         let control = modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);

@@ -2,6 +2,7 @@
 
 use std::{
     cell::{Cell, RefCell},
+    path::Path,
     rc::Rc,
     time::Duration,
 };
@@ -22,6 +23,97 @@ use crate::{
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod performance_tests;
+
+mod canvas;
+
+struct AssetRequest {
+    identity: Rc<()>,
+    cancellation: Cancellation,
+}
+
+impl AssetRequest {
+    fn new() -> Self {
+        Self {
+            identity: Rc::new(()),
+            cancellation: Cancellation::default(),
+        }
+    }
+
+    fn accepts(&self, identity: &Rc<()>) -> bool {
+        Rc::ptr_eq(&self.identity, identity) && !self.cancellation.is_cancelled()
+    }
+}
+
+impl Drop for AssetRequest {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+    }
+}
+
+struct TrackAssets {
+    artwork: Option<Vec<u8>>,
+    lyrics: Option<Lyrics>,
+}
+
+fn read_track_assets(path: &Path, cancellation: &Cancellation) -> TrackAssets {
+    let mut result = TrackAssets {
+        artwork: None,
+        lyrics: None,
+    };
+    if cancellation.is_cancelled() {
+        return result;
+    }
+    result.lyrics = find_lyrics_for_audio_file(path);
+    if cancellation.is_cancelled() {
+        return result;
+    }
+    let folder_art = path.parent().and_then(crate::ui::thumbnail::folder_album_art);
+    if cancellation.is_cancelled() {
+        return result;
+    }
+    if let Some((cover, ParseOperation::ThumbnailImage)) = folder_art {
+        result.artwork = crate::sandbox::parse(
+            &cover,
+            ParseOperation::ThumbnailImage,
+            1024,
+            cancellation,
+        )
+        .ok()
+        .map(|output| output.data);
+    }
+    if result.artwork.is_none() && !cancellation.is_cancelled() {
+        result.artwork = crate::sandbox::parse(
+            path,
+            ParseOperation::ThumbnailVideo,
+            512,
+            cancellation,
+        )
+        .ok()
+        .map(|output| output.data);
+    }
+    result
+}
+
+fn needs_visualizer_frames(
+    mapped: bool,
+    stopped: bool,
+    active: bool,
+    playing: bool,
+    motion: bool,
+) -> bool {
+    mapped && !stopped && active && playing && motion
+}
+
+fn visualizer_frame_delta(previous: Option<i64>, now: i64) -> Option<f64> {
+    let Some(previous) = previous else {
+        return Some(0.0);
+    };
+    let elapsed = now.saturating_sub(previous);
+    (elapsed >= 1_000_000 / 60).then_some(elapsed.min(100_000) as f64 / 1_000_000.0)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VisualizerStyle {
     Ribbons,
@@ -36,14 +128,24 @@ pub struct ImmersiveView {
 }
 
 struct ImmersiveState {
+    overlay: glib::WeakRef<gtk::Overlay>,
     controller: Rc<Controller>,
     _observer: RefCell<Option<Rc<dyn Fn()>>>,
     on_open_library: Rc<dyn Fn()>,
-    visualizer_canvas: gtk::DrawingArea,
+    ambient_aura: gtk::DrawingArea,
+    palette: Cell<((f64, f64, f64), (f64, f64, f64))>,
+    visualizer_canvas: canvas::VisualizerCanvas,
+    visualizer_bands: Cell<[f32; crate::playback::SPECTRUM_BANDS]>,
     visualizer_active: Cell<bool>,
     visualizer_style: Cell<VisualizerStyle>,
     lyrics_active: Cell<bool>,
     current_track: RefCell<Option<Track>>,
+    current_generation: Cell<u64>,
+    track_dirty: Cell<bool>,
+    stopped: Cell<bool>,
+    asset_request: RefCell<Option<AssetRequest>>,
+    asset_task: RefCell<Option<glib::JoinHandle<()>>>,
+    tick: RefCell<Option<gtk::TickCallbackId>>,
     current_lyrics: RefCell<Option<Lyrics>>,
     active_lyric_index: Cell<Option<usize>>,
     lyric_labels: RefCell<Vec<gtk::Label>>,
@@ -53,7 +155,6 @@ struct ImmersiveState {
     art_box: gtk::Box,
     art_stack: gtk::Stack,
     art_picture: gtk::Picture,
-    art_fallback: gtk::Image,
     title_label: gtk::Label,
     artist_label: gtk::Label,
     scrub_scale: gtk::Scale,
@@ -82,11 +183,13 @@ struct ImmersiveState {
     floating_volume: gtk::Scale,
     floating_time: gtk::Label,
     vis_t: Cell<f64>,
+    last_frame_us: Cell<Option<i64>>,
     playing_icon: Cell<bool>,
     muted_icon: Cell<bool>,
+    repeat_icon: Cell<Option<crate::music::Repeat>>,
     syncing: Cell<bool>,
-    last_tick_us: Cell<i64>,
     last_second: Cell<i64>,
+    last_duration: Cell<i64>,
 }
 
 impl ImmersiveView {
@@ -103,14 +206,10 @@ impl ImmersiveView {
         ambient_aura.set_hexpand(true);
         ambient_aura.set_vexpand(true);
         ambient_aura.add_css_class("immersive-ambient-aura");
-        ambient_aura.set_draw_func(move |_, cr, width, height| {
-            let (accent, highlight) = current_theme_palette();
-            draw_ambient_aura(cr, width as f64, height as f64, accent, highlight);
-        });
         overlay.set_child(Some(&ambient_aura));
 
         // 2. Full-Screen Visualizer Canvas
-        let visualizer_canvas = gtk::DrawingArea::new();
+        let visualizer_canvas = canvas::VisualizerCanvas::new();
         visualizer_canvas.set_hexpand(true);
         visualizer_canvas.set_vexpand(true);
         visualizer_canvas.set_visible(false);
@@ -203,6 +302,7 @@ impl ImmersiveView {
 
         // Artwork Frame
         let art_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        art_box.set_overflow(gtk::Overflow::Hidden);
         art_box.add_css_class("immersive-art-box");
         art_box.set_size_request(420, 420);
 
@@ -276,7 +376,7 @@ impl ImmersiveView {
         prev_button.add_css_class("immersive-control-btn");
 
         let play_button = gtk::Button::builder().tooltip_text("Play / Pause").build();
-        play_button.set_child(Some(&assets::primary_icon(icons::PLAY, 20)));
+        play_button.set_child(Some(&assets::on_accent_icon(icons::PLAY, 20)));
         play_button.add_css_class("immersive-play-btn");
 
         let next_button = gtk::Button::builder().tooltip_text("Next").build();
@@ -365,7 +465,7 @@ impl ImmersiveView {
         floating_dock.append(&floating_prev);
 
         let floating_play = gtk::Button::builder().tooltip_text("Play / Pause").build();
-        floating_play.set_child(Some(&assets::primary_icon(icons::PLAY, 16)));
+        floating_play.set_child(Some(&assets::on_accent_icon(icons::PLAY, 16)));
         floating_play.add_css_class("immersive-play-btn");
         floating_dock.append(&floating_play);
 
@@ -395,14 +495,24 @@ impl ImmersiveView {
         overlay.add_overlay(&content_box);
 
         let state = Rc::new(ImmersiveState {
+            overlay: overlay.downgrade(),
             controller: controller.clone(),
             _observer: RefCell::new(None),
             on_open_library: on_open_library.clone(),
+            ambient_aura: ambient_aura.clone(),
+            palette: Cell::new(current_theme_palette()),
             visualizer_canvas: visualizer_canvas.clone(),
+            visualizer_bands: Cell::new([0.0; crate::playback::SPECTRUM_BANDS]),
             visualizer_active: Cell::new(false),
             visualizer_style: Cell::new(VisualizerStyle::Ribbons),
             lyrics_active: Cell::new(true),
             current_track: RefCell::new(None),
+            current_generation: Cell::new(0),
+            track_dirty: Cell::new(true),
+            stopped: Cell::new(false),
+            asset_request: RefCell::new(None),
+            asset_task: RefCell::new(None),
+            tick: RefCell::new(None),
             current_lyrics: RefCell::new(None),
             active_lyric_index: Cell::new(None),
             lyric_labels: RefCell::new(Vec::new()),
@@ -412,7 +522,6 @@ impl ImmersiveView {
             art_box,
             art_stack,
             art_picture,
-            art_fallback,
             title_label,
             artist_label,
             scrub_scale,
@@ -441,58 +550,34 @@ impl ImmersiveView {
             floating_volume,
             floating_time,
             vis_t: Cell::new(0.0),
+            last_frame_us: Cell::new(None),
             playing_icon: Cell::new(false),
             muted_icon: Cell::new(false),
+            repeat_icon: Cell::new(None),
             syncing: Cell::new(false),
-            last_tick_us: Cell::new(0),
             last_second: Cell::new(-1),
+            last_duration: Cell::new(-1),
         });
 
-        // Visualizer Canvas Drawing
-        let vis_state = Rc::downgrade(&state);
-        visualizer_canvas.set_draw_func(move |_, cr, width, height| {
-            if let Some(state) = vis_state.upgrade()
-                && state.visualizer_active.get()
-            {
-                let bands = state.controller.spectrum_bands();
-                let (accent, highlight) = current_theme_palette();
-                draw_generative_visualizer(
-                    cr,
-                    width as f64,
-                    height as f64,
-                    state.vis_t.get(),
-                    state.visualizer_style.get(),
-                    &bands,
-                    accent,
-                    highlight,
-                );
+        let ambient_state = Rc::downgrade(&state);
+        ambient_aura.set_draw_func(move |_, cr, width, height| {
+            if let Some(state) = ambient_state.upgrade() {
+                let (accent, highlight) = state.palette.get();
+                draw_ambient_aura(cr, width as f64, height as f64, accent, highlight);
             }
         });
 
-        // Tick Callback for Visualizer and Smooth Scrubbing
-        let tick_state = Rc::downgrade(&state);
-        overlay.add_tick_callback(move |widget, clock| {
-            if !widget.is_mapped() {
-                return glib::ControlFlow::Continue;
+        let mapped_state = Rc::downgrade(&state);
+        overlay.connect_map(move |_| {
+            if let Some(state) = mapped_state.upgrade() {
+                state.sync();
             }
-            let Some(state) = tick_state.upgrade() else {
-                return glib::ControlFlow::Break;
-            };
-            if !state.visualizer_active.get() && !state.lyrics_active.get() {
-                return glib::ControlFlow::Continue;
+        });
+        let unmapped_state = Rc::downgrade(&state);
+        overlay.connect_unmap(move |_| {
+            if let Some(state) = unmapped_state.upgrade() {
+                state.suspend();
             }
-            let frame_time = clock.frame_time();
-            if state.visualizer_active.get() {
-                let seconds = frame_time as f64 / 1_000_000.0;
-                state.vis_t.set(seconds);
-                state.visualizer_canvas.queue_draw();
-            }
-            let prev_us = state.last_tick_us.get();
-            if frame_time - prev_us >= 100_000 {
-                state.last_tick_us.set(frame_time);
-                state.sync_lyrics_and_time();
-            }
-            glib::ControlFlow::Continue
         });
 
         // Top Bar Button Handlers
@@ -507,7 +592,9 @@ impl ImmersiveView {
         state.lyrics_btn.connect_toggled(move |btn| {
             if let Some(state) = lyrics_state.upgrade() {
                 state.lyrics_active.set(btn.is_active());
-                state.update_stage_layout();
+                if state.is_mapped() && !state.stopped.get() {
+                    state.update_stage_layout();
+                }
             }
         });
 
@@ -516,10 +603,7 @@ impl ImmersiveView {
             if let Some(state) = vis_state.upgrade() {
                 let active = btn.is_active();
                 state.visualizer_active.set(active);
-                state.visualizer_canvas.set_visible(active);
-                state.style_selector.set_visible(active);
-                state.stage_box.set_visible(!active);
-                state.floating_dock.set_visible(active);
+                state.sync();
             }
         });
 
@@ -529,6 +613,7 @@ impl ImmersiveView {
                 && let Some(state) = style_state.upgrade()
             {
                 state.visualizer_style.set(VisualizerStyle::Ribbons);
+                state.redraw_visualizer();
             }
         });
 
@@ -538,6 +623,7 @@ impl ImmersiveView {
                 && let Some(state) = style_state.upgrade()
             {
                 state.visualizer_style.set(VisualizerStyle::Tunnel);
+                state.redraw_visualizer();
             }
         });
 
@@ -547,6 +633,7 @@ impl ImmersiveView {
                 && let Some(state) = style_state.upgrade()
             {
                 state.visualizer_style.set(VisualizerStyle::Cosmic);
+                state.redraw_visualizer();
             }
         });
 
@@ -663,35 +750,166 @@ impl ImmersiveView {
     pub fn sync(&self) {
         self.state.sync();
     }
+
+    pub fn request_stop(&self) {
+        self.state.request_stop();
+    }
+}
+
+impl Drop for ImmersiveView {
+    fn drop(&mut self) {
+        if Rc::strong_count(&self.state) == 1 {
+            self.request_stop();
+        }
+    }
 }
 
 impl ImmersiveState {
-    fn sync(&self) {
+    fn is_mapped(&self) -> bool {
+        self.overlay.upgrade().is_some_and(|overlay| overlay.is_mapped())
+    }
+
+    fn cancel_request(&self) {
+        self.asset_request.borrow_mut().take();
+        if let Some(task) = self.asset_task.borrow_mut().take() {
+            task.abort();
+        }
+    }
+
+    fn cancel_tick(&self) {
+        if let Some(tick) = self.tick.borrow_mut().take() {
+            tick.remove();
+        }
+        self.last_frame_us.set(None);
+    }
+
+    fn suspend(&self) {
+        self.cancel_request();
+        self.cancel_tick();
+        self.track_dirty.set(true);
+        self.current_lyrics.replace(None);
+        self.visualizer_bands.set([0.0; crate::playback::SPECTRUM_BANDS]);
+        self.visualizer_canvas.clear();
+        self.art_picture.set_paintable(Option::<&gdk::Paintable>::None);
+        self.art_stack.set_visible_child_name("fallback");
+        self.clear_lyrics_ui();
+    }
+
+    fn request_stop(&self) {
+        if !self.stopped.replace(true) {
+            self.suspend();
+            self._observer.borrow_mut().take();
+        }
+    }
+
+    fn should_animate(&self) -> bool {
+        needs_visualizer_frames(
+            self.is_mapped(),
+            self.stopped.get() || self.controller.closed.get(),
+            self.visualizer_active.get(),
+            self.controller.status() == super::controller::PlaybackStatus::Playing,
+            crate::ui::motion::animations_enabled(),
+        )
+    }
+
+    fn sync_tick(self: &Rc<Self>) {
+        if !self.should_animate() {
+            self.cancel_tick();
+            return;
+        }
+        if self.tick.borrow().is_some() {
+            return;
+        }
+        let Some(overlay) = self.overlay.upgrade() else {
+            return;
+        };
+        self.last_frame_us.set(None);
+        let weak = Rc::downgrade(self);
+        let tick = overlay.add_tick_callback(move |_, clock| {
+            let Some(state) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            if !state.should_animate() {
+                state.tick.borrow_mut().take();
+                state.last_frame_us.set(None);
+                return glib::ControlFlow::Break;
+            }
+            let now = clock.frame_time();
+            let Some(delta) = visualizer_frame_delta(state.last_frame_us.get(), now) else {
+                return glib::ControlFlow::Continue;
+            };
+            state.last_frame_us.set(Some(now));
+            state.vis_t.set(state.vis_t.get() + delta);
+            state.visualizer_bands.set(state.controller.spectrum_bands());
+            state.redraw_visualizer();
+            glib::ControlFlow::Continue
+        });
+        self.tick.replace(Some(tick));
+    }
+
+    fn redraw_visualizer(&self) {
+        if self.is_mapped() && !self.stopped.get() && self.visualizer_active.get() {
+            self.visualizer_canvas.set_frame(
+                self.visualizer_style.get(),
+                self.vis_t.get(),
+                self.visualizer_bands.get(),
+                self.palette.get(),
+            );
+        }
+    }
+
+    fn sync(self: &Rc<Self>) {
+        if self.controller.closed.get() {
+            self.request_stop();
+        }
+        if self.stopped.get() || !self.is_mapped() {
+            return;
+        }
+        let palette = current_theme_palette();
+        if self.palette.replace(palette) != palette {
+            self.ambient_aura.queue_draw();
+            self.redraw_visualizer();
+        }
+        self.art_stack.set_transition_duration(if crate::ui::motion::animations_enabled() {
+            200
+        } else {
+            0
+        });
+        let active = self.visualizer_active.get();
+        self.visualizer_canvas.set_visible(active);
+        self.style_selector.set_visible(active);
+        self.stage_box.set_visible(!active);
+        self.floating_dock.set_visible(active);
         let track = self.controller.current_track();
-        if *self.current_track.borrow() != track {
+        let generation = self.controller.generation.get();
+        if self.track_dirty.replace(false)
+            || *self.current_track.borrow() != track
+            || self.current_generation.get() != generation
+        {
+            self.cancel_request();
+            self.current_generation.set(generation);
             self.current_track.replace(track.clone());
+            self.last_second.set(-1);
+            self.last_duration.set(-1);
+            self.current_lyrics.replace(None);
+            self.rebuild_lyrics_ui();
+            self.art_picture.set_paintable(Option::<&gdk::Paintable>::None);
+            self.art_stack.set_visible_child_name("fallback");
             if let Some(ref track) = track {
                 self.title_label.set_text(&track.title());
                 self.floating_title.set_text(&track.title());
                 let subtitle = format!("{} · {}", track.artist(), track.album());
                 self.artist_label.set_text(&subtitle);
                 self.floating_artist.set_text(&track.artist());
-                self.load_artwork(Some(track));
-                // Load lyrics
-                let lyrics = find_lyrics_for_audio_file(&track.path);
-                self.current_lyrics.replace(lyrics);
-                self.rebuild_lyrics_ui();
+                self.load_track_assets(track.clone(), generation);
             } else {
                 self.title_label.set_text("Nothing playing");
                 self.artist_label.set_text("Choose a track in Music");
                 self.floating_title.set_text("");
                 self.floating_artist.set_text("");
-                self.load_artwork(None);
-                self.current_lyrics.replace(None);
-                self.rebuild_lyrics_ui();
             }
-            self.update_stage_layout();
         }
+        self.update_stage_layout();
 
         self.syncing.set(true);
         self.volume_scale.set_value(self.controller.volume());
@@ -703,8 +921,8 @@ impl ImmersiveState {
         let playing = self.controller.status() == super::controller::PlaybackStatus::Playing;
         if self.playing_icon.replace(playing) != playing {
             let icon = if playing { icons::PAUSE } else { icons::PLAY };
-            self.play_button.set_child(Some(&assets::primary_icon(icon, 20)));
-            self.floating_play.set_child(Some(&assets::primary_icon(icon, 16)));
+            self.play_button.set_child(Some(&assets::on_accent_icon(icon, 20)));
+            self.floating_play.set_child(Some(&assets::on_accent_icon(icon, 16)));
         }
 
         let muted = self
@@ -718,91 +936,99 @@ impl ImmersiveState {
         }
 
         let repeat = self.controller.repeat();
-        let rep_icon = if repeat == crate::music::Repeat::One {
-            icons::REPEAT_ONE
-        } else {
-            icons::REPEAT
-        };
-        self.repeat_button.set_child(Some(&assets::primary_icon(rep_icon, 16)));
-        self.floating_repeat.set_child(Some(&assets::primary_icon(rep_icon, 16)));
-        if repeat == crate::music::Repeat::Off {
-            self.repeat_button.remove_css_class("repeat-enabled");
-            self.floating_repeat.remove_css_class("repeat-enabled");
-        } else {
-            self.repeat_button.add_css_class("repeat-enabled");
-            self.floating_repeat.add_css_class("repeat-enabled");
+        if self.repeat_icon.replace(Some(repeat)) != Some(repeat) {
+            let rep_icon = if repeat == crate::music::Repeat::One {
+                icons::REPEAT_ONE
+            } else {
+                icons::REPEAT
+            };
+            self.repeat_button.set_child(Some(&assets::primary_icon(rep_icon, 16)));
+            self.floating_repeat.set_child(Some(&assets::primary_icon(rep_icon, 16)));
+            if repeat == crate::music::Repeat::Off {
+                self.repeat_button.remove_css_class("repeat-enabled");
+                self.floating_repeat.remove_css_class("repeat-enabled");
+            } else {
+                self.repeat_button.add_css_class("repeat-enabled");
+                self.floating_repeat.add_css_class("repeat-enabled");
+            }
         }
 
         self.syncing.set(false);
         self.sync_lyrics_and_time();
+        self.sync_tick();
+        self.redraw_visualizer();
     }
 
-    fn load_artwork(&self, track: Option<&Track>) {
-        let Some(track) = track else {
-            self.art_picture.set_paintable(Option::<&gdk::Paintable>::None);
-            assets::set_primary_icon(&self.art_fallback, icons::MUSIC);
-            self.art_stack.set_visible_child_name("fallback");
-            return;
-        };
-
-        // 1. Direct folder artwork check (highest quality native image file)
-        let parent = track.path.parent();
-        let folder_art = parent.and_then(crate::ui::thumbnail::folder_album_art);
-        if let Some((cover_path, ParseOperation::ThumbnailImage)) = folder_art {
-            let file = gio::File::for_path(&cover_path);
-            self.art_picture.set_file(Some(&file));
-            self.art_stack.set_visible_child_name("picture");
-            return;
-        }
-
-        // 2. Embedded artwork extraction via sandbox helper
+    fn load_track_assets(self: &Rc<Self>, track: Track, generation: u64) {
+        let request = AssetRequest::new();
+        let identity = request.identity.clone();
+        let cancellation = request.cancellation.clone();
+        self.asset_request.replace(Some(request));
+        let weak = Rc::downgrade(self);
         let path = track.path.clone();
-        let weak_pic = self.art_picture.downgrade();
-        let weak_stack = self.art_stack.downgrade();
-        let weak_fallback = self.art_fallback.downgrade();
-        let cancellation = Cancellation::default();
-
-        glib::MainContext::default().spawn_local(async move {
-            let worker_cancel = cancellation.clone();
-            let track_path = path.clone();
-            let output = gio::spawn_blocking(move || {
-                crate::sandbox::parse(
-                    &track_path,
-                    ParseOperation::ThumbnailVideo,
-                    512,
-                    &worker_cancel,
-                )
-                .ok()
-                .map(|out| out.data)
-            })
-            .await;
-
-            if let (Some(pic), Some(stack), Some(fallback)) = (
-                weak_pic.upgrade(),
-                weak_stack.upgrade(),
-                weak_fallback.upgrade(),
-            ) {
-                if let Ok(Some(bytes)) = output
-                    && let Ok(texture) = gdk::Texture::from_bytes(&glib::Bytes::from_owned(bytes))
-                {
-                    pic.set_paintable(Some(&texture));
-                    stack.set_visible_child_name("picture");
-                } else {
-                    assets::set_primary_icon(&fallback, icons::MUSIC);
-                    stack.set_visible_child_name("fallback");
-                }
+        let task = glib::MainContext::default().spawn_local(async move {
+            let output = gio::spawn_blocking(move || read_track_assets(&path, &cancellation)).await;
+            if let Some(state) = weak.upgrade() {
+                state.finish_track_assets(&identity, &track, generation, output.ok());
             }
         });
+        self.asset_task.replace(Some(task));
     }
 
-    fn rebuild_lyrics_ui(&self) {
-        // Clear previous lyrics
+    fn finish_track_assets(
+        &self,
+        identity: &Rc<()>,
+        track: &Track,
+        generation: u64,
+        output: Option<TrackAssets>,
+    ) {
+        if self.stopped.get()
+            || !self.is_mapped()
+            || self.controller.closed.get()
+            || self.controller.generation.get() != generation
+            || self.controller.current_track().as_ref() != Some(track)
+            || self.current_track.borrow().as_ref() != Some(track)
+            || !self
+                .asset_request
+                .borrow()
+                .as_ref()
+                .is_some_and(|request| request.accepts(identity))
+        {
+            return;
+        }
+        self.asset_task.borrow_mut().take();
+        self.asset_request.borrow_mut().take();
+        if let Some(output) = output {
+            if let Some(bytes) = output.artwork
+                && let Ok(texture) = gdk::Texture::from_bytes(&glib::Bytes::from_owned(bytes))
+            {
+                self.art_picture.set_paintable(Some(&texture));
+                self.art_stack.set_visible_child_name("picture");
+            }
+            self.current_lyrics.replace(output.lyrics);
+        }
+        self.rebuild_lyrics_ui();
+        self.update_stage_layout();
+        self.sync_lyrics_and_time();
+    }
+
+    fn clear_lyrics_ui(&self) {
         while let Some(child) = self.lyrics_box.first_child() {
             self.lyrics_box.remove(&child);
         }
         self.lyric_labels.borrow_mut().clear();
         self.active_lyric_index.set(None);
+    }
 
+    fn rebuild_lyrics_ui(&self) {
+        self.clear_lyrics_ui();
+        if !self.is_mapped()
+            || self.stopped.get()
+            || !self.lyrics_active.get()
+            || self.visualizer_active.get()
+        {
+            return;
+        }
         let lyrics = self.current_lyrics.borrow();
         if let Some(ref lyrics) = *lyrics {
             let ctrl = self.controller.clone();
@@ -813,7 +1039,7 @@ impl ImmersiveState {
                 label.set_wrap(true);
                 label.set_cursor_from_name(Some("pointer"));
 
-                let line_timestamp = line.timestamp.as_micros() as i64;
+                let line_timestamp = line.timestamp.as_micros().min(i64::MAX as u128) as i64;
                 let ctrl = ctrl.clone();
                 let click = gtk::GestureClick::new();
                 click.connect_pressed(move |_, _, _, _| {
@@ -828,8 +1054,8 @@ impl ImmersiveState {
     }
 
     fn sync_lyrics_and_time(&self) {
-        let position = self.controller.position();
-        let duration = self.controller.duration();
+        let position = self.controller.position().max(0);
+        let duration = self.controller.duration().max(0);
 
         let fraction = if duration > 0 {
             (position as f64 / duration as f64).clamp(0.0, 1.0)
@@ -842,15 +1068,19 @@ impl ImmersiveState {
         self.syncing.set(false);
 
         let current_sec = position / 1_000_000;
-        if self.last_second.replace(current_sec) != current_sec {
+        let second_changed = self.last_second.replace(current_sec) != current_sec;
+        let duration_changed = self.last_duration.replace(duration) != duration;
+        if second_changed || duration_changed {
             self.elapsed_label.set_text(&time_label(position));
-            let rem = duration - position;
+            let rem = duration.saturating_sub(position);
             self.remaining_label.set_text(&format!("-{}", time_label(rem.max(0))));
             self.floating_time
                 .set_text(&format!("{} / {}", time_label(position), time_label(duration)));
         }
 
-        // Update active lyric line
+        if !self.lyrics_scroll.is_mapped() {
+            return;
+        }
         if let Some(ref lyrics) = *self.current_lyrics.borrow() {
             let active_idx = lyrics.active_line_at(Duration::from_micros(position as u64));
             if active_idx != self.active_lyric_index.get() {
@@ -882,6 +1112,9 @@ impl ImmersiveState {
     fn update_stage_layout(&self) {
         let has_lyrics = self.current_lyrics.borrow().is_some();
         let show_lyrics = self.lyrics_active.get() && has_lyrics;
+        if show_lyrics && !self.visualizer_active.get() && self.lyric_labels.borrow().is_empty() {
+            self.rebuild_lyrics_ui();
+        }
 
         self.lyrics_scroll.set_visible(show_lyrics);
         if show_lyrics {
@@ -893,6 +1126,13 @@ impl ImmersiveState {
             self.art_box.set_size_request(520, 520);
             self.art_picture.set_size_request(520, 520);
         }
+    }
+}
+
+impl Drop for ImmersiveState {
+    fn drop(&mut self) {
+        self.cancel_request();
+        self.cancel_tick();
     }
 }
 
@@ -949,6 +1189,7 @@ pub fn draw_ambient_aura(
     let _ = cr.paint();
 }
 
+#[cfg(test)]
 pub fn draw_generative_visualizer(
     cr: &gtk::cairo::Context,
     width: f64,

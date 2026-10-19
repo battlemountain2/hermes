@@ -3,6 +3,63 @@
 use super::*;
 
 #[test]
+#[ignore = "Requires isolated GTK display; synthetic deletion provider only"]
+fn desktop_permanent_delete_preference_preserves_trash_and_empty_trash_safety() {
+    struct EmptySource;
+
+    impl FileSource for EmptySource {
+        fn validate_location(&self, _: &Location) -> Result<(), crate::services::LocationValidationError> {
+            Ok(())
+        }
+
+        fn enumerate(&self, _: crate::services::DirectoryRequest, _: Rc<dyn Fn(crate::services::DirectoryEvent)>) -> crate::services::LoadHandle {
+            crate::services::LoadHandle::new(|| {})
+        }
+    }
+
+    fn cancel_modal(overlay: &gtk::Overlay) {
+        let layer = overlay.last_child().unwrap();
+        assert!(layer.has_css_class("app-modal-layer"));
+        let content = layer.first_child().unwrap().next_sibling().unwrap();
+        let actions = content.last_child().unwrap();
+        let cancel = actions.first_child().unwrap().next_sibling().unwrap().downcast::<gtk::Button>().unwrap();
+        assert_eq!(cancel.label().as_deref(), Some("Cancel"));
+        cancel.emit_clicked();
+    }
+
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let manager = super::super::theme::ThemeManager::shared();
+    let view = BrowserView::new(Rc::new(EmptySource), Default::default());
+    let operations = Rc::new(TransferFixtureOperations::default());
+    view.browser().set_operation_provider(operations.clone());
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(&view.widget()));
+    let window = gtk::Window::builder().child(&overlay).build();
+    let entries = vec![crate::app::music_order::tests::entry("generated.flac", None, None)];
+    manager.set_confirm_permanent_delete(true);
+    view.state.show_delete_confirmation(entries.clone(), true);
+    assert!(operations.deletions.borrow().is_empty());
+    cancel_modal(&overlay);
+    assert_eq!(overlay.last_child(), overlay.child());
+    manager.set_confirm_permanent_delete(false);
+    view.state.show_delete_confirmation(entries.clone(), false);
+    assert!(operations.deletions.borrow().is_empty());
+    cancel_modal(&overlay);
+    view.state.show_empty_trash_confirmation(TrashSummary { entries: entries.clone(), item_count: 1, total_size: 0 });
+    assert!(operations.deletions.borrow().is_empty());
+    cancel_modal(&overlay);
+    view.state.show_delete_confirmation(Vec::new(), true);
+    assert!(operations.deletions.borrow().is_empty());
+    view.state.show_delete_confirmation(entries, true);
+    assert_eq!(*operations.deletions.borrow(), vec![true]);
+    assert_eq!(overlay.last_child(), overlay.child());
+    assert!(!window.is_visible() && !window.is_mapped());
+    view.browser().clear_observer();
+    window.destroy();
+}
+
+#[test]
 #[ignore = "Requires private GTK display; compact clipboard feedback fixture"]
 fn desktop_clipboard_feedback_is_compact_explicit_and_clears_on_replacement() {
     use crate::services::{DirectoryEvent, DirectoryRequest, LoadHandle};
@@ -309,6 +366,7 @@ fn desktop_navigation_releases_discarded_presentations() {
 #[derive(Default)]
 struct TransferFixtureOperations {
     requests: RefCell<Vec<(crate::services::OperationRequestId, Rc<dyn Fn(crate::services::OperationEvent)>)>>,
+    deletions: RefCell<Vec<bool>>,
     cancellations: Rc<Cell<usize>>,
 }
 
@@ -334,6 +392,7 @@ impl OperationProvider for TransferFixtureOperations {
         self.start(request.id, emit)
     }
     fn delete(&self, request: crate::services::DeleteRequest, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+        self.deletions.borrow_mut().push(request.permanent);
         self.start(request.id, emit)
     }
     fn restore(&self, request: crate::services::RestoreRequest, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {

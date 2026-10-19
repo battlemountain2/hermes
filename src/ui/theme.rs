@@ -114,6 +114,8 @@ struct Preferences {
     startup_location: String,
     #[serde(default = "default_confirm_delete")]
     confirm_permanent_delete: bool,
+    #[serde(default)]
+    reduce_motion: bool,
     #[serde(default = "default_date_format")]
     date_format: String,
     #[serde(default = "default_size_unit")]
@@ -164,6 +166,7 @@ impl Default for Preferences {
             search_reconcile_periodically: true,
             startup_location: default_startup_location(),
             confirm_permanent_delete: default_confirm_delete(),
+            reduce_motion: false,
             date_format: default_date_format(),
             size_unit: default_size_unit(),
             show_hidden_default: false,
@@ -298,6 +301,13 @@ impl ThemeManager {
             preferences.mode = "omarchy".to_owned();
         }
 
+        super::motion::set_reduce_motion(preferences.reduce_motion);
+        super::formatting::configure(&preferences.date_format, &preferences.size_unit);
+        super::audio_preferences::configure(
+            preferences.audio_spin_animation,
+            preferences.audio_spectrum_bands,
+            &preferences.audio_spectrum_decay,
+        );
         let manager = Rc::new(Self {
             provider: gtk::CssProvider::new(),
             themes: RefCell::new(themes),
@@ -405,7 +415,10 @@ impl ThemeManager {
         self.preferences.borrow().show_smart_folders
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "Saved search visibility toggle and test helper"))]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Saved search visibility toggle and test helper")
+    )]
     pub fn set_show_smart_folders(&self, show: bool) {
         self.preferences.borrow_mut().show_smart_folders = show;
         self.save_preferences();
@@ -420,74 +433,87 @@ impl ThemeManager {
         self.save_preferences();
     }
 
-    pub fn audio_continuity(&self) -> bool {
-        self.preferences.borrow().audio_continuity
-    }
-
-    pub fn set_audio_continuity(&self, enabled: bool) {
-        self.preferences.borrow_mut().audio_continuity = enabled;
-        self.save_preferences();
-    }
-
     pub fn audio_spin_animation(&self) -> bool {
         self.preferences.borrow().audio_spin_animation
     }
 
     pub fn set_audio_spin_animation(&self, enabled: bool) {
+        if self.audio_spin_animation() == enabled {
+            return;
+        }
         self.preferences.borrow_mut().audio_spin_animation = enabled;
+        self.refresh_audio_preferences();
         self.save_preferences();
     }
 
     pub fn audio_spectrum_bands(&self) -> u32 {
-        self.preferences.borrow().audio_spectrum_bands
+        if self.preferences.borrow().audio_spectrum_bands == 16 {
+            16
+        } else {
+            32
+        }
     }
 
-    pub fn set_audio_spectrum_bands(&self, bands: u32) {
-        self.preferences.borrow_mut().audio_spectrum_bands = bands;
+    pub fn set_audio_spectrum_bands(&self, columns: u32) {
+        if !matches!(columns, 16 | 32) || self.preferences.borrow().audio_spectrum_bands == columns
+        {
+            return;
+        }
+        self.preferences.borrow_mut().audio_spectrum_bands = columns;
+        self.refresh_audio_preferences();
         self.save_preferences();
     }
 
     pub fn audio_spectrum_decay(&self) -> String {
-        self.preferences.borrow().audio_spectrum_decay.clone()
+        super::audio_preferences::Decay::from_id(&self.preferences.borrow().audio_spectrum_decay)
+            .id()
+            .to_owned()
     }
 
     pub fn set_audio_spectrum_decay(&self, decay: &str) {
+        if !matches!(decay, "studio" | "snappy" | "smooth")
+            || self.preferences.borrow().audio_spectrum_decay == decay
+        {
+            return;
+        }
         self.preferences.borrow_mut().audio_spectrum_decay = decay.to_owned();
+        self.refresh_audio_preferences();
         self.save_preferences();
+    }
+
+    fn refresh_audio_preferences(&self) {
+        super::audio_preferences::configure(
+            self.audio_spin_animation(),
+            self.audio_spectrum_bands(),
+            &self.audio_spectrum_decay(),
+        );
     }
 
     pub fn search_exclude_hidden(&self) -> bool {
         self.preferences.borrow().search_exclude_hidden
     }
 
-    pub fn set_search_exclude_hidden(&self, exclude: bool) {
-        self.preferences.borrow_mut().search_exclude_hidden = exclude;
-        self.save_preferences();
-    }
-
     pub fn search_exclude_build_artifacts(&self) -> bool {
         self.preferences.borrow().search_exclude_build_artifacts
-    }
-
-    pub fn set_search_exclude_build_artifacts(&self, exclude: bool) {
-        self.preferences.borrow_mut().search_exclude_build_artifacts = exclude;
-        self.save_preferences();
     }
 
     pub fn search_reconcile_periodically(&self) -> bool {
         self.preferences.borrow().search_reconcile_periodically
     }
 
-    pub fn set_search_reconcile_periodically(&self, reconcile: bool) {
-        self.preferences.borrow_mut().search_reconcile_periodically = reconcile;
-        self.save_preferences();
-    }
-
     pub fn startup_location(&self) -> String {
-        self.preferences.borrow().startup_location.clone()
+        match self.preferences.borrow().startup_location.as_str() {
+            "music" => "music",
+            "last" => "last",
+            _ => "home",
+        }
+        .to_owned()
     }
 
     pub fn set_startup_location(&self, location: &str) {
+        if !matches!(location, "home" | "music" | "last") {
+            return;
+        }
         self.preferences.borrow_mut().startup_location = location.to_owned();
         self.save_preferences();
     }
@@ -496,26 +522,55 @@ impl ThemeManager {
         self.preferences.borrow().confirm_permanent_delete
     }
 
-    pub fn set_confirm_permanent_delete(&self, confirm: bool) {
-        self.preferences.borrow_mut().confirm_permanent_delete = confirm;
+    pub fn set_confirm_permanent_delete(&self, enabled: bool) {
+        self.preferences.borrow_mut().confirm_permanent_delete = enabled;
+        self.save_preferences();
+    }
+
+    pub fn reduce_motion(&self) -> bool {
+        self.preferences.borrow().reduce_motion
+    }
+
+    pub fn set_reduce_motion(&self, reduced: bool) {
+        self.preferences.borrow_mut().reduce_motion = reduced;
+        super::motion::set_reduce_motion(reduced);
         self.save_preferences();
     }
 
     pub fn date_format(&self) -> String {
-        self.preferences.borrow().date_format.clone()
+        if self.preferences.borrow().date_format == "iso" {
+            "iso"
+        } else {
+            "relative"
+        }
+        .to_owned()
     }
 
     pub fn set_date_format(&self, format: &str) {
+        if !matches!(format, "relative" | "iso") || self.preferences.borrow().date_format == format
+        {
+            return;
+        }
         self.preferences.borrow_mut().date_format = format.to_owned();
+        super::formatting::configure(&self.date_format(), &self.size_unit());
         self.save_preferences();
     }
 
     pub fn size_unit(&self) -> String {
-        self.preferences.borrow().size_unit.clone()
+        if self.preferences.borrow().size_unit == "binary" {
+            "binary"
+        } else {
+            "decimal"
+        }
+        .to_owned()
     }
 
     pub fn set_size_unit(&self, unit: &str) {
+        if !matches!(unit, "decimal" | "binary") || self.preferences.borrow().size_unit == unit {
+            return;
+        }
         self.preferences.borrow_mut().size_unit = unit.to_owned();
+        super::formatting::configure(&self.date_format(), &self.size_unit());
         self.save_preferences();
     }
 
@@ -523,8 +578,8 @@ impl ThemeManager {
         self.preferences.borrow().show_hidden_default
     }
 
-    pub fn set_show_hidden_default(&self, show: bool) {
-        self.preferences.borrow_mut().show_hidden_default = show;
+    pub fn set_show_hidden_default(&self, enabled: bool) {
+        self.preferences.borrow_mut().show_hidden_default = enabled;
         self.save_preferences();
     }
 
@@ -823,6 +878,7 @@ impl ThemeManager {
         self.applied_tokens.replace(Some(tokens.clone()));
         crate::assets::set_primary_icon_color(&tokens.accent);
         crate::assets::set_text_icon_color(&tokens.text);
+        crate::assets::set_on_accent_icon_color(on_accent_color(tokens));
         crate::assets::set_danger_icon_color(&tokens.danger);
         install_source_style_scheme(tokens);
     }
@@ -1213,7 +1269,7 @@ fn tokens_css(tokens: &ThemeTokens, interface_font: &str) -> String {
         _ => r#""Maple Mono Normal", "JetBrains Mono", monospace"#,
     };
     format!(
-        "@define-color theme_bg {};\n@define-color theme_surface {};\n@define-color theme_text {};\n@define-color theme_accent {};\n@define-color theme_danger {};\n@define-color theme_muted {};\n@define-color theme_highlight {};\n@define-color theme_border {};\n@define-color theme_dim_text {};\nwindow, popover, .search-dialog, .search-filter-popover, .search-filter-panel, .app-modal-layer, .preview-text, .preview-text text, .monospace, .search-filter-shortcut, .grid-thumbnail-value {{ font-family: {}; }}\n",
+        "@define-color theme_bg {};\n@define-color theme_surface {};\n@define-color theme_text {};\n@define-color theme_accent {};\n@define-color theme_danger {};\n@define-color theme_muted {};\n@define-color theme_highlight {};\n@define-color theme_border {};\n@define-color theme_dim_text {};\nwindow, popover, .search-dialog, .search-filter-popover, .search-filter-panel, .app-modal-layer, .preview-text, .preview-text text, .monospace, .search-filter-shortcut, .grid-thumbnail-value {{ font-family: {}; }}\n@define-color theme_on_accent {};\n",
         tokens.background,
         tokens.surface,
         tokens.text,
@@ -1224,7 +1280,40 @@ fn tokens_css(tokens: &ThemeTokens, interface_font: &str) -> String {
         tokens.border,
         tokens.dim_text,
         font_family,
+        on_accent_color(tokens),
     )
+}
+
+fn on_accent_color(tokens: &ThemeTokens) -> &str {
+    let luminance = |color: &str| {
+        let color = gdk::RGBA::parse(color).ok()?;
+        let linear = |channel: f32| {
+            let channel = f64::from(channel);
+            if channel <= 0.04045 {
+                channel / 12.92
+            } else {
+                ((channel + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        Some(
+            0.2126 * linear(color.red())
+                + 0.7152 * linear(color.green())
+                + 0.0722 * linear(color.blue()),
+        )
+    };
+    let Some(accent) = luminance(&tokens.accent) else {
+        return &tokens.text;
+    };
+    let contrast = |color: &str| {
+        luminance(color).map_or(0.0, |value| {
+            (accent.max(value) + 0.05) / (accent.min(value) + 0.05)
+        })
+    };
+    if contrast(&tokens.background) >= contrast(&tokens.text) {
+        &tokens.background
+    } else {
+        &tokens.text
+    }
 }
 
 fn blend(left: &str, right: &str, amount: f64) -> String {

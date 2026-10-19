@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+mod audio_preferences;
 mod blur;
 mod browser;
 mod browser_modes;
 mod context_menu;
+mod formatting;
 pub mod folder_tree;
 mod motion;
 mod music;

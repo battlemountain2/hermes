@@ -18,7 +18,7 @@ use gtk::{gio, glib, prelude::*};
 
 use crate::{
     app::{Browser, BrowserColumnSnapshot, BrowserEvent},
-    model::{FileEntry, Location, MetadataValue, SortDirection, SortKey},
+    model::{FileEntry, Location, SortDirection, SortKey},
 };
 
 const EXPLORER_COLUMN_WIDTHS: [i32; 4] = [320, 90, 120, 150];
@@ -1875,17 +1875,35 @@ fn build_explorer_pane(
             );
             name.set_label(&entry.display_name);
             name.set_tooltip_text(Some(&entry.display_name));
-            size.set_label(&entry_size(&entry));
+            super::browser::bind_entry_size(&size, Some(&entry), "");
             kind.set_label(entry_type(&entry));
-            modified.set_label(&entry_modified(&entry));
+            super::browser::bind_entry_modified(&modified, Some(&entry), "");
         } else {
             row.remove_css_class("cut-item");
             crate::assets::set_primary_icon(&icon, crate::assets::icons::FOLDER);
             name.set_visible(false);
             field.set_visible(true);
-            size.set_label("");
+            super::formatting::clear(&size, "");
             kind.set_label("");
-            modified.set_label("");
+            super::formatting::clear(&modified, "");
+        }
+    });
+    factory.connect_unbind(|_, item| {
+        let Some(row) = item
+            .downcast_ref::<gtk::ListItem>()
+            .and_then(|item| item.child())
+        else {
+            return;
+        };
+        if let Some(size) = row
+            .first_child()
+            .and_then(|name| name.next_sibling())
+            .and_downcast::<gtk::Label>()
+        {
+            super::formatting::clear(&size, "");
+        }
+        if let Some(modified) = row.last_child().and_downcast::<gtk::Label>() {
+            super::formatting::clear(&modified, "");
         }
     });
     let view = gtk::ListView::new(Some(selection.clone()), Some(factory));
@@ -2643,16 +2661,6 @@ fn explorer_metadata_label() -> gtk::Label {
     label
 }
 
-fn entry_size(entry: &FileEntry) -> String {
-    if entry.is_directory() {
-        return String::new();
-    }
-    match entry.size {
-        MetadataValue::Known(bytes) => super::browser::format_file_size(bytes),
-        MetadataValue::Unknown | MetadataValue::Unavailable => String::new(),
-    }
-}
-
 fn entry_type(entry: &FileEntry) -> &'static str {
     use crate::model::EntryKind;
     match entry.kind {
@@ -2662,17 +2670,6 @@ fn entry_type(entry: &FileEntry) -> &'static str {
         EntryKind::FileSymbolicLink => "File link",
         EntryKind::SymbolicLink => "Broken link",
         EntryKind::Other => "Other",
-    }
-}
-
-fn entry_modified(entry: &FileEntry) -> String {
-    match entry.modified_unix_seconds {
-        MetadataValue::Known(seconds) => glib::DateTime::from_unix_local(seconds)
-            .ok()
-            .and_then(|date| date.format("%Y-%m-%d %H:%M").ok())
-            .map(|value| value.to_string())
-            .unwrap_or_default(),
-        MetadataValue::Unknown | MetadataValue::Unavailable => String::new(),
     }
 }
 

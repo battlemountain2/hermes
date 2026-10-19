@@ -3735,15 +3735,36 @@ button.music-cover-button:focus-visible {
 
 .preview-audio-play-button {
   background: @theme_accent;
-  color: @theme_background;
-  border: none;
+  color: @theme_on_accent;
+  border: 1px solid @theme_accent;
   border-radius: 4px;
   padding: 6px 10px;
 }
 
 .preview-audio-play-button:hover {
-  background: @theme_highlight;
-  color: @theme_background;
+  background: @theme_accent;
+  color: @theme_on_accent;
+  border-color: @theme_text;
+}
+
+.preview-audio-play-button:active,
+.immersive-play-btn:active {
+  background: @theme_accent;
+  color: @theme_on_accent;
+  border-color: @theme_on_accent;
+}
+
+.preview-audio-play-button:focus-visible,
+.immersive-play-btn:focus-visible {
+  outline: 2px solid @theme_accent;
+  outline-offset: 3px;
+}
+
+.preview-audio-play-button:disabled,
+.immersive-play-btn:disabled {
+  background: @theme_accent;
+  color: @theme_on_accent;
+  opacity: 0.45;
 }
 
 .preview-audio-volume-scale {
@@ -4051,7 +4072,6 @@ button.music-cover-button:focus-visible {
   border: 1px solid alpha(@theme_border, 0.35);
   box-shadow: 0 20px 50px alpha(@theme_bg, 0.65);
   background: alpha(@theme_surface, 0.85);
-  overflow: hidden;
 }
 
 .immersive-art-pic,
@@ -4105,7 +4125,7 @@ button.music-cover-button:focus-visible {
 
 .immersive-play-btn {
   background: @theme_accent;
-  color: @theme_bg;
+  color: @theme_on_accent;
   border: 1px solid @theme_accent;
   border-radius: 50%;
   padding: 10px;
@@ -4114,7 +4134,8 @@ button.music-cover-button:focus-visible {
 }
 
 .immersive-play-btn:hover {
-  background: @theme_text;
+  background: @theme_accent;
+  color: @theme_on_accent;
   border-color: @theme_text;
 }
 

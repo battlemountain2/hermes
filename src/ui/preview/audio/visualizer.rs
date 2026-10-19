@@ -7,12 +7,14 @@ use gtk::{glib, prelude::*};
 
 use crate::{
     playback::SPECTRUM_BANDS,
-    ui::{preview::stream::PlaybackStream, theme::ThemeManager},
+    ui::{
+        audio_preferences::{self, Decay, Options},
+        preview::stream::PlaybackStream,
+        theme::ThemeManager,
+    },
 };
 
 const NUM_SEGMENTS: usize = 14;
-const PEAK_DECAY: f32 = 0.92;
-const PEAK_HOLD_FRAMES: u8 = 10;
 
 #[cfg(test)]
 mod tests;
@@ -30,6 +32,8 @@ struct VisualizerState {
     peak_hold: Cell<[u8; SPECTRUM_BANDS]>,
     tick: RefCell<Option<gtk::TickCallbackId>>,
     playing_handler: RefCell<Option<glib::SignalHandlerId>>,
+    options: Cell<Options>,
+    preferences_observer: RefCell<Option<Rc<dyn Fn()>>>,
     stopped: Cell<bool>,
 }
 
@@ -51,6 +55,8 @@ impl MicroSegmentVisualizer {
             peak_hold: Cell::new([0; SPECTRUM_BANDS]),
             tick: RefCell::new(None),
             playing_handler: RefCell::new(None),
+            options: Cell::new(audio_preferences::current()),
+            preferences_observer: RefCell::new(None),
             stopped: Cell::new(false),
         });
         let draw_state = Rc::downgrade(&state);
@@ -62,6 +68,7 @@ impl MicroSegmentVisualizer {
                     height as f64,
                     &state.bands.get(),
                     &state.peaks.get(),
+                    state.options.get().columns,
                 );
             }
         });
@@ -85,6 +92,26 @@ impl MicroSegmentVisualizer {
             }
         });
         state.playing_handler.replace(Some(handler));
+        let preferences_state = Rc::downgrade(&state);
+        let observer: Rc<dyn Fn()> = Rc::new(move || {
+            if let Some(state) = preferences_state.upgrade()
+                && !state.stopped.get()
+            {
+                let options = audio_preferences::current();
+                let previous = state.options.replace(options);
+                if previous.decay != options.decay {
+                    let mut hold = state.peak_hold.get();
+                    clamp_peak_hold(&mut hold, options.decay);
+                    state.peak_hold.set(hold);
+                }
+                if let Some(widget) = state.widget.upgrade() {
+                    widget.queue_draw();
+                }
+                state.ensure_tick_running();
+            }
+        });
+        audio_preferences::observe(&observer);
+        state.preferences_observer.replace(Some(observer));
         Self { widget, state }
     }
 
@@ -98,6 +125,7 @@ impl MicroSegmentVisualizer {
 
     pub fn stop(&self) {
         self.state.stopped.set(true);
+        self.state.preferences_observer.borrow_mut().take();
         self.state.cancel_tick();
         self.state.clear();
         if let Some(handler) = self.state.playing_handler.borrow_mut().take()
@@ -178,7 +206,7 @@ impl VisualizerState {
         self.bands.set(bands);
         let mut peaks = self.peaks.get();
         let mut hold = self.peak_hold.get();
-        update_peaks(&bands, &mut peaks, &mut hold);
+        update_peaks(&bands, &mut peaks, &mut hold, self.options.get().decay);
         self.peaks.set(peaks);
         self.peak_hold.set(hold);
         widget.queue_draw();
@@ -196,17 +224,35 @@ fn update_peaks(
     bands: &[f32; SPECTRUM_BANDS],
     peaks: &mut [f32; SPECTRUM_BANDS],
     hold: &mut [u8; SPECTRUM_BANDS],
+    decay: Decay,
 ) {
     for band in 0..SPECTRUM_BANDS {
         if bands[band] >= peaks[band] {
             peaks[band] = bands[band];
-            hold[band] = PEAK_HOLD_FRAMES;
+            hold[band] = decay.hold_frames();
         } else if hold[band] > 0 {
             hold[band] -= 1;
         } else {
-            peaks[band] = (peaks[band] * PEAK_DECAY).max(0.0);
+            peaks[band] = (peaks[band] * decay.factor()).max(0.0);
         }
     }
+}
+
+fn clamp_peak_hold(hold: &mut [u8; SPECTRUM_BANDS], decay: Decay) {
+    for remaining in hold {
+        *remaining = (*remaining).min(decay.hold_frames());
+    }
+}
+
+fn group_columns(levels: &[f32; SPECTRUM_BANDS], columns: usize) -> [f32; SPECTRUM_BANDS] {
+    if columns == SPECTRUM_BANDS {
+        return *levels;
+    }
+    let mut grouped = [0.0; SPECTRUM_BANDS];
+    for (column, pair) in levels.chunks_exact(2).enumerate() {
+        grouped[column] = pair[0].max(pair[1]);
+    }
+    grouped
 }
 
 fn draw_micro_segments(
@@ -215,6 +261,7 @@ fn draw_micro_segments(
     height: f64,
     bands: &[f32; SPECTRUM_BANDS],
     peaks: &[f32; SPECTRUM_BANDS],
+    columns: usize,
 ) {
     if width <= 10.0 || height <= 10.0 {
         return;
@@ -245,13 +292,15 @@ fn draw_micro_segments(
 
     let col_gap = if width < 220.0 { 1.0_f64 } else { 2.0_f64 };
     let seg_gap = 1.0_f64;
-    let total_gaps = col_gap * (SPECTRUM_BANDS - 1) as f64;
-    let col_width = ((width - total_gaps) / SPECTRUM_BANDS as f64).max(1.0);
+    let total_gaps = col_gap * (columns - 1) as f64;
+    let col_width = ((width - total_gaps) / columns as f64).max(1.0);
+    let bands = group_columns(bands, columns);
+    let peaks = group_columns(peaks, columns);
 
     let total_seg_gaps = seg_gap * (NUM_SEGMENTS - 1) as f64;
     let seg_height = ((height - total_seg_gaps - 2.0) / NUM_SEGMENTS as f64).max(1.5);
 
-    for col in 0..SPECTRUM_BANDS {
+    for col in 0..columns {
         let x = col as f64 * (col_width + col_gap);
         let level = bands[col].clamp(0.0, 1.0);
         let peak_level = peaks[col].clamp(0.0, 1.0);

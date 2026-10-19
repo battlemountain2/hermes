@@ -7,7 +7,7 @@ use std::{
 
 use gtk::{glib, prelude::*};
 
-use crate::ui::{motion::animations_enabled, theme::ThemeManager};
+use crate::ui::{audio_preferences, motion::animations_enabled, theme::ThemeManager};
 
 const TARGET_RPM: f64 = 33.3333333;
 const TARGET_ANGULAR_VELOCITY: f64 = TARGET_RPM * 2.0 * PI / 60.0; // ~3.49 rad/s
@@ -59,6 +59,7 @@ struct VinylAnimation {
     stopped: Cell<bool>,
     tick: RefCell<Option<gtk::TickCallbackId>>,
     last_tick: Cell<Option<Instant>>,
+    preferences_observer: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
 impl VinylDisc {
@@ -98,6 +99,20 @@ impl VinylDisc {
             }
         });
 
+        let weak_animation = Rc::downgrade(&animation);
+        let weak_widget = widget.downgrade();
+        let observer: Rc<dyn Fn()> = Rc::new(move || {
+            if let Some(animation) = weak_animation.upgrade()
+                && !animation.stopped.get()
+                && let Some(widget) = weak_widget.upgrade()
+            {
+                animation.ensure_tick_running(&widget);
+                widget.queue_draw();
+            }
+        });
+        audio_preferences::observe(&observer);
+        animation.preferences_observer.replace(Some(observer));
+
         Self { widget, animation }
     }
 
@@ -117,6 +132,7 @@ impl VinylDisc {
         self.animation.stopped.set(true);
         self.animation.playing.set(false);
         self.animation.cancel_tick();
+        self.animation.preferences_observer.borrow_mut().take();
     }
 }
 
@@ -150,7 +166,10 @@ impl VinylAnimation {
     }
 
     fn ensure_tick_running(self: &Rc<Self>, widget: &gtk::DrawingArea) {
-        if !self.should_animate(widget.is_mapped(), animations_enabled()) {
+        if !self.should_animate(
+            widget.is_mapped(),
+            animations_enabled() && audio_preferences::current().spin,
+        ) {
             self.cancel_tick();
             return;
         }
@@ -170,7 +189,10 @@ impl VinylAnimation {
     }
 
     fn advance(&self, widget: &gtk::DrawingArea) -> glib::ControlFlow {
-        if !self.should_animate(widget.is_mapped(), animations_enabled()) {
+        if !self.should_animate(
+            widget.is_mapped(),
+            animations_enabled() && audio_preferences::current().spin,
+        ) {
             drop(self.tick.borrow_mut().take());
             self.reset_motion();
             return glib::ControlFlow::Break;

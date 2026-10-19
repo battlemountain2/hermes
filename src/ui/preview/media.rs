@@ -13,6 +13,8 @@ pub(super) struct MediaPreview {
     fullscreen: Rc<RefCell<Option<gtk::Window>>>,
     fullscreen_button: gtk::Button,
     playback_enabled: Rc<std::cell::Cell<bool>>,
+    is_animation: bool,
+    play_handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
 impl MediaPreview {
@@ -20,7 +22,7 @@ impl MediaPreview {
         Self::build(stream.upcast_ref(), is_audio, false, false)
     }
 
-    pub fn new_full(stream: &super::stream::PlaybackStream) -> Self {
+    pub fn new_full(stream: &impl IsA<gtk::MediaStream>) -> Self {
         Self::build(stream.upcast_ref(), false, false, true)
     }
 
@@ -288,6 +290,39 @@ impl MediaPreview {
             fullscreen,
             fullscreen_button: expand,
             playback_enabled,
+            is_animation,
+            play_handler: RefCell::new(None),
+        }
+    }
+
+    pub fn set_play_handler(&self, on_play: Rc<dyn Fn()>) {
+        if let Some(handler) = self.play_handler.borrow_mut().take() {
+            self.stream.disconnect(handler);
+        }
+        if self.is_animation || !self.playback_enabled.get() {
+            return;
+        }
+        let had_focus = std::cell::Cell::new(
+            self.stream.is_playing() && self.stream.is_prepared() && self.stream.has_audio(),
+        );
+        let handler = self
+            .stream
+            .connect_notify_local(None, move |stream, property| {
+                if !matches!(property.name(), "playing" | "prepared" | "has-audio") {
+                    return;
+                }
+                let claims_focus =
+                    stream.is_playing() && stream.is_prepared() && stream.has_audio();
+                if had_focus.replace(claims_focus) != claims_focus && claims_focus {
+                    on_play();
+                }
+            });
+        self.play_handler.replace(Some(handler));
+    }
+
+    pub fn pause_for_music(&self) {
+        if !self.is_animation && (!self.stream.is_prepared() || self.stream.has_audio()) {
+            self.stream.pause();
         }
     }
 
@@ -305,6 +340,9 @@ impl MediaPreview {
 
     pub fn stop(&self) {
         self.playback_enabled.set(false);
+        if let Some(handler) = self.play_handler.borrow_mut().take() {
+            self.stream.disconnect(handler);
+        }
         self.stream.pause();
         if let Some(stream) = self.stream.downcast_ref::<super::stream::PlaybackStream>() {
             stream.stop();
@@ -313,6 +351,12 @@ impl MediaPreview {
         if let Some(window) = window {
             window.close();
         }
+    }
+}
+
+impl Drop for MediaPreview {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 
@@ -572,4 +616,3 @@ pub(super) fn format_time(microseconds: i64) -> String {
         format!("{}:{:02}", seconds / 60, seconds % 60)
     }
 }
-

@@ -1,6 +1,21 @@
 use super::*;
 
 #[test]
+fn library_refresh_waits_for_finished_snapshots_and_preserves_service_errors() {
+    use crate::services::music_library::Snapshot;
+    let mut snapshot = Snapshot { indexing: true, ..Snapshot::default() };
+    assert_eq!(library_refresh_result(&snapshot), None);
+    snapshot.notice = Some("Folder unavailable: generated fixture".into());
+    assert_eq!(library_refresh_result(&snapshot), None);
+    snapshot.indexing = false;
+    assert_eq!(library_refresh_result(&snapshot), Some(Err("Folder unavailable: generated fixture".into())));
+    snapshot.notice = None;
+    assert_eq!(library_refresh_result(&snapshot), Some(Ok(())));
+    snapshot.indexing = true;
+    assert_eq!(library_refresh_result(&snapshot), None);
+}
+
+#[test]
 fn refreshed_settings_keep_the_current_release_version() {
     assert_eq!(crate::build_info::VERSION, env!("CARGO_PKG_VERSION"));
     assert!(!crate::build_info::VERSION.starts_with("1.0"));
@@ -113,7 +128,6 @@ theme = "azure-glow"
 
     // Verify Preferences defaults
     let manager = ThemeManager::shared();
-    assert!(manager.audio_continuity());
     assert!(manager.audio_spin_animation());
     assert_eq!(manager.audio_spectrum_bands(), 32);
     assert_eq!(manager.audio_spectrum_decay(), "studio");

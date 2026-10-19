@@ -116,6 +116,8 @@ struct GtkFixture {
     window: gtk::Window,
     settings: gtk::Settings,
     original_animations: bool,
+    original_options: audio_preferences::Options,
+    _theme_manager: Rc<ThemeManager>,
 }
 
 impl GtkFixture {
@@ -126,14 +128,19 @@ impl GtkFixture {
             "Run one exact ignored test per process with private HOME/XDG, D-Bus and GTK display"
         );
         gtk::init().expect("Private GTK display available");
+        let theme_manager = ThemeManager::shared();
         let settings = gtk::Settings::default().unwrap();
         let original_animations = settings.is_gtk_enable_animations();
+        let original_options = audio_preferences::current();
+        audio_preferences::configure(true, 32, "studio");
         settings.set_gtk_enable_animations(true);
         crate::ui::motion::set_reduce_motion(false);
         Self {
             window: gtk::Window::new(),
             settings,
             original_animations,
+            original_options,
+            _theme_manager: theme_manager,
         }
     }
 
@@ -150,6 +157,11 @@ impl Drop for GtkFixture {
         self.settings
             .set_gtk_enable_animations(self.original_animations);
         crate::ui::motion::set_reduce_motion(false);
+        audio_preferences::configure(
+            self.original_options.spin,
+            self.original_options.columns as u32,
+            self.original_options.decay.id(),
+        );
     }
 }
 
@@ -247,7 +259,8 @@ fn gtk_vinyl_stop_and_drop_release_callbacks() {
     disc.stop();
     disc.stop();
     assert_motion_stopped(&disc);
-    assert_eq!(Rc::weak_count(&disc.animation), inactive_weak_count);
+    assert!(disc.animation.preferences_observer.borrow().is_none());
+    assert_eq!(Rc::weak_count(&disc.animation), inactive_weak_count - 1);
     disc.set_playing(true);
     disc.widget().set_visible(false);
     disc.widget().set_visible(true);
@@ -274,7 +287,8 @@ fn gtk_vinyl_stop_and_drop_release_callbacks() {
     drop(disc);
     assert!(widget.is_mapped());
     assert!(animation.tick.borrow().is_none());
-    assert_eq!(Rc::weak_count(&animation), inactive_weak_count);
+    assert!(animation.preferences_observer.borrow().is_none());
+    assert_eq!(Rc::weak_count(&animation), inactive_weak_count - 1);
     assert_eq!(animation.rotation.get().velocity, 0.0);
     let weak_animation = Rc::downgrade(&animation);
     drop(animation);
@@ -337,4 +351,97 @@ fn gtk_vinyl_gtk_animation_setting_stops_active_ticks_and_refresh_resumes() {
     assert_motion_policy_refresh(&fixture, |enabled| {
         fixture.settings.set_gtk_enable_animations(enabled);
     });
+}
+
+#[test]
+#[ignore = "Private GTK/HOME/XDG/D-Bus; run one exact test per process, no audio or decoding"]
+fn gtk_vinyl_live_spin_options_preserve_intent_and_lifecycle() {
+    let fixture = GtkFixture::new();
+    audio_preferences::configure(false, 16, "smooth");
+    let disc = VinylDisc::new();
+    disc.set_playing(true);
+    fixture.mount(&disc);
+    assert_motion_stopped(&disc);
+    assert!(disc.animation.playing.get());
+
+    audio_preferences::configure(true, 16, "smooth");
+    wait_until(|| disc.animation.rotation.get().velocity > 0.0);
+    let angle = disc.animation.rotation.get().angle;
+    audio_preferences::configure(false, 32, "snappy");
+    assert_motion_stopped(&disc);
+    assert_eq!(disc.animation.rotation.get().angle, angle);
+    assert!(disc.animation.playing.get());
+    audio_preferences::configure(true, 32, "studio");
+    assert!(disc.animation.tick.borrow().is_some());
+    let started_at = disc.animation.last_tick.get();
+    audio_preferences::configure(true, 16, "smooth");
+    assert_eq!(disc.animation.last_tick.get(), started_at);
+
+    audio_preferences::configure(false, 16, "smooth");
+    disc.set_playing(false);
+    audio_preferences::configure(true, 16, "smooth");
+    assert_motion_stopped(&disc);
+    assert_eq!(disc.animation.rotation.get().angle, angle);
+    disc.set_playing(true);
+    assert!(disc.animation.tick.borrow().is_some());
+
+    disc.widget().set_visible(false);
+    audio_preferences::configure(false, 32, "studio");
+    audio_preferences::configure(true, 32, "studio");
+    assert_motion_stopped(&disc);
+    disc.widget().set_visible(true);
+    assert!(disc.animation.tick.borrow().is_some());
+
+    crate::ui::motion::set_reduce_motion(true);
+    audio_preferences::configure(false, 16, "snappy");
+    audio_preferences::configure(true, 16, "snappy");
+    assert_motion_stopped(&disc);
+    crate::ui::motion::set_reduce_motion(false);
+    fixture.settings.set_gtk_enable_animations(false);
+    audio_preferences::configure(false, 32, "smooth");
+    audio_preferences::configure(true, 32, "smooth");
+    assert_motion_stopped(&disc);
+    fixture.settings.set_gtk_enable_animations(true);
+    audio_preferences::configure(true, 16, "studio");
+    assert!(disc.animation.tick.borrow().is_some());
+}
+
+#[test]
+#[ignore = "Private GTK/HOME/XDG/D-Bus; run one exact test per process, no audio or decoding"]
+fn gtk_vinyl_live_options_observer_releases_on_stop_and_drop() {
+    let fixture = GtkFixture::new();
+    for stop_first in [true, false] {
+        let disc = VinylDisc::new();
+        disc.set_playing(true);
+        fixture.mount(&disc);
+        let observer = Rc::downgrade(
+            disc.animation
+                .preferences_observer
+                .borrow()
+                .as_ref()
+                .unwrap(),
+        );
+        let animation = disc.animation.clone();
+        let widget = disc.widget().clone();
+        if stop_first {
+            disc.stop();
+            assert!(observer.upgrade().is_none());
+            audio_preferences::configure(false, 16, "snappy");
+            audio_preferences::configure(true, 32, "studio");
+            assert_motion_stopped(&disc);
+        }
+        drop(disc);
+        assert!(observer.upgrade().is_none());
+        assert!(animation.tick.borrow().is_none());
+        assert!(!animation.playing.get());
+        let weak_animation = Rc::downgrade(&animation);
+        drop(animation);
+        assert!(weak_animation.upgrade().is_none());
+        audio_preferences::configure(false, 16, "smooth");
+        audio_preferences::configure(true, 32, "studio");
+        let weak_widget = widget.downgrade();
+        fixture.window.set_child(gtk::Widget::NONE);
+        drop(widget);
+        assert!(weak_widget.upgrade().is_none());
+    }
 }

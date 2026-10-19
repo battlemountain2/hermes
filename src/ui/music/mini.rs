@@ -266,6 +266,10 @@ impl MiniPlayer {
         }
     }
 
+    pub(super) fn close(&self) {
+        self.window.destroy();
+    }
+
     #[cfg(test)]
     pub fn is_visible(&self) -> bool {
         self.window.is_visible()

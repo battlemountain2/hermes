@@ -7,6 +7,9 @@ use gtk::{gdk, gio, prelude::*};
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod behavior_tests;
+
 use crate::{
     assets::icons,
     services::{actions_path, create_custom_actions_template},
@@ -15,7 +18,7 @@ use crate::{
 use super::{
     blur::BlurBin,
     browser::BrowserView,
-    motion::set_reduce_motion,
+    browser_modes::{BrowserDensity, BrowserMode},
     theme::{INTERFACE_FONTS, Theme, ThemeManager, ThemeTokens},
 };
 
@@ -417,26 +420,25 @@ fn general_page(
 
     let current_startup = manager.startup_location();
     let startup_options = [
-        ("home", "DEFAULT HOME", "Home Folder", "Default user directory with pinned places and candidate search cache.", icons::HOME),
-        ("music", "JUKEBOX MODE", "Music Library", "Directly launch into music collection and hardware DSP visualizer.", icons::MUSIC),
-        ("last", "SESSION CONTINUITY", "Last Session", "Restore open tabs, directory paths, and scroll positions.", icons::REPEAT),
+        ("home", "HOME", "Home Folder", "Start in your Home folder without removing saved tabs.", icons::HOME),
+        ("music", "MUSIC", "Music Library", "Open your music library without starting playback.", icons::MUSIC),
+        ("last", "RESUME", "Last Session", "Reopen the last active folder and retain your saved tabs and view settings.", icons::REPEAT),
     ];
 
-    let startup_buttons = Rc::new(RefCell::new(Vec::<gtk::Button>::new()));
+    let startup_buttons = Rc::new(RefCell::new(Vec::<gtk::glib::WeakRef<gtk::Button>>::new()));
     for (id, tag, title, desc, icon) in startup_options {
         let is_selected = id == current_startup;
         let card = visual_choice_card(tag, title, desc, None, Some(icon), is_selected);
         let buttons = startup_buttons.clone();
-        let manager_for_card = manager.clone();
-        let loc_id = id.to_owned();
+        let manager = manager.clone();
         card.connect_clicked(move |clicked| {
-            for btn in buttons.borrow().iter() {
-                btn.remove_css_class("selected");
+            manager.set_startup_location(id);
+            for button in buttons.borrow().iter().filter_map(gtk::glib::WeakRef::upgrade) {
+                button.remove_css_class("selected");
             }
             clicked.add_css_class("selected");
-            manager_for_card.set_startup_location(&loc_id);
         });
-        startup_buttons.borrow_mut().push(card.clone());
+        startup_buttons.borrow_mut().push(card.downgrade());
         startup_cards.append(&card);
     }
     preferences.append(&startup_cards);
@@ -460,7 +462,7 @@ fn general_page(
 
     let (confirm_delete_row, confirm_delete) = settings_option(
         "Confirm permanent deletion",
-        "Display confirmation dialog when permanently deleting files (Shift+Delete) or emptying trash.",
+        "Ask before permanently deleting selected items. Turning this off skips that warning; deletion cannot be undone. Empty Trash always asks.",
         manager.confirm_permanent_delete(),
     );
     let manager_for_delete = manager.clone();
@@ -471,10 +473,11 @@ fn general_page(
 
     let (motion_row, reduce_motion) = settings_option(
         "Reduce motion",
-        "Disable nonessential interface animations and transitions.",
-        false,
+        "Reduce interface animations and transitions. This preference is remembered; system animation settings are also respected.",
+        manager.reduce_motion(),
     );
-    reduce_motion.connect_active_notify(|toggle| set_reduce_motion(toggle.is_active()));
+    let manager_for_motion = manager.clone();
+    reduce_motion.connect_active_notify(move |toggle| manager_for_motion.set_reduce_motion(toggle.is_active()));
     safety_card.append(&motion_row);
     preferences.append(&safety_card);
 
@@ -545,13 +548,13 @@ fn general_page(
 }
 
 fn view_formats_page(
-    _browser: &BrowserView,
+    browser: &BrowserView,
     manager: Rc<ThemeManager>,
     _refresh_sidebar: Rc<dyn Fn()>,
 ) -> gtk::Widget {
     let content = page_content();
 
-    append_heading(&content, "DEFAULT BROWSER PRESENTATION");
+    append_heading(&content, "CURRENT BROWSER PRESENTATION");
     let layout_cards = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     layout_cards.add_css_class("settings-choice-cards");
 
@@ -561,17 +564,24 @@ fn view_formats_page(
         ("explorer", "DUAL-PANE TREE", "Explorer Split", "Classic sidebar folder tree paired with active file list."),
     ];
 
-    let layout_buttons = Rc::new(RefCell::new(Vec::<gtk::Button>::new()));
+    let layout_buttons = Rc::new(RefCell::new(Vec::<gtk::glib::WeakRef<gtk::Button>>::new()));
     for (id, tag, title, desc) in layout_options {
-        let card = visual_choice_card(tag, title, desc, Some(id), None, id == "columns");
+        let mode = match id {
+            "grid" => BrowserMode::Grid,
+            "explorer" => BrowserMode::Explorer,
+            _ => BrowserMode::Columns,
+        };
+        let card = visual_choice_card(tag, title, desc, Some(id), None, browser.view_mode() == mode);
         let buttons = layout_buttons.clone();
+        let browser = browser.clone();
         card.connect_clicked(move |clicked| {
-            for btn in buttons.borrow().iter() {
+            for btn in buttons.borrow().iter().filter_map(gtk::glib::WeakRef::upgrade) {
                 btn.remove_css_class("selected");
             }
             clicked.add_css_class("selected");
+            browser.set_view_mode(mode);
         });
-        layout_buttons.borrow_mut().push(card.clone());
+        layout_buttons.borrow_mut().push(card.downgrade());
         layout_cards.append(&card);
     }
     content.append(&layout_cards);
@@ -586,31 +596,47 @@ fn view_formats_page(
         ("airy", "GENEROUS SPACING", "Airy", "Spacious line heights and generous touch targets."),
     ];
 
-    let density_buttons = Rc::new(RefCell::new(Vec::<gtk::Button>::new()));
+    let density_buttons = Rc::new(RefCell::new(Vec::<gtk::glib::WeakRef<gtk::Button>>::new()));
     for (id, tag, title, desc) in density_options {
-        let card = visual_choice_card(tag, title, desc, Some(id), None, id == "compact");
+        let density = match id {
+            "compact" => Some(BrowserDensity::Compact),
+            "airy" => Some(BrowserDensity::Airy),
+            _ => None,
+        };
+        let description = if density.is_none() {
+            format!("Not implemented: a separate standard density. {desc}")
+        } else {
+            desc.to_owned()
+        };
+        let card = visual_choice_card(tag, title, &description, Some(id), None, density == Some(browser.density()));
+        card.set_sensitive(density.is_some());
         let buttons = density_buttons.clone();
+        let browser = browser.clone();
         card.connect_clicked(move |clicked| {
-            for btn in buttons.borrow().iter() {
+            let Some(density) = density else { return; };
+            for btn in buttons.borrow().iter().filter_map(gtk::glib::WeakRef::upgrade) {
                 btn.remove_css_class("selected");
             }
             clicked.add_css_class("selected");
+            browser.set_density(density);
         });
-        density_buttons.borrow_mut().push(card.clone());
+        density_buttons.borrow_mut().push(card.downgrade());
         density_cards.append(&card);
     }
     content.append(&density_cards);
 
     append_heading(&content, "HIDDEN FILES & NAVIGATION");
     let general_card = settings_card();
-    let (hidden_row, hidden_toggle) = settings_option(
+    let (hidden_row, hidden_files) = settings_option(
         "Show hidden files by default",
-        "Display dotfiles and hidden directories (e.g. .config, .local) on folder navigation.",
+        "Apply here and to newly created folder views. Restored tabs keep their own visibility; Ctrl+H toggles it without changing the default.",
         manager.show_hidden_default(),
     );
     let manager_for_hidden = manager.clone();
-    hidden_toggle.connect_active_notify(move |toggle| {
+    let browser_for_hidden = browser.browser();
+    hidden_files.connect_active_notify(move |toggle| {
         manager_for_hidden.set_show_hidden_default(toggle.is_active());
+        browser_for_hidden.set_show_hidden(toggle.is_active());
     });
     general_card.append(&hidden_row);
     content.append(&general_card);
@@ -618,36 +644,35 @@ fn view_formats_page(
     append_heading(&content, "DATE & TIME DISPLAY");
     let card2 = settings_card();
     let date_format_choices = [
-        "Relative · Natural language (e.g. 5m ago, Today, Yesterday)",
-        "Absolute ISO-8601 · Standardized (e.g. 2026-10-18 04:30)",
+        "Relative · Just now, 5m ago, Today, Yesterday",
+        "ISO-style · YYYY-MM-DD HH:MM (local time)",
     ];
     let selected_date_idx = match manager.date_format().as_str() {
         "iso" => 1,
         _ => 0,
     };
-    let (date_row, date_choice) = settings_choice(
+    let (date_row, date_format) = settings_choice(
         "Timestamp presentation",
-        "Governs modified and accessed dates across file listings and inspect panels.",
+        "Update file timestamps throughout Hermes. Hover a timestamp for its full date, time and timezone.",
         &date_format_choices,
         selected_date_idx,
     );
-    let (date_sample_row, date_badge) = sample_telemetry_row(
-        "Live timestamp preview",
-        "Sample formatted timestamp as calculated across directory listings",
-        &date_sample_text(&manager.date_format()),
-    );
     let manager_for_date = manager.clone();
-    let weak_date_badge = date_badge.downgrade();
-    date_choice.connect_selected_notify(move |dropdown| {
-        let fmt = match dropdown.selected() {
-            1 => "iso",
-            _ => "relative",
-        };
-        manager_for_date.set_date_format(fmt);
-        if let Some(badge) = weak_date_badge.upgrade() {
-            badge.set_text(&date_sample_text(fmt));
+    date_format.connect_selected_notify(move |choice| {
+        match choice.selected() {
+            0 => manager_for_date.set_date_format("relative"),
+            1 => manager_for_date.set_date_format("iso"),
+            _ => {}
         }
     });
+    let (date_sample_row, date_sample) = sample_telemetry_row(
+        "Live timestamp example",
+        "The same format used in listings, previews and properties",
+        "—",
+    );
+    if let Ok(now) = gtk::glib::DateTime::now_local() {
+        super::formatting::bind(&date_sample, super::formatting::Value::Timestamp(now.to_unix().saturating_sub(240)));
+    }
     card2.append(&date_row);
     card2.append(&date_sample_row);
     content.append(&card2);
@@ -655,36 +680,33 @@ fn view_formats_page(
     append_heading(&content, "FILE SIZE MEASUREMENT");
     let card3 = settings_card();
     let size_unit_choices = [
-        "Decimal (SI) · 1 KB = 1,000 bytes (macOS / GNOME standard)",
-        "Binary (IEC) · 1 KiB = 1,024 bytes (KDE / Windows standard)",
+        "Decimal (SI) · 1 kB = 1,000 bytes",
+        "Binary (IEC) · 1 KiB = 1,024 bytes",
     ];
     let selected_unit_idx = match manager.size_unit().as_str() {
         "binary" => 1,
         _ => 0,
     };
-    let (unit_row, unit_choice) = settings_choice(
+    let (unit_row, size_unit) = settings_choice(
         "Byte unit prefixes",
-        "Governs byte conversion calculations across file items, properties, and status cards.",
+        "Use the same size units in listings, previews, properties and the status bar.",
         &size_unit_choices,
         selected_unit_idx,
     );
-    let (size_sample_row, size_badge) = sample_telemetry_row(
-        "Live size prefix preview",
-        "Sample byte conversion as calculated in file properties and status cards",
-        &size_sample_text(&manager.size_unit()),
-    );
     let manager_for_unit = manager.clone();
-    let weak_size_badge = size_badge.downgrade();
-    unit_choice.connect_selected_notify(move |dropdown| {
-        let unit = match dropdown.selected() {
-            1 => "binary",
-            _ => "decimal",
-        };
-        manager_for_unit.set_size_unit(unit);
-        if let Some(badge) = weak_size_badge.upgrade() {
-            badge.set_text(&size_sample_text(unit));
+    size_unit.connect_selected_notify(move |choice| {
+        match choice.selected() {
+            0 => manager_for_unit.set_size_unit("decimal"),
+            1 => manager_for_unit.set_size_unit("binary"),
+            _ => {}
         }
     });
+    let (size_sample_row, size_sample) = sample_telemetry_row(
+        "Live file size example",
+        "One file, displayed using your selected unit system",
+        "",
+    );
+    super::formatting::bind(&size_sample, super::formatting::Value::Size(1_420_000_000));
     card3.append(&unit_row);
     card3.append(&size_sample_row);
     content.append(&card3);
@@ -791,7 +813,7 @@ fn previews_page(browser: &BrowserView, manager: Rc<ThemeManager>) -> gtk::Widge
     let spreadsheets_tile = format_tile(
         icons::GRID,
         "Spreadsheet workbooks",
-        "XLSX · CSV · TSV · ODS",
+        "XLSX · XLS · ODS",
         manager.preview_spreadsheets(),
         move |active| manager_for_spreadsheets.set_preview_spreadsheets(active),
     );
@@ -800,8 +822,8 @@ fn previews_page(browser: &BrowserView, manager: Rc<ThemeManager>) -> gtk::Widge
     let manager_for_code = manager.clone();
     let code_tile = format_tile(
         icons::FILE_CODE,
-        "Source code syntax",
-        "RS · TS · PY · JSON · MD",
+        "Text & source code",
+        "RS · TS · PY · JSON · MD · CSV · TSV",
         manager.preview_code(),
         move |active| manager_for_code.set_preview_code(active),
     );
@@ -825,7 +847,7 @@ fn audio_page(manager: Rc<ThemeManager>) -> gtk::Widget {
         ("bottom", "BOTTOM DOCK", "Bottom Dock", "Full library with persistent bottom dock.", "dock"),
     ];
 
-    let layout_buttons = Rc::new(RefCell::new(Vec::<gtk::Button>::new()));
+    let layout_buttons = Rc::new(RefCell::new(Vec::<gtk::glib::WeakRef<gtk::Button>>::new()));
     for (id, tag, title, desc, wf) in layout_options {
         let is_selected = id == current_layout;
         let card = visual_choice_card(tag, title, desc, Some(wf), None, is_selected);
@@ -833,33 +855,31 @@ fn audio_page(manager: Rc<ThemeManager>) -> gtk::Widget {
         let manager_for_layout = manager.clone();
         let layout_id = id.to_owned();
         card.connect_clicked(move |clicked| {
-            for btn in buttons.borrow().iter() {
+            for btn in buttons.borrow().iter().filter_map(gtk::glib::WeakRef::upgrade) {
                 btn.remove_css_class("selected");
             }
             clicked.add_css_class("selected");
             manager_for_layout.set_music_player_layout(&layout_id);
         });
-        layout_buttons.borrow_mut().push(card.clone());
+        layout_buttons.borrow_mut().push(card.downgrade());
         layout_cards.append(&card);
     }
     content.append(&layout_cards);
 
     append_heading(&content, "PLAYBACK CONTINUITY");
     let card1 = settings_card();
-    let (continuity_row, continuity) = settings_option(
-        "Background playback continuity",
-        "Keep audio playing smoothly when switching between files, folders, and tabs.",
-        manager.audio_continuity(),
-    );
-    let manager_for_continuity = manager.clone();
-    continuity.connect_active_notify(move |toggle| {
-        manager_for_continuity.set_audio_continuity(toggle.is_active());
-    });
-    card1.append(&continuity_row);
+    let continuity = gtk::Label::new(Some(
+        "Music keeps playing while you browse, with playback controls available. Playing a Hermes audio preview or video with audio pauses music. Other apps are unaffected; paused music does not resume automatically.",
+    ));
+    continuity.set_xalign(0.0);
+    continuity.set_wrap(true);
+    continuity.add_css_class("settings-option");
+    continuity.add_css_class("settings-option-description");
+    card1.append(&continuity);
 
     let (spin_row, spin) = settings_option(
-        "Mechanical hero animation",
-        "Subtle vinyl disc and tape reel rotation in the player during playback.",
+        "Spinning record in audio previews",
+        "Animate the preview's record during playback. Reduced motion takes priority; sound is unchanged.",
         manager.audio_spin_animation(),
     );
     let manager_for_spin = manager.clone();
@@ -869,32 +889,27 @@ fn audio_page(manager: Rc<ThemeManager>) -> gtk::Widget {
     card1.append(&spin_row);
     content.append(&card1);
 
-    append_heading(&content, "DSP & SPECTRUM ENGINE");
+    append_heading(&content, "AUDIO PREVIEW VISUALIZER");
     let card2 = settings_card();
     let bands_choices = [
-        "16 bands · Fast low-latency",
-        "32 bands · Studio default",
-        "64 bands · High definition",
+        "16 columns · Grouped pairs",
+        "32 columns · Full analyzer detail",
     ];
     let selected_bands_idx = match manager.audio_spectrum_bands() {
         16 => 0,
-        64 => 2,
         _ => 1,
     };
-    let (bands_row, bands_choice) = settings_choice(
-        "Spectrum frequency resolution",
-        "Discrete log-spaced frequency bands analyzed and rendered in real-time.",
+    let (bands_row, bands) = settings_choice(
+        "Preview visualizer columns",
+        "Display 16 grouped or 32 individual columns from the fixed 32-band analyzer. Does not change decoding or sound quality.",
         &bands_choices,
         selected_bands_idx,
     );
     let manager_for_bands = manager.clone();
-    bands_choice.connect_selected_notify(move |dropdown| {
-        let bands = match dropdown.selected() {
-            0 => 16,
-            2 => 64,
-            _ => 32,
-        };
-        manager_for_bands.set_audio_spectrum_bands(bands);
+    bands.connect_selected_notify(move |choice| match choice.selected() {
+        0 => manager_for_bands.set_audio_spectrum_bands(16),
+        1 => manager_for_bands.set_audio_spectrum_bands(32),
+        _ => {}
     });
     card2.append(&bands_row);
 
@@ -908,32 +923,32 @@ fn audio_page(manager: Rc<ThemeManager>) -> gtk::Widget {
         "smooth" => 2,
         _ => 0,
     };
-    let (decay_row, decay_choice) = settings_choice(
+    let (decay_row, decay) = settings_choice(
         "Ballistics & meter falloff",
-        "Peak-hold timing and decay rate for visualizer segment meters.",
+        "Adjust the preview meter's peak hold and return speed without changing audio playback.",
         &decay_choices,
         selected_decay_idx,
     );
-    let manager_for_decay = manager.clone();
-    decay_choice.connect_selected_notify(move |dropdown| {
-        let decay = match dropdown.selected() {
-            1 => "snappy",
-            2 => "smooth",
-            _ => "studio",
-        };
-        manager_for_decay.set_audio_spectrum_decay(decay);
+    decay.connect_selected_notify(move |choice| match choice.selected() {
+        0 => manager.set_audio_spectrum_decay("studio"),
+        1 => manager.set_audio_spectrum_decay("snappy"),
+        2 => manager.set_audio_spectrum_decay("smooth"),
+        _ => {}
     });
     card2.append(&decay_row);
     content.append(&card2);
 
     append_heading(&content, "DSP PIPELINE TELEMETRY");
     let telemetry_card = settings_card();
-    append_telemetry_row(&telemetry_card, "Decoder core", "Symphonia v0.5.4 · Pure Rust media framework");
-    append_telemetry_row(&telemetry_card, "Audio output", "Rodio ALSA/PulseAudio/PipeWire backend");
-    append_telemetry_row(&telemetry_card, "Internal format", "32-bit float PCM (f32) · Dual-channel stereo");
-    append_telemetry_row(&telemetry_card, "Filterbank", "Log-spaced 20 Hz – 20,000 Hz · 60 fps GTK frame-clock");
-    append_telemetry_row(&telemetry_card, "Lossless codecs", "FLAC (16/24-bit), WAV, ALAC");
-    append_telemetry_row(&telemetry_card, "Lossy codecs", "MP3, Vorbis, AAC, Opus, M4A");
+    append_telemetry_row(&telemetry_card, "Decoder core", "GStreamer · sandboxed media worker");
+    append_telemetry_row(&telemetry_card, "Audio output", "GStreamer autoaudiosink · system audio backend");
+    append_telemetry_row(&telemetry_card, "Internal format", "48 kHz · 32-bit float PCM · Stereo");
+    append_telemetry_row(
+        &telemetry_card,
+        "Filterbank",
+        &format!("{} log-spaced bands · 50 Hz – 16 kHz", crate::playback::SPECTRUM_BANDS),
+    );
+    append_telemetry_row(&telemetry_card, "Codec availability", "Depends on installed GStreamer decoder plugins");
     content.append(&telemetry_card);
 
     content.upcast()
@@ -950,7 +965,7 @@ fn search_page(manager: Rc<ThemeManager>) -> gtk::Widget {
         &card1,
         "Music library catalog",
         &music_dir.display().to_string(),
-        "Active · SQLite snapshot",
+        "Shared library service",
     );
     let home_dir = gtk::glib::home_dir();
     append_catalog_status_row(
@@ -963,37 +978,25 @@ fn search_page(manager: Rc<ThemeManager>) -> gtk::Widget {
 
     append_heading(&content, "INDEX EXCLUSIONS & FILTERS");
     let card2 = settings_card();
-    let (hidden_row, hidden_toggle) = settings_option(
+    let hidden_row = unimplemented_option(
         "Exclude hidden files and folders",
-        "Skip dotfiles and hidden trees (e.g. .git, .cache, .config) during index walks.",
+        "Custom exclusions are not connected. The index uses its built-in hidden-file rules.",
         manager.search_exclude_hidden(),
     );
-    let manager_for_hidden = manager.clone();
-    hidden_toggle.connect_active_notify(move |toggle| {
-        manager_for_hidden.set_search_exclude_hidden(toggle.is_active());
-    });
     card2.append(&hidden_row);
 
-    let (artifacts_row, artifacts_toggle) = settings_option(
+    let artifacts_row = unimplemented_option(
         "Exclude development build artifacts",
-        "Ignore high-churn directories like node_modules, target, dist, build, and .venv.",
+        "Custom artifact exclusions are not connected. Built-in index exclusions remain active.",
         manager.search_exclude_build_artifacts(),
     );
-    let manager_for_artifacts = manager.clone();
-    artifacts_toggle.connect_active_notify(move |toggle| {
-        manager_for_artifacts.set_search_exclude_build_artifacts(toggle.is_active());
-    });
     card2.append(&artifacts_row);
 
-    let (reconcile_row, reconcile_toggle) = settings_option(
+    let reconcile_row = unimplemented_option(
         "Periodic index reconciliation",
-        "Silently synchronize index with disk changes when idle.",
+        "The reconciliation setting is not connected; the library manages its own refresh schedule.",
         manager.search_reconcile_periodically(),
     );
-    let manager_for_reconcile = manager.clone();
-    reconcile_toggle.connect_active_notify(move |toggle| {
-        manager_for_reconcile.set_search_reconcile_periodically(toggle.is_active());
-    });
     card2.append(&reconcile_row);
     content.append(&card2);
 
@@ -1008,7 +1011,7 @@ fn search_page(manager: Rc<ThemeManager>) -> gtk::Widget {
     title.set_xalign(0.0);
     title.add_css_class("settings-option-title");
     let desc = gtk::Label::new(Some(
-        "Force a rescan of your Music directory and regenerate the SQLite tag cache.",
+        "Rescan your Music directory using the shared library service and update its saved tag cache.",
     ));
     desc.set_xalign(0.0);
     desc.set_wrap(true);
@@ -1028,16 +1031,32 @@ fn search_page(manager: Rc<ThemeManager>) -> gtk::Widget {
         btn.set_sensitive(false);
         if let Some(badge) = weak_badge.upgrade() {
             badge.set_text("Re-indexing...");
+            badge.set_tooltip_text(None);
         }
+        let mut subscription = crate::services::music_library::subscribe(music_dir.clone());
+        subscription.poll();
+        subscription.refresh();
         let weak_badge = weak_badge.clone();
         let weak_btn = btn.downgrade();
-        gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(600), move || {
-            if let Some(badge) = weak_badge.upgrade() {
-                badge.set_text("Up to date");
+        gtk::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+            let (Some(badge), Some(btn)) = (weak_badge.upgrade(), weak_btn.upgrade()) else {
+                return gtk::glib::ControlFlow::Break;
+            };
+            let Some(snapshot) = subscription.poll() else {
+                return gtk::glib::ControlFlow::Continue;
+            };
+            let Some(result) = library_refresh_result(&snapshot) else {
+                return gtk::glib::ControlFlow::Continue;
+            };
+            match result {
+                Ok(()) => badge.set_text("Up to date"),
+                Err(notice) => {
+                    badge.set_text("Finished with issues");
+                    badge.set_tooltip_text(Some(&notice));
+                }
             }
-            if let Some(btn) = weak_btn.upgrade() {
-                btn.set_sensitive(true);
-            }
+            btn.set_sensitive(true);
+            gtk::glib::ControlFlow::Break
         });
     });
 
@@ -1048,6 +1067,17 @@ fn search_page(manager: Rc<ThemeManager>) -> gtk::Widget {
     content.append(&card3);
 
     content.upcast()
+}
+
+fn library_refresh_result(snapshot: &crate::services::music_library::Snapshot) -> Option<Result<(), String>> {
+    if snapshot.indexing {
+        None
+    } else {
+        Some(match &snapshot.notice {
+            Some(notice) => Err(notice.clone()),
+            None => Ok(()),
+        })
+    }
 }
 
 fn diagnostics_page() -> gtk::Widget {
@@ -1072,7 +1102,14 @@ fn diagnostics_page() -> gtk::Widget {
         "GTK version",
         &format!("{}.{}.{}", gtk::major_version(), gtk::minor_version(), gtk::micro_version()),
     );
-    append_telemetry_row(&card1, "Graphics renderer", "Cairo 2D vector pipeline");
+    let renderer = gtk::Window::list_toplevels()
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::Window>().ok())
+        .find_map(|window| window.renderer())
+        .map(|renderer| renderer.type_().name().to_owned())
+        .unwrap_or_else(|| "Available after a window is realized".to_owned());
+    append_telemetry_row(&card1, "GTK renderer", &renderer);
+    append_telemetry_row(&card1, "Music effects", "Native GTK scene nodes (GSK)");
     content.append(&card1);
 
     append_heading(&content, "STORAGE & PATHS");
@@ -1095,7 +1132,7 @@ fn diagnostics_page() -> gtk::Widget {
     let title = gtk::Label::new(Some("Thumbnail cache"));
     title.set_xalign(0.0);
     title.add_css_class("settings-option-title");
-    let thumb_dir = gtk::glib::user_cache_dir().join("strata/thumbnails");
+    let thumb_dir = super::thumbnail::cache_directory();
     let desc = gtk::Label::new(Some(&format!(
         "Cached album art and image previews in {}",
         thumb_dir.display()
@@ -1109,19 +1146,34 @@ fn diagnostics_page() -> gtk::Widget {
     let clear_btn = gtk::Button::with_label("Clear thumbnails");
     clear_btn.add_css_class("settings-action-button");
     clear_btn.set_valign(gtk::Align::Center);
-    let badge = gtk::Label::new(Some("Cached"));
+    let badge = gtk::Label::new(Some("Ready"));
     badge.add_css_class("settings-telemetry-badge");
     badge.set_valign(gtk::Align::Center);
 
     let weak_badge = badge.downgrade();
     clear_btn.connect_clicked(move |btn| {
-        let thumb_path = gtk::glib::user_cache_dir().join("strata/thumbnails");
-        let _ = std::fs::remove_dir_all(&thumb_path);
-        let _ = std::fs::create_dir_all(&thumb_path);
-        if let Some(b) = weak_badge.upgrade() {
-            b.set_text("Cleared");
-        }
         btn.set_sensitive(false);
+        if let Some(badge) = weak_badge.upgrade() {
+            badge.set_text("Clearing...");
+            badge.set_tooltip_text(None);
+        }
+        let weak_btn = btn.downgrade();
+        let weak_badge = weak_badge.clone();
+        gtk::glib::MainContext::default().spawn_local(async move {
+            let result = super::thumbnail::clear_cache().await;
+            if let Some(badge) = weak_badge.upgrade() {
+                match result {
+                    Ok(_) => badge.set_text("Cleared"),
+                    Err(error) => {
+                        badge.set_text("Clear failed");
+                        badge.set_tooltip_text(Some(&error));
+                    }
+                }
+            }
+            if let Some(btn) = weak_btn.upgrade() {
+                btn.set_sensitive(true);
+            }
+        });
     });
 
     thumb_row.append(&copy);
@@ -1906,6 +1958,12 @@ fn settings_option(title: &str, description: &str, active: bool) -> (gtk::Box, g
     (row, toggle)
 }
 
+fn unimplemented_option(title: &str, explanation: &str, active: bool) -> gtk::Box {
+    let (row, _) = settings_option(title, &format!("Not implemented: {explanation}"), active);
+    row.set_sensitive(false);
+    row
+}
+
 fn settings_choice(
     title: &str,
     description: &str,
@@ -2286,22 +2344,6 @@ fn sample_telemetry_row(
     row.append(&copy);
     row.append(&badge);
     (row, badge)
-}
-
-fn date_sample_text(format: &str) -> String {
-    if format == "iso" {
-        "Sample: 2026-10-18 09:14".to_owned()
-    } else {
-        "Sample: 4m ago".to_owned()
-    }
-}
-
-fn size_sample_text(unit: &str) -> String {
-    if unit == "binary" {
-        "Sample: 1.32 GiB (IEC)".to_owned()
-    } else {
-        "Sample: 1.42 GB (SI)".to_owned()
-    }
 }
 
 trait RoundedRectangle {
