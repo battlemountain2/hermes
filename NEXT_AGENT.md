@@ -1,5 +1,257 @@
 # Next agent: Hermes performance, file features and media polish
 
+## Git backup approved — 2026-10-19
+
+The user approved committing/pushing the tested accumulated updates on the existing
+feat/6-spreadsheet-and-settings-polish branch and opening its pull request. Track this backup
+under https://github.com/battlemountain2/hermes/issues/4; the historical branch name is retained,
+not a newly created branch. Keep main and version0.2.0 unchanged; do not merge or publish a release.
+The pre-existing untracked hermes-review-2026-10-15.md is intentionally excluded from the backup.
+The implementation/validation notes below describe the saved work; their earlier uncommitted/
+unauthorized status is historical. This approval is for this backup, not automatic future pushes.
+Search-index policy settings and search/transfer polish remain the next development increment.
+
+## Live audio Settings and preview focus — 2026-10-19
+
+User clarified the proposed background-playback preference: browsing must NOT pause music.
+Only competing Hermes previews should pause it, not Firefox/Spotify or other apps. Controls must
+remain accessible. No automatic resume. This supersedes the earlier disabled continuity/spin/
+bands/decay status below. Same branch/HEAD and accumulated uncommitted patch; no Git, version,
+dependency, personal preference/media changes or interaction with the user's running window.
+
+- Replaced the misleading disconnected continuity switch with an explanation of this policy.
+  Kept its legacy serialized field for compatibility, without repurposing false into pause-on-hide.
+  Music workspace changes still affect layout only, and the bottom transport remains while browsing.
+- New ui/audio_preferences.rs caches typed presentation options with weak, deduplicated observers.
+  Notifications permit reentrant configuration and registration; callbacks read the latest options.
+  No per-frame preference reads, new DSP work, sound changes or source reloads were introduced.
+- Settings now persist/apply record spin,16/32 preview columns and Studio/Snappy/Smooth peak falloff.
+  16 columns group adjacent analyzer bins by max;32 preserve the fixed32-band analyzer. Removed the
+  unsupported64-band choice rather than pretending visual interpolation improves audio resolution.
+  Legacy64/unknown decay normalize to32/Studio; invalid setter values are rejected.
+- Preview vinyl/visualizer subscribe weakly and release callbacks on stop/drop. Spin off cancels
+  ticks while preserving angle/play intent; on resumes only under mapped/playing/motion policy.
+  Falloff changes clamp existing hold rather than prolonging it. Paused/hidden/reduced-motion
+  lifecycle remains intact, with no new idle animation loops.
+- Fixed missing video/music coordination through the existing preview handler and music observer.
+  Audio-bearing videos claim focus only when playing and prepared, including shared-stream
+  fullscreen. Silent videos/GIFs don't claim focus. Selection/preparation alone doesn't pause music;
+  main music pauses competing previews, and pending preview play intent is cancelled appropriately.
+  Completion, error, replacement and close never auto-resume music. Stop/drop disconnect the handler;
+  notification filtering avoids timestamp/volume work. Existing real-audio reverse-direction test
+  now actually starts music while its preview is playing, but that decoder fixture was NOT run.
+
+Validation uses private HOME/XDG/D-Bus and a separate hidden Broadway display, no real audio/media.
+859 regular tests pass serially (168 optional ignored), plus20 exact isolated GTK cases:13 new and7
+existing regressions. Initial two-thread suite hit an unrelated thumbnail test's process-global
+GLib main-context ownership race; the full serial run passes, and no unrelated fix was attempted.
+Final artifacts are in the directory recorded by /tmp/hermes-audio-settings-path: compile-final.log,
+unit-final.log, ui-final.log, production-check.log, all-targets-check.log and build-final.log.
+Production check/build pass cleanly; all-targets check passes with5 existing test-only unfulfilled
+lint expectations. Scoped formatting and diff whitespace checks pass. The private Broadway server
+and connected test tab are closed; an unreachable initial temporary tab is left to tool auto-cleanup.
+Copernicus handled preview focus, Ptolemy handled child audio widgets
+and reviewed parent preferences/Settings; both were integrated and closed. Parent owns Settings,
+preferences, workspace regression and final checks. No running-window/audio/real-media verification
+is claimed. Do not restart, focus, reposition or close the user's Hermes to verify this work.
+
+Still disabled: separate standard density and search-index policy knobs. Search needs a dedicated
+catalog-policy pass: hidden-file policy affects disk validation/cache identity, shared catalog
+coverage/delegation and monitors; don't simply enable switches over hardcoded service policy.
+Then return to search/transfer-conflict polish. Preserve all previous work and the pre-existing
+untracked hermes-review-2026-10-15.md. No release/version change is authorized; see the current
+Git-backup approval above for the commit/push scope.
+
+## Shared date and size formatting — 2026-10-19
+
+Resumed the user-approved display-format Settings increment after the usage interruption.
+Date/size controls are now connected; their disabled status in older entries below is superseded.
+All changes remain local/uncommitted on the same branch/HEAD. Do not restart, focus, reposition or
+close the user's running Hermes. No version, dependencies, Git or personal preference/media changes.
+
+- ui/formatting.rs owns cached typed display options, decimal SI / binary IEC byte formatting and
+  local relative / ISO-style timestamps. Normalizes unknown saved IDs, rejects invalid setter IDs,
+  promotes rounded size boundaries, and handles out-of-range/future timestamps safely. Yesterday
+  uses calendar days rather than86400-second subtraction, including daylight-saving transitions.
+- Settings choices save through ThemeManager and update real labels immediately, including their
+  live examples. Tooltips retain full local timestamp/seconds/timezone. Formatting does not reload
+  preferences per row or re-enumerate folders, re-sort entries, query metadata or decode previews.
+  Sorting/search/policy calculations remain raw bytes/timestamps; this is presentation only.
+- Listings, Explorer size/modified cells, preview headers, Properties (initial and async metadata),
+  deletion/Trash summaries and status selection/free space share the same formatter. Recycled,
+  unbound, unknown and closed-preview labels clear old bindings instead of reviving stale values.
+  Existing folder-total tooltips and known directory Property sizes remain intact.
+- Weak O(1) label registry uses per-widget identities/revisions and preference epochs, without
+  holding borrows across notifications. Reentrant rebind/clear/preferences cannot publish stale
+  text. One shared minute timer runs only for mapped relative-date labels, stops on ISO/last
+  unmap/destruction, and resumes on map. No per-label timers or strong widget retention.
+- Status free-space replies use weak labels and request generations so an older reply cannot
+  repopulate a cleared label or overwrite newer navigation. Display changes use cached bytes.
+- Eight pure formatter regressions plus fourteen new isolated GTK checks cover precision, DST,
+  live controls/persistence, weak lifecycle/reentrancy, recycled rows, properties tooltips and
+  preview provider load counts. Nine existing UI regressions are included in final verification.
+
+October19 validation uses private HOME/XDG/DBus, low-priority jobs2 and a private hidden Broadway
+display, never the user's active session. 852 regular tests pass;155 optional ignored. All23 focused
+isolated checks pass (14 new,9 existing). Production check/build pass cleanly; all-targets check
+passes with the5 pre-existing test-only unfulfilled lint expectations. Scoped formatting and diff
+whitespace checks pass. The private test server/tab are closed. No real audio/media/deletion work.
+Artifacts are in the directory recorded by /tmp/hermes-formatting-path: compile-final.log,
+unit-final.log, ui-final.log, production-check.log, all-targets-check.log and build-final.log. Earlier
+October18 temporary logs were cleared between sessions; use these fresh October19 results.
+Workers Franklin (browser metadata) and Ohm (weak bindings) were integrated/reviewed and closed.
+Parent owns shared formatting/prefs/Settings, previews/status, edge cases and overall validation.
+
+Remaining disabled Settings: separate standard density, audio continuity/spin/bands/decay and
+optional search-index knobs. Next: connect those deliberately, then search/transfer conflict polish.
+Preserve all previous uncommitted work and the old untracked hermes-review-2026-10-15.md.
+
+## First Settings behavior batch — 2026-10-18
+
+User approved continuing after native immersive rendering. This supersedes the disabled startup,
+hidden-default and permanent-delete settings status below; other disabled controls remain unfinished.
+Same branch/HEAD, local uncommitted changes; no version/dependency/Git or personal config changes.
+Do not restart, focus, move or close the user's running Hermes to validate this work.
+
+- Startup cards now save Home / Music / Last Session. Startup selection honors explicit requested
+  folders before preferences, reuses matching saved tabs or creates one without discarding others,
+  and keeps saved views/hidden-file choices. Music selects the library without starting playback
+  or immersive. Last Session means last active folder and saved tabs/views, NOT restored scroll
+  positions or reopening a selected preview. Nested stored Trail paths survive initial restoration.
+- Missing/offline startup destinations fail through the existing asynchronous source and fall back
+  to Home without deleting the failed tab. Deferred fallback uses a navigation generation and weak
+  activation ownership: manual navigation (even away and back), tab changes or destroyed/cleared
+  observers prevent stale fallback from changing location or writing session data. No synchronous
+  existence checks were added. Removed the now-unused internal Trails::active_location,
+  active_view and ensure_default helpers; Trail tests use live create/activate APIs and verify
+  a saved view update leaves a second tab untouched.
+- Show hidden files by default is live in Settings: applies to the current tab and fresh folder
+  views; restored tabs retain their visibility. Ctrl+H remains a local toggle, not a global preference
+  write. Idempotent Browser::set_show_hidden closes stale peeks, reloads and renews monitor policy.
+- Reduced motion is now persisted and applied when preferences load; reopening Settings reflects
+  it. The OS animation setting remains authoritative too. Music/preview regression fixtures retain
+  a manager as real windows do, so loading an ephemeral manager cannot reset their synthetic policy.
+- Permanent-delete confirmation defaults on and is honored by selected-item keyboard/context-menu
+  deletion. Off skips that one warning, with an explicit irreversible-deletion explanation. Normal
+  Trash and Empty Trash confirmations remain unchanged; tests use fake operations, never real files.
+- Newly enabled controls have functional/persistence tests. Startup has16 pure in-memory regressions
+  plus an isolated actual deferred-callback test; hidden-policy loads/monitors have a pure regression.
+
+Validation/artifacts: directory recorded by /tmp/hermes-settings-path. 844 regular tests pass;
+141 optional ignored. Fourteen focused isolated checks pass, including actual deferred fallback,
+settings persistence, fake deletion safety, reduced-motion visualizers/vinyl and retained tabs.
+Production check/build are clean; all-targets check passes with existing test-only lint expectations.
+Tests use private HOME/XDG/DBus, low-priority jobs2 and a private hidden Broadway connection, never
+the user's existing session. That private server/tab are closed. No real audio/media/delete operations.
+Final logs: unit-complete.log, ui-validated.log, production-check.log, all-targets-check.log and
+build-final.log. Earlier compile/UI logs include a mid-edit missing test module and an old test
+fixture that did not retain its theme manager; use final results, not those intermediate failures.
+Worker Plato implemented startup only, reviewed/integrated by parent and closed. Parent owns live
+Settings/preferences, hidden visibility, deletion safety, deferred-callback guards and validation.
+
+Still disabled: standard density, date/size display formats, audio continuity/spin/band/decay
+choices, and optional search-index knobs. Next focused Settings batch should wire shared date/size
+formatting consistently across listings, previews, properties and status rather than just samples.
+Then return to search and transfer/conflict polish. Preserve all earlier uncommitted work and the
+pre-existing untracked hermes-review-2026-10-15.md.
+
+## Native immersive effects follow-up — 2026-10-18
+
+User approved profiling and GPU-friendly immersive rendering. This supersedes the Cairo-only
+status in the earlier stabilization entry below. Changes remain local/uncommitted on the same
+branch; no version, dependency, renderer environment or user preference changes.
+
+- Added safe GTK4.12 Widget snapshot implementation in ui/music/immersive/canvas.rs. Ribbons,
+  Tunnel and Cosmic now use bounded native GSK color/transform/border/rounded-clip nodes instead
+  of per-frame Cairo surfaces. GTK retains renderer selection and software fallback. This is
+  NOT a custom GLArea/shader or a forced GPU backend. Static ambient aura remains cached Cairo.
+- Preserved mapped/playing/motion gating and near60fps animation cap. Static styles/theme changes
+  redraw without an idle animation loop; suspension clears the retained frame. Canvas has no
+  timers, DSP, I/O, texture downloads or layout-dependent minimum size. Old Cairo drawing is
+  compiled only in tests for paired comparisons. Settings reports the native scene-node path.
+- Hidden library hero no longer rebuilds speaker/repeat widgets on every100ms controller tick;
+  hidden waveform skips redundant redraw. Regressions verify reused icons and changed repeat mode.
+- Isolated offscreen test selected GskVulkanRenderer on Wayland without presenting a window.
+  Final4K median render-plus-readback: native7.4–8.0ms vs Cairo-node29.5–35.3ms. These synthetic
+  debug measurements include download/synchronization, NOT onscreen FPS or pure GPU timestamps.
+  Device engine counters were unavailable. Explicit GskCairoRenderer fallback also passes.
+- 827 normal tests pass;137 optional ignored. Seventeen focused GTK checks pass individually,
+  plus explicit synthetic profiling tests. Production check clean; all-targets check retains
+  existing test-only unfulfilled-expectation warnings. New rendering modules pass scoped rustfmt;
+  diff whitespace check passes. No live audio or user's active window was exercised.
+
+Method/results/limits: docs/performance-baseline.md. Test artifacts under the directory in
+/tmp/hermes-render-path: unit-final.log, ui-final.log, native-final.log, software-final.log,
+production-check.log, all-targets-check.log and shots/. Tests use private HOME/XDG/DBus; native
+profiling realizes an invisible window and asserts it is unmapped. Private Broadway test server
+and browser tab were closed; the user's existing10500 session was untouched. Next work: implement the
+explicitly disabled Settings options in small increments, then real-user smoothness verification.
+
+## Stability, player contrast and immersive performance — 2026-10-18
+
+User approved the first three stabilization priorities after the October 18 review, reported
+invisible play buttons in immersive/music previews, and asked how to improve immersive GPU use.
+Starting HEAD fd668bb on feat/6-spreadsheet-and-settings-polish; changes remain uncommitted.
+Do not restart, focus, reposition or close the user's running Hermes. No personal media/audio,
+preferences, forced renderer environment, branches, commits, pushes or version changes in this pass.
+
+Implemented:
+- Ratings validate candidates/serialization; unsupported-extension renames remove only the affected
+  rating rather than poisoning the store. Loading salvages valid individual entries while malformed
+  or unsupported-version stores remain protected/read-only. Flush failures surface correctly.
+- Playlist replacement moves deduplicate in stable order; indexed dates retain the earliest date,
+  play counts saturating-merge. Candidate validation happens before publishing. Save/reload and
+  subsequent-edit regressions added for both stores.
+- Lyrics parsing is ASCII-validated, overflow/UTF-8-safe and bounded by source bytes, line size,
+  timestamp expansion, output lines/text. Sidecar reads are bounded and reject non-regular files.
+- Immersive artwork/lyrics discovery and decoding move off the GTK thread; hidden views defer work.
+  Identity/generation checks reject stale successes AND failures, requests cancel on switch/unmap/
+  stop/drop. Folder covers decode through the sandbox at a bounded 1024px, embedded art at512px.
+- Visualizer colors/bands are cached outside painting. Frame callbacks exist only while mapped,
+  playing, visualizer-enabled and motion-enabled; near60fps cap handles microsecond60Hz rounding
+  without alternating frames. Time labels update only on second/duration changes. No GPU shader
+  rewrite: effects are still Cairo, composited by GTK's selected renderer; hardware acceleration
+  and actual frame time were NOT benchmarked. No claims of zero idle CPU for the whole player.
+- Added semantic theme_on_accent plus a live-recolored filled-control icon registry. Immersive stage/
+  floating and preview play/pause icons now contrast with their accent-filled buttons, including
+  hover/active/theme changes. Checked Graphite, Paper and Azure synthetic render fixtures. Invalid
+  CSS overflow property replaced with native GTK overflow clipping on artwork.
+- Immersive callbacks use weak player/widget captures; disposal clears callbacks and closes its
+  mini-player. Escape honors modal layers before immersive workspace navigation.
+- Spreadsheet fullscreen retains the viewer before detaching it; tab closures use weak button
+  references. Real repeated fullscreen/stop/drop tests cover single/multiple sheets and object
+  release. Whole-workbook values/text/escaped JSON budgets count compatibility duplication; final
+  JSON cap28MiB stays below the32MiB transport ceiling. Tests moved to adjacent module.
+- Preview size/format preferences now gate provider payload work, cached image reads, and late
+  completed rendering; policy is rechecked after async work. Default50MB ceiling is now EFFECTIVE
+  and adjustable in Settings, so large previews may intentionally be blocked until raised.
+- Re-index triggers the shared library service and waits for finished snapshots, preserving notices;
+  thumbnail clearing uses the authoritative thumbnails-rgba-v1 path, ordered disk-writer commands,
+  cancellation/generation guards, off-thread disk work and real error feedback. Symlinks/unrelated
+  cache entries are handled conservatively; personal caches were not cleared during validation.
+- Settings layout/density choices act on the current browser. Still-unimplemented startup/date/
+  units/hidden-default/confirmation/DSP/search knobs are explicitly disabled, NOT falsely presented
+  as working. Their saved fields remain compatible; unused mutators removed. These options still
+  need actual runtime implementation in a future pass. Diagnostics now shows GTK renderer type
+  when available; corrected inaccurate Symphonia/Rodio telemetry to the actual GStreamer pipeline.
+
+Validation uses private HOME/XDG/DBus and connected HIDDEN Broadway:118/18118, low-priority jobs2.
+827 regular tests pass;133 optional ignored. Fifteen focused GTK checks pass, including the new
+contrast/lifecycle/fullscreen/policy checks and three earlier search geometry/pagination regressions.
+Production check is clean; five older test-only unfulfilled lint expectations remain. No full
+optional-suite/real audio/driver/GPU benchmark claim. Previous baseline search-selection test issue
+remains separate and was not reclassified as passing.
+
+Logs/screenshots: directory recorded in /tmp/hermes-stabilize-path (initially
+/tmp/hermes-stabilize-20261018-sHwSA1): compile.log, unit.log, ui-final.log,
+unit-final.log, ui-rerun.log, disposal-final.log, all-targets-check.log, production-check.log;
+shots/player-controls-{graphite,paper,azure-glow}.png. Earlier intermediate
+compile failures caught workers mid-edit; use FINAL validation logs, not those transient results.
+Four scoped workers implemented persistence, immersive/lyrics, preview/settings/cache, spreadsheet;
+all reviewed/integrated and closed. Parent owns contrast/theme/window/disposal/policy integration.
+Untracked hermes-review-2026-10-15.md predates this pass and must be preserved. Review snapshot
+/home/bry/hermes-review-2026-10-18.md describes pre-fix findings, not remaining status.
+
 ## Music Library Album & Track Single-Click Playback Polish — 2026-10-18
 
 Completed on branch `feat/6-spreadsheet-and-settings-polish`:

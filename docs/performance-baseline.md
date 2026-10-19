@@ -1,5 +1,57 @@
 # Performance Baseline
 
+## Native immersive scene rendering — 2026-10-18
+
+Ribbons, Tunnel and Cosmic now snapshot bounded native GTK4.12 GSK color, transform, border and
+rounded-clip nodes instead of repainting a viewport-sized Cairo surface every frame. GTK keeps
+its normal Vulkan/GL/software renderer selection; no forced backend, unsafe code, dependency,
+custom GLArea or shader was added. The static ambient aura remains cached Cairo. Native frames
+contain no Cairo nodes, texture uploads/downloads, timers, I/O or spectrum analysis. Animation
+only runs when mapped, enabled, motion-enabled and playing, capped near60fps; pause keeps a
+static frame and suspension clears it. Theme/style/size changes still redraw correctly.
+
+An initial CPU-only debug probe (reused Cairo image surface,20 frames,3 warmup frames excluded)
+found4K Tunnel drawing~4.535ms median versus~0.220ms for the1024-sample spectrum analysis. That
+motivated examining render/upload cost rather than replacing the analyzer or audio pipeline.
+
+Paired offscreen probe:15 frames per style/size/path, first3 excluded, same synthetic32-band input,
+palette and time steps, debug build. Measures snapshot construction plus render_texture and a
+completed TextureDownloader readback. Final native Wayland run selected GskVulkanRenderer without
+GSK_RENDERER overrides. The window was realized solely to obtain a surface, never presented or
+mapped; assertions enforce this. No personal media/audio was opened or played.
+
+| Style,3840x2160 | Cairo-node median / p95 | Native GSK median / p95 |
+| --- | --- | --- |
+| Ribbons |31.092 /33.322ms |8.031 /8.648ms |
+| Tunnel |35.260 /36.338ms |8.035 /10.160ms |
+| Cosmic |29.524 /32.022ms |7.383 /8.328ms |
+
+These include synchronization/readback and are NOT pure GPU timestamps, actual onscreen frame
+times, guaranteed FPS or a universal speedup. DRM engine counters were unavailable. Native node
+construction remains CPU work: final4K Ribbons~0.276ms, Tunnel~0.037ms and Cosmic~0.038ms median.
+Ribbons use at most128 segments per curve to bound scene complexity; this is a polyline
+approximation, not pixel-identical Cairo antialiasing. Synthetic side-by-side PNGs were inspected.
+
+Explicit GskCairoRenderer/Broadway fallback passed the same comparison. A representative fallback
+run at4K had Ribbons2.588→2.523ms, Tunnel5.757→5.600ms and Cosmic0.555→0.703ms median. Some small
+software-rendered cases are slightly slower (1080p Ribbons0.971→1.354ms); do not promise a CPU
+fallback speedup. Output stays bounded, clipped and theme-driven on all paths.
+
+Separately, library hero speaker/repeat icons now update only on state changes instead of being
+recreated every100ms, including while hidden behind immersive. Hidden waveform avoids redraw.
+827 regular tests pass;137 optional ignored. Seventeen focused isolated GTK checks pass, including
+bounded native nodes, invalid input, live palette, clear/reuse/allocation/drop and transport icon
+identity. Synthetic profile tests are optional/ignored and run explicitly, never on app startup.
+Production and all-target checks pass (existing test-only lint-expectation warnings remain).
+
+Tests: src/ui/music/immersive/performance_tests.rs and canvas/tests.rs. Logs/screenshots are in
+the directory recorded by /tmp/hermes-render-path: cairo-baseline.log, native-comparison.log
+(prototype), native-final.log (final), software-comparison.log, software-final.log, unit-final.log
+and ui-final.log.
+Private HOME/XDG/DBus and a private hidden Broadway connection isolate these from the user's
+running Hermes/preferences. Real compositor presentation/frame pacing and live audio under load
+remain user-verification gates; neither an application restart nor renderer setting was forced.
+
 ## Heavy first-load photo/video follow-up — 2026-10-13
 
 Eligible large JPEG/standard8-bit HEIF selected previews now try installed optional libvips inside
