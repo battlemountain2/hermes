@@ -1,9 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{fs, path::Path, time::Duration};
+use std::{fs, io::Read, path::Path, time::Duration};
 
 #[cfg(test)]
 mod tests;
+
+const MAX_LRC_BYTES: usize = 1024 * 1024;
+const MAX_LINE_BYTES: usize = 4096;
+const MAX_LYRIC_LINES: usize = 1024;
+const MAX_TIMESTAMPS_PER_LINE: usize = 32;
+const MAX_LYRIC_TEXT_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LyricLine {
@@ -43,9 +49,16 @@ impl Lyrics {
 }
 
 pub fn parse_lrc(content: &str) -> Option<Lyrics> {
+    if content.len() > MAX_LRC_BYTES {
+        return None;
+    }
     let mut lines = Vec::new();
+    let mut text_bytes = 0usize;
 
     for raw_line in content.lines() {
+        if raw_line.len() > MAX_LINE_BYTES {
+            return None;
+        }
         let trimmed = raw_line.trim();
         if !trimmed.starts_with('[') {
             continue;
@@ -60,16 +73,26 @@ pub fn parse_lrc(content: &str) -> Option<Lyrics> {
             }
             let tag = &remaining[1..close_bracket];
             if let Some(timestamp) = parse_timestamp(tag) {
+                if timestamps.len() == MAX_TIMESTAMPS_PER_LINE {
+                    return None;
+                }
                 timestamps.push(timestamp);
             }
             remaining = remaining[close_bracket + 1..].trim_start();
         }
 
-        let text = remaining.trim().to_owned();
+        let text = remaining.trim();
+        if lines.len() + timestamps.len() > MAX_LYRIC_LINES {
+            return None;
+        }
+        text_bytes = text_bytes.checked_add(text.len().checked_mul(timestamps.len())?)?;
+        if text_bytes > MAX_LYRIC_TEXT_BYTES {
+            return None;
+        }
         for timestamp in timestamps {
             lines.push(LyricLine {
                 timestamp,
-                text: text.clone(),
+                text: text.to_owned(),
             });
         }
     }
@@ -84,34 +107,59 @@ pub fn parse_lrc(content: &str) -> Option<Lyrics> {
 
 fn parse_timestamp(tag: &str) -> Option<Duration> {
     let (min_str, rest) = tag.split_once(':')?;
+    if min_str.is_empty() || !min_str.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
     let minutes: u64 = min_str.parse().ok()?;
 
     let (sec_str, millis) = if let Some((sec_part, frac_part)) = rest.split_once('.') {
-        let seconds: u64 = sec_part.parse().ok()?;
-        let millis: u64 = match frac_part.len() {
-            1 => frac_part.parse::<u64>().ok()? * 100,
-            2 => frac_part.parse::<u64>().ok()? * 10,
-            3 => frac_part.parse::<u64>().ok()?,
-            _ => frac_part[..3].parse::<u64>().ok()?,
-        };
-        (seconds, millis)
+        if frac_part.is_empty() || !frac_part.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        let mut digits = frac_part.bytes();
+        let millis = [100u64, 10, 1].into_iter().fold(0, |total, weight| {
+            total + digits.next().map_or(0, |digit| u64::from(digit - b'0') * weight)
+        });
+        (sec_part, millis)
     } else {
-        let seconds: u64 = rest.parse().ok()?;
-        (seconds, 0)
+        (rest, 0)
     };
 
-    Some(Duration::from_millis(
-        minutes * 60_000 + sec_str * 1_000 + millis,
-    ))
+    if sec_str.is_empty() || !sec_str.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let seconds: u64 = sec_str.parse().ok()?;
+    if seconds >= 60 {
+        return None;
+    }
+    let total = minutes
+        .checked_mul(60_000)?
+        .checked_add(seconds.checked_mul(1_000)?)?
+        .checked_add(millis)?;
+    if total > i64::MAX as u64 / 1_000 {
+        return None;
+    }
+    Some(Duration::from_millis(total))
 }
 
 pub fn find_lyrics_for_audio_file(audio_path: &Path) -> Option<Lyrics> {
     let lrc_path = audio_path.with_extension("lrc");
-    if lrc_path.is_file()
-        && let Ok(content) = fs::read_to_string(&lrc_path)
-        && let Some(lyrics) = parse_lrc(&content)
-    {
-        return Some(lyrics);
+    let metadata = fs::metadata(&lrc_path).ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_LRC_BYTES as u64 {
+        return None;
     }
-    None
+    let file = fs::File::open(&lrc_path).ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_LRC_BYTES as u64 {
+        return None;
+    }
+    read_lrc(file)
+}
+
+fn read_lrc(reader: impl Read) -> Option<Lyrics> {
+    let mut content = String::new();
+    reader.take(MAX_LRC_BYTES as u64 + 1)
+        .read_to_string(&mut content)
+        .ok()?;
+    parse_lrc(&content)
 }

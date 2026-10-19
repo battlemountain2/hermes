@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::path::Path;
+use std::{borrow::Cow, path::Path};
 
 use calamine::{Data, Reader};
 use serde::{Deserialize, Serialize};
@@ -12,6 +12,9 @@ pub const TABLE_VALUE_LIMIT: usize = 100_000;
 pub const TABLE_TEXT_LIMIT: usize = 4 * 1024 * 1024; // 4 MiB
 
 pub const TABLE_SHEET_LIMIT: usize = 16;
+pub const TABLE_SERIALIZED_LIMIT: usize = 28 * 1024 * 1024;
+const TABLE_SERIALIZED_TEXT_LIMIT: usize = 24 * 1024 * 1024;
+const TABLE_SHEET_NAME_LIMIT: usize = 1024;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SheetData {
@@ -43,7 +46,11 @@ impl SpreadsheetData {
     }
 
     pub fn to_json(&self) -> Result<String, String> {
-        serde_json::to_string(self).map_err(|e| e.to_string())
+        let json = serde_json::to_string(self).map_err(|error| error.to_string())?;
+        if json.len() > TABLE_SERIALIZED_LIMIT {
+            return Err("Spreadsheet preview exceeds the serialized size limit".to_string());
+        }
+        Ok(json)
     }
 
     pub fn read_workbook(path: &Path) -> Result<Self, String> {
@@ -56,80 +63,43 @@ impl SpreadsheetData {
             .map_err(|e| format!("Invalid or corrupted spreadsheet: {e}"))?;
 
         let sheet_names: Vec<String> = workbook.sheet_names();
+        Self::preview_workbook(sheet_names, |idx| {
+            workbook.worksheet_range_at(idx).and_then(Result::ok)
+        })
+    }
+
+    fn preview_workbook(
+        sheet_names: Vec<String>,
+        mut read_sheet: impl FnMut(usize) -> Option<calamine::Range<Data>>,
+    ) -> Result<Self, String> {
         if sheet_names.is_empty() {
             return Err("Workbook contains no worksheets".to_string());
         }
 
         let mut sheets = Vec::new();
-        let mut overall_truncated = false;
+        let mut overall_truncated = sheet_names.len() > TABLE_SHEET_LIMIT;
+        let sheet_count = sheet_names.len().min(TABLE_SHEET_LIMIT);
+        let mut budget = PreviewBudget {
+            values: TABLE_VALUE_LIMIT,
+            text_bytes: TABLE_TEXT_LIMIT,
+            serialized_bytes: TABLE_SERIALIZED_TEXT_LIMIT,
+        };
 
         for (idx, name) in sheet_names.iter().enumerate().take(TABLE_SHEET_LIMIT) {
-            let Some(range_res) = workbook.worksheet_range_at(idx) else {
-                continue;
-            };
-            let Ok(range) = range_res else {
-                continue;
-            };
-
-            let total_rows = range.height();
-            let total_cols = range.width();
-
-            let mut headers = Vec::new();
-            let mut rows = Vec::new();
-            let mut sheet_truncated = false;
-
-            let mut values_count = 0usize;
-            let mut text_bytes = 0usize;
-
-            let mut row_iter = range.rows();
-            if let Some(first_row) = row_iter.next() {
-                for cell in first_row.iter().take(TABLE_COLUMN_LIMIT) {
-                    let cell_str = format_cell(cell);
-                    values_count += 1;
-                    text_bytes += cell_str.len();
-                    headers.push(cell_str);
-                }
-            }
-
-            for row in row_iter {
-                if rows.len() >= TABLE_ROW_LIMIT
-                    || values_count >= TABLE_VALUE_LIMIT
-                    || text_bytes >= TABLE_TEXT_LIMIT
-                {
-                    sheet_truncated = true;
-                    break;
-                }
-
-                let mut row_vec = Vec::new();
-                for cell in row.iter().take(TABLE_COLUMN_LIMIT) {
-                    let cell_str = format_cell(cell);
-                    values_count += 1;
-                    text_bytes += cell_str.len();
-                    row_vec.push(cell_str);
-                    if values_count >= TABLE_VALUE_LIMIT || text_bytes >= TABLE_TEXT_LIMIT {
-                        sheet_truncated = true;
-                        break;
-                    }
-                }
-                rows.push(row_vec);
-            }
-
-            if total_rows > rows.len() + 1 || total_cols > TABLE_COLUMN_LIMIT {
-                sheet_truncated = true;
-            }
-
-            if sheet_truncated {
+            let Some(range) = read_sheet(idx) else {
                 overall_truncated = true;
-            }
-
-            sheets.push(SheetData {
-                name: name.clone(),
-                headers,
-                rows,
-                total_rows,
-                total_cols,
-                truncated: sheet_truncated,
-            });
+                continue;
+            };
+            let copies = if sheets.is_empty() { 2 } else { 1 };
+            let allocation = budget.share(sheet_count - idx + copies - 1);
+            let mut remaining = allocation;
+            let sheet = preview_sheet(name, &range, &mut remaining);
+            budget.values -= (allocation.values - remaining.values) * copies;
+            budget.text_bytes -= (allocation.text_bytes - remaining.text_bytes) * copies;
+            budget.serialized_bytes -=
+                (allocation.serialized_bytes - remaining.serialized_bytes) * copies;
+            overall_truncated |= sheet.truncated;
+            sheets.push(sheet);
         }
 
         if sheets.is_empty() {
@@ -144,7 +114,7 @@ impl SpreadsheetData {
         let truncated = overall_truncated;
 
         Ok(SpreadsheetData {
-            sheet_names,
+            sheet_names: sheets.iter().map(|sheet| sheet.name.clone()).collect(),
             active_sheet: 0,
             headers,
             rows,
@@ -154,6 +124,110 @@ impl SpreadsheetData {
             sheets,
         })
     }
+}
+
+#[derive(Clone, Copy)]
+struct PreviewBudget {
+    values: usize,
+    text_bytes: usize,
+    serialized_bytes: usize,
+}
+
+impl PreviewBudget {
+    fn share(self, count: usize) -> Self {
+        Self {
+            values: self.values / count,
+            text_bytes: self.text_bytes / count,
+            serialized_bytes: self.serialized_bytes / count,
+        }
+    }
+
+    fn cell(&mut self, cell: &Data) -> Option<(String, bool)> {
+        if self.values == 0 || self.serialized_bytes < 3 {
+            return None;
+        }
+        let text = match cell {
+            Data::String(text) | Data::DateTimeIso(text) | Data::DurationIso(text) => {
+                Cow::Borrowed(text.as_str())
+            }
+            _ => Cow::Owned(format_cell(cell)),
+        };
+        let (end, serialized_bytes) =
+            text_prefix(&text, self.text_bytes, self.serialized_bytes - 3);
+        let truncated = end < text.len();
+        let text = text[..end].to_string();
+        self.values -= 1;
+        self.text_bytes -= text.len();
+        self.serialized_bytes -= serialized_bytes + 3;
+        Some((text, truncated))
+    }
+}
+
+fn text_prefix(text: &str, byte_limit: usize, serialized_limit: usize) -> (usize, usize) {
+    let mut end = 0;
+    let mut serialized_bytes = 0;
+    for character in text.chars() {
+        let bytes = character.len_utf8();
+        let escaped_bytes = match character {
+            '"' | '\\' | '\u{08}' | '\u{0c}' | '\n' | '\r' | '\t' => 2,
+            '\u{00}'..='\u{1f}' => 6,
+            _ => bytes,
+        };
+        if end + bytes > byte_limit || serialized_bytes + escaped_bytes > serialized_limit {
+            break;
+        }
+        end += bytes;
+        serialized_bytes += escaped_bytes;
+    }
+    (end, serialized_bytes)
+}
+
+fn preview_row(row: &[Data], budget: &mut PreviewBudget) -> (Vec<String>, bool) {
+    let mut cells = Vec::new();
+    for cell in row.iter().take(TABLE_COLUMN_LIMIT) {
+        let Some((text, truncated)) = budget.cell(cell) else {
+            return (cells, true);
+        };
+        cells.push(text);
+        if truncated {
+            return (cells, true);
+        }
+    }
+    (cells, false)
+}
+
+fn preview_sheet(
+    name: &str,
+    range: &calamine::Range<Data>,
+    budget: &mut PreviewBudget,
+) -> SheetData {
+    let (name_end, _) = text_prefix(name, TABLE_SHEET_NAME_LIMIT, TABLE_SHEET_NAME_LIMIT);
+    let mut sheet = SheetData {
+        name: name[..name_end].to_string(),
+        total_rows: range.height(),
+        total_cols: range.width(),
+        truncated: name_end < name.len() || range.width() > TABLE_COLUMN_LIMIT,
+        ..SheetData::default()
+    };
+    let mut row_iter = range.rows();
+    let mut exhausted = false;
+    if let Some(first_row) = row_iter.next() {
+        (sheet.headers, exhausted) = preview_row(first_row, budget);
+    }
+    if !exhausted {
+        for row in row_iter.take(TABLE_ROW_LIMIT) {
+            let (cells, truncated) = preview_row(row, budget);
+            if !cells.is_empty() {
+                sheet.rows.push(cells);
+            }
+            if truncated {
+                exhausted = true;
+                break;
+            }
+        }
+    }
+    sheet.truncated |= exhausted || sheet.total_rows > sheet.rows.len() + 1;
+    sheet
 }
 
 fn format_cell(cell: &Data) -> String {
@@ -176,31 +250,4 @@ fn format_cell(cell: &Data) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_spreadsheet_data_json_roundtrip() {
-        let data = SpreadsheetData {
-            sheet_names: vec!["Sheet1".to_string()],
-            active_sheet: 0,
-            headers: vec!["Name".to_string(), "Amount".to_string()],
-            rows: vec![vec!["Alice".to_string(), "100".to_string()]],
-            total_rows: 2,
-            total_cols: 2,
-            truncated: false,
-            sheets: vec![SheetData {
-                name: "Sheet1".to_string(),
-                headers: vec!["Name".to_string(), "Amount".to_string()],
-                rows: vec![vec!["Alice".to_string(), "100".to_string()]],
-                total_rows: 2,
-                total_cols: 2,
-                truncated: false,
-            }],
-        };
-
-        let json = data.to_json().expect("serialize");
-        let deserialized = SpreadsheetData::from_json(json.as_bytes()).expect("deserialize");
-        assert_eq!(data, deserialized);
-    }
-}
+mod tests;

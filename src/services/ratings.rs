@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{Read, Write},
     path::{Component, Path, PathBuf},
@@ -59,7 +59,9 @@ impl RatingsData {
             self.ratings.remove(&path);
         }
         for (new_path, rating) in updates {
-            self.ratings.insert(new_path, rating);
+            if validate_target_path(&new_path).is_ok() {
+                self.ratings.insert(new_path, rating);
+            }
         }
 
         changed
@@ -101,7 +103,8 @@ impl RatingsData {
                         let new_count = paths
                             .iter()
                             .filter(|p| !self.ratings.contains_key(*p))
-                            .count();
+                            .collect::<BTreeSet<_>>()
+                            .len();
                         if self.ratings.len() + new_count > MAX_RATINGS {
                             return Err("Rating limit reached (50,000 items)".into());
                         }
@@ -352,16 +355,43 @@ fn load(path: &Path) -> Result<RatingsData, String> {
     if bytes.len() as u64 > MAX_BYTES {
         return Err("Ratings exceed 16 MiB".into());
     }
-    let data = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    #[derive(Deserialize)]
+    struct SavedRatings {
+        version: u32,
+        ratings: BTreeMap<PathBuf, serde_json::Value>,
+    }
+
+    let saved: SavedRatings = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    if saved.version != 1 || saved.ratings.len() > MAX_RATINGS {
+        return Err("Saved ratings data exceeds limits or has unsupported version".into());
+    }
+    let data = RatingsData {
+        version: saved.version,
+        ratings: saved
+            .ratings
+            .into_iter()
+            .filter_map(|(path, value)| {
+                let star = serde_json::from_value::<u8>(value).ok()?;
+                (validate_target_path(&path).is_ok() && validate_rating_value(star).is_ok())
+                    .then_some((path, star))
+            })
+            .collect(),
+    };
     validate(&data)?;
     Ok(data)
 }
 
-fn save(path: &Path, data: &RatingsData) -> Result<(), String> {
+fn encode(data: &RatingsData) -> Result<Vec<u8>, String> {
+    validate(data)?;
     let bytes = serde_json::to_vec_pretty(data).map_err(|error| error.to_string())?;
     if bytes.len() as u64 > MAX_BYTES {
         return Err("Ratings exceed 16 MiB".into());
     }
+    Ok(bytes)
+}
+
+fn save(path: &Path, data: &RatingsData) -> Result<(), String> {
+    let bytes = encode(data)?;
     let parent = path.parent().ok_or("Invalid storage path")?;
     fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     let temporary = parent.join(format!(
@@ -428,7 +458,12 @@ fn run(
                 }
             } else {
                 let mut candidate = data.clone();
-                match candidate.apply(command) {
+                match candidate.apply(command).and_then(|changed| {
+                    if changed {
+                        encode(&candidate)?;
+                    }
+                    Ok(changed)
+                }) {
                     Ok(changed) => {
                         if changed {
                             data = candidate;
@@ -452,27 +487,28 @@ fn run(
                     Ok(()) => {
                         dirty = false;
                         last_save = Instant::now();
-                        if let Some(reply) = flush {
-                            let _ = reply.send(Ok(()));
-                        }
-                    }
-                    Err(save_err) => {
-                        error = Some(save_err.clone());
+                        error = None;
                         revision += 1;
                         publish(&data, revision, &error);
-                        if let Some(reply) = flush {
-                            let _ = reply.send(Err(save_err));
-                        }
+                    }
+                    Err(save_err) => {
+                        error = Some(save_err);
+                        revision += 1;
+                        publish(&data, revision, &error);
                     }
                 }
             } else {
                 dirty = false;
-                if let Some(reply) = flush {
-                    let _ = reply.send(Ok(()));
-                }
             }
-        } else if let Some(reply) = flush {
-            let _ = reply.send(Ok(()));
+        }
+        if let Some(reply) = flush {
+            let _ = reply.send(if dirty || read_only {
+                Err(error
+                    .clone()
+                    .unwrap_or_else(|| "Ratings could not be flushed".into()))
+            } else {
+                Ok(())
+            });
         }
 
         if disconnected {

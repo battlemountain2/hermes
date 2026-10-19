@@ -388,3 +388,206 @@ fn relocate_deduplicates_when_target_already_in_favorites() {
     assert!(changed);
     assert_eq!(data.favorite_paths(), [track2].into_iter().collect());
 }
+
+fn close_persistent_store(store: Store, path: &Path) {
+    drop(store);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Ok(storage) = disk::Storage::open(path) {
+            drop(storage);
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Collection worker did not release storage"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn replacing_member_moves_deduplicate_stably_and_allow_edits_after_save_and_reload() {
+    for directory_move in [false, true] {
+        let root = temporary("relocate-collision");
+        let file = root.join("collections.json");
+        let source = PathBuf::from("/generated/source/song.flac");
+        let destination = PathBuf::from("/generated/destination/song.flac");
+        let middle = PathBuf::from("/generated/middle.mp3");
+        let sibling = PathBuf::from("/generated/source-other/song.flac");
+        let nested_source = PathBuf::from("/generated/source/nested/other.flac");
+        let nested_destination = PathBuf::from("/generated/destination/nested/other.flac");
+        let mut data = Collections::default();
+        data.apply(Command::Create("Source first".into())).unwrap();
+        data.apply(Command::Create("Destination first".into()))
+            .unwrap();
+        data.apply(Command::Add(
+            1,
+            vec![
+                source.clone(),
+                middle.clone(),
+                destination.clone(),
+                sibling.clone(),
+            ],
+        ))
+        .unwrap();
+        data.apply(Command::Add(
+            2,
+            vec![
+                destination.clone(),
+                middle.clone(),
+                source.clone(),
+                sibling.clone(),
+            ],
+        ))
+        .unwrap();
+        data.apply(Command::Favorite(
+            vec![source.clone(), destination.clone(), sibling.clone()],
+            true,
+        ))
+        .unwrap();
+        data.apply(Command::Observe(vec![destination.clone()], 200))
+            .unwrap();
+        data.apply(Command::Observe(vec![source.clone()], 100))
+            .unwrap();
+        data.apply(Command::Observe(vec![sibling.clone()], 300))
+            .unwrap();
+        data.played = vec![
+            PlayCount {
+                path: Location::local(source.clone()),
+                count: 7,
+            },
+            PlayCount {
+                path: Location::local(destination.clone()),
+                count: 9,
+            },
+        ];
+        if directory_move {
+            for id in [1, 2] {
+                data.apply(Command::Add(
+                    id,
+                    vec![nested_destination.clone(), nested_source.clone()],
+                ))
+                .unwrap();
+            }
+            data.apply(Command::Favorite(
+                vec![nested_source.clone(), nested_destination.clone()],
+                true,
+            ))
+            .unwrap();
+            data.apply(Command::Observe(vec![nested_source.clone()], 50))
+                .unwrap();
+            data.apply(Command::Observe(vec![nested_destination.clone()], 75))
+                .unwrap();
+            data.played.extend([
+                PlayCount {
+                    path: Location::local(nested_source.clone()),
+                    count: u64::MAX,
+                },
+                PlayCount {
+                    path: Location::local(nested_destination.clone()),
+                    count: 1,
+                },
+            ]);
+        }
+        let mut storage = disk::Storage::open(&file).unwrap();
+        storage.save(&data).unwrap();
+        drop(storage);
+
+        let store = Store::start(Some(file.clone()));
+        let initial = wait(&store, |snapshot| snapshot.ready);
+        assert!(initial.error.is_none());
+        let (from, to) = if directory_move {
+            (
+                PathBuf::from("/generated/source"),
+                PathBuf::from("/generated/destination"),
+            )
+        } else {
+            (source.clone(), destination.clone())
+        };
+        store.relocate(from, to).unwrap();
+        store.flush(Duration::from_secs(2)).unwrap();
+        let moved = store.snapshot();
+        assert!(moved.error.is_none());
+        validate(&moved.data).unwrap();
+        let mut expected = vec![destination.clone(), middle.clone(), sibling.clone()];
+        if directory_move {
+            expected.push(nested_destination.clone());
+        }
+        for id in [1, 2] {
+            assert_eq!(
+                moved.data.playlist(id).unwrap().tracks,
+                expected
+                    .iter()
+                    .cloned()
+                    .map(Location::local)
+                    .collect::<Vec<_>>()
+            );
+        }
+        assert!(!moved.data.favorite_paths().contains(&source));
+        assert!(moved.data.favorite_paths().contains(&destination));
+        assert!(moved.data.favorite_paths().contains(&sibling));
+        assert_eq!(
+            moved.data.favorite_paths().len(),
+            if directory_move { 3 } else { 2 }
+        );
+        assert_eq!(moved.data.added_dates()[&destination], 100);
+        assert_eq!(moved.data.added_dates()[&sibling], 300);
+        assert_eq!(moved.data.play_counts()[&destination], 16);
+        assert!(!moved.data.added_dates().contains_key(&source));
+        assert!(!moved.data.play_counts().contains_key(&source));
+        if directory_move {
+            assert_eq!(moved.data.added_dates()[&nested_destination], 50);
+            assert_eq!(moved.data.play_counts()[&nested_destination], u64::MAX);
+        }
+        assert_eq!(
+            load(&file).unwrap().playlist(1).unwrap().tracks,
+            moved.data.playlist(1).unwrap().tracks
+        );
+        close_persistent_store(store, &file);
+
+        let restored = Store::start(Some(file.clone()));
+        let initial = wait(&restored, |snapshot| snapshot.ready);
+        assert!(initial.error.is_none());
+        assert_eq!(
+            initial.data.playlist(1).unwrap().tracks.len(),
+            expected.len()
+        );
+        restored
+            .send(Command::Move(1, destination.clone(), 1))
+            .unwrap();
+        restored
+            .send(Command::Remove(2, vec![destination.clone()]))
+            .unwrap();
+        restored
+            .send(Command::Favorite(vec![destination.clone()], false))
+            .unwrap();
+        restored.send(Command::Played(destination.clone())).unwrap();
+        restored.flush(Duration::from_secs(2)).unwrap();
+        let edited = load(&file).unwrap();
+        assert_eq!(
+            edited.playlist(1).unwrap().tracks[0].native_path(),
+            Some(middle.as_path())
+        );
+        assert_eq!(
+            edited.playlist(1).unwrap().tracks[1].native_path(),
+            Some(destination.as_path())
+        );
+        assert_eq!(edited.playlist(2).unwrap().tracks.len(), expected.len() - 1);
+        assert!(!edited.favorite_paths().contains(&destination));
+        assert_eq!(edited.play_counts()[&destination], 17);
+        assert_eq!(edited.added_dates()[&destination], 100);
+        assert!(restored.snapshot().error.is_none());
+        close_persistent_store(restored, &file);
+
+        let final_store = Store::start(Some(file.clone()));
+        let final_snapshot = wait(&final_store, |snapshot| snapshot.ready);
+        assert!(final_snapshot.error.is_none());
+        assert_eq!(
+            final_snapshot.data.playlist(1).unwrap().tracks,
+            edited.playlist(1).unwrap().tracks
+        );
+        assert_eq!(final_snapshot.data.play_counts()[&destination], 17);
+        close_persistent_store(final_store, &file);
+        fs::remove_dir_all(root).unwrap();
+    }
+}

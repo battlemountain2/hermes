@@ -144,10 +144,18 @@ impl Collections {
                     }
                 }
             }
+            let mut seen = BTreeSet::new();
+            playlist.tracks.retain(|track| {
+                let unique = track
+                    .native_path()
+                    .is_none_or(|path| seen.insert(path.to_owned()));
+                changed |= !unique;
+                unique
+            });
         }
 
-        let mut seen_indexed = BTreeSet::new();
-        let mut new_indexed = Vec::new();
+        let mut seen_indexed: BTreeMap<PathBuf, usize> = BTreeMap::new();
+        let mut new_indexed: Vec<Indexed> = Vec::new();
         for entry in self.indexed.drain(..) {
             let native = entry.path.native_path().map(Path::to_owned);
             let updated_path = if let Some(p) = native.as_deref() {
@@ -165,13 +173,16 @@ impl Collections {
                 entry.path
             };
             if let Some(p) = updated_path.native_path() {
-                if seen_indexed.insert(p.to_owned()) {
+                if let Some(&index) = seen_indexed.get(p) {
+                    let existing = &mut new_indexed[index];
+                    existing.added = existing.added.min(entry.added);
+                    changed = true;
+                } else {
+                    seen_indexed.insert(p.to_owned(), new_indexed.len());
                     new_indexed.push(Indexed {
                         path: updated_path,
                         added: entry.added,
                     });
-                } else {
-                    changed = true;
                 }
             } else {
                 new_indexed.push(Indexed {
@@ -633,6 +644,7 @@ fn run(
                 let mut candidate = data.clone();
                 match candidate.apply(command).and_then(|changed| {
                     if changed {
+                        validate(&candidate)?;
                         let bytes =
                             serde_json::to_vec(&candidate).map_err(|error| error.to_string())?;
                         if bytes.len() as u64 > MAX_BYTES {
