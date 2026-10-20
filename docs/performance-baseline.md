@@ -1,5 +1,34 @@
 # Performance Baseline
 
+## Prism / Orbit and mode-switch polish — 2026-10-19
+
+The user still reported Tunnel/Cosmic stutter and unreliable returns to Lyrics after the native
+snapshot migration below. Native nodes alone were not sufficient: the old elapsed-since-render
+limiter produced about48updates/second on144Hz displays, and raw audio bins moved geometry abruptly.
+The new deadline scheduler maintains approximately60updates across60/144/240/1000Hz synthetic
+clocks without catch-up bursts; time-based attack/release smooths the32 bins. Hidden/paused/
+motion-disabled modes still stop ticks, and leaving Visualizer clears its retained frame.
+
+Prism uses six nested rectangular frames (24 strokes). Orbit uses two sparse arcs,12 stable stars,
+six short trails and16 grouped spectrum columns. Audio changes brightness/size, not star positions.
+Both avoid the old large translucent ring/particle paint regions, full-screen blur and new timers.
+Lyrics/Visualizer buttons synchronize modes, missing lyrics keep stable panel geometry, unchanged
+empty states reuse widgets, and active lyrics no longer animate font dimensions or weight.
+
+Initial isolated Vulkan offscreen render-plus-readback medians at3840×2160: Prism5.70ms and
+Orbit6.15ms, with CPU snapshot recording around0.04/0.07ms. Ribbons5.81ms. These debug measurements
+include synchronization/download and do NOT measure onscreen FPS or hardware-decoder activity.
+The old Cairo comparator draws the old designs, so it is not a like-for-like speedup comparison.
+After visual inspection, long crossing Orbit links were shortened to trails; final profiling
+artifacts, generated PNGs and validation are recorded in NEXT_AGENT.md. No user's running window
+was presented, moved or restarted; the renderer fixture realizes an explicitly unmapped window.
+
+Final sparse-design3840×2160 medians: Vulkan render-plus-readback Prism5.10ms/Orbit5.21ms;
+explicit Cairo fallback1.27ms/1.01ms. GPU synchronization/readback can dominate this synthetic test,
+so these numbers are not a reason to force a backend or a claim that GPU rendering always wins.
+Production keeps GTK's automatic selection. Both fixture paths pass, including bounded native
+geometry and normal widget disposal; actual onscreen cadence still needs user verification.
+
 ## Native immersive scene rendering — 2026-10-18
 
 Ribbons, Tunnel and Cosmic now snapshot bounded native GTK4.12 GSK color, transform, border and

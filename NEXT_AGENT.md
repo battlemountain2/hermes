@@ -1,5 +1,157 @@
 # Next agent: Hermes performance, file features and media polish
 
+## Git backup and shared coordination authorized — 2026-10-19
+
+The user explicitly authorized committing/pushing all current Hermes work and refreshing the
+roadmap/Markdown. This includes the new lyrics/visualizer/streaming-policy fixes, palette/design
+references and previously excluded historical review note (now labeled historical). Continue on
+the existing feature branch and draft PR5 under issue4; do not push to main, merge or release1.0.
+This approval supersedes earlier local-only/push restrictions for this backup, not future changes.
+
+The user also approved a small Hermes/Iris Obsidian coordination hub, with each repository's docs
+remaining the technical source of truth. Only project links, priorities, evidence and a handoff
+template belong there; do not copy private mail, credentials or build artifacts into notes/GitHub.
+Iris is a separate project at https://github.com/battlemountain2/iris; this task does not modify,
+commit or push its source. Its vault/README descriptions are not verified implementation evidence.
+
+Next Hermes work is richer optional hover cards, then search/index controls and coverage,
+transfers/conflicts and per-folder views, followed by document/performance/release verification.
+See docs/1.0-roadmap.md. Current validation is889 regular tests across the serial888-case run and
+isolated known GLib thumbnail case, plus three isolated preview-policy/adapter GTK checks; earlier
+lyrics/tab/player GTK checks remain documented above their historical increments below. Production
+check/build pass, but full formatting/strict-Clippy/CI readiness and live-device audio remain open.
+
+## Large media preview ceiling and refreshed next-up list — 2026-10-19
+
+User supplied75.4MB FLAC and172.4MB MP4 screenshots, both rejected by the default50MB limit.
+Fixed the size-policy mismatch locally; do not increase the user's saved generation limit or push
+without authorization. Existing uncommitted patches and unrelated untracked theme/brand assets stay.
+
+- PreviewPolicy defaults to capped generation. Its explicit for_streaming_preview purpose exempts
+  only Audio/Video detail playback and bounded audio metadata from the file-byte ceiling. Drawer
+  cache admission/completion and provider initial/actual-source/final checks use that detail policy.
+  Thumbnail generation and folder artwork-source checks retain the original ceiling. All format
+  switches, known actual source-size requirement, non-media limits and sandbox decoder budgets stay.
+- Generic MIME/name claims can defer unknown classification until queried source metadata, but
+  neither a media extension nor an audio MIME can bypass a conflicting known image/document limit
+  or disabled format. Size changes between listing and queried source remain checked.
+- Settings explains the generation limit separately from incremental audio/video playback. No
+  preference/tag/media changes, new dependencies, codec workarounds or playback truncation.
+- docs/1.0-roadmap.md now explicitly schedules richer optional hover cards next: cached art first,
+  useful media metadata, stable compact geometry, cancellation and no hover autoplay. Follow with
+  search coverage/index policy, transfers/per-folder views, document and measured release polish.
+  Removed stale bottom-section claims that ratings/collection continuity are absent or saved
+  searches are pre-1.0 requirements. Independent split stays optional; redo/batch naming/gapless later.
+
+Validation artifacts: /tmp/hermes-streaming-previews-path. Two new pure policy cases; three isolated
+GTK cases cover drawer policy, late image/settings rejection and the real adapter using generated
+75.4MB sparse PCM WAV metadata plus a valid172.4MB MP4 with a free box. Correct Audio/StreamingMedia
+responses are verified without constructing/playing a native stream or touching user files/windows.
+This verifies the size gate, not actual decoder compatibility/audible playback of the user's MP4.
+Final normal suite:888 together + the known GLib thumbnail case separately (889 regular),175 optional
+ignored. Production check/build and whitespace checks pass; five old test-only lint expectations
+remain. Hidden test display/tab are cleaned up; a user-controlled reopen is needed for the new build.
+
+## Follow-up: provider outages, compact tab close and audible pause/resume — 2026-10-19
+
+The user reproduced LRCLIB HTTP503 for Beach House while other songs return lyrics, and clarified
+that pause/resume feedback is an audible click/stutter, not visual flicker. This follow-up is local
+and uncommitted, atop the previous lyrics/visualizer batch. Do not push without new authorization.
+Leave the newly present untracked theme/brand assets and old review file untouched.
+
+- Online transport retries only500/502/503/504, with500ms then1500ms cancellable backoff, at most
+  three attempts and a20-second overall request budget. Per-process13-second limit remains capped
+  by remaining time. No retry for404,429, malformed/oversized responses or transport failures.
+  Cancellation prevents the next attempt; failures are not negative-cached. Busy/rate-limit copy
+  explains the provider issue rather than implying absent lyrics. No Beach House match verified.
+- Tab close is a centered24px square instead of a full-height button; explicit pressed state
+  removes native decoration and a smaller keyboard-only focus indicator stays accessible.
+- Ordinary pause now uses the audio pipeline's PAUSED state, retaining negotiated formats and
+  running time instead of dropping to READY and restarting streaming negotiation on every resume.
+  Seek still flushes through READY; Stop still tears down. State-change failures surface as errors.
+  A generated PCM→fakesink regression checks12 pause/resume cycles, exact resumed samples, silence
+  while paused, retained caps and no PAUSED→READY transition. This does NOT prove audible clicks
+  are fully eliminated on the user's output device; a later user-controlled listening check remains.
+
+Validation under /tmp/hermes-feedback-path:886 regular tests pass together, plus the known
+process-global GLib thumbnail test passes separately (887 regular total);173 optional cases ignored.
+Six isolated GTK checks pass: new real tab sizing/hover/pressed/focus/close case, four lyrics/settings
+regressions and filled-button contrast. Production check/build pass cleanly; test compilation retains
+five old unfulfilled lint expectations. No user window, live audio, saved preferences, tags or lyrics
+files touched. No real lyrics request made. Hidden Broadway display/browser are cleaned up.
+
+## Lyrics lookup and smoother immersive modes — 2026-10-19
+
+Backup completed first: four focused commits2b3e988/15db175/f2fcbb6/0db4e86 were pushed to the existing
+feature branch; draftPR https://github.com/battlemountain2/hermes/pull/5 is attached and references
+issue4. Main remains70c44b2; no merge/version/release. This NEW batch below is local/uncommitted;
+the earlier backup approval did not authorize automatic future pushes. Keep the old untracked
+hermes-review-2026-10-15.md untouched. No live Hermes window was restarted/focused/moved/closed.
+
+User redirected the next increment from search to buggy Visualizer→Lyrics switching, stuttery
+Tunnel/Cosmic and missing lyrics. Confirmed automatic online lookup only AFTER opt-in, local first.
+Read-only Mutagen audit of ~/Music:1086 supported readable audio files (994 album tracks,92 samples),
+0 matching .lrc sidecars,0 embedded plain/timed lyric tags,0 unknowns. Excluded80 RX2 files, hidden
+files/symlinks and other apps' caches/nonstandard stores. No media decoded/played, tags/config
+changed or library metadata uploaded. Audit results do not imply online lyric availability.
+
+- Lyrics/Visualizer controls now synchronize mutually exclusive modes; toggling one off leaves
+  artwork. Returning restores retained lyrics. Missing/loading/not-found/instrumental/metadata/
+  network-error states use stable panels and a built flag, avoiding100ms empty-widget reconstruction.
+  NoTrack survives preference toggles. Highlighting changes color, not font dimensions/weight;
+  isolated GTK coverage checks actual allocated bounds as well as label reuse.
+- Deadline-based frame pacing fixes the old about48updates/sec at144Hz. Synthetic60/144/240/1000Hz
+  clocks produce about60updates without catch-up bursts; time-based attack/release smooths32 bands.
+  Ticks stop with existing mapped/playing/motion rules; leaving Visualizer clears retained frames.
+- Visible options Prism/Orbit replace Tunnel/Cosmic while keeping internal enum IDs. Prism is six
+  sparse rectangular depth frames. Orbit has stable orbital stars, short trails and a compact
+  spectrum rather than audio-driven position jumps. Native GTK4.12 nodes, semantic palette,
+  software fallback and bounded geometry remain; no dependency, rawGL or forced production backend.
+- Audio Settings gains online_lyrics, false by default, with weak deduplicated live observers.
+  Only the current track's tagged title/artist/duration can be sent when Lyrics is actually open.
+  No filenames, paths, album metadata, audio or library scan requests. Local .lrc then explicitly
+  named .lyrics.txt win; positive LRCLIB cache precedes network. No audio files/tags are written.
+- services/lyrics/online.rs uses the optional absolute /usr/bin/curl, verified fixed HTTPS endpoint,
+  encoded query values, ignored curlrc/environment/proxies, no redirects, timeouts, cancellation,
+  bounded stdout/stderr readers and child kill/wait cleanup. No Rust dependencies were added.
+  Response matching preserves exact title/version/artist and duration within2seconds. Prefer LRC,
+  fall back to selectable plain text with no invented highlight/seek times. Instrumental/no-match/
+  failure are distinct; success source is attributed LRCLIB. Private validated atomic cache has
+  32 bounded slots and rejects symlinks/hardlinks/unsafe modes/foreign identities/oversize entries.
+- Track/generation/request identity and current mode/opt-in/mapped/stopped guards reject stale
+  successes AND failures. Leaving Lyrics, opting out, unmapping, replacing track or disposal cancel
+  worker/request ownership; late results cannot update the next song or a closed panel. Nothing
+  auto-resumes playback. Lyrics actions never replace the music queue.
+
+Provider contract verified against official LRCLIB server source: album is optional in
+server/src/routes/get_lyrics_by_metadata.rs and conditional in track_repository.rs. No real track
+requests were made; transport/cache/metadata matching use generated offline fixtures. Network is
+still disabled in the user's saved preferences. Enable in Settings→Audio on a later user-controlled
+reopen to try real matches. Coverage is not guaranteed and embedded lyrics playback remains future
+work (the audited library had none); current local sources are the two sidecar formats above.
+
+Validation artifacts live under /tmp/hermes-lyrics-visualizers-path. 881 regular tests pass together
+and the remaining thumbnail cache test passes in a separate exact process (882 total,172 optional
+ignored). The existing process-global GLib main-context ownership race reproduced even serially;
+it is not fixed or hidden as a clean one-process suite/CI run. All12 exact isolated GTK checks pass,
+including4 new opt-in/mode/stale-result/local-first checks and8 existing lifecycle/contrast cases.
+Generated pure service/geometry/smoothing tests are included in the regular suite. User's active
+window/audio/preferences were not exercised. Workers Bohr (canvas/review), Heisenberg (lyrics
+service/review) and Nietzsche (read-only audit) were integrated/reviewed and closed; their two review
+findings (NoTrack preference status and cancel-on-mode-exit) are fixed and covered.
+
+Logs: compile-final.log, unit-final.log, thumbnail-isolated.log, ui-final.log, native-final.log,
+software-final.log, production-check.log, all-targets-check.log and build-final.log. Native profiler
+realizes an explicitly invisible/unmapped private fixture on Wayland; it never presents a window.
+PNG snapshots in shots/ were visually inspected; old internal Tunnel/Cosmic filenames identify
+Prism/Orbit. The Cairo comparator still draws the OLD designs, so don't claim like-for-like speedup
+or onscreenFPS. Search settings/transfer polish remain postponed until this user feedback is handled.
+Final4K medians including readback: Vulkan Prism5.10ms/Orbit5.21ms; explicit Cairo1.27ms/1.01ms.
+GPU readback dominates parts of this synthetic test; never force a backend from these figures.
+Production check/build pass cleanly; all-targets check retains5 existing test-only lint-expectation
+warnings. Scoped formatting and diff-whitespace checks pass. The temporary test display/tab are
+cleaned up before handoff; no live service request or full clean-CI/onscreen-FPS claim is made.
+
 ## Git backup approved — 2026-10-19
 
 The user approved committing/pushing the tested accumulated updates on the existing

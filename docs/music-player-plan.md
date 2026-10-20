@@ -1,5 +1,41 @@
 # Hermes music player and desktop integration plan
 
+## Lyrics and immersive modes — 2026-10-19
+
+Lyrics and Visualizer are now explicit, mutually exclusive modes; toggling either off leaves
+the artwork view. Returning from a visualizer restores retained lyrics instead of an empty stage.
+Missing/loading/not-found/instrumental/error states stay visible without repeatedly rebuilding
+widgets. Active-line highlighting changes color, not font size/weight, avoiding text reflow.
+
+Settings → Audio → Look up missing lyrics online is **off by default**. Once enabled, opening
+Lyrics automatically checks a matching local `.lrc`, then an explicitly named `.lyrics.txt`,
+before using a cached LRCLIB match or requesting the current track. Only tagged title, artist
+and duration are sent; never filenames, paths, album metadata, audio or the full library.
+Leaving Lyrics, changing tracks, opting out, hiding or disposing the view cancels pending work.
+Stale responses cannot replace a newer track or update a closed panel. No file tags are modified.
+
+LRCLIB lookup uses the optional `/usr/bin/curl` program with verified HTTPS, encoded metadata,
+timeouts, cancellation and bounded output. Synced lyrics get highlighting/click-to-seek; plain
+lyrics remain selectable text without invented timestamps. Exact title/artist and close-duration
+matching deliberately reject alternate versions/remixes. Positive matches use a private bounded
+cache; offline/network failures and no match are distinct states. Availability is not guaranteed.
+Transient provider500/502/503/504 responses get at most two retries, with cancellable500ms/1500ms
+backoff inside a20-second total transport budget.404 misses and429 rate limits are not retried;
+outages are explained as service failures rather than missing song lyrics, and never negative-cached.
+Provider contract: [LRCLIB metadata endpoint](https://github.com/tranxuanthang/lrclib/blob/main/server/src/routes/get_lyrics_by_metadata.rs).
+
+Ordinary pause preserves the audio output's prepared pipeline, negotiated format and running time.
+Only seeking resets the output for a flush; stopping still releases it. Generated silent-output
+tests cover repeated pause/resume; audible device-specific click/stutter feedback still needs a
+user listening check rather than an assertion that synthetic tests prove the sound is fixed.
+
+Prism replaces Tunnel's expanding rings with sparse rectangular depth frames; Orbit replaces
+Cosmic's audio-positioned particles with stable orbital stars/trails and a compact spectrum.
+Ribbons remains available. Time-based attack/release smoothing and deadline-based frame pacing
+avoid abrupt band jumps and the old approximately48fps cadence on144Hz displays. Native GTK scene
+nodes retain software fallback, reduced-motion behavior and no idle animation loop. Synthetic
+offscreen results are in performance-baseline.md; they are not an onscreen smoothness guarantee.
+
 ## Implemented collections and playlist editor — 2026-10-11
 
 Albums, Artists, Songs, Favorites and Playlists are now dedicated Music sections. Heart buttons

@@ -57,6 +57,8 @@ Responsive icon tiles with high-performance thumbnail caching.
 - **Live Audio Waveforms**: Real-time waveform visualization in the Music view with a one-click visibility toggle.
 - **Desktop MPRIS v2 Bridge**: Exposes `org.mpris.MediaPlayer2.hermes` for native desktop widgets, lock screens, and hardware media keys (play/pause, skip, seek, volume, and cover art).
 - **Whole-Library Music Search (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd>)**: Instantly search song titles, artists, and albums across your entire music collection with live background metadata indexing.
+- **Local-First Lyrics**: Matching `.lrc` and `.lyrics.txt` files beside a song take priority. Optional automatic LRCLIB lookup is off by default; after opting in, only the current song's tagged title, artist and duration are sent. Synced lyrics support highlighting/seeking; plain lyrics remain selectable without invented timing. Successful matches are cached, temporary service failures get bounded retries, and coverage is not guaranteed. Online lookup requires the optional `/usr/bin/curl` program.
+- **Immersive Modes**: Switch between artwork, lyrics and lightweight native-scene visualizers, with reduced-motion support and no animation work while hidden or paused.
 
 ![Hermes Music Player and Library View](docs/assets/hermes-music.png)
 
@@ -73,6 +75,7 @@ Image/document renderers use a **[Bubblewrap (`bwrap`) sandbox](docs/preview-san
 - **Photo Preview Menus**: Right-click an image in the drawer or fullscreen for file actions and Fullscreen/Fit/100% controls.
 - **Rich Text & Syntax Highlighting**: View source code and formatted text via GtkSourceView 5 with selectable mono fonts.
 - **Format & Speed Audit**: See the [preview audit](docs/preview-format-audit.md) for verified coverage, Dolphin/Strata comparisons, measurements and remaining cold-loading work.
+- **Separate Streaming and Generation Limits**: The configured preview file-size ceiling limits thumbnail generation and image/document previews, not incremental audio/video playback. Format switches and sandbox decoder/resource limits still apply; raising the ceiling is not required to preview a large FLAC, MP4 or MOV.
 
 ### 🔍 Search & Custom Actions
 - **Fuzzy Search (<kbd>Ctrl</kbd>+<kbd>K</kbd>)**: Search Home by default, the current folder (including another drive), or your music library with live results and file-type badges. Exact music filters such as `artist:"Beach House"`, `album:"Depression Cherry"`, and `title:"Space Song"` compose with type, extension, dates, and optional content filters. Result tabs retain relevance order until you choose a sort and keep incomplete-search notices visible alongside matches.
@@ -192,6 +195,22 @@ Run test suites and quality linters:
 ```
 
 ---
+
+## Project Status & Handoffs
+
+Hermes remains pre-1.0. Read the [current roadmap](docs/1.0-roadmap.md) and
+[next-agent handoff](NEXT_AGENT.md) before starting work; repository code and these documents
+are the technical source of truth. [Performance notes](docs/performance-baseline.md) distinguish
+measured results from release targets and real-device checks still needed.
+
+Next priorities are richer optional hover previews, search/index coverage and controls,
+transfer/conflict polish, persistent per-folder views, and release validation. Smart Folders
+are out of pre-1.0 scope; independent split view is optional. Full redo, advanced batch renaming
+and gapless music remain later work.
+
+[Iris](https://github.com/battlemountain2/iris) is the companion email-client project, maintained
+separately. [Design references](docs/assets/README.md) preserve shared visual exploration; they
+do not imply cross-app attachment integration or new production icons are already implemented.
 
 ## Desktop Integration
 
