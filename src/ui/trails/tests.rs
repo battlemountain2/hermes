@@ -25,6 +25,68 @@ fn file_tab_surfaces_keep_square_indicator_corners() {
 }
 
 #[test]
+#[ignore = "Requires isolated GTK display; checks real tab close allocation and interaction states"]
+fn desktop_tab_close_is_compact_centered_and_keyboard_focusable() {
+    use crate::{
+        app::{Browser, Trails},
+        model::{Location, TrailViewState},
+        services::{StoredTrails, TrailStore},
+    };
+    use gtk::prelude::*;
+    use std::{rc::Rc, time::{Duration, Instant}};
+
+    struct MemoryStore;
+    impl TrailStore for MemoryStore {
+        fn load(&self) -> std::io::Result<StoredTrails> { Ok(StoredTrails::default()) }
+        fn save(&self, _: &StoredTrails) -> std::io::Result<()> { Ok(()) }
+    }
+
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let _manager = crate::ui::theme::ThemeManager::shared();
+    let css = gtk::CssProvider::new();
+    css.connect_parsing_error(|_, _, error| panic!("Tab stylesheet: {error}"));
+    css.load_from_string(include_str!("../../style.css"));
+    gtk::style_context_add_provider_for_display(
+        &gtk::gdk::Display::default().unwrap(), &css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let trails = Trails::empty(Rc::new(MemoryStore));
+    trails.create("First", Location::local("/"), TrailViewState::default()).unwrap();
+    trails.create("Second", Location::local("/"), TrailViewState::default()).unwrap();
+    let browser = Browser::new(Rc::new(crate::adapters::RoutedFileSource::new()));
+    let bar = super::TabBar::new(trails.clone(), browser, Rc::new(TrailViewState::default), Rc::new(|_| {}));
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.append(&bar.widget());
+    let window = gtk::Window::builder().default_width(640).default_height(100).child(&content).build();
+    window.present();
+    let tab = bar.rendered.borrow()[0].1.clone();
+    let close = tab.last_child().unwrap().downcast::<gtk::Button>().unwrap();
+    let pump = || {
+        let until = Instant::now() + Duration::from_millis(100);
+        while Instant::now() < until {
+            while gtk::glib::MainContext::default().iteration(false) {}
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    };
+    pump();
+    assert_eq!(close.valign(), gtk::Align::Center);
+    let original = (close.width(), close.height());
+    assert!(close.height() >= 24 && close.height() < tab.height());
+    assert!(close.grab_focus());
+    for state in [gtk::StateFlags::PRELIGHT, gtk::StateFlags::ACTIVE, gtk::StateFlags::FOCUS_VISIBLE] {
+        close.set_state_flags(state, false);
+        pump();
+        assert_eq!((close.width(), close.height()), original);
+        close.unset_state_flags(state);
+    }
+    close.emit_clicked();
+    assert_eq!(trails.all().len(), 1);
+    let remaining = bar.rendered.borrow()[0].1.last_child().unwrap().downcast::<gtk::Button>().unwrap();
+    assert!(!remaining.is_sensitive());
+    window.close();
+}
+
+#[test]
 #[ignore = "Requires isolated GTK display; generated folder/tab reuse and live-change fixture"]
 fn desktop_warm_tab_directory_reuse_and_live_changes() {
     use crate::{

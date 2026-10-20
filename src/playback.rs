@@ -155,17 +155,13 @@ impl Session {
                 if control_stopped.load(Ordering::Acquire) {
                     break;
                 }
-                match command {
-                    Command::Play => {
-                        let _state = control_audio.set_state(gst::State::Playing);
-                    }
-                    Command::Pause => {
-                        let _state = control_audio.set_state(gst::State::Ready);
-                    }
-                    Command::Seek { .. } => {
-                        let _state = control_audio.set_state(gst::State::Ready);
-                    }
-                    Command::Stop => break,
+                if matches!(command, Command::Stop) {
+                    break;
+                }
+                if control_audio.set_state(output_state(&command)).is_err() {
+                    control_updates.lock().unwrap().error =
+                        Some("Audio output could not change playback state".to_owned());
+                    break;
                 }
                 let result = (|| -> io::Result<()> {
                     serde_json::to_writer(&mut input, &command)?;
@@ -332,6 +328,15 @@ impl Session {
         self.volume.wake();
         self.playing.store(false, Ordering::Release);
         let _sent = self.commands.try_send(Command::Stop);
+    }
+}
+
+fn output_state(command: &Command) -> gst::State {
+    match command {
+        Command::Play => gst::State::Playing,
+        Command::Pause => gst::State::Paused,
+        Command::Seek { .. } => gst::State::Ready,
+        Command::Stop => gst::State::Null,
     }
 }
 

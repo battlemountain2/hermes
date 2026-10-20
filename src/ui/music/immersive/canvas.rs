@@ -6,6 +6,10 @@ use super::VisualizerStyle;
 
 const MAX_RIBBON_SEGMENTS: usize = 128;
 const MAX_DIMENSION: f64 = i32::MAX as f64;
+const PRISM_FRAMES: usize = 6;
+const ORBIT_ARC_SEGMENTS: usize = 24;
+const ORBIT_STARS: usize = 12;
+const ORBIT_COLUMNS: usize = 16;
 
 #[cfg(test)]
 mod tests;
@@ -158,8 +162,8 @@ fn render_frame(snapshot: &gtk::Snapshot, width: f64, height: f64, frame: Frame)
     snapshot.push_clip(&graphene::Rect::new(0.0, 0.0, width as f32, height as f32));
     match frame.style {
         VisualizerStyle::Ribbons => ribbons(snapshot, width, height, frame),
-        VisualizerStyle::Tunnel => tunnel(snapshot, width, height, frame),
-        VisualizerStyle::Cosmic => cosmic(snapshot, width, height, frame),
+        VisualizerStyle::Tunnel => prism(snapshot, width, height, frame),
+        VisualizerStyle::Cosmic => orbit(snapshot, width, height, frame),
     }
     snapshot.pop();
 }
@@ -196,57 +200,212 @@ fn ribbons(snapshot: &gtk::Snapshot, width: f64, height: f64, frame: Frame) {
     }
 }
 
-fn tunnel(snapshot: &gtk::Snapshot, width: f64, height: f64, frame: Frame) {
-    let bass = frame.bands[..4]
-        .iter()
-        .map(|value| f64::from(*value))
-        .sum::<f64>()
-        / 4.0;
-    for ring in 0..8 {
-        let progress =
-            (frame.time.rem_euclid(4.0 / 3.0) * 0.75 + ring as f64 / 8.0).rem_euclid(1.0);
-        let radius = progress * progress * width.max(height) * 0.68 + 12.0 * bass;
-        let alpha = (progress * std::f64::consts::PI).sin() * (0.28 + 0.6 * bass);
-        if radius <= 0.0 || alpha <= 0.0 {
-            continue;
-        }
-        let stroke = 1.5 + 3.0 * progress;
-        let outer_radius = radius + stroke / 2.0;
-        let outline = gsk::RoundedRect::from_rect(
-            graphene::Rect::new(
-                (width / 2.0 - outer_radius) as f32,
-                (height / 2.0 - outer_radius) as f32,
-                (outer_radius * 2.0) as f32,
-                (outer_radius * 2.0) as f32,
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Stroke {
+    start: (f64, f64),
+    end: (f64, f64),
+    width: f64,
+    blend: f64,
+    alpha: f64,
+}
+
+impl Stroke {
+    fn append(self, snapshot: &gtk::Snapshot, frame: Frame) {
+        let delta_x = self.end.0 - self.start.0;
+        let delta_y = self.end.1 - self.start.1;
+        snapshot.save();
+        snapshot.translate(&graphene::Point::new(
+            self.start.0 as f32,
+            self.start.1 as f32,
+        ));
+        snapshot.rotate(delta_y.atan2(delta_x).to_degrees() as f32);
+        snapshot.append_color(
+            &frame.color(self.blend, self.alpha),
+            &graphene::Rect::new(
+                (-self.width * 0.5) as f32,
+                (-self.width * 0.5) as f32,
+                (delta_x.hypot(delta_y) + self.width) as f32,
+                self.width as f32,
             ),
-            outer_radius as f32,
         );
-        snapshot.append_border(
-            &outline,
-            &[stroke as f32; 4],
-            &[frame.color(progress, alpha); 4],
-        );
+        snapshot.restore();
     }
 }
 
-fn cosmic(snapshot: &gtk::Snapshot, width: f64, height: f64, frame: Frame) {
-    for particle in 0..32 {
-        let theta =
-            particle as f64 * TAU / 32.0 + phase(frame.time, 0.25 + 0.04 * (particle % 5) as f64);
-        let distance = ((particle * 17) % 100) as f64 / 100.0;
-        let energy = f64::from(frame.bands[particle % 16 + 8]);
-        let radius = distance * width.min(height) * 0.42 + 24.0 + 40.0 * energy;
-        let center_x = width / 2.0 + radius * theta.cos();
-        let center_y = height / 2.0 + radius * theta.sin() * 0.65;
-        let dot_radius = 2.0 + 4.0 * energy;
+fn band_energy(frame: Frame, start: usize, count: usize) -> f64 {
+    frame.bands[start..start + count]
+        .iter()
+        .map(|value| f64::from(*value))
+        .sum::<f64>()
+        / count as f64
+}
+
+fn detail_scale(width: f64, height: f64) -> f64 {
+    (width.min(height) / 720.0).min(2.0)
+}
+
+fn rotate_point(point: (f64, f64), angle: f64, center: (f64, f64)) -> (f64, f64) {
+    let (sine, cosine) = angle.sin_cos();
+    (
+        center.0 + point.0 * cosine - point.1 * sine,
+        center.1 + point.0 * sine + point.1 * cosine,
+    )
+}
+
+fn prism_geometry(width: f64, height: f64, frame: Frame) -> [Stroke; PRISM_FRAMES * 4] {
+    let scale = detail_scale(width, height);
+    let motion = phase(frame.time, 0.12);
+    let center = (
+        width * 0.5 + width.min(height) * 0.012 * motion.sin(),
+        height * 0.5 + width.min(height) * 0.008 * motion.cos(),
+    );
+    let breath = 1.0 + 0.012 * band_energy(frame, 0, 4);
+    std::array::from_fn(|index| {
+        let depth = (index / 4) as f64;
+        let shrink = 0.77_f64.powf(depth) * breath;
+        let half_width = width.min(height * 1.8) * 0.39 * shrink;
+        let half_height = height.min(width / 1.25) * 0.34 * shrink;
+        let angle = 0.025 * motion.sin() + depth * 0.007 * (motion + 0.6).sin();
+        let corners = [
+            (-half_width, -half_height),
+            (half_width, -half_height),
+            (half_width, half_height),
+            (-half_width, half_height),
+        ];
+        Stroke {
+            start: rotate_point(corners[index % 4], angle, center),
+            end: rotate_point(corners[(index + 1) % 4], angle, center),
+            width: scale * (1.7 - depth * 0.13),
+            blend: depth / (PRISM_FRAMES - 1) as f64,
+            alpha: 0.78 - depth * 0.055 + 0.12 * band_energy(frame, index / 4 * 4, 4),
+        }
+    })
+}
+
+fn prism(snapshot: &gtk::Snapshot, width: f64, height: f64, frame: Frame) {
+    for stroke in prism_geometry(width, height, frame) {
+        stroke.append(snapshot, frame);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Star {
+    center: (f64, f64),
+    radius: f64,
+    blend: f64,
+    alpha: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SpectrumColumn {
+    left: f64,
+    top: f64,
+    width: f64,
+    height: f64,
+    blend: f64,
+}
+
+#[derive(Debug, PartialEq)]
+struct OrbitGeometry {
+    arcs: [Stroke; ORBIT_ARC_SEGMENTS * 2],
+    links: [Stroke; ORBIT_STARS / 2],
+    stars: [Star; ORBIT_STARS],
+    columns: [SpectrumColumn; ORBIT_COLUMNS],
+}
+
+fn orbit_point(width: f64, height: f64, track: usize, angle: f64) -> (f64, f64) {
+    let radius = if track == 0 { 1.0 } else { 0.71 };
+    rotate_point(
+        (
+            width.min(height * 1.65) * 0.31 * radius * angle.cos(),
+            height.min(width / 1.25) * 0.20 * radius * angle.sin(),
+        ),
+        if track == 0 { -0.18 } else { 0.26 },
+        (width * 0.5, height * 0.46),
+    )
+}
+
+fn orbit_geometry(width: f64, height: f64, frame: Frame) -> OrbitGeometry {
+    let scale = detail_scale(width, height);
+    let motion = phase(frame.time, 0.025);
+    let stars: [Star; ORBIT_STARS] = std::array::from_fn(|index| {
+        let seed = ((index * 73 + 19) % 101) as f64 / 101.0;
+        let angle = index as f64 * 2.399963229728653 + seed * 0.2 + motion;
+        let energy = band_energy(frame, index * 2 + 4, 2);
+        Star {
+            center: orbit_point(width, height, index % 2, angle),
+            radius: scale * (1.8 + seed * 1.2 + energy * 0.8),
+            blend: seed,
+            alpha: 0.72 + energy * 0.23,
+        }
+    });
+    OrbitGeometry {
+        arcs: std::array::from_fn(|index| {
+            let track = index / ORBIT_ARC_SEGMENTS;
+            let segment = index % ORBIT_ARC_SEGMENTS;
+            let start = motion + track as f64 * 2.3;
+            let angle = TAU * 0.75 / ORBIT_ARC_SEGMENTS as f64;
+            Stroke {
+                start: orbit_point(width, height, track, start + segment as f64 * angle),
+                end: orbit_point(width, height, track, start + (segment + 1) as f64 * angle),
+                width: scale * 0.9,
+                blend: track as f64,
+                alpha: 0.38,
+            }
+        }),
+        links: std::array::from_fn(|index| {
+            let star = index * 2;
+            let seed = ((star * 73 + 19) % 101) as f64 / 101.0;
+            let angle = star as f64 * 2.399963229728653 + seed * 0.2 + motion;
+            Stroke {
+                start: stars[star].center,
+                end: orbit_point(width, height, star % 2, angle - 0.18),
+                width: scale * 0.7,
+                blend: index as f64 / (ORBIT_STARS / 2 - 1) as f64,
+                alpha: 0.30,
+            }
+        }),
+        stars,
+        columns: std::array::from_fn(|index| {
+            let spacing = width.min(height * 1.4) * 0.027;
+            let energy = band_energy(frame, index * 2, 2);
+            let column_height = scale * 2.0 + height * 0.065 * energy;
+            SpectrumColumn {
+                left: width * 0.5 + (index as f64 - 8.0) * spacing + spacing * 0.3,
+                top: height * 0.77 - column_height,
+                width: spacing * 0.4,
+                height: column_height,
+                blend: index as f64 / (ORBIT_COLUMNS - 1) as f64,
+            }
+        }),
+    }
+}
+
+fn orbit(snapshot: &gtk::Snapshot, width: f64, height: f64, frame: Frame) {
+    let geometry = orbit_geometry(width, height, frame);
+    for stroke in geometry.arcs.into_iter().chain(geometry.links) {
+        stroke.append(snapshot, frame);
+    }
+    for star in geometry.stars {
         let bounds = graphene::Rect::new(
-            (center_x - dot_radius) as f32,
-            (center_y - dot_radius) as f32,
-            (dot_radius * 2.0) as f32,
-            (dot_radius * 2.0) as f32,
+            (star.center.0 - star.radius) as f32,
+            (star.center.1 - star.radius) as f32,
+            (star.radius * 2.0) as f32,
+            (star.radius * 2.0) as f32,
         );
-        snapshot.push_rounded_clip(&gsk::RoundedRect::from_rect(bounds, dot_radius as f32));
-        snapshot.append_color(&frame.color(0.0, 0.35 + 0.65 * energy), &bounds);
+        snapshot.push_rounded_clip(&gsk::RoundedRect::from_rect(bounds, star.radius as f32));
+        snapshot.append_color(&frame.color(star.blend, star.alpha), &bounds);
         snapshot.pop();
+    }
+    for column in geometry.columns {
+        snapshot.append_color(
+            &frame.color(column.blend, 0.82),
+            &graphene::Rect::new(
+                column.left as f32,
+                column.top as f32,
+                column.width as f32,
+                column.height as f32,
+            ),
+        );
     }
 }

@@ -748,8 +748,8 @@ fn previews_page(browser: &BrowserView, manager: Rc<ThemeManager>) -> gtk::Widge
 
     let max_mb = manager.max_preview_size_mb();
     let (max_size_row, max_size_spin) = settings_spin(
-        "Maximum preview file size (MB)",
-        "Do not generate rich previews or decode media for files exceeding this limit (1-500 MB).",
+        "Generated preview file limit (MB)",
+        "Limit generated thumbnails and image/document previews (1-500 MB). Audio/video playback streams separately within decoder safety limits.",
         f64::from(max_mb),
         1.0,
         500.0,
@@ -929,14 +929,29 @@ fn audio_page(manager: Rc<ThemeManager>) -> gtk::Widget {
         &decay_choices,
         selected_decay_idx,
     );
+    let manager_for_decay = manager.clone();
     decay.connect_selected_notify(move |choice| match choice.selected() {
-        0 => manager.set_audio_spectrum_decay("studio"),
-        1 => manager.set_audio_spectrum_decay("snappy"),
-        2 => manager.set_audio_spectrum_decay("smooth"),
+        0 => manager_for_decay.set_audio_spectrum_decay("studio"),
+        1 => manager_for_decay.set_audio_spectrum_decay("snappy"),
+        2 => manager_for_decay.set_audio_spectrum_decay("smooth"),
         _ => {}
     });
     card2.append(&decay_row);
     content.append(&card2);
+
+    append_heading(&content, "LYRICS");
+    let lyrics_card = settings_card();
+    let lyrics_manager = manager.clone();
+    let (lyrics_row, lyrics_toggle) = settings_option(
+        "Look up missing lyrics online",
+        "Opt in to LRCLIB while the Lyrics view is open. Matching local .lrc or .lyrics.txt files take priority. Only the current song's title, artist and duration are sent; matches are cached, and your music files are never changed. Requires curl.",
+        lyrics_manager.online_lyrics(),
+    );
+    lyrics_toggle.connect_active_notify(move |toggle| {
+        lyrics_manager.set_online_lyrics(toggle.is_active());
+    });
+    lyrics_card.append(&lyrics_row);
+    content.append(&lyrics_card);
 
     append_heading(&content, "DSP PIPELINE TELEMETRY");
     let telemetry_card = settings_card();

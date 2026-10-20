@@ -308,6 +308,53 @@ fn desktop_preview_metadata_reformats_without_reloading_and_clears_recycled_valu
 }
 
 #[test]
+#[ignore = "Requires isolated GTK display and private preferences; no decoder or audio output"]
+fn desktop_large_streaming_previews_reach_provider_without_lifting_image_limits() {
+    use crate::{
+        model::{EntryKind, FileEntry, FileEntryInner, Location, MetadataValue},
+        services::{LoadHandle, PreviewProvider, PreviewRequest},
+    };
+    use std::{cell::Cell, rc::Rc};
+    struct Pending(Rc<Cell<usize>>);
+    impl PreviewProvider for Pending {
+        fn load(&self, request: PreviewRequest, emit: Rc<dyn Fn(crate::services::PreviewEvent)>) -> LoadHandle {
+            if let Err(message) = crate::adapters::LocalPreviewProvider::check_policy(&request.entry, None) {
+                emit(crate::services::PreviewEvent::Failed {
+                    request_id: request.id, entry: request.entry, message,
+                });
+                return LoadHandle::new(|| {});
+            }
+            self.0.set(self.0.get() + 1);
+            LoadHandle::new(|| {})
+        }
+    }
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let manager = crate::ui::theme::ThemeManager::shared();
+    manager.set_max_preview_size_mb(50);
+    manager.set_preview_audio(true);
+    manager.set_preview_videos(true);
+    let loads = Rc::new(Cell::new(0));
+    let drawer = super::PreviewDrawer::new(Rc::new(Pending(loads.clone())));
+    let entry = |name: &str, size| FileEntry(Rc::new(FileEntryInner {
+        music_tags: None,
+        location: Location::local(format!("/generated-large-preview/{name}")),
+        native_name: name.into(), display_name: name.into(), kind: EntryKind::File,
+        size: MetadataValue::Known(size), modified_unix_seconds: MetadataValue::Unknown,
+    }));
+    drawer.show(entry("song.flac", 75_400_000));
+    assert_eq!(loads.get(), 1);
+    drawer.show(entry("clip.mp4", 172_400_000));
+    assert_eq!(loads.get(), 2);
+    drawer.show(entry("photo.png", 75_400_000));
+    assert_eq!(loads.get(), 2);
+    manager.set_preview_audio(false);
+    drawer.show(entry("disabled.flac", 75_400_000));
+    assert_eq!(loads.get(), 2);
+    drawer.close();
+}
+
+#[test]
 #[ignore = "Requires an isolated GTK display and private preferences; validates late preview policy changes"]
 fn desktop_completed_previews_recheck_format_and_size_settings_before_rendering() {
     use gtk::prelude::*;

@@ -321,7 +321,7 @@ impl TabBar {
             crate::assets::icons::X,
             14,
         )));
-        close.set_valign(gtk::Align::Fill);
+        close.set_valign(gtk::Align::Center);
         close.add_css_class("file-tab-close");
         close.set_sensitive(count > 1);
         let close_id = tab.id.clone();

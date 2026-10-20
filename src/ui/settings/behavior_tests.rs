@@ -1,6 +1,49 @@
 use super::*;
 use std::cell::Cell;
 
+#[test]
+#[ignore = "Private GTK/preferences; verifies explicit opt-in without any network or playback"]
+fn desktop_online_lyrics_requires_explicit_opt_in_and_weakly_notifies() {
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let manager = ThemeManager::shared();
+    assert!(!manager.online_lyrics());
+    let page = audio_page(manager.clone());
+    let toggle = option_control(&page, "Look up missing lyrics online")
+        .unwrap()
+        .downcast::<gtk::Switch>()
+        .unwrap();
+    assert!(!toggle.is_active());
+    let calls = Rc::new(Cell::new(0));
+    let count = calls.clone();
+    let callback: Rc<dyn Fn()> = Rc::new(move || count.set(count.get() + 1));
+    manager.observe_online_lyrics(&callback);
+    manager.observe_online_lyrics(&callback);
+    toggle.set_active(true);
+    assert!(manager.online_lyrics());
+    assert_eq!(calls.get(), 1);
+    manager.set_online_lyrics(true);
+    assert_eq!(calls.get(), 1);
+    let saved: toml::Value = toml::from_str(
+        &std::fs::read_to_string(gtk::glib::user_config_dir().join("strata/settings.toml"))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved["online_lyrics"].as_bool(), Some(true));
+    let reopened = audio_page(manager.clone());
+    assert!(
+        option_control(&reopened, "Look up missing lyrics online")
+            .unwrap()
+            .downcast::<gtk::Switch>()
+            .unwrap()
+            .is_active()
+    );
+    drop(callback);
+    toggle.set_active(false);
+    assert!(!manager.online_lyrics());
+    assert_eq!(calls.get(), 1);
+}
+
 fn option_control(widget: &gtk::Widget, title: &str) -> Option<gtk::Widget> {
     if widget
         .first_child()

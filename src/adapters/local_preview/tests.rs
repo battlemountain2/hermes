@@ -10,6 +10,7 @@ mod generated_probe;
 fn policy() -> super::PreviewPolicy {
     super::PreviewPolicy {
         max_bytes: 1_000_000,
+        streaming_media: false,
         audio: true,
         images: true,
         videos: true,
@@ -29,6 +30,117 @@ fn entry(name: &str, size: crate::model::MetadataValue<u64>) -> crate::model::Fi
         size,
         modified_unix_seconds: crate::model::MetadataValue::Unknown,
     }))
+}
+
+#[test]
+fn streaming_previews_allow_large_media_but_keep_thumbnail_and_document_limits() {
+    let details = policy().for_streaming_preview();
+    for (name, mime) in [("track.flac", "audio/flac"), ("clip.mp4", "video/mp4"), ("clip.mov", "video/quicktime")] {
+        let large = entry(name, crate::model::MetadataValue::Known(172_400_000));
+        assert!(details.check_entry(&large, None).is_ok());
+        assert!(details.check_source(&large, mime, Some(172_400_000)).is_ok());
+        assert!(details.check_source(&large, "application/octet-stream", Some(172_400_000)).is_ok());
+        assert!(policy().check_source(&large, mime, Some(172_400_000)).is_err());
+        assert!(details.check_source(&large, mime, None).is_err());
+    }
+    for (name, mime) in [("photo.jpg", "image/jpeg"), ("paper.pdf", "application/pdf"), ("data.bin", "application/octet-stream")] {
+        let large = entry(name, crate::model::MetadataValue::Known(75_400_000));
+        assert!(details.check_source(&large, mime, Some(75_400_000)).is_err());
+    }
+}
+
+#[test]
+fn streaming_previews_preserve_format_switches_and_validate_detected_types() {
+    use crate::model::MetadataValue;
+    let details = policy().for_streaming_preview();
+    let large_audio = entry("track.flac", MetadataValue::Known(75_400_000));
+    let large_video = entry("clip.mp4", MetadataValue::Known(172_400_000));
+    let no_audio = super::PreviewPolicy { audio: false, ..details };
+    let no_video = super::PreviewPolicy { videos: false, ..details };
+    assert!(no_audio.check_entry(&large_audio, None).is_err());
+    assert!(no_video.check_source(&large_video, "video/mp4", Some(172_400_000)).is_err());
+    let unnamed = entry("media.bin", MetadataValue::Known(75_400_000));
+    assert!(details.check_entry(&unnamed, None).is_ok());
+    assert!(details.check_source(&unnamed, "audio/flac", Some(75_400_000)).is_ok());
+    assert!(no_audio.check_source(&unnamed, "audio/flac", Some(75_400_000)).is_err());
+    assert!(details.check_source(&unnamed, "application/octet-stream", Some(75_400_000)).is_err());
+    assert!(details.check_source(&large_audio, "image/png", Some(75_400_000)).is_err());
+    let disguised_image = entry("photo.png", MetadataValue::Known(75_400_000));
+    assert!(details.check_source(&disguised_image, "audio/flac", Some(75_400_000)).is_err());
+    let stale = entry("track.flac", MetadataValue::Known(1));
+    assert!(details.check_source(&stale, "audio/flac", Some(75_400_000)).is_ok());
+}
+
+#[test]
+#[ignore = "Requires isolated GTK/private preferences and built sandbox; generated sparse media, no playback"]
+fn desktop_large_sources_reach_metadata_and_streaming_routes() {
+    use std::{cell::RefCell, io::Write, rc::Rc, time::{Duration, Instant}};
+    use crate::{model::{FileEntry, FileEntryInner, MetadataValue}, services::{PreviewContent, PreviewEvent, PreviewProvider, PreviewRequest, PreviewRequestId}};
+    use gtk::glib;
+
+    gtk::init().unwrap();
+    assert_eq!(super::PreviewPolicy::current().max_bytes, 50_000_000);
+    let root = std::env::temp_dir().join(format!("hermes-large-streams-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let wav = root.join("large.wav");
+    let data_bytes = 75_400_000_u32 - 44;
+    let mut header = Vec::new();
+    header.extend_from_slice(b"RIFF");
+    header.extend_from_slice(&(data_bytes + 36).to_le_bytes());
+    header.extend_from_slice(b"WAVEfmt ");
+    header.extend_from_slice(&16_u32.to_le_bytes());
+    header.extend_from_slice(&1_u16.to_le_bytes());
+    header.extend_from_slice(&2_u16.to_le_bytes());
+    header.extend_from_slice(&48_000_u32.to_le_bytes());
+    header.extend_from_slice(&192_000_u32.to_le_bytes());
+    header.extend_from_slice(&4_u16.to_le_bytes());
+    header.extend_from_slice(&16_u16.to_le_bytes());
+    header.extend_from_slice(b"data");
+    header.extend_from_slice(&data_bytes.to_le_bytes());
+    let mut file = fs::File::create(&wav).unwrap();
+    file.write_all(&header).unwrap();
+    file.set_len(75_400_000).unwrap();
+    drop(file);
+    let mp4 = root.join("large.mp4");
+    assert!(std::process::Command::new("ffmpeg").args([
+        "-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "color=c=black:s=32x32:r=1",
+        "-t", "1", "-an", "-c:v", "mpeg4", "-threads", "1",
+    ]).arg(&mp4).status().unwrap().success());
+    let mut file = fs::OpenOptions::new().append(true).open(&mp4).unwrap();
+    let original_size = file.metadata().unwrap().len();
+    file.write_all(&(172_400_000_u32 - original_size as u32).to_be_bytes()).unwrap();
+    file.write_all(b"free").unwrap();
+    file.set_len(172_400_000).unwrap();
+    drop(file);
+    let context = glib::MainContext::default();
+    for path in [&wav, &mp4] {
+        let captured = Rc::new(RefCell::new(None));
+        let emitted = captured.clone();
+        let request_entry = FileEntry(Rc::new(FileEntryInner {
+            location: crate::model::Location::local(path),
+            native_name: path.file_name().unwrap().into(), display_name: path.file_name().unwrap().to_string_lossy().into_owned(),
+            kind: crate::model::EntryKind::File, size: MetadataValue::Known(path.metadata().unwrap().len()),
+            modified_unix_seconds: MetadataValue::Unknown, music_tags: None,
+        }));
+        let handle = super::LocalPreviewProvider.load(PreviewRequest {
+            id: PreviewRequestId(1), entry: request_entry, text_byte_limit: 1024, pdf_page: 0,
+        }, Rc::new(move |event| { emitted.replace(Some(event)); }));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while captured.borrow().is_none() && Instant::now() < deadline {
+            while context.iteration(false) {}
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        match captured.borrow_mut().take().expect("Adapter completed") {
+            PreviewEvent::Ready(preview) => match preview.content {
+                PreviewContent::Audio { metadata } if path == &wav => assert!(metadata.properties.duration_seconds.unwrap() > 300.0),
+                PreviewContent::StreamingMedia { path: returned } if path == &mp4 => assert_eq!(returned, *path),
+                _ => panic!("Incorrect large-media route"),
+            },
+            PreviewEvent::Failed { message, .. } => panic!("Large-media adapter failed: {message}"),
+        }
+        drop(handle);
+    }
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

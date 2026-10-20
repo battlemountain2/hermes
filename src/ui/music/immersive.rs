@@ -13,7 +13,7 @@ use crate::{
     assets::{self, icons},
     music::Track,
     sandbox::{Cancellation, ParseOperation},
-    services::lyrics::{find_lyrics_for_audio_file, Lyrics},
+    services::lyrics::{Lyrics, find_lyrics_for_audio_file, online},
     ui::{
         music::{controller::Controller, time_label},
         theme::ThemeManager,
@@ -69,29 +69,23 @@ fn read_track_assets(path: &Path, cancellation: &Cancellation) -> TrackAssets {
     if cancellation.is_cancelled() {
         return result;
     }
-    let folder_art = path.parent().and_then(crate::ui::thumbnail::folder_album_art);
+    let folder_art = path
+        .parent()
+        .and_then(crate::ui::thumbnail::folder_album_art);
     if cancellation.is_cancelled() {
         return result;
     }
     if let Some((cover, ParseOperation::ThumbnailImage)) = folder_art {
-        result.artwork = crate::sandbox::parse(
-            &cover,
-            ParseOperation::ThumbnailImage,
-            1024,
-            cancellation,
-        )
-        .ok()
-        .map(|output| output.data);
+        result.artwork =
+            crate::sandbox::parse(&cover, ParseOperation::ThumbnailImage, 1024, cancellation)
+                .ok()
+                .map(|output| output.data);
     }
     if result.artwork.is_none() && !cancellation.is_cancelled() {
-        result.artwork = crate::sandbox::parse(
-            path,
-            ParseOperation::ThumbnailVideo,
-            512,
-            cancellation,
-        )
-        .ok()
-        .map(|output| output.data);
+        result.artwork =
+            crate::sandbox::parse(path, ParseOperation::ThumbnailVideo, 512, cancellation)
+                .ok()
+                .map(|output| output.data);
     }
     result
 }
@@ -106,12 +100,62 @@ fn needs_visualizer_frames(
     mapped && !stopped && active && playing && motion
 }
 
-fn visualizer_frame_delta(previous: Option<i64>, now: i64) -> Option<f64> {
+fn visualizer_frame_delta(
+    previous: Option<i64>,
+    deadline: Option<i64>,
+    now: i64,
+) -> Option<(f64, i64)> {
+    const INTERVAL: i64 = 1_000_000 / 60;
     let Some(previous) = previous else {
-        return Some(0.0);
+        return Some((0.0, now.saturating_add(INTERVAL)));
     };
+    let deadline = deadline.unwrap_or_else(|| previous.saturating_add(INTERVAL));
     let elapsed = now.saturating_sub(previous);
-    (elapsed >= 1_000_000 / 60).then_some(elapsed.min(100_000) as f64 / 1_000_000.0)
+    if now < deadline || elapsed <= 0 {
+        return None;
+    }
+    let intervals = now.saturating_sub(deadline) / INTERVAL + 1;
+    Some((
+        elapsed.min(100_000) as f64 / 1_000_000.0,
+        deadline.saturating_add(intervals.saturating_mul(INTERVAL)),
+    ))
+}
+
+fn smooth_spectrum(previous: [f32; 32], target: [f32; 32], seconds: f64) -> [f32; 32] {
+    let seconds = if seconds.is_finite() {
+        seconds.clamp(0.0, 0.1)
+    } else {
+        0.0
+    };
+    let attack = (1.0 - (-seconds / 0.045).exp()) as f32;
+    let release = (1.0 - (-seconds / 0.18).exp()) as f32;
+    std::array::from_fn(|index| {
+        let clean = |value: f32| {
+            if value.is_finite() {
+                value.clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+        };
+        let current = clean(previous[index]);
+        let target = clean(target[index]);
+        let factor = if target > current { attack } else { release };
+        current + (target - current) * factor
+    })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum LyricsStatus {
+    NoTrack,
+    LoadingLocal,
+    LocalMissing,
+    LoadingOnline,
+    OnlineMissing,
+    Instrumental,
+    MissingMetadata,
+    Failed(String),
+    Local,
+    Online,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -131,6 +175,8 @@ struct ImmersiveState {
     overlay: glib::WeakRef<gtk::Overlay>,
     controller: Rc<Controller>,
     _observer: RefCell<Option<Rc<dyn Fn()>>>,
+    lyrics_observer: RefCell<Option<Rc<dyn Fn()>>>,
+    mode_syncing: Cell<bool>,
     on_open_library: Rc<dyn Fn()>,
     ambient_aura: gtk::DrawingArea,
     palette: Cell<((f64, f64, f64), (f64, f64, f64))>,
@@ -145,6 +191,11 @@ struct ImmersiveState {
     stopped: Cell<bool>,
     asset_request: RefCell<Option<AssetRequest>>,
     asset_task: RefCell<Option<glib::JoinHandle<()>>>,
+    lyrics_request: RefCell<Option<AssetRequest>>,
+    lyrics_task: RefCell<Option<glib::JoinHandle<()>>>,
+    lyrics_attempted: Cell<bool>,
+    lyrics_status: RefCell<LyricsStatus>,
+    lyrics_built: Cell<bool>,
     tick: RefCell<Option<gtk::TickCallbackId>>,
     current_lyrics: RefCell<Option<Lyrics>>,
     active_lyric_index: Cell<Option<usize>>,
@@ -184,6 +235,7 @@ struct ImmersiveState {
     floating_time: gtk::Label,
     vis_t: Cell<f64>,
     last_frame_us: Cell<Option<i64>>,
+    next_frame_us: Cell<Option<i64>>,
     playing_icon: Cell<bool>,
     muted_icon: Cell<bool>,
     repeat_icon: Cell<Option<crate::music::Repeat>>,
@@ -272,11 +324,11 @@ impl ImmersiveView {
         opt_ribbons.add_css_class("immersive-style-opt");
         opt_ribbons.set_active(true);
 
-        let opt_tunnel = gtk::ToggleButton::with_label("Tunnel");
+        let opt_tunnel = gtk::ToggleButton::with_label("Prism");
         opt_tunnel.add_css_class("immersive-style-opt");
         opt_tunnel.set_group(Some(&opt_ribbons));
 
-        let opt_cosmic = gtk::ToggleButton::with_label("Cosmic");
+        let opt_cosmic = gtk::ToggleButton::with_label("Orbit");
         opt_cosmic.add_css_class("immersive-style-opt");
         opt_cosmic.set_group(Some(&opt_ribbons));
 
@@ -498,6 +550,8 @@ impl ImmersiveView {
             overlay: overlay.downgrade(),
             controller: controller.clone(),
             _observer: RefCell::new(None),
+            lyrics_observer: RefCell::new(None),
+            mode_syncing: Cell::new(false),
             on_open_library: on_open_library.clone(),
             ambient_aura: ambient_aura.clone(),
             palette: Cell::new(current_theme_palette()),
@@ -512,6 +566,11 @@ impl ImmersiveView {
             stopped: Cell::new(false),
             asset_request: RefCell::new(None),
             asset_task: RefCell::new(None),
+            lyrics_request: RefCell::new(None),
+            lyrics_task: RefCell::new(None),
+            lyrics_attempted: Cell::new(false),
+            lyrics_status: RefCell::new(LyricsStatus::LoadingLocal),
+            lyrics_built: Cell::new(false),
             tick: RefCell::new(None),
             current_lyrics: RefCell::new(None),
             active_lyric_index: Cell::new(None),
@@ -551,6 +610,7 @@ impl ImmersiveView {
             floating_time,
             vis_t: Cell::new(0.0),
             last_frame_us: Cell::new(None),
+            next_frame_us: Cell::new(None),
             playing_icon: Cell::new(false),
             muted_icon: Cell::new(false),
             repeat_icon: Cell::new(None),
@@ -590,22 +650,45 @@ impl ImmersiveView {
 
         let lyrics_state = Rc::downgrade(&state);
         state.lyrics_btn.connect_toggled(move |btn| {
-            if let Some(state) = lyrics_state.upgrade() {
-                state.lyrics_active.set(btn.is_active());
-                if state.is_mapped() && !state.stopped.get() {
-                    state.update_stage_layout();
-                }
+            if let Some(state) = lyrics_state.upgrade()
+                && !state.mode_syncing.get()
+            {
+                state.set_mode(btn.is_active(), false);
             }
         });
 
         let vis_state = Rc::downgrade(&state);
         state.visualizer_btn.connect_toggled(move |btn| {
-            if let Some(state) = vis_state.upgrade() {
-                let active = btn.is_active();
-                state.visualizer_active.set(active);
+            if let Some(state) = vis_state.upgrade()
+                && !state.mode_syncing.get()
+            {
+                state.set_mode(false, btn.is_active());
+            }
+        });
+
+        let lyrics_state = Rc::downgrade(&state);
+        let lyrics_observer: Rc<dyn Fn()> = Rc::new(move || {
+            if let Some(state) = lyrics_state.upgrade()
+                && !state.stopped.get()
+            {
+                state.cancel_online_lyrics();
+                state.lyrics_attempted.set(false);
+                if state.current_lyrics.borrow().is_none() && state.asset_request.borrow().is_none()
+                {
+                    state
+                        .lyrics_status
+                        .replace(if state.current_track.borrow().is_some() {
+                            LyricsStatus::LocalMissing
+                        } else {
+                            LyricsStatus::NoTrack
+                        });
+                    state.rebuild_lyrics_ui();
+                }
                 state.sync();
             }
         });
+        ThemeManager::shared().observe_online_lyrics(&lyrics_observer);
+        state.lyrics_observer.replace(Some(lyrics_observer));
 
         let style_state = Rc::downgrade(&state);
         state.opt_ribbons.connect_toggled(move |btn| {
@@ -765,8 +848,25 @@ impl Drop for ImmersiveView {
 }
 
 impl ImmersiveState {
+    fn set_mode(self: &Rc<Self>, lyrics: bool, visualizer: bool) {
+        if self.stopped.get() || self.mode_syncing.replace(true) {
+            return;
+        }
+        if !lyrics {
+            self.cancel_online_lyrics();
+        }
+        self.lyrics_active.set(lyrics);
+        self.visualizer_active.set(visualizer);
+        self.lyrics_btn.set_active(lyrics);
+        self.visualizer_btn.set_active(visualizer);
+        self.mode_syncing.set(false);
+        self.sync();
+    }
+
     fn is_mapped(&self) -> bool {
-        self.overlay.upgrade().is_some_and(|overlay| overlay.is_mapped())
+        self.overlay
+            .upgrade()
+            .is_some_and(|overlay| overlay.is_mapped())
     }
 
     fn cancel_request(&self) {
@@ -776,21 +876,36 @@ impl ImmersiveState {
         }
     }
 
+    fn cancel_online_lyrics(&self) {
+        self.lyrics_request.borrow_mut().take();
+        if let Some(task) = self.lyrics_task.borrow_mut().take() {
+            task.abort();
+        }
+        if *self.lyrics_status.borrow() == LyricsStatus::LoadingOnline {
+            self.lyrics_status.replace(LyricsStatus::LocalMissing);
+            self.lyrics_attempted.set(false);
+        }
+    }
+
     fn cancel_tick(&self) {
         if let Some(tick) = self.tick.borrow_mut().take() {
             tick.remove();
         }
         self.last_frame_us.set(None);
+        self.next_frame_us.set(None);
     }
 
     fn suspend(&self) {
         self.cancel_request();
+        self.cancel_online_lyrics();
         self.cancel_tick();
         self.track_dirty.set(true);
         self.current_lyrics.replace(None);
-        self.visualizer_bands.set([0.0; crate::playback::SPECTRUM_BANDS]);
+        self.visualizer_bands
+            .set([0.0; crate::playback::SPECTRUM_BANDS]);
         self.visualizer_canvas.clear();
-        self.art_picture.set_paintable(Option::<&gdk::Paintable>::None);
+        self.art_picture
+            .set_paintable(Option::<&gdk::Paintable>::None);
         self.art_stack.set_visible_child_name("fallback");
         self.clear_lyrics_ui();
     }
@@ -799,6 +914,7 @@ impl ImmersiveState {
         if !self.stopped.replace(true) {
             self.suspend();
             self._observer.borrow_mut().take();
+            self.lyrics_observer.borrow_mut().take();
         }
     }
 
@@ -824,6 +940,7 @@ impl ImmersiveState {
             return;
         };
         self.last_frame_us.set(None);
+        self.next_frame_us.set(None);
         let weak = Rc::downgrade(self);
         let tick = overlay.add_tick_callback(move |_, clock| {
             let Some(state) = weak.upgrade() else {
@@ -832,15 +949,23 @@ impl ImmersiveState {
             if !state.should_animate() {
                 state.tick.borrow_mut().take();
                 state.last_frame_us.set(None);
+                state.next_frame_us.set(None);
                 return glib::ControlFlow::Break;
             }
             let now = clock.frame_time();
-            let Some(delta) = visualizer_frame_delta(state.last_frame_us.get(), now) else {
+            let Some((delta, next)) =
+                visualizer_frame_delta(state.last_frame_us.get(), state.next_frame_us.get(), now)
+            else {
                 return glib::ControlFlow::Continue;
             };
             state.last_frame_us.set(Some(now));
+            state.next_frame_us.set(Some(next));
             state.vis_t.set(state.vis_t.get() + delta);
-            state.visualizer_bands.set(state.controller.spectrum_bands());
+            state.visualizer_bands.set(smooth_spectrum(
+                state.visualizer_bands.get(),
+                state.controller.spectrum_bands(),
+                delta,
+            ));
             state.redraw_visualizer();
             glib::ControlFlow::Continue
         });
@@ -870,16 +995,20 @@ impl ImmersiveState {
             self.ambient_aura.queue_draw();
             self.redraw_visualizer();
         }
-        self.art_stack.set_transition_duration(if crate::ui::motion::animations_enabled() {
-            200
-        } else {
-            0
-        });
+        self.art_stack
+            .set_transition_duration(if crate::ui::motion::animations_enabled() {
+                200
+            } else {
+                0
+            });
         let active = self.visualizer_active.get();
         self.visualizer_canvas.set_visible(active);
         self.style_selector.set_visible(active);
         self.stage_box.set_visible(!active);
         self.floating_dock.set_visible(active);
+        if !active {
+            self.visualizer_canvas.clear();
+        }
         let track = self.controller.current_track();
         let generation = self.controller.generation.get();
         if self.track_dirty.replace(false)
@@ -887,13 +1016,19 @@ impl ImmersiveState {
             || self.current_generation.get() != generation
         {
             self.cancel_request();
+            self.cancel_online_lyrics();
+            self.lyrics_attempted.set(false);
+            self.lyrics_status.replace(LyricsStatus::LoadingLocal);
+            self.visualizer_bands
+                .set([0.0; crate::playback::SPECTRUM_BANDS]);
             self.current_generation.set(generation);
             self.current_track.replace(track.clone());
             self.last_second.set(-1);
             self.last_duration.set(-1);
             self.current_lyrics.replace(None);
             self.rebuild_lyrics_ui();
-            self.art_picture.set_paintable(Option::<&gdk::Paintable>::None);
+            self.art_picture
+                .set_paintable(Option::<&gdk::Paintable>::None);
             self.art_stack.set_visible_child_name("fallback");
             if let Some(ref track) = track {
                 self.title_label.set_text(&track.title());
@@ -903,6 +1038,8 @@ impl ImmersiveState {
                 self.floating_artist.set_text(&track.artist());
                 self.load_track_assets(track.clone(), generation);
             } else {
+                self.lyrics_status.replace(LyricsStatus::NoTrack);
+                self.rebuild_lyrics_ui();
                 self.title_label.set_text("Nothing playing");
                 self.artist_label.set_text("Choose a track in Music");
                 self.floating_title.set_text("");
@@ -910,6 +1047,7 @@ impl ImmersiveState {
             }
         }
         self.update_stage_layout();
+        self.maybe_lookup_lyrics();
 
         self.syncing.set(true);
         self.volume_scale.set_value(self.controller.volume());
@@ -921,8 +1059,10 @@ impl ImmersiveState {
         let playing = self.controller.status() == super::controller::PlaybackStatus::Playing;
         if self.playing_icon.replace(playing) != playing {
             let icon = if playing { icons::PAUSE } else { icons::PLAY };
-            self.play_button.set_child(Some(&assets::on_accent_icon(icon, 20)));
-            self.floating_play.set_child(Some(&assets::on_accent_icon(icon, 16)));
+            self.play_button
+                .set_child(Some(&assets::on_accent_icon(icon, 20)));
+            self.floating_play
+                .set_child(Some(&assets::on_accent_icon(icon, 16)));
         }
 
         let muted = self
@@ -931,8 +1071,10 @@ impl ImmersiveState {
             .is_some_and(|stream| stream.is_muted());
         if self.muted_icon.replace(muted) != muted {
             let icon = if muted { icons::MUTED } else { icons::VOLUME };
-            self.speaker_button.set_child(Some(&assets::primary_icon(icon, 16)));
-            self.floating_speaker.set_child(Some(&assets::primary_icon(icon, 16)));
+            self.speaker_button
+                .set_child(Some(&assets::primary_icon(icon, 16)));
+            self.floating_speaker
+                .set_child(Some(&assets::primary_icon(icon, 16)));
         }
 
         let repeat = self.controller.repeat();
@@ -942,8 +1084,10 @@ impl ImmersiveState {
             } else {
                 icons::REPEAT
             };
-            self.repeat_button.set_child(Some(&assets::primary_icon(rep_icon, 16)));
-            self.floating_repeat.set_child(Some(&assets::primary_icon(rep_icon, 16)));
+            self.repeat_button
+                .set_child(Some(&assets::primary_icon(rep_icon, 16)));
+            self.floating_repeat
+                .set_child(Some(&assets::primary_icon(rep_icon, 16)));
             if repeat == crate::music::Repeat::Off {
                 self.repeat_button.remove_css_class("repeat-enabled");
                 self.floating_repeat.remove_css_class("repeat-enabled");
@@ -976,7 +1120,7 @@ impl ImmersiveState {
     }
 
     fn finish_track_assets(
-        &self,
+        self: &Rc<Self>,
         identity: &Rc<()>,
         track: &Track,
         generation: u64,
@@ -1007,6 +1151,114 @@ impl ImmersiveState {
             }
             self.current_lyrics.replace(output.lyrics);
         }
+        self.lyrics_status
+            .replace(if self.current_lyrics.borrow().is_some() {
+                LyricsStatus::Local
+            } else {
+                LyricsStatus::LocalMissing
+            });
+        self.rebuild_lyrics_ui();
+        self.update_stage_layout();
+        self.sync_lyrics_and_time();
+        self.maybe_lookup_lyrics();
+    }
+
+    fn maybe_lookup_lyrics(self: &Rc<Self>) {
+        if self.stopped.get()
+            || !self.is_mapped()
+            || !self.lyrics_active.get()
+            || self.visualizer_active.get()
+            || self.current_lyrics.borrow().is_some()
+            || self.lyrics_attempted.get()
+            || *self.lyrics_status.borrow() != LyricsStatus::LocalMissing
+            || !ThemeManager::shared().online_lyrics()
+        {
+            return;
+        }
+        let Some(track) = self.current_track.borrow().clone() else {
+            return;
+        };
+        let (Some(title), Some(artist)) = (
+            track.tags.title.as_deref(),
+            track
+                .tags
+                .artist
+                .as_deref()
+                .or(track.tags.album_artist.as_deref()),
+        ) else {
+            self.lyrics_attempted.set(true);
+            self.lyrics_status.replace(LyricsStatus::MissingMetadata);
+            self.rebuild_lyrics_ui();
+            return;
+        };
+        let duration = self.controller.duration();
+        if duration <= 0 {
+            return;
+        }
+        let Ok(query) = online::Query::new(title, artist, duration as f64 / 1_000_000.0) else {
+            self.lyrics_attempted.set(true);
+            self.lyrics_status.replace(LyricsStatus::MissingMetadata);
+            self.rebuild_lyrics_ui();
+            return;
+        };
+        let request = AssetRequest::new();
+        let identity = request.identity.clone();
+        let cancellation = request.cancellation.clone();
+        let generation = self.current_generation.get();
+        self.lyrics_request.replace(Some(request));
+        self.lyrics_attempted.set(true);
+        self.lyrics_status.replace(LyricsStatus::LoadingOnline);
+        self.rebuild_lyrics_ui();
+        let weak = Rc::downgrade(self);
+        let task = glib::MainContext::default().spawn_local(async move {
+            let result = gio::spawn_blocking(move || online::lookup(&query, &cancellation))
+                .await
+                .unwrap_or_else(|_| {
+                    Err("The lyrics lookup could not finish. Try again.".to_owned())
+                });
+            if let Some(state) = weak.upgrade() {
+                state.finish_online_lyrics(&identity, &track, generation, result);
+            }
+        });
+        self.lyrics_task.replace(Some(task));
+    }
+
+    fn finish_online_lyrics(
+        self: &Rc<Self>,
+        identity: &Rc<()>,
+        track: &Track,
+        generation: u64,
+        result: Result<online::Lookup, String>,
+    ) {
+        if self.stopped.get()
+            || !self.is_mapped()
+            || !self.lyrics_active.get()
+            || self.visualizer_active.get()
+            || !ThemeManager::shared().online_lyrics()
+            || self.controller.closed.get()
+            || self.controller.generation.get() != generation
+            || self.controller.current_track().as_ref() != Some(track)
+            || self.current_track.borrow().as_ref() != Some(track)
+            || !self
+                .lyrics_request
+                .borrow()
+                .as_ref()
+                .is_some_and(|request| request.accepts(identity))
+        {
+            return;
+        }
+        self.lyrics_task.borrow_mut().take();
+        self.lyrics_request.borrow_mut().take();
+        let status = match result {
+            Ok(online::Lookup::Found(lyrics)) => {
+                self.current_lyrics.replace(Some(lyrics));
+                LyricsStatus::Online
+            }
+            Ok(online::Lookup::Instrumental) => LyricsStatus::Instrumental,
+            Ok(online::Lookup::NotFound) => LyricsStatus::OnlineMissing,
+            Err(message) => LyricsStatus::Failed(message),
+        };
+        self.lyrics_status.replace(status);
         self.rebuild_lyrics_ui();
         self.update_stage_layout();
         self.sync_lyrics_and_time();
@@ -1018,9 +1270,10 @@ impl ImmersiveState {
         }
         self.lyric_labels.borrow_mut().clear();
         self.active_lyric_index.set(None);
+        self.lyrics_built.set(false);
     }
 
-    fn rebuild_lyrics_ui(&self) {
+    fn rebuild_lyrics_ui(self: &Rc<Self>) {
         self.clear_lyrics_ui();
         if !self.is_mapped()
             || self.stopped.get()
@@ -1031,13 +1284,24 @@ impl ImmersiveState {
         }
         let lyrics = self.current_lyrics.borrow();
         if let Some(ref lyrics) = *lyrics {
+            let source = gtk::Label::new(Some(
+                if *self.lyrics_status.borrow() == LyricsStatus::Online {
+                    "Lyrics · LRCLIB"
+                } else {
+                    "Lyrics · Local file"
+                },
+            ));
+            source.set_xalign(0.0);
+            source.add_css_class("music-detail");
+            self.lyrics_box.append(&source);
             let ctrl = self.controller.clone();
             for line in &lyrics.lines {
                 let label = gtk::Label::new(Some(&line.text));
                 label.add_css_class("immersive-lyric-line");
                 label.set_xalign(0.0);
                 label.set_wrap(true);
-                label.set_cursor_from_name(Some("pointer"));
+                label.set_selectable(!lyrics.synced);
+                label.set_cursor_from_name(Some(if lyrics.synced { "pointer" } else { "text" }));
 
                 let line_timestamp = line.timestamp.as_micros().min(i64::MAX as u128) as i64;
                 let ctrl = ctrl.clone();
@@ -1045,12 +1309,66 @@ impl ImmersiveState {
                 click.connect_pressed(move |_, _, _, _| {
                     ctrl.seek(line_timestamp);
                 });
-                label.add_controller(click);
+                if lyrics.synced {
+                    label.add_controller(click);
+                }
 
                 self.lyrics_box.append(&label);
                 self.lyric_labels.borrow_mut().push(label);
             }
+        } else {
+            let status = self.lyrics_status.borrow().clone();
+            let (title, description) = match &status {
+                LyricsStatus::NoTrack => ("Choose a song", "Lyrics will appear here when a song is playing.".to_owned()),
+                LyricsStatus::LoadingLocal => ("Checking local lyrics…", "A matching .lrc file is used first.".to_owned()),
+                LyricsStatus::LoadingOnline => ("Finding lyrics…", "Looking up this song on LRCLIB.".to_owned()),
+                LyricsStatus::OnlineMissing => ("No matching lyrics found", "You can add a matching .lrc file next to this song.".to_owned()),
+                LyricsStatus::Instrumental => ("Instrumental track", "LRCLIB lists this recording as instrumental.".to_owned()),
+                LyricsStatus::MissingMetadata => ("Song details needed", "Online matching needs title, artist and duration. Filenames are never sent instead.".to_owned()),
+                LyricsStatus::Failed(message) => ("Lyrics lookup unavailable", message.clone()),
+                _ => ("No local lyrics", if ThemeManager::shared().online_lyrics() {
+                    "Waiting for the song's duration before looking online.".to_owned()
+                } else {
+                    "Enable online lyrics to find missing words. LRCLIB receives only this song's title, artist and duration; your files stay unchanged.".to_owned()
+                }),
+            };
+            let heading = gtk::Label::new(Some(title));
+            heading.add_css_class("immersive-title");
+            heading.set_xalign(0.0);
+            heading.set_wrap(true);
+            let detail = gtk::Label::new(Some(&description));
+            detail.add_css_class("music-detail");
+            detail.set_xalign(0.0);
+            detail.set_wrap(true);
+            self.lyrics_box.append(&heading);
+            self.lyrics_box.append(&detail);
+            let online_enabled = ThemeManager::shared().online_lyrics();
+            if (!online_enabled && status == LyricsStatus::LocalMissing)
+                || matches!(status, LyricsStatus::Failed(_))
+            {
+                let action = gtk::Button::with_label(if online_enabled {
+                    "Try again"
+                } else {
+                    "Enable online lyrics"
+                });
+                action.set_halign(gtk::Align::Start);
+                let weak = Rc::downgrade(self);
+                action.connect_clicked(move |_| {
+                    if let Some(state) = weak.upgrade() {
+                        state.lyrics_attempted.set(false);
+                        state.lyrics_status.replace(LyricsStatus::LocalMissing);
+                        let manager = ThemeManager::shared();
+                        if !manager.online_lyrics() {
+                            manager.set_online_lyrics(true);
+                        } else {
+                            state.maybe_lookup_lyrics();
+                        }
+                    }
+                });
+                self.lyrics_box.append(&action);
+            }
         }
+        self.lyrics_built.set(true);
     }
 
     fn sync_lyrics_and_time(&self) {
@@ -1073,9 +1391,13 @@ impl ImmersiveState {
         if second_changed || duration_changed {
             self.elapsed_label.set_text(&time_label(position));
             let rem = duration.saturating_sub(position);
-            self.remaining_label.set_text(&format!("-{}", time_label(rem.max(0))));
-            self.floating_time
-                .set_text(&format!("{} / {}", time_label(position), time_label(duration)));
+            self.remaining_label
+                .set_text(&format!("-{}", time_label(rem.max(0))));
+            self.floating_time.set_text(&format!(
+                "{} / {}",
+                time_label(position),
+                time_label(duration)
+            ));
         }
 
         if !self.lyrics_scroll.is_mapped() {
@@ -1101,7 +1423,9 @@ impl ImmersiveState {
                     if let Some(bounds) = label.compute_bounds(&self.lyrics_box) {
                         let target = bounds.y() as f64 - (self.lyrics_scroll.height() as f64 / 2.0)
                             + (bounds.height() as f64 / 2.0);
-                        adj.set_value(target.clamp(adj.lower(), (adj.upper() - adj.page_size()).max(0.0)));
+                        adj.set_value(
+                            target.clamp(adj.lower(), (adj.upper() - adj.page_size()).max(0.0)),
+                        );
                     }
                 }
                 self.active_lyric_index.set(active_idx);
@@ -1109,10 +1433,9 @@ impl ImmersiveState {
         }
     }
 
-    fn update_stage_layout(&self) {
-        let has_lyrics = self.current_lyrics.borrow().is_some();
-        let show_lyrics = self.lyrics_active.get() && has_lyrics;
-        if show_lyrics && !self.visualizer_active.get() && self.lyric_labels.borrow().is_empty() {
+    fn update_stage_layout(self: &Rc<Self>) {
+        let show_lyrics = self.lyrics_active.get() && !self.visualizer_active.get();
+        if show_lyrics && !self.lyrics_built.get() {
             self.rebuild_lyrics_ui();
         }
 
@@ -1132,6 +1455,7 @@ impl ImmersiveState {
 impl Drop for ImmersiveState {
     fn drop(&mut self) {
         self.cancel_request();
+        self.cancel_online_lyrics();
         self.cancel_tick();
     }
 }
@@ -1200,7 +1524,6 @@ pub fn draw_generative_visualizer(
     (ar, ag, ab): (f64, f64, f64),
     (hr, hg, hb): (f64, f64, f64),
 ) {
-
     match style {
         VisualizerStyle::Ribbons => {
             // Neon Ribbons
@@ -1226,7 +1549,8 @@ pub fn draw_generative_visualizer(
                 cr.move_to(x, y0);
                 while x <= width {
                     x += step;
-                    let y = base_y + amp * (x * freq + phase).sin()
+                    let y = base_y
+                        + amp * (x * freq + phase).sin()
                         + (amp * 0.3) * (x * freq * 1.8 - phase).cos();
                     cr.line_to(x, y);
                 }

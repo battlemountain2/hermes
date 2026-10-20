@@ -94,6 +94,7 @@ fn preview_cache_only_reuses_the_requested_file_not_adjacent_album_art() {
 fn preview_policy() -> super::PreviewPolicy {
     super::PreviewPolicy {
         max_bytes: 1_000_000,
+        streaming_media: false,
         audio: true,
         images: true,
         videos: true,

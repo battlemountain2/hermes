@@ -1,6 +1,49 @@
 use super::*;
 
 #[test]
+fn repeated_pause_resume_retains_negotiated_audio_without_resetting_output() {
+    gst::init().unwrap();
+    let pipeline = gst::parse::launch(
+        "appsrc name=pcm is-live=true format=time do-timestamp=true caps=audio/x-raw,format=F32LE,rate=48000,channels=2,layout=interleaved ! fakesink name=capture sync=false async=false signal-handoffs=true",
+    ).unwrap().downcast::<gst::Pipeline>().unwrap();
+    let source = pipeline.by_name("pcm").unwrap().downcast::<app::AppSrc>().unwrap();
+    let sink = pipeline.by_name("capture").unwrap();
+    let (sender, receiver) = mpsc::channel();
+    sink.connect("handoff", false, move |values| {
+        let buffer = values[1].get::<gst::Buffer>().unwrap();
+        sender.send(buffer.map_readable().unwrap().as_slice().to_vec()).unwrap();
+        None
+    });
+    let bus = pipeline.bus().unwrap();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pipeline.set_state(output_state(&Command::Play)).unwrap();
+        for cycle in 0..12 {
+            let before_pause = (cycle as f32 / 32.0).to_le_bytes().repeat(480 * 2);
+            source.push_buffer(pcm_buffer(before_pause.clone())).unwrap();
+            assert_eq!(receiver.recv_timeout(Duration::from_secs(2)).unwrap(), before_pause);
+            pipeline.set_state(output_state(&Command::Pause)).unwrap();
+            let (_, state, _) = pipeline.state(gst::ClockTime::from_seconds(2));
+            assert_eq!(state, gst::State::Paused);
+            assert!(source.static_pad("src").unwrap().current_caps().is_some());
+            assert!(receiver.recv_timeout(Duration::from_millis(5)).is_err());
+            pipeline.set_state(output_state(&Command::Play)).unwrap();
+            let resumed = ((cycle + 16) as f32 / 32.0).to_le_bytes().repeat(480 * 2);
+            source.push_buffer(pcm_buffer(resumed.clone())).unwrap();
+            assert_eq!(receiver.recv_timeout(Duration::from_secs(2)).unwrap(), resumed);
+        }
+        for message in bus.iter() {
+            if let gst::MessageView::StateChanged(change) = message.view() {
+                assert_ne!((change.old(), change.current()), (gst::State::Paused, gst::State::Ready));
+            }
+        }
+        assert_eq!(output_state(&Command::Seek { epoch: 1, timestamp: 0 }), gst::State::Ready);
+        assert_eq!(output_state(&Command::Stop), gst::State::Null);
+    }));
+    pipeline.set_state(gst::State::Null).unwrap();
+    result.unwrap();
+}
+
+#[test]
 fn pcm_packets_have_sample_accurate_durations_including_split_tails() {
     gst::init().unwrap();
     for frames in [1, 480, 8192, 37] {

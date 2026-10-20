@@ -22,7 +22,7 @@ impl LocalPreviewProvider {
         entry: &FileEntry,
         content_type: Option<&str>,
     ) -> Result<(), String> {
-        PreviewPolicy::current().check_entry(entry, content_type)
+        PreviewPolicy::current().for_streaming_preview().check_entry(entry, content_type)
     }
 }
 
@@ -77,7 +77,7 @@ impl PreviewProvider for LocalPreviewProvider {
                 && info.size() >= 0)
                 .then(|| info.size() as u64);
             let policy = PreviewPolicy::current();
-            let permitted = policy.check_source(&entry, &content_type, source_size);
+            let permitted = policy.for_streaming_preview().check_source(&entry, &content_type, source_size);
             if let Err(message) = permitted {
                 emit(PreviewEvent::Failed { request_id, entry, message });
                 return;
@@ -262,7 +262,7 @@ impl PreviewProvider for LocalPreviewProvider {
             }
 
             let current_policy = PreviewPolicy::current();
-            let permitted = current_policy.check_source(&entry, &content_type, source_size).and_then(|()| {
+            let permitted = current_policy.for_streaming_preview().check_source(&entry, &content_type, source_size).and_then(|()| {
                 if let Some((family, size)) = folder_source {
                     current_policy.check(family, Some(size))
                 } else {

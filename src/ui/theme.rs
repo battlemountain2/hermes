@@ -104,6 +104,8 @@ struct Preferences {
     audio_spectrum_bands: u32,
     #[serde(default = "default_spectrum_decay")]
     audio_spectrum_decay: String,
+    #[serde(default)]
+    online_lyrics: bool,
     #[serde(default = "default_enabled")]
     search_exclude_hidden: bool,
     #[serde(default = "default_enabled")]
@@ -161,6 +163,7 @@ impl Default for Preferences {
             audio_spin_animation: true,
             audio_spectrum_bands: default_spectrum_bands(),
             audio_spectrum_decay: default_spectrum_decay(),
+            online_lyrics: false,
             search_exclude_hidden: true,
             search_exclude_build_artifacts: true,
             search_reconcile_periodically: true,
@@ -270,6 +273,7 @@ pub struct ThemeManager {
     noctalia_poll: RefCell<Option<glib::SourceId>>,
     previewing: Cell<bool>,
     layout_observers: RefCell<Vec<Rc<dyn Fn()>>>,
+    lyrics_observers: RefCell<Vec<std::rc::Weak<dyn Fn()>>>,
 }
 
 impl ThemeManager {
@@ -324,6 +328,7 @@ impl ThemeManager {
             noctalia_poll: RefCell::new(None),
             previewing: Cell::new(false),
             layout_observers: RefCell::new(Vec::new()),
+            lyrics_observers: RefCell::new(Vec::new()),
         });
         manager.noctalia.borrow_mut().refresh();
         manager.install_provider();
@@ -435,6 +440,38 @@ impl ThemeManager {
 
     pub fn audio_spin_animation(&self) -> bool {
         self.preferences.borrow().audio_spin_animation
+    }
+
+    pub(crate) fn online_lyrics(&self) -> bool {
+        self.preferences.borrow().online_lyrics
+    }
+
+    pub(crate) fn set_online_lyrics(&self, enabled: bool) {
+        if self.online_lyrics() == enabled {
+            return;
+        }
+        self.preferences.borrow_mut().online_lyrics = enabled;
+        self.save_preferences();
+        let callbacks: Vec<_> = {
+            let mut observers = self.lyrics_observers.borrow_mut();
+            observers.retain(|observer| observer.strong_count() > 0);
+            observers
+                .iter()
+                .filter_map(std::rc::Weak::upgrade)
+                .collect()
+        };
+        for callback in callbacks {
+            callback();
+        }
+    }
+
+    pub(crate) fn observe_online_lyrics(&self, callback: &Rc<dyn Fn()>) {
+        let mut observers = self.lyrics_observers.borrow_mut();
+        observers.retain(|observer| observer.strong_count() > 0);
+        let weak = Rc::downgrade(callback);
+        if !observers.iter().any(|observer| observer.ptr_eq(&weak)) {
+            observers.push(weak);
+        }
     }
 
     pub fn set_audio_spin_animation(&self, enabled: bool) {

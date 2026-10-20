@@ -289,6 +289,7 @@ theme = "azure-glow"
     .expect("defaults should be applied when omitted");
 
     assert!(preferences.audio_continuity);
+    assert!(!preferences.online_lyrics);
     assert!(preferences.audio_spin_animation);
     assert_eq!(preferences.audio_spectrum_bands, 32);
     assert_eq!(preferences.audio_spectrum_decay, "studio");
@@ -439,6 +440,7 @@ fn noctalia_monitor_debounces_replacement_and_recovers_without_overriding_other_
         noctalia_poll: RefCell::new(None),
         previewing: Cell::new(false),
         layout_observers: RefCell::new(Vec::new()),
+        lyrics_observers: RefCell::new(Vec::new()),
     });
     assert!(
         manager.waveform_colors().is_none(),

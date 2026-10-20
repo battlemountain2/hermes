@@ -20,7 +20,10 @@ fn parses_standard_lrc_lines_with_fractional_seconds() {
     assert_eq!(lyrics.len(), 4);
     assert!(!lyrics.is_empty());
     assert_eq!(lyrics.lines[0].timestamp, Duration::from_secs(0));
-    assert_eq!(lyrics.lines[0].text, "Allotting time just to dream them through");
+    assert_eq!(
+        lyrics.lines[0].text,
+        "Allotting time just to dream them through"
+    );
     assert_eq!(lyrics.lines[1].timestamp, Duration::from_millis(20_500));
     assert_eq!(lyrics.lines[2].timestamp, Duration::from_millis(85_400));
     assert_eq!(lyrics.lines[2].text, "Owning a red carpet");
@@ -96,7 +99,12 @@ fn fractional_precision_and_timestamps_stay_within_signed_seek_bounds() {
     }
     let limit = i64::MAX as u64 / 1000;
     let format_timestamp = |millis: u64| {
-        format!("{}:{:02}.{:03}", millis / 60_000, millis / 1000 % 60, millis % 1000)
+        format!(
+            "{}:{:02}.{:03}",
+            millis / 60_000,
+            millis / 1000 % 60,
+            millis % 1000
+        )
     };
     let timestamp = parse_timestamp(&format_timestamp(limit)).expect("maximum seekable timestamp");
     assert!(timestamp.as_micros() <= i64::MAX as u128);
@@ -115,11 +123,17 @@ fn bounds_input_bytes_and_individual_line_bytes() {
 #[test]
 fn bounds_timestamp_expansion_and_total_lyric_lines() {
     let mut timestamps = "[00:00]".repeat(MAX_TIMESTAMPS_PER_LINE);
-    assert_eq!(parse_lrc(&timestamps).expect("timestamps at limit").len(), MAX_TIMESTAMPS_PER_LINE);
+    assert_eq!(
+        parse_lrc(&timestamps).expect("timestamps at limit").len(),
+        MAX_TIMESTAMPS_PER_LINE
+    );
     timestamps.push_str("[00:00]");
     assert!(parse_lrc(&timestamps).is_none());
     let mut lines = "[00:00]x\n".repeat(MAX_LYRIC_LINES);
-    assert_eq!(parse_lrc(&lines).expect("lines at limit").len(), MAX_LYRIC_LINES);
+    assert_eq!(
+        parse_lrc(&lines).expect("lines at limit").len(),
+        MAX_LYRIC_LINES
+    );
     lines.push_str("[00:00]x\n");
     assert!(parse_lrc(&lines).is_none());
 }
@@ -163,7 +177,9 @@ fn sidecar_lookup_rejects_oversized_and_non_regular_files() {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
-    let fixture = Fixture(std::env::temp_dir().join(format!("hermes-lyrics-{}-{unique}", std::process::id())));
+    let fixture = Fixture(
+        std::env::temp_dir().join(format!("hermes-lyrics-{}-{unique}", std::process::id())),
+    );
     fs::create_dir(&fixture.0).expect("fixture directory");
     let audio = fixture.0.join("track.flac");
     let sidecar = audio.with_extension("lrc");
@@ -177,7 +193,96 @@ fn sidecar_lookup_rejects_oversized_and_non_regular_files() {
         .expect("sparse sidecar size");
     assert!(find_lyrics_for_audio_file(&audio).is_none());
     fs::write(&sidecar, "[00:00]fixture").expect("valid sidecar");
-    assert_eq!(find_lyrics_for_audio_file(&audio).expect("valid lyrics").lines[0].text, "fixture");
+    assert_eq!(
+        find_lyrics_for_audio_file(&audio)
+            .expect("valid lyrics")
+            .lines[0]
+            .text,
+        "fixture"
+    );
     fs::write(&sidecar, b"[00:00]\xff").expect("invalid UTF-8 sidecar");
+    assert!(find_lyrics_for_audio_file(&audio).is_none());
+}
+
+#[test]
+fn plain_lyrics_preserve_stanzas_but_never_supply_timing() {
+    let lyrics = parse_plain(" First line 🎵\r\n\r\nSecond line ").expect("plain lyrics");
+    assert!(!lyrics.synced);
+    assert_eq!(
+        lyrics
+            .lines
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>(),
+        ["First line 🎵", "", "Second line"]
+    );
+    assert!(
+        lyrics
+            .lines
+            .iter()
+            .all(|line| line.timestamp == Duration::ZERO)
+    );
+    for position in [Duration::ZERO, Duration::from_secs(100), Duration::MAX] {
+        assert_eq!(lyrics.active_line_at(position), None);
+    }
+    assert!(parse_lrc("[00:01]Synced").expect("lrc").synced);
+    assert_eq!(Lyrics::default().active_line_at(Duration::ZERO), None);
+}
+
+#[test]
+fn plain_lyrics_bound_source_lines_text_and_control_characters() {
+    for content in ["", " \n\t", "text\0bad", "text\u{1b}bad"] {
+        assert!(parse_plain(content).is_none());
+    }
+    assert!(parse_plain(&"x".repeat(MAX_LRC_BYTES + 1)).is_none());
+    assert!(parse_plain(&"x".repeat(MAX_LINE_BYTES)).is_some());
+    assert!(parse_plain(&"x".repeat(MAX_LINE_BYTES + 1)).is_none());
+    assert!(parse_plain(&"x\n".repeat(MAX_LYRIC_LINES)).is_some());
+    assert!(parse_plain(&"x\n".repeat(MAX_LYRIC_LINES + 1)).is_none());
+    let line = format!("{}\n", "x".repeat(MAX_LINE_BYTES));
+    let allowed = line.repeat(MAX_LYRIC_TEXT_BYTES / MAX_LINE_BYTES);
+    assert!(parse_plain(&allowed).is_some());
+    assert!(parse_plain(&(allowed + "x")).is_none());
+}
+
+#[test]
+fn explicitly_named_plain_sidecar_follows_lrc_and_never_guesses_text() {
+    struct Fixture(std::path::PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _removed = fs::remove_dir_all(&self.0);
+        }
+    }
+    let fixture = Fixture(std::env::temp_dir().join(format!(
+            "hermes-plain-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        )));
+    fs::create_dir(&fixture.0).expect("fixture");
+    let audio = fixture.0.join("track.flac");
+    fs::write(audio.with_extension("txt"), "Not necessarily lyrics").expect("arbitrary text");
+    assert!(find_lyrics_for_audio_file(&audio).is_none());
+    fs::write(audio.with_extension("lyrics.txt"), "Explicit lyrics").expect("plain sidecar");
+    assert!(!find_lyrics_for_audio_file(&audio).expect("plain").synced);
+    fs::write(audio.with_extension("lrc"), "[00:01]Timed lyrics").expect("lrc sidecar");
+    assert!(
+        find_lyrics_for_audio_file(&audio)
+            .expect("lrc first")
+            .synced
+    );
+    fs::remove_file(audio.with_extension("lrc")).expect("remove lrc");
+    fs::remove_file(audio.with_extension("lyrics.txt")).expect("remove plain");
+    std::os::unix::fs::symlink(
+        audio.with_extension("txt"),
+        audio.with_extension("lyrics.txt"),
+    )
+    .expect("symlink");
+    assert!(find_lyrics_for_audio_file(&audio).is_none());
+    fs::remove_file(audio.with_extension("lyrics.txt")).expect("remove symlink");
+    std::os::unix::fs::symlink(audio.with_extension("txt"), audio.with_extension("lrc"))
+        .expect("lrc symlink");
     assert!(find_lyrics_for_audio_file(&audio).is_none());
 }

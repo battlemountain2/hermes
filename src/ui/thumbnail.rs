@@ -22,6 +22,7 @@ use crate::{
 #[derive(Clone, Copy)]
 pub(crate) struct PreviewPolicy {
     pub max_bytes: u64,
+    pub streaming_media: bool,
     pub audio: bool,
     pub images: bool,
     pub videos: bool,
@@ -35,6 +36,7 @@ impl PreviewPolicy {
         let manager = super::theme::ThemeManager::shared();
         Self {
             max_bytes: u64::from(manager.max_preview_size_mb().clamp(1, 500)) * 1_000_000,
+            streaming_media: false,
             audio: manager.preview_audio(),
             images: manager.preview_images(),
             videos: manager.preview_videos(),
@@ -42,6 +44,11 @@ impl PreviewPolicy {
             spreadsheets: manager.preview_spreadsheets(),
             code: manager.preview_code(),
         }
+    }
+
+    pub(crate) fn for_streaming_preview(mut self) -> Self {
+        self.streaming_media = true;
+        self
     }
 
     pub(crate) fn check(self, family: FormatFamily, size: Option<u64>) -> Result<(), String> {
@@ -61,7 +68,9 @@ impl PreviewPolicy {
         if !enabled {
             return Err("Previews for this file format are disabled in Settings".into());
         }
-        if size.is_some_and(|size| size > self.max_bytes) {
+        if !(self.streaming_media && matches!(family, FormatFamily::Audio | FormatFamily::Video))
+            && size.is_some_and(|size| size > self.max_bytes)
+        {
             return Err(format!(
                 "File exceeds the maximum preview size ({} MB)",
                 self.max_bytes / 1_000_000
@@ -78,15 +87,32 @@ impl PreviewPolicy {
             MetadataValue::Known(size) => Some(size),
             _ => None,
         };
-        self.check(classify_by_name(&entry.native_name), size)?;
-        if let Some(content_type) = content_type {
+        self.check_formats(entry, content_type, size)
+    }
+
+    fn check_formats(
+        self,
+        entry: &FileEntry,
+        content_type: Option<&str>,
+        size: Option<u64>,
+    ) -> Result<(), String> {
+        let named = classify_by_name(&entry.native_name);
+        let detected = content_type.map(|content_type| {
             let family = classify_by_mime(content_type);
-            let family = if family == FormatFamily::Unknown && gio::content_type_is_a(content_type, "text/plain") {
+            if family == FormatFamily::Unknown && gio::content_type_is_a(content_type, "text/plain") {
                 FormatFamily::PlainText
             } else {
                 family
-            };
-            self.check(family, size)?;
+            }
+        });
+        let streamed = self.streaming_media
+            && std::iter::once(named).chain(detected).any(|family| {
+                matches!(family, FormatFamily::Audio | FormatFamily::Video)
+            });
+        for family in std::iter::once(named).chain(detected) {
+            let deferred_size = family == FormatFamily::Unknown
+                && (streamed || (self.streaming_media && content_type.is_none()));
+            self.check(family, if deferred_size { None } else { size })?;
         }
         Ok(())
     }
@@ -102,8 +128,7 @@ impl PreviewPolicy {
             return Ok(());
         }
         let size = size.ok_or_else(|| "File size is unavailable; preview was not loaded".to_owned())?;
-        self.check(classify_by_name(&entry.native_name), Some(size))?;
-        self.check(classify_by_mime(content_type), Some(size))
+        self.check_formats(entry, Some(content_type), Some(size))
     }
 }
 
