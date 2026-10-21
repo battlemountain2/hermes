@@ -105,6 +105,7 @@ fn filled_controls_choose_the_more_legible_semantic_foreground() {
 fn desktop_filled_player_controls_render_with_live_theme_contrast() {
     use gtk::{gdk::prelude::*, prelude::*};
     gtk::init().unwrap();
+    gtk::Settings::default().unwrap().set_gtk_enable_animations(false);
     crate::assets::prepare().unwrap();
     let manager = super::ThemeManager::shared();
     let styles = gtk::CssProvider::new();
@@ -120,7 +121,7 @@ fn desktop_filled_player_controls_render_with_live_theme_contrast() {
     content.set_margin_start(24);
     content.set_margin_end(24);
     let mut buttons = Vec::new();
-    for class in ["immersive-play-btn", "preview-audio-play-button"] {
+    for class in ["immersive-play-btn", "preview-audio-play-button", "mini-play-btn"] {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
         row.append(&gtk::Label::new(Some(class)));
         for state in [
@@ -145,6 +146,7 @@ fn desktop_filled_player_controls_render_with_live_theme_contrast() {
         .default_height(260)
         .child(&content)
         .build();
+    let paintable = gtk::WidgetPaintable::new(Some(&content));
     window.present();
     for theme in ["graphite", "paper", "azure-glow"] {
         manager.select_theme(theme);
@@ -162,15 +164,32 @@ fn desktop_filled_player_controls_render_with_live_theme_contrast() {
             assert_eq!(image.paintable(), expected_icon.paintable());
         }
         if let Ok(directory) = std::env::var("HERMES_PLAYER_CONTRAST_SHOTS") {
-            let snapshot = gtk::Snapshot::new();
-            gtk::WidgetPaintable::new(Some(&window)).snapshot(
-                &snapshot,
-                window.width() as f64,
-                window.height() as f64,
-            );
+            content.queue_draw();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            let node = loop {
+                for _ in 0..128 {
+                    if !gtk::glib::MainContext::default().iteration(false) {
+                        break;
+                    }
+                }
+                let snapshot = gtk::Snapshot::new();
+                window.allocate(700, 260, -1, None);
+                paintable.snapshot(&snapshot, content.width() as f64, content.height() as f64);
+                if let Some(node) = snapshot.to_node() {
+                    break Some(node);
+                }
+                if std::time::Instant::now() >= deadline {
+                    break None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            };
+            let Some(node) = node else {
+                eprintln!("Optional screenshot unavailable for {theme}; no frame from isolated display");
+                continue;
+            };
             let renderer = gtk::gsk::CairoRenderer::new();
             renderer.realize(window.surface().as_ref()).unwrap();
-            let texture = renderer.render_texture(&snapshot.to_node().unwrap(), None);
+            let texture = renderer.render_texture(&node, None);
             texture
                 .save_to_png(
                     std::path::Path::new(&directory).join(format!("player-controls-{theme}.png")),

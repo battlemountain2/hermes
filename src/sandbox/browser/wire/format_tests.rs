@@ -12,6 +12,7 @@ fn explicit_formats_survive_the_actual_descriptor_wire_protocol() {
         Operation::PreviewEpubCover,
         Operation::PreviewCbzCover,
         Operation::PreviewCbrCover,
+        Operation::PreviewAudioArtwork,
     ] {
         send(&sender, &input, &output, operation).expect("typed wire request");
         let (received, input_fd, output_fd) = receive(&receiver)
@@ -33,6 +34,6 @@ fn explicit_formats_survive_the_actual_descriptor_wire_protocol() {
             0
         );
     }
-    assert!(Operation::parse(26).is_err());
+    assert!(Operation::parse(27).is_err());
     assert!(Operation::parse(u8::MAX).is_err());
 }

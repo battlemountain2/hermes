@@ -1,6 +1,78 @@
 use super::*;
 
 #[test]
+fn missing_metadata_uses_display_fallbacks_without_inventing_tags() {
+    let track = Track {
+        path: PathBuf::from("/Artist - Album/02 Filename.flac"),
+        tags: MusicTags::default(),
+    };
+    assert!(track.needs_metadata());
+    assert_eq!(track.title(), "02 Filename");
+    assert_eq!(track.artist(), "Unknown artist");
+    assert_eq!(track.album(), "Artist - Album");
+    assert_eq!(track.tags, MusicTags::default());
+}
+
+#[test]
+fn hydration_fills_only_missing_tags_and_never_uses_display_fallbacks() {
+    let mut track = Track {
+        path: PathBuf::from("/Not An Artist/02 Filename.flac"),
+        tags: MusicTags {
+            title: Some("Existing title".into()),
+            artist: Some(" \t ".into()),
+            disc: Some(2),
+            ..Default::default()
+        },
+    };
+    let tags = MusicTags {
+        title: Some("Embedded title".into()),
+        artist: Some(" Embedded artist ".into()),
+        album_artist: Some("Embedded album artist".into()),
+        album: Some("Embedded album".into()),
+        disc: Some(1),
+        track: Some(4),
+    };
+    assert!(track.hydrate_metadata(&tags));
+    assert!(!track.needs_metadata());
+    assert_eq!(track.title(), "Existing title");
+    assert_eq!(track.artist(), "Embedded artist");
+    assert_eq!(track.album(), "Embedded album");
+    assert_eq!(track.tags.disc, Some(2));
+    assert_eq!(track.tags.track, Some(4));
+    assert!(!track.hydrate_metadata(&tags));
+    assert!(!track.hydrate_metadata(&MusicTags::default()));
+}
+
+#[test]
+fn blank_metadata_is_missing_and_album_artist_is_a_tagged_artist_fallback() {
+    let mut track = Track {
+        path: PathBuf::from("/Directory/filename.flac"),
+        tags: MusicTags {
+            title: Some("  ".into()),
+            artist: Some(" ".into()),
+            album_artist: Some(" Album artist ".into()),
+            album: Some("\t".into()),
+            ..Default::default()
+        },
+    };
+    assert!(track.needs_metadata());
+    assert_eq!(track.title(), "filename");
+    assert_eq!(track.artist(), "Album artist");
+    assert_eq!(track.album(), "Directory");
+    track.hydrate_metadata(&MusicTags {
+        title: Some("Title".into()),
+        album: Some("Album".into()),
+        track: Some(0),
+        disc: Some(0),
+        ..Default::default()
+    });
+    assert!(!track.needs_metadata());
+    assert!(track.tags.artist.is_none());
+    assert_eq!(track.tags.track, None);
+    assert_eq!(track.tags.disc, None);
+}
+
+#[test]
 fn moving_tracks_changes_next_order_without_changing_current_or_history() {
     let mut queue = Queue::default();
     queue.replace((1..=4).map(track).collect(), 0);

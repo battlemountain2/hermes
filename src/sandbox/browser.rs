@@ -494,6 +494,7 @@ fn map_preview_op(op: &ParseOperation) -> Option<Operation> {
     match op {
         ParseOperation::MusicTags => Some(Operation::MusicTags),
         ParseOperation::PreviewAudioMetadata => Some(Operation::PreviewAudioMetadata),
+        ParseOperation::PreviewAudioArtwork => Some(Operation::PreviewAudioArtwork),
         ParseOperation::PreviewImage => Some(Operation::PreviewImage),
         ParseOperation::PreviewGeoTiff => Some(Operation::PreviewGeoTiff),
         ParseOperation::PreviewHeif => Some(Operation::PreviewHeif),

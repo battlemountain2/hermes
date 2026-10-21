@@ -55,6 +55,14 @@ impl TrackIdentity {
     }
 }
 
+#[derive(Clone)]
+struct MetadataRequest {
+    track_id: (u64, u64),
+    generation: u64,
+    path: PathBuf,
+    cancellation: Cancellation,
+}
+
 pub(crate) struct Controller {
     weak: Weak<Self>,
     pub(super) stream: RefCell<Option<PlaybackStream>>,
@@ -63,6 +71,7 @@ pub(crate) struct Controller {
     pub(super) peaks: RefCell<Vec<f32>>,
     pub(super) folder_cancel: RefCell<Cancellation>,
     waveform_cancel: RefCell<Cancellation>,
+    metadata_request: RefCell<Option<MetadataRequest>>,
     pub(super) queue_revision: Cell<u64>,
     pub(super) drag_identity: u64,
     pub(super) session_store: RefCell<Option<crate::music::session::Store>>,
@@ -100,6 +109,7 @@ impl Controller {
     }
 
     pub(super) fn restore_queue(&self, queue: Queue) {
+        self.cancel_metadata_request();
         self.identities.borrow_mut().replace(queue.tracks.len());
         self.queue.replace(queue);
         self.queue_revision
@@ -165,6 +175,7 @@ impl Controller {
             peaks: RefCell::new(Vec::new()),
             folder_cancel: RefCell::new(Cancellation::default()),
             waveform_cancel: RefCell::new(Cancellation::default()),
+            metadata_request: RefCell::new(None),
             queue_revision: Cell::new(0),
             drag_identity: {
                 static NEXT_CONTROLLER: std::sync::atomic::AtomicU64 =
@@ -216,6 +227,7 @@ impl Controller {
                 controller.report_save_error();
             }
             let volume_changed = controller.flush_volume_changes();
+            controller.hydrate_current_metadata();
             controller.sample_listening();
             let has_stream = controller.stream.borrow().is_some();
             if has_stream || volume_changed {
@@ -273,6 +285,95 @@ impl Controller {
 
     pub(crate) fn current_track(&self) -> Option<Track> {
         self.queue.borrow().playing().cloned()
+    }
+
+    fn cancel_metadata_request(&self) {
+        if let Some(request) = self.metadata_request.borrow_mut().take() {
+            request.cancellation.cancel();
+        }
+    }
+
+    fn begin_metadata_request(&self) -> Option<MetadataRequest> {
+        if self.closed.get() {
+            return None;
+        }
+        let track = self.current_track();
+        let track_id = self.track_id();
+        let generation = self.generation.get();
+        if let Some(request) = self.metadata_request.borrow().as_ref()
+            && Some(request.track_id) == track_id
+            && request.generation == generation
+            && track
+                .as_ref()
+                .is_some_and(|track| track.path == request.path)
+        {
+            return None;
+        }
+        self.cancel_metadata_request();
+        let track = track.filter(Track::needs_metadata)?;
+        let request = MetadataRequest {
+            track_id: track_id?,
+            generation,
+            path: track.path,
+            cancellation: Cancellation::default(),
+        };
+        self.metadata_request.replace(Some(request.clone()));
+        Some(request)
+    }
+
+    fn hydrate_current_metadata(&self) {
+        let Some(request) = self.begin_metadata_request() else {
+            return;
+        };
+        let weak = self.weak.clone();
+        glib::MainContext::default().spawn_local(async move {
+            let worker_request = request.clone();
+            let result = gtk::gio::spawn_blocking(move || {
+                let output = crate::adapters::music_metadata::read_audio_metadata(
+                    &worker_request.path,
+                    &worker_request.cancellation,
+                )
+                .ok()?;
+                serde_json::from_slice::<crate::model::MusicTags>(&output.data).ok()
+            })
+            .await;
+            if let Some(controller) = weak.upgrade() {
+                controller.complete_metadata_request(&request, result.ok().flatten());
+            }
+        });
+    }
+
+    fn complete_metadata_request(
+        &self,
+        request: &MetadataRequest,
+        tags: Option<crate::model::MusicTags>,
+    ) -> bool {
+        if self.closed.get()
+            || request.cancellation.is_cancelled()
+            || self.generation.get() != request.generation
+            || self.track_id() != Some(request.track_id)
+            || !self
+                .current_track()
+                .is_some_and(|track| track.path == request.path)
+        {
+            return false;
+        }
+        let Some(tags) = tags else {
+            return false;
+        };
+        let mut changed = false;
+        {
+            let mut queue = self.queue.borrow_mut();
+            for track in &mut queue.tracks {
+                if track.path == request.path {
+                    changed |= track.hydrate_metadata(&tags);
+                }
+            }
+        }
+        if changed {
+            self.queue_changed();
+        }
+        changed
     }
 
     pub(crate) fn track_id(&self) -> Option<(u64, u64)> {
@@ -427,6 +528,7 @@ impl Controller {
     }
 
     fn release_stream(&self) {
+        self.cancel_metadata_request();
         self.sample_listening();
         self.listening.borrow_mut().reset(None);
         self.play_intent.set(false);

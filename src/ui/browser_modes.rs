@@ -16,6 +16,8 @@ use std::{
 
 use gtk::{gio, glib, prelude::*};
 
+use super::browser::loading::LoadingTransition;
+
 use crate::{
     app::{Browser, BrowserColumnSnapshot, BrowserEvent},
     model::{FileEntry, Location, SortDirection, SortKey},
@@ -187,6 +189,8 @@ struct Pane {
     filtered_model: Option<gio::ListModel>,
     syncing_selection: Rc<Cell<bool>>,
     stack: gtk::Stack,
+    transition: LoadingTransition,
+    loading: Cell<bool>,
     status: gtk::Label,
     notice: gtk::Label,
     spinner: gtk::Spinner,
@@ -213,6 +217,7 @@ pub struct ModeViews {
     mode: BrowserMode,
     density: BrowserDensity,
     grid_thumbnail_size: Rc<Cell<i32>>,
+    load_errors: Vec<(usize, String)>,
 }
 
 impl ModeViews {
@@ -273,8 +278,6 @@ impl ModeViews {
             .build();
 
         let stack = gtk::Stack::builder()
-            .transition_type(gtk::StackTransitionType::Crossfade)
-            .transition_duration(120)
             .hexpand(true)
             .vexpand(true)
             .build();
@@ -299,6 +302,7 @@ impl ModeViews {
             mode: BrowserMode::Columns,
             density: BrowserDensity::Compact,
             grid_thumbnail_size: Rc::new(Cell::new(DEFAULT_GRID_THUMBNAIL_SIZE)),
+            load_errors: Vec::new(),
         }
     }
 
@@ -544,16 +548,16 @@ impl ModeViews {
             clear_box(&self.explorer_root);
             self.explorer_pane = None;
         }
-        self.stack.set_visible_child_name(match mode {
-            BrowserMode::Columns => "columns",
-            BrowserMode::Grid => "grid",
-            BrowserMode::Explorer => "explorer",
-        });
         if mode == BrowserMode::Grid {
             self.rebuild_grid();
         } else if mode == BrowserMode::Explorer {
             self.rebuild_explorer();
         }
+        self.stack.set_visible_child_name(match mode {
+            BrowserMode::Columns => "columns",
+            BrowserMode::Grid => "grid",
+            BrowserMode::Explorer => "explorer",
+        });
         if let Some(depth) = self.browser.active_depth() {
             self.focus_visible_pane(depth);
         }
@@ -594,6 +598,23 @@ impl ModeViews {
     }
 
     pub fn handle(&mut self, event: &BrowserEvent) {
+        match event {
+            BrowserEvent::Reset => self.load_errors.clear(),
+            BrowserEvent::ColumnsTruncated { len } => {
+                self.load_errors.retain(|(depth, _)| depth < len);
+            }
+            BrowserEvent::ColumnAdded { depth, .. } => {
+                self.load_errors.retain(|(error_depth, _)| error_depth < depth);
+            }
+            BrowserEvent::ColumnReloaded { depth } | BrowserEvent::LoadFinished { depth } => {
+                self.load_errors.retain(|(error_depth, _)| error_depth != depth);
+            }
+            BrowserEvent::LoadFailed { depth, message } => {
+                self.load_errors.retain(|(error_depth, _)| error_depth != depth);
+                self.load_errors.push((*depth, message.clone()));
+            }
+            _ => {}
+        }
         if matches!(
             event,
             BrowserEvent::Reset
@@ -615,8 +636,15 @@ impl ModeViews {
                         self.grid_root.remove(&pane.shell);
                     }
                 }
-                self.rebuild_grid();
-                self.rebuild_explorer();
+                if self.browser.active_depth().is_some_and(|depth| depth < *len) {
+                    self.rebuild_grid();
+                    self.rebuild_explorer();
+                } else {
+                    clear_box(&self.grid_root);
+                    self.grid_panes.clear();
+                    clear_box(&self.explorer_root);
+                    self.explorer_pane = None;
+                }
             }
             BrowserEvent::ColumnAdded { depth, location } => {
                 clear_box(&self.grid_root);
@@ -708,10 +736,9 @@ impl ModeViews {
             BrowserEvent::ColumnReloaded { depth } => {
                 for pane in self.panes_at(*depth) {
                     pane.notice.set_visible(false);
+                    pane.loading.set(true);
+                    pane.transition.begin();
                     pane.model.splice(0, pane.model.n_items(), &[]);
-                    pane.spinner.set_visible(true);
-                    pane.spinner.start();
-                    pane.stack.set_visible_child_name("loading");
                 }
             }
             BrowserEvent::LoadNotice { depth, message } => {
@@ -721,18 +748,13 @@ impl ModeViews {
             }
             BrowserEvent::LoadFinished { depth } => {
                 for pane in self.panes_at(*depth) {
-                    pane.spinner.stop();
-                    pane.spinner.set_visible(false);
+                    pane.loading.set(false);
                     show_count(pane);
                 }
             }
             BrowserEvent::LoadFailed { depth, message } => {
                 for pane in self.panes_at(*depth) {
-                    pane.spinner.stop();
-                    pane.status
-                        .set_label(&format!("Unable to read this directory\n{message}"));
-                    pane.status.add_css_class("error");
-                    pane.stack.set_visible_child_name("status");
+                    show_load_error(pane, message);
                 }
             }
             BrowserEvent::SelectionSetChanged {
@@ -873,7 +895,14 @@ impl ModeViews {
             &snapshot.location.display_name(),
         );
         configure_grid_density(&pane, self.density);
-        apply_snapshot(&pane, &snapshot);
+        apply_snapshot(
+            &pane,
+            &snapshot,
+            self.load_errors
+                .iter()
+                .find(|(error_depth, _)| *error_depth == depth)
+                .map(|(_, message)| message.as_str()),
+        );
         self.install_context_menu(&pane);
         self.grid_root.append(&pane.shell);
         self.grid_panes.push(pane);
@@ -899,7 +928,14 @@ impl ModeViews {
             depth,
             &snapshot.location.display_name(),
         );
-        apply_snapshot(&pane, &snapshot);
+        apply_snapshot(
+            &pane,
+            &snapshot,
+            self.load_errors
+                .iter()
+                .find(|(error_depth, _)| *error_depth == depth)
+                .map(|(_, message)| message.as_str()),
+        );
         self.install_context_menu(&pane);
         self.explorer_root.append(&pane.shell);
         self.explorer_pane = Some(pane);
@@ -1379,6 +1415,7 @@ fn build_grid_pane(
         "grid-card",
     ));
     let shell = pane;
+    let transition = LoadingTransition::new(&stack, &spinner);
     Pane {
         depth,
         shell,
@@ -1387,6 +1424,8 @@ fn build_grid_pane(
         filtered_model: Some(view_model.upcast()),
         syncing_selection,
         stack,
+        transition,
+        loading: Cell::new(true),
         status,
         notice,
         spinner,
@@ -1943,6 +1982,7 @@ fn build_explorer_pane(
         bound_items.clone(),
         "explorer-row",
     ));
+    let transition = LoadingTransition::new(&stack, &spinner);
     Pane {
         depth,
         shell,
@@ -1951,6 +1991,8 @@ fn build_explorer_pane(
         filtered_model: Some(view_model_object),
         syncing_selection,
         stack,
+        transition,
+        loading: Cell::new(true),
         status,
         notice,
         spinner,
@@ -1986,7 +2028,7 @@ fn pane_base(
     heading.set_xalign(0.0);
     heading.set_hexpand(true);
     let spinner = gtk::Spinner::new();
-    spinner.start();
+    spinner.set_visible(false);
     if let Some(leading) = header_leading {
         header.append(&leading);
     }
@@ -2012,7 +2054,7 @@ fn pane_base(
     stack.add_named(&content, Some("content"));
     stack.add_named(&loading, Some("loading"));
     stack.add_named(&status, Some("status"));
-    stack.set_visible_child_name("loading");
+    stack.set_visible_child_name("content");
     shell.append(&stack);
 
     let model = gtk::StringList::new(&[]);
@@ -2627,23 +2669,32 @@ fn replace_entries(pane: &Pane, entries: &[FileEntry]) {
 
 fn show_count(pane: &Pane) {
     if pane.model.n_items() == 0 {
+        if pane.loading.get() {
+            return;
+        }
         pane.status.remove_css_class("error");
         pane.status.set_label("This directory is empty");
-        pane.stack.set_visible_child_name("status");
+        pane.transition.show("status");
     } else {
-        pane.stack.set_visible_child_name("content");
+        pane.transition.show("content");
     }
 }
 
-fn apply_snapshot(pane: &Pane, snapshot: &BrowserColumnSnapshot) {
+fn show_load_error(pane: &Pane, message: &str) {
+    pane.loading.set(false);
+    pane.status
+        .set_label(&format!("Unable to read this directory\n{message}"));
+    pane.status.add_css_class("error");
+    pane.transition.show("status");
+}
+
+fn apply_snapshot(pane: &Pane, snapshot: &BrowserColumnSnapshot, error: Option<&str>) {
     set_search_notice(&pane.notice, snapshot.notice.as_deref());
+    pane.loading.set(snapshot.loading);
     replace_entries(pane, &snapshot.entries);
     set_selections(pane, &snapshot.selected_positions);
-    if snapshot.loading {
-        pane.spinner.start();
-        pane.stack.set_visible_child_name("loading");
-    } else {
-        pane.spinner.stop();
+    if let Some(message) = error {
+        show_load_error(pane, message);
     }
 }
 

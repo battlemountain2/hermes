@@ -38,6 +38,7 @@ pub(crate) enum Operation {
     PreviewEpubCover = 23,
     PreviewCbzCover = 24,
     PreviewCbrCover = 25,
+    PreviewAudioArtwork = 26,
 }
 
 impl Operation {
@@ -68,6 +69,7 @@ impl Operation {
             23 => Ok(Self::PreviewEpubCover),
             24 => Ok(Self::PreviewCbzCover),
             25 => Ok(Self::PreviewCbrCover),
+            26 => Ok(Self::PreviewAudioArtwork),
             _ => Err(io::Error::other("Unknown browser operation")),
         }
     }

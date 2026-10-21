@@ -260,3 +260,181 @@ fn serialization_rejects_unbudgeted_oversized_data() {
     };
     assert!(data.to_json().is_err());
 }
+
+struct WorkbookFixture(std::path::PathBuf);
+
+impl WorkbookFixture {
+    fn new(extra: &[(&str, &str)]) -> Self {
+        use std::io::Write;
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "hermes-table-{}-{}.ods",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let file = File::options()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .expect("new fixture");
+        let mut zip = zip::ZipWriter::new(file);
+        let members = [
+            (
+                "_rels/.rels",
+                r#"<Relationships><Relationship Id="doc" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#,
+            ),
+            (
+                "xl/workbook.xml",
+                r#"<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Summary" sheetId="2" r:id="summary"/><sheet name="Data" sheetId="1" r:id="data"/></sheets></workbook>"#,
+            ),
+            (
+                "xl/_rels/workbook.xml.rels",
+                r#"<Relationships><Relationship Id="data" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="summary" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>"#,
+            ),
+            (
+                "xl/sharedStrings.xml",
+                r#"<sst uniqueCount="2"><si><t>Amount</t></si><si><r><t>Hel</t></r><r><t>lo</t></r></si></sst>"#,
+            ),
+            (
+                "xl/worksheets/sheet1.xml",
+                r#"<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Name</t></is></c><c r="B1" t="s"><v>0</v></c><c r="C1" t="inlineStr"><is><t>Flag</t></is></c></row><row r="2"><c r="A2" t="s"><v>1</v></c><c r="B2"><f>1+2</f><v>3</v></c><c r="C2" t="b"><v>1</v></c></row><row r="3"><c r="A3" t="e"><v>#DIV/0!</v></c><c r="B3"><v>-1.5</v></c></row></sheetData></worksheet>"#,
+            ),
+            (
+                "xl/worksheets/sheet2.xml",
+                r#"<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Total</t></is></c></row><row r="2"><c r="A2"><v>42</v></c></row></sheetData></worksheet>"#,
+            ),
+        ];
+        for (name, xml) in members
+            .iter()
+            .filter(|(name, _)| !extra.iter().any(|(extra_name, _)| extra_name == name))
+            .chain(extra)
+        {
+            zip.start_file(
+                *name,
+                zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored),
+            )
+            .expect("member");
+            zip.write_all(xml.as_bytes()).expect("XML");
+        }
+        zip.finish().expect("workbook ZIP");
+        Self(path)
+    }
+}
+
+impl Drop for WorkbookFixture {
+    fn drop(&mut self) {
+        std::fs::remove_file(&self.0).expect("remove workbook fixture");
+    }
+}
+
+#[test]
+fn xlsx_structure_wins_over_extension_and_anonymous_fd_preserves_sheet_order() {
+    use std::os::fd::AsRawFd;
+    let fixture = WorkbookFixture::new(&[]);
+    let data = SpreadsheetData::read_workbook(&fixture.0).expect("XLSX named ODS");
+    let file = File::open(&fixture.0).expect("fixture");
+    let descriptor = format!("/proc/self/fd/{}", file.as_raw_fd());
+    assert_eq!(
+        SpreadsheetData::read_workbook(Path::new(&descriptor)).expect("anonymous FD"),
+        data
+    );
+    assert_eq!(data.sheet_names, ["Summary", "Data"]);
+    assert_eq!(data.headers, ["Total"]);
+    assert_eq!(data.rows, [vec!["42"]]);
+    assert_eq!(data.sheets[1].headers, ["Name", "Amount", "Flag"]);
+    assert_eq!(
+        data.sheets[1].rows,
+        [vec!["Hello", "3", "true"], vec!["#DIV/0!", "-1.5", ""]]
+    );
+    assert!(!data.truncated);
+    assert_workbook_budget(&data);
+    let text = crate::sandbox_helper::table::extract_spreadsheet_text(Path::new(&descriptor), 1000)
+        .expect("text extraction");
+    assert_eq!(
+        String::from_utf8(text).expect("UTF-8"),
+        "Summary\nTotal\n42\nData\nName\tAmount\tFlag\nHello\t3\ttrue\n#DIV/0!\t-1.5\t\n"
+    );
+    for limit in 0..80 {
+        assert!(
+            crate::sandbox_helper::table::extract_spreadsheet_text(&fixture.0, limit)
+                .expect("bounded extraction")
+                .len()
+                <= limit
+        );
+    }
+}
+
+#[test]
+fn xlsx_external_links_are_rejected_before_calamine_and_text_extraction() {
+    let fixture = WorkbookFixture::new(&[(
+        "xl/externalLinks/_rels/externalLink1.xml.rels",
+        r#"<Relationships><Relationship Id="link" TargetMode="External" Target="file:///outside.xlsx"/></Relationships>"#,
+    )]);
+    assert!(
+        SpreadsheetData::read_workbook(&fixture.0)
+            .expect_err("external workbook")
+            .contains("External")
+    );
+    assert!(crate::sandbox_helper::table::extract_spreadsheet_text(&fixture.0, 100).is_err());
+}
+
+#[test]
+fn xlsx_root_relationship_selects_relocated_workbook_and_worksheet_parts() {
+    let fixture = WorkbookFixture::new(&[
+        (
+            "_rels/.rels",
+            "<Relationships><Relationship Id=\"doc\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"custom/workbook.xml\"/></Relationships>",
+        ),
+        (
+            "custom/workbook.xml",
+            "<workbook xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheets><sheet name=\"Relocated\" sheetId=\"1\" r:id=\"sheet\"/></sheets></workbook>",
+        ),
+        (
+            "custom/_rels/workbook.xml.rels",
+            "<Relationships><Relationship Id=\"sheet\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"/parts/sheet.part\"/></Relationships>",
+        ),
+        (
+            "parts/sheet.part",
+            "<worksheet><sheetData><row><c t=\"inlineStr\"><is><t>Relocated heading</t></is></c></row><row><c><v>57</v></c></row></sheetData></worksheet>",
+        ),
+    ]);
+    let data = SpreadsheetData::read_workbook(&fixture.0).unwrap();
+    assert_eq!(data.sheet_names, ["Relocated"]);
+    assert_eq!(data.headers, ["Relocated heading"]);
+    assert_eq!(data.rows, [vec!["57"]]);
+}
+
+#[test]
+fn xlsx_external_hyperlinks_keep_cell_text_without_reading_the_target() {
+    let fixture = WorkbookFixture::new(&[
+        (
+            "xl/worksheets/sheet1.xml",
+            r#"<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Label</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Visible link</t></is></c></row></sheetData><hyperlinks><hyperlink ref="A2" r:id="link"/></hyperlinks></worksheet>"#,
+        ),
+        (
+            "xl/worksheets/_rels/sheet1.xml.rels",
+            r#"<Relationships><Relationship Id="link" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" TargetMode="External" Target="file:///hermes-generated-nonexistent-hyperlink-target.xlsx"/></Relationships>"#,
+        ),
+    ]);
+    let data = SpreadsheetData::read_workbook(&fixture.0).expect("hyperlinked workbook");
+    assert_eq!(data.sheets[1].headers, ["Label"]);
+    assert_eq!(data.sheets[1].rows, [vec!["Visible link"]]);
+    let text = crate::sandbox_helper::table::extract_spreadsheet_text(&fixture.0, 1024)
+        .expect("text without target resolution");
+    assert_eq!(
+        String::from_utf8(text).expect("UTF-8"),
+        "Summary\nTotal\n42\nData\nLabel\nVisible link\n"
+    );
+}
+
+#[test]
+fn spreadsheet_errors_have_one_excel_error_prefix() {
+    for error in [
+        calamine::CellErrorType::Div0,
+        calamine::CellErrorType::NA,
+        calamine::CellErrorType::Ref,
+    ] {
+        assert_eq!(format_cell(&Data::Error(error.clone())), error.to_string());
+    }
+}

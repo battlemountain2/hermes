@@ -1,5 +1,21 @@
 use super::*;
 
+pub(in crate::ui) fn load_probe(
+    views: &ModeViews,
+) -> (gtk::Stack, gtk::Spinner, gtk::StringList, gtk::Label) {
+    let pane = match views.mode {
+        BrowserMode::Grid => views.grid_panes.last().unwrap(),
+        BrowserMode::Explorer => views.explorer_pane.as_ref().unwrap(),
+        BrowserMode::Columns => panic!("Columns use their own load presentation"),
+    };
+    (
+        pane.stack.clone(),
+        pane.spinner.clone(),
+        pane.model.clone(),
+        pane.status.clone(),
+    )
+}
+
 #[test]
 fn explorer_initial_layout_keeps_all_details_in_a_compact_name_column() {
     assert_eq!(EXPLORER_COLUMN_WIDTHS[0], 320);

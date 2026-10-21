@@ -27,6 +27,8 @@ mod tests;
 mod performance_tests;
 
 mod canvas;
+mod artwork;
+mod backdrop;
 
 struct AssetRequest {
     identity: Rc<()>,
@@ -52,16 +54,16 @@ impl Drop for AssetRequest {
     }
 }
 
+#[derive(Default)]
 struct TrackAssets {
     artwork: Option<Vec<u8>>,
     lyrics: Option<Lyrics>,
+    backdrop: Option<Vec<u8>>,
+    palette: Option<artwork::Palette>,
 }
 
 fn read_track_assets(path: &Path, cancellation: &Cancellation) -> TrackAssets {
-    let mut result = TrackAssets {
-        artwork: None,
-        lyrics: None,
-    };
+    let mut result = TrackAssets::default();
     if cancellation.is_cancelled() {
         return result;
     }
@@ -77,17 +79,37 @@ fn read_track_assets(path: &Path, cancellation: &Cancellation) -> TrackAssets {
     }
     if let Some((cover, ParseOperation::ThumbnailImage)) = folder_art {
         result.artwork =
-            crate::sandbox::parse(&cover, ParseOperation::ThumbnailImage, 1024, cancellation)
+            crate::sandbox::parse(&cover, ParseOperation::PreviewImage, 1400, cancellation)
                 .ok()
                 .map(|output| output.data);
     }
     if result.artwork.is_none() && !cancellation.is_cancelled() {
         result.artwork =
-            crate::sandbox::parse(path, ParseOperation::ThumbnailVideo, 512, cancellation)
+            crate::sandbox::parse(path, ParseOperation::PreviewAudioArtwork, 1024, cancellation)
                 .ok()
                 .map(|output| output.data);
     }
+    if !cancellation.is_cancelled()
+        && let Some((backdrop, palette)) = result.artwork.as_deref().and_then(artwork::presentation)
+    {
+        result.backdrop = Some(backdrop);
+        result.palette = Some(palette);
+    }
     result
+}
+
+fn lyrics_metadata(track: &Track) -> Option<(&str, &str)> {
+    fn nonempty(value: Option<&str>) -> Option<&str> {
+        value.map(str::trim).filter(|value| !value.is_empty())
+    }
+    let title = nonempty(track.tags.title.as_deref())?;
+    let artist = nonempty(track.tags.artist.as_deref())
+        .or_else(|| nonempty(track.tags.album_artist.as_deref()))?;
+    Some((title, artist))
+}
+
+fn same_lyrics_track(first: &Track, second: &Track) -> bool {
+    first.path == second.path && lyrics_metadata(first) == lyrics_metadata(second)
 }
 
 fn needs_visualizer_frames(
@@ -178,7 +200,8 @@ struct ImmersiveState {
     lyrics_observer: RefCell<Option<Rc<dyn Fn()>>>,
     mode_syncing: Cell<bool>,
     on_open_library: Rc<dyn Fn()>,
-    ambient_aura: gtk::DrawingArea,
+    ambient_aura: backdrop::ArtworkBackdrop,
+    artwork_palette: Cell<Option<artwork::Palette>>,
     palette: Cell<((f64, f64, f64), (f64, f64, f64))>,
     visualizer_canvas: canvas::VisualizerCanvas,
     visualizer_bands: Cell<[f32; crate::playback::SPECTRUM_BANDS]>,
@@ -254,7 +277,7 @@ impl ImmersiveView {
         overlay.add_css_class("immersive-root");
 
         // 1. Ambient Aura Background
-        let ambient_aura = gtk::DrawingArea::new();
+        let ambient_aura = backdrop::ArtworkBackdrop::new();
         ambient_aura.set_hexpand(true);
         ambient_aura.set_vexpand(true);
         ambient_aura.add_css_class("immersive-ambient-aura");
@@ -364,7 +387,7 @@ impl ImmersiveView {
 
         let art_picture = gtk::Picture::new();
         art_picture.set_can_shrink(true);
-        art_picture.set_content_fit(gtk::ContentFit::Cover);
+        art_picture.set_content_fit(gtk::ContentFit::Contain);
         art_picture.add_css_class("immersive-art-pic");
         art_picture.set_size_request(420, 420);
         art_stack.add_named(&art_picture, Some("picture"));
@@ -379,6 +402,7 @@ impl ImmersiveView {
 
         // Scrubber Scale & Times
         let scrub_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        scrub_box.add_css_class("immersive-scrub-region");
         let scrub_scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
         scrub_scale.set_draw_value(false);
         scrub_scale.set_hexpand(true);
@@ -417,6 +441,7 @@ impl ImmersiveView {
         // Permanently Visible Playback & Volume Controls
         let controls_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         controls_row.add_css_class("immersive-controls");
+        controls_row.set_tooltip_text(Some("Playback controls · Tab to focus"));
 
         let shuffle_button = gtk::ToggleButton::new();
         shuffle_button.set_child(Some(&assets::primary_icon(icons::SHUFFLE, 16)));
@@ -462,6 +487,7 @@ impl ImmersiveView {
         controls_row.append(&volume_scale);
 
         deck_container.append(&controls_row);
+        install_control_focus(&deck_container);
         stage_box.append(&deck_container);
 
         // Synced Lyrics Scrollable Panel
@@ -483,6 +509,7 @@ impl ImmersiveView {
         // Floating Pill Dock (Shown during Visualizer mode)
         let floating_dock = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         floating_dock.add_css_class("immersive-floating-dock");
+        install_control_focus(&floating_dock);
         floating_dock.set_halign(gtk::Align::Center);
         floating_dock.set_valign(gtk::Align::End);
         floating_dock.set_margin_bottom(24);
@@ -554,6 +581,7 @@ impl ImmersiveView {
             mode_syncing: Cell::new(false),
             on_open_library: on_open_library.clone(),
             ambient_aura: ambient_aura.clone(),
+            artwork_palette: Cell::new(None),
             palette: Cell::new(current_theme_palette()),
             visualizer_canvas: visualizer_canvas.clone(),
             visualizer_bands: Cell::new([0.0; crate::playback::SPECTRUM_BANDS]),
@@ -617,14 +645,6 @@ impl ImmersiveView {
             syncing: Cell::new(false),
             last_second: Cell::new(-1),
             last_duration: Cell::new(-1),
-        });
-
-        let ambient_state = Rc::downgrade(&state);
-        ambient_aura.set_draw_func(move |_, cr, width, height| {
-            if let Some(state) = ambient_state.upgrade() {
-                let (accent, highlight) = state.palette.get();
-                draw_ambient_aura(cr, width as f64, height as f64, accent, highlight);
-            }
         });
 
         let mapped_state = Rc::downgrade(&state);
@@ -907,6 +927,8 @@ impl ImmersiveState {
         self.art_picture
             .set_paintable(Option::<&gdk::Paintable>::None);
         self.art_stack.set_visible_child_name("fallback");
+        self.artwork_palette.set(None);
+        self.ambient_aura.set_artwork(None);
         self.clear_lyrics_ui();
     }
 
@@ -990,7 +1012,23 @@ impl ImmersiveState {
         if self.stopped.get() || !self.is_mapped() {
             return;
         }
-        let palette = current_theme_palette();
+        let palette = visible_artwork_palette(self.artwork_palette.get());
+        if let Some(color) = ThemeManager::shared().applied_tokens()
+            .and_then(|tokens| gdk::RGBA::parse(&tokens.background).ok())
+        {
+            let color = self.artwork_palette.get().map_or(color, |palette| {
+                let background = artwork::background(palette, (f64::from(color.red()), f64::from(color.green()), f64::from(color.blue())));
+                gdk::RGBA::new(background.0 as f32, background.1 as f32, background.2 as f32, 1.0)
+            });
+            self.ambient_aura.set_base(color);
+        }
+        if let Some(overlay) = self.overlay.upgrade() {
+            if crate::ui::motion::animations_enabled() {
+                overlay.remove_css_class("reduced-motion");
+            } else {
+                overlay.add_css_class("reduced-motion");
+            }
+        }
         if self.palette.replace(palette) != palette {
             self.ambient_aura.queue_draw();
             self.redraw_visualizer();
@@ -1011,8 +1049,10 @@ impl ImmersiveState {
         }
         let track = self.controller.current_track();
         let generation = self.controller.generation.get();
+        let previous_track = self.current_track.borrow().clone();
         if self.track_dirty.replace(false)
-            || *self.current_track.borrow() != track
+            || previous_track.as_ref().map(|track| &track.path)
+                != track.as_ref().map(|track| &track.path)
             || self.current_generation.get() != generation
         {
             self.cancel_request();
@@ -1023,6 +1063,9 @@ impl ImmersiveState {
                 .set([0.0; crate::playback::SPECTRUM_BANDS]);
             self.current_generation.set(generation);
             self.current_track.replace(track.clone());
+            self.artwork_palette.set(None);
+            self.palette.set(current_theme_palette());
+            self.ambient_aura.set_artwork(None);
             self.last_second.set(-1);
             self.last_duration.set(-1);
             self.current_lyrics.replace(None);
@@ -1031,11 +1074,7 @@ impl ImmersiveState {
                 .set_paintable(Option::<&gdk::Paintable>::None);
             self.art_stack.set_visible_child_name("fallback");
             if let Some(ref track) = track {
-                self.title_label.set_text(&track.title());
-                self.floating_title.set_text(&track.title());
-                let subtitle = format!("{} · {}", track.artist(), track.album());
-                self.artist_label.set_text(&subtitle);
-                self.floating_artist.set_text(&track.artist());
+                self.update_track_labels(track);
                 self.load_track_assets(track.clone(), generation);
             } else {
                 self.lyrics_status.replace(LyricsStatus::NoTrack);
@@ -1045,6 +1084,10 @@ impl ImmersiveState {
                 self.floating_title.set_text("");
                 self.floating_artist.set_text("");
             }
+        } else if previous_track != track
+            && let (Some(previous), Some(track)) = (previous_track.as_ref(), track.as_ref())
+        {
+            self.refresh_track_metadata(previous, track);
         }
         self.update_stage_layout();
         self.maybe_lookup_lyrics();
@@ -1103,6 +1146,33 @@ impl ImmersiveState {
         self.redraw_visualizer();
     }
 
+    fn update_track_labels(&self, track: &Track) {
+        self.title_label.set_text(&track.title());
+        self.floating_title.set_text(&track.title());
+        let subtitle = format!("{} · {}", track.artist(), track.album());
+        self.artist_label.set_text(&subtitle);
+        self.floating_artist.set_text(track.artist());
+    }
+
+    fn refresh_track_metadata(self: &Rc<Self>, previous: &Track, track: &Track) {
+        self.current_track.replace(Some(track.clone()));
+        self.update_track_labels(track);
+        if !same_lyrics_track(previous, track) {
+            self.cancel_online_lyrics();
+            self.lyrics_attempted.set(false);
+            if *self.lyrics_status.borrow() != LyricsStatus::Local {
+                self.current_lyrics.replace(None);
+                self.lyrics_status
+                    .replace(if self.asset_request.borrow().is_some() {
+                        LyricsStatus::LoadingLocal
+                    } else {
+                        LyricsStatus::LocalMissing
+                    });
+                self.rebuild_lyrics_ui();
+            }
+        }
+    }
+
     fn load_track_assets(self: &Rc<Self>, track: Track, generation: u64) {
         let request = AssetRequest::new();
         let identity = request.identity.clone();
@@ -1130,8 +1200,15 @@ impl ImmersiveState {
             || !self.is_mapped()
             || self.controller.closed.get()
             || self.controller.generation.get() != generation
-            || self.controller.current_track().as_ref() != Some(track)
-            || self.current_track.borrow().as_ref() != Some(track)
+            || self
+                .controller
+                .current_track()
+                .is_none_or(|current| current.path != track.path)
+            || self
+                .current_track
+                .borrow()
+                .as_ref()
+                .is_none_or(|current| current.path != track.path)
             || !self
                 .asset_request
                 .borrow()
@@ -1143,6 +1220,11 @@ impl ImmersiveState {
         self.asset_task.borrow_mut().take();
         self.asset_request.borrow_mut().take();
         if let Some(output) = output {
+            self.artwork_palette.set(output.palette);
+            self.palette.set(visible_artwork_palette(output.palette));
+            self.ambient_aura.set_artwork(output.backdrop.and_then(|bytes| {
+                gdk::Texture::from_bytes(&glib::Bytes::from_owned(bytes)).ok()
+            }));
             if let Some(bytes) = output.artwork
                 && let Ok(texture) = gdk::Texture::from_bytes(&glib::Bytes::from_owned(bytes))
             {
@@ -1161,6 +1243,7 @@ impl ImmersiveState {
         self.update_stage_layout();
         self.sync_lyrics_and_time();
         self.maybe_lookup_lyrics();
+        self.redraw_visualizer();
     }
 
     fn maybe_lookup_lyrics(self: &Rc<Self>) {
@@ -1178,14 +1261,7 @@ impl ImmersiveState {
         let Some(track) = self.current_track.borrow().clone() else {
             return;
         };
-        let (Some(title), Some(artist)) = (
-            track.tags.title.as_deref(),
-            track
-                .tags
-                .artist
-                .as_deref()
-                .or(track.tags.album_artist.as_deref()),
-        ) else {
+        let Some((title, artist)) = lyrics_metadata(&track) else {
             self.lyrics_attempted.set(true);
             self.lyrics_status.replace(LyricsStatus::MissingMetadata);
             self.rebuild_lyrics_ui();
@@ -1237,8 +1313,15 @@ impl ImmersiveState {
             || !ThemeManager::shared().online_lyrics()
             || self.controller.closed.get()
             || self.controller.generation.get() != generation
-            || self.controller.current_track().as_ref() != Some(track)
-            || self.current_track.borrow().as_ref() != Some(track)
+            || self
+                .controller
+                .current_track()
+                .is_none_or(|current| !same_lyrics_track(&current, track))
+            || self
+                .current_track
+                .borrow()
+                .as_ref()
+                .is_none_or(|current| !same_lyrics_track(current, track))
             || !self
                 .lyrics_request
                 .borrow()
@@ -1460,6 +1543,23 @@ impl Drop for ImmersiveState {
     }
 }
 
+fn install_control_focus(widget: &gtk::Box) {
+    let focus = gtk::EventControllerFocus::new();
+    let weak = widget.downgrade();
+    focus.connect_enter(move |_| {
+        if let Some(widget) = weak.upgrade() {
+            widget.add_css_class("controls-focused");
+        }
+    });
+    let weak = widget.downgrade();
+    focus.connect_leave(move |_| {
+        if let Some(widget) = weak.upgrade() {
+            widget.remove_css_class("controls-focused");
+        }
+    });
+    widget.add_controller(focus);
+}
+
 fn current_theme_palette() -> ((f64, f64, f64), (f64, f64, f64)) {
     let tokens = ThemeManager::shared().applied_tokens();
     let accent = tokens
@@ -1477,6 +1577,23 @@ fn current_theme_palette() -> ((f64, f64, f64), (f64, f64, f64)) {
     (accent, highlight)
 }
 
+fn visible_artwork_palette(palette: Option<artwork::Palette>) -> artwork::Palette {
+    let Some(palette) = palette else {
+        return current_theme_palette();
+    };
+    let Some(tokens) = ThemeManager::shared().applied_tokens() else {
+        return current_theme_palette();
+    };
+    let color = |value: &str| gdk::RGBA::parse(value).ok().map(|color| {
+        (f64::from(color.red()), f64::from(color.green()), f64::from(color.blue()))
+    });
+    match (color(&tokens.background), color(&tokens.text)) {
+        (Some(background), Some(foreground)) => artwork::legible_palette(palette, artwork::background(palette, background), foreground),
+        _ => current_theme_palette(),
+    }
+}
+
+#[cfg(test)]
 pub fn draw_ambient_aura(
     cr: &gtk::cairo::Context,
     width: f64,

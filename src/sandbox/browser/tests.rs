@@ -29,6 +29,41 @@ fn test_wire_operation_parse() {
 }
 
 #[test]
+fn selected_audio_artwork_has_its_own_high_resolution_operation() {
+    assert_eq!(map_preview_op(&ParseOperation::PreviewAudioArtwork), Some(Operation::PreviewAudioArtwork));
+    assert_eq!(Operation::parse(26).unwrap(), Operation::PreviewAudioArtwork);
+    assert!(map_thumbnail_op(&ParseOperation::PreviewAudioArtwork).is_none());
+    assert_ne!(map_preview_op(&ParseOperation::PreviewAudioArtwork), map_thumbnail_op(&ParseOperation::ThumbnailVideo));
+}
+
+#[test]
+#[ignore = "Requires built sandbox helper and FFmpeg; generated cover only, no playback"]
+fn generated_embedded_artwork_preview_preserves_more_detail_than_thumbnail() {
+    let root = std::env::temp_dir().join(format!("hermes-artwork-resolution-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let cover = root.join("cover.png");
+    let pixels = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 1400, 1400).unwrap();
+    pixels.fill(0xee8020ff);
+    pixels.savev(&cover, "png", &[]).unwrap();
+    let track = root.join("generated.mp3");
+    assert!(std::process::Command::new("ffmpeg").args([
+        "-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+        "-i",
+    ]).arg(&cover).args([
+        "-t", "0.2", "-map", "0:a", "-map", "1:v", "-c:a", "libmp3lame", "-c:v", "png",
+        "-threads", "1", "-id3v2_version", "3", "-metadata:s:v", "title=Album cover",
+        "-metadata:s:v", "comment=Cover (front)",
+    ]).arg(&track).status().unwrap().success());
+    let cancellation = Cancellation::default();
+    let small = crate::sandbox::parse(&track, ParseOperation::ThumbnailVideo, 1024, &cancellation).unwrap();
+    let large = crate::sandbox::parse(&track, ParseOperation::PreviewAudioArtwork, 1024, &cancellation).unwrap();
+    let width = |bytes: &[u8]| u32::from_be_bytes(bytes[16..20].try_into().unwrap());
+    assert_eq!(width(&small.data), 256);
+    assert_eq!(width(&large.data), 1024);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn heif_thumbnails_and_full_previews_use_distinct_cached_operations() {
     assert_eq!(map_thumbnail_op(&ParseOperation::ThumbnailHeif), Some(Operation::Heif));
     assert_eq!(map_preview_op(&ParseOperation::PreviewHeif), Some(Operation::PreviewHeif));

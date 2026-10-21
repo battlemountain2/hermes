@@ -183,6 +183,25 @@ fn classifies_office_documents() {
 }
 
 #[test]
+fn presentation_packages_have_office_preview_and_search_capabilities() {
+    for extension in ["PPTX", "ppsx", "potx"] {
+        let capabilities = capabilities_by_name(OsStr::new(&format!("deck.{extension}")));
+        assert_eq!(capabilities.family, FormatFamily::OfficeDocument);
+        assert_eq!(capabilities.preview, Some(PreviewHandler::Office));
+        assert_eq!(capabilities.text_extractor, Some(TextExtractor::Office));
+        assert_eq!(capabilities.thumbnail, None);
+    }
+    for suffix in ["presentation", "slideshow", "template"] {
+        assert_eq!(
+            classify_by_mime(&format!(
+                "application/vnd.openxmlformats-officedocument.presentationml.{suffix}"
+            )),
+            FormatFamily::OfficeDocument,
+        );
+    }
+}
+
+#[test]
 fn unknown_for_unrecognized_or_missing_extension() {
     assert_eq!(
         classify_by_name(OsStr::new("no-extension")),

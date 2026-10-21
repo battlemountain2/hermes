@@ -96,6 +96,7 @@ fn render_job(operation: Operation, input_fd: &OwnedFd) -> Result<Response, Stri
         Operation::Image => (crate::sandbox_helper::render_image(input_path, 256)?, None),
         Operation::Video => (crate::sandbox_helper::render_media(input_path, 256)?, None),
         Operation::PreviewImage => (crate::sandbox_helper::render_image(input_path, 1400)?, None),
+        Operation::PreviewAudioArtwork => (crate::sandbox_helper::render_media(input_path, 1024)?, None),
         Operation::Heif => (
             crate::sandbox_helper::render_heif_thumbnail(input_path, 256)?,
             None,

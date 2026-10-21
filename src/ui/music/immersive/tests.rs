@@ -403,7 +403,65 @@ fn fixture_assets(text: &str) -> TrackAssets {
     TrackAssets {
         artwork: Some(bytes),
         lyrics: crate::services::lyrics::parse_lrc(&format!("[00:00]{text}")),
+        ..TrackAssets::default()
     }
+}
+
+#[test]
+#[ignore = "Requires isolated GTK display; synthetic covers and keyboard focus, no playback"]
+fn desktop_immersive_artwork_palette_survives_theme_sync_and_controls_reveal_without_reflow() {
+    gtk::init().unwrap();
+    gtk::Settings::default().unwrap().set_gtk_enable_animations(false);
+    crate::assets::prepare().unwrap();
+    let manager = ThemeManager::shared();
+    manager.set_online_lyrics(false);
+    let styles = gtk::CssProvider::new();
+    styles.connect_parsing_error(|_, _, error| panic!("Immersive CSS: {error}"));
+    styles.load_from_string(include_str!("../../../style.css"));
+    gtk::style_context_add_provider_for_display(&gdk::Display::default().unwrap(), &styles, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+    let view = fixture_view();
+    let window = gtk::Window::builder().default_width(1200).default_height(900).child(view.widget()).build();
+    window.present();
+    let track = fixture_track("/generated/cover-colors.flac");
+    let identity = arm_asset_request(&view, &track, 7);
+    let pixels = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, 1024, 1024).unwrap();
+    pixels.fill(0xee8020ff);
+    let bytes = pixels.save_to_bufferv("png", &[]).unwrap();
+    let (backdrop, palette) = artwork::presentation(&bytes).unwrap();
+    view.state.finish_track_assets(&identity, &track, 7, Some(TrackAssets {
+        artwork: Some(bytes), backdrop: Some(backdrop), palette: Some(palette), lyrics: None,
+    }));
+    let loaded = view.state.art_picture.paintable().unwrap().downcast::<gdk::Texture>().unwrap();
+    assert_eq!((loaded.width(), loaded.height()), (1024, 1024));
+    manager.select_theme("paper");
+    view.sync();
+    assert_eq!(view.state.artwork_palette.get(), Some(palette));
+    assert_eq!(view.state.palette.get(), visible_artwork_palette(Some(palette)));
+    let deck = view.state.art_box.parent().unwrap();
+    let controls = view.state.play_button.parent().unwrap();
+    let pump = || {
+        let until = std::time::Instant::now() + Duration::from_millis(200);
+        while std::time::Instant::now() < until {
+            while glib::MainContext::default().iteration(false) {}
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    };
+    view.state.lyrics_btn.grab_focus();
+    pump();
+    let bounds = controls.compute_bounds(&deck).unwrap();
+    assert!(!deck.has_css_class("controls-focused"));
+    view.state.play_button.grab_focus();
+    pump();
+    assert!(deck.has_css_class("controls-focused"));
+    assert!(view.state.play_button.has_focus());
+    assert_eq!(controls.compute_bounds(&deck).unwrap(), bounds);
+    view.state.lyrics_btn.grab_focus();
+    pump();
+    assert!(!deck.has_css_class("controls-focused"));
+    assert_eq!(controls.compute_bounds(&deck).unwrap(), bounds);
+    view.request_stop();
+    assert!(view.state.artwork_palette.get().is_none());
+    window.close();
 }
 
 #[test]
@@ -627,4 +685,306 @@ fn desktop_immersive_tick_motion_pause_stop_and_filled_play_icons() {
     assert!(view.state.asset_task.borrow().is_none());
     window.close();
     settings.set_gtk_enable_animations(previous_animations);
+}
+
+fn tagged_fixture_track() -> Track {
+    let mut track = fixture_track("/synthetic/metadata-refresh.flac");
+    track.tags.title = Some("Synthetic title".into());
+    track.tags.artist = Some("Synthetic artist".into());
+    track
+}
+
+#[test]
+fn lyrics_metadata_prefers_nonblank_artist_tags_without_filename_fallbacks() {
+    let mut track = tagged_fixture_track();
+    track.tags.artist = Some(" \t ".into());
+    track.tags.album_artist = Some(" Album artist ".into());
+    assert_eq!(
+        lyrics_metadata(&track),
+        Some(("Synthetic title", "Album artist"))
+    );
+    let (title, artist) = lyrics_metadata(&track).unwrap();
+    assert!(online::Query::new(title, artist, 180.0).is_ok());
+    track.tags.artist = Some(" Track artist ".into());
+    assert_eq!(
+        lyrics_metadata(&track),
+        Some(("Synthetic title", "Track artist"))
+    );
+    track.tags.title = None;
+    assert!(lyrics_metadata(&track).is_none());
+    track.tags.title = Some(" \t ".into());
+    assert!(lyrics_metadata(&track).is_none());
+    track.tags.title = Some("Title".into());
+    track.tags.artist = None;
+    track.tags.album_artist = Some(" ".into());
+    assert!(lyrics_metadata(&track).is_none());
+}
+
+#[test]
+fn lyrics_request_metadata_ignores_album_and_order_tags_but_not_source_title_or_artist() {
+    let original = tagged_fixture_track();
+    let mut refreshed = original.clone();
+    refreshed.tags.album = Some("Hydrated album".into());
+    refreshed.tags.album_artist = Some("Different album artist".into());
+    refreshed.tags.disc = Some(2);
+    refreshed.tags.track = Some(5);
+    refreshed.tags.title = Some(" Synthetic title ".into());
+    assert!(same_lyrics_track(&original, &refreshed));
+    refreshed.path = PathBuf::from("/synthetic/different-source.flac");
+    assert!(!same_lyrics_track(&original, &refreshed));
+    refreshed = original.clone();
+    refreshed.tags.title = Some("Different title".into());
+    assert!(!same_lyrics_track(&original, &refreshed));
+    refreshed = original.clone();
+    refreshed.tags.artist = Some("Different artist".into());
+    assert!(!same_lyrics_track(&original, &refreshed));
+    refreshed = original.clone();
+    refreshed.tags.artist = Some(" ".into());
+    refreshed.tags.album_artist = original.tags.artist.clone();
+    assert!(same_lyrics_track(&original, &refreshed));
+}
+
+#[test]
+#[ignore = "Private GTK display; synthetic artwork/lyrics, no audio, network or preference writes"]
+fn desktop_metadata_only_refresh_preserves_loaded_artwork_and_lyrics_widgets() {
+    gtk::init().unwrap();
+    let view = fixture_view();
+    let window = gtk::Window::builder().child(view.widget()).build();
+    window.present();
+    let track = tagged_fixture_track();
+    let identity = arm_asset_request(&view, &track, 1);
+    view.state.finish_track_assets(
+        &identity,
+        &track,
+        1,
+        Some(fixture_assets("Retained lyrics")),
+    );
+    let picture = view.state.art_picture.paintable().unwrap();
+    for status in [LyricsStatus::Local, LyricsStatus::Online] {
+        view.state.lyrics_status.replace(status.clone());
+        view.state.lyrics_attempted.set(true);
+        view.state.rebuild_lyrics_ui();
+        let label = view.state.lyric_labels.borrow()[0].clone();
+        let source = view.state.lyrics_box.first_child().unwrap();
+        view.state.visualizer_bands.set([0.3; 32]);
+        {
+            let mut queue = view.state.controller.queue.borrow_mut();
+            queue.tracks[0].tags.album = Some(format!("Hydrated album {status:?}"));
+            queue.tracks[0].tags.disc = Some(2);
+        }
+        view.state.controller.notify();
+        assert_eq!(view.state.art_picture.paintable().as_ref(), Some(&picture));
+        assert_eq!(
+            view.state.art_stack.visible_child_name().as_deref(),
+            Some("picture")
+        );
+        assert_eq!(view.state.lyric_labels.borrow()[0], label);
+        assert_eq!(view.state.lyrics_box.first_child().as_ref(), Some(&source));
+        assert_eq!(*view.state.lyrics_status.borrow(), status);
+        assert!(view.state.lyrics_attempted.get());
+        assert_eq!(view.state.visualizer_bands.get(), [0.3; 32]);
+        assert!(view.state.asset_request.borrow().is_none());
+        assert!(view.state.asset_task.borrow().is_none());
+        assert!(view.state.lyrics_request.borrow().is_none());
+        assert!(view.state.artist_label.text().contains("Hydrated album"));
+        assert_eq!(view.state.controller.generation.get(), 1);
+        assert!(view.state.controller.stream().is_none());
+    }
+    view.request_stop();
+    window.close();
+}
+
+#[test]
+#[ignore = "Private GTK display; synthetic pending local assets, no audio, network or preference writes"]
+fn desktop_metadata_hydration_preserves_pending_local_assets_and_accepts_original_completion() {
+    gtk::init().unwrap();
+    let view = fixture_view();
+    let window = gtk::Window::builder().child(view.widget()).build();
+    window.present();
+    let track = fixture_track("/synthetic/metadata-refresh.flac");
+    let identity = arm_asset_request(&view, &track, 1);
+    let cancellation = view
+        .state
+        .asset_request
+        .borrow()
+        .as_ref()
+        .unwrap()
+        .cancellation
+        .clone();
+    view.state.lyrics_status.replace(LyricsStatus::LoadingLocal);
+    view.state.controller.queue.borrow_mut().tracks[0] = tagged_fixture_track();
+    view.state.controller.notify();
+    assert!(!cancellation.is_cancelled());
+    assert!(
+        view.state
+            .asset_request
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .accepts(&identity)
+    );
+    assert!(view.state.asset_task.borrow().is_none());
+    assert_eq!(
+        *view.state.lyrics_status.borrow(),
+        LyricsStatus::LoadingLocal
+    );
+    assert_eq!(view.state.title_label.text(), "Synthetic title");
+    view.state.finish_track_assets(
+        &identity,
+        &track,
+        1,
+        Some(fixture_assets("Current local lyrics")),
+    );
+    assert!(view.state.art_picture.paintable().is_some());
+    assert!(view.state.asset_request.borrow().is_none());
+    assert_eq!(*view.state.lyrics_status.borrow(), LyricsStatus::Local);
+    assert_eq!(
+        view.state.current_lyrics.borrow().as_ref().unwrap().lines[0].text,
+        "Current local lyrics"
+    );
+    assert_eq!(
+        view.state.current_track.borrow().as_ref().unwrap().tags,
+        tagged_fixture_track().tags
+    );
+    view.request_stop();
+    window.close();
+}
+
+#[test]
+#[ignore = "Private GTK/preferences; synthetic online completions, no media, audio or real requests"]
+fn desktop_metadata_refresh_preserves_same_query_online_request_and_rearms_changed_query() {
+    gtk::init().unwrap();
+    let manager = ThemeManager::shared();
+    let previous_online = manager.online_lyrics();
+    manager.set_online_lyrics(true);
+    let view = fixture_view();
+    let window = gtk::Window::builder().child(view.widget()).build();
+    window.present();
+    let track = tagged_fixture_track();
+    arm_asset_request(&view, &track, 1);
+    view.state.cancel_request();
+    let request = AssetRequest::new();
+    let identity = request.identity.clone();
+    let cancellation = request.cancellation.clone();
+    view.state.lyrics_request.replace(Some(request));
+    view.state.lyrics_attempted.set(true);
+    view.state
+        .lyrics_status
+        .replace(LyricsStatus::LoadingOnline);
+    view.state.controller.queue.borrow_mut().tracks[0]
+        .tags
+        .album = Some("Hydrated album".into());
+    view.state.controller.notify();
+    assert!(!cancellation.is_cancelled());
+    assert!(
+        view.state
+            .lyrics_request
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .accepts(&identity)
+    );
+    assert!(view.state.lyrics_attempted.get());
+    assert_eq!(
+        *view.state.lyrics_status.borrow(),
+        LyricsStatus::LoadingOnline
+    );
+    let lyrics = || {
+        online::Lookup::Found(
+            crate::services::lyrics::parse_lrc("[00:00]Synthetic online lyrics").unwrap(),
+        )
+    };
+    view.state
+        .finish_online_lyrics(&identity, &track, 1, Ok(lyrics()));
+    assert_eq!(*view.state.lyrics_status.borrow(), LyricsStatus::Online);
+    assert!(view.state.current_lyrics.borrow().is_some());
+    view.state.controller.queue.borrow_mut().tracks[0]
+        .tags
+        .title = Some("Hydrated title".into());
+    view.state.controller.notify();
+    assert_eq!(
+        *view.state.lyrics_status.borrow(),
+        LyricsStatus::LocalMissing
+    );
+    assert!(view.state.current_lyrics.borrow().is_none());
+    assert!(!view.state.lyrics_attempted.get());
+    assert!(view.state.lyrics_request.borrow().is_none());
+    view.state
+        .finish_online_lyrics(&identity, &track, 1, Ok(lyrics()));
+    assert!(view.state.current_lyrics.borrow().is_none());
+    let request = AssetRequest::new();
+    let cancellation = request.cancellation.clone();
+    view.state.lyrics_request.replace(Some(request));
+    view.state.lyrics_attempted.set(true);
+    view.state
+        .lyrics_status
+        .replace(LyricsStatus::LoadingOnline);
+    view.state.controller.queue.borrow_mut().tracks[0]
+        .tags
+        .artist = Some("Hydrated artist".into());
+    view.state.controller.notify();
+    assert!(cancellation.is_cancelled());
+    assert!(view.state.lyrics_request.borrow().is_none());
+    assert!(!view.state.lyrics_attempted.get());
+    view.state
+        .current_lyrics
+        .replace(crate::services::lyrics::parse_lrc(
+            "[00:00]Local lyrics win",
+        ));
+    view.state.lyrics_status.replace(LyricsStatus::Local);
+    view.state.rebuild_lyrics_ui();
+    let label = view.state.lyric_labels.borrow()[0].clone();
+    view.state.controller.queue.borrow_mut().tracks[0]
+        .tags
+        .title = Some("Another hydrated title".into());
+    view.state.controller.notify();
+    assert_eq!(*view.state.lyrics_status.borrow(), LyricsStatus::Local);
+    assert_eq!(view.state.lyric_labels.borrow()[0], label);
+    assert!(view.state.lyrics_request.borrow().is_none());
+    assert!(view.state.controller.stream().is_none());
+    view.request_stop();
+    window.close();
+    manager.set_online_lyrics(previous_online);
+}
+
+#[test]
+#[ignore = "Private GTK display; synthetic assets only, no worker execution, audio or network"]
+fn desktop_metadata_refresh_keeps_source_and_generation_changes_as_full_resets() {
+    gtk::init().unwrap();
+    for change_generation in [false, true] {
+        let view = fixture_view();
+        let window = gtk::Window::builder().child(view.widget()).build();
+        window.present();
+        let track = tagged_fixture_track();
+        let identity = arm_asset_request(&view, &track, 1);
+        view.state.finish_track_assets(
+            &identity,
+            &track,
+            1,
+            Some(fixture_assets("Old local lyrics")),
+        );
+        assert!(view.state.art_picture.paintable().is_some());
+        if change_generation {
+            view.state.controller.generation.set(2);
+        } else {
+            view.state.controller.queue.borrow_mut().tracks[0].path =
+                PathBuf::from("/synthetic/new-source.flac");
+        }
+        view.state.controller.notify();
+        assert!(view.state.art_picture.paintable().is_none());
+        assert_eq!(
+            view.state.art_stack.visible_child_name().as_deref(),
+            Some("fallback")
+        );
+        assert!(view.state.current_lyrics.borrow().is_none());
+        assert!(view.state.asset_request.borrow().is_some());
+        assert!(view.state.asset_task.borrow().is_some());
+        view.state
+            .finish_track_assets(&identity, &track, 1, Some(fixture_assets("Stale assets")));
+        assert!(view.state.art_picture.paintable().is_none());
+        assert!(view.state.current_lyrics.borrow().is_none());
+        view.request_stop();
+        assert!(view.state.asset_task.borrow().is_none());
+        window.close();
+    }
 }

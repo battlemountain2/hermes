@@ -4121,6 +4121,29 @@ button.music-cover-button:focus-visible {
 
 .immersive-controls {
   padding-top: 10px;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.immersive-scrub-region,
+.immersive-floating-dock {
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.immersive-deck:hover .immersive-controls,
+.immersive-deck.controls-focused .immersive-controls,
+.immersive-deck:hover .immersive-scrub-region,
+.immersive-deck.controls-focused .immersive-scrub-region,
+.immersive-floating-dock:hover,
+.immersive-floating-dock.controls-focused {
+  opacity: 1;
+}
+
+.immersive-root.reduced-motion .immersive-controls,
+.immersive-root.reduced-motion .immersive-scrub-region,
+.immersive-root.reduced-motion .immersive-floating-dock {
+  transition: none;
 }
 
 .immersive-control-btn {
@@ -4272,15 +4295,30 @@ button.music-cover-button:focus-visible {
 
 .mini-play-btn {
   background: @theme_accent;
-  color: @theme_bg;
+  background-image: none;
+  color: @theme_on_accent;
   border: 1px solid @theme_accent;
   border-radius: 5px;
   padding: 5px 10px;
+  box-shadow: none;
 }
 
-.mini-play-btn:hover {
-  background: @theme_text;
+.mini-play-btn:hover,
+.mini-play-btn:active {
+  background: @theme_accent;
+  background-image: none;
+  color: @theme_on_accent;
   border-color: @theme_text;
+  box-shadow: none;
+}
+
+.mini-play-btn:focus-visible {
+  outline: 2px solid @theme_text;
+  outline-offset: -3px;
+}
+
+.mini-player-header {
+  padding: 2px 0;
 }
 
 .mini-expand-btn {

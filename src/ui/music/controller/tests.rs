@@ -1,5 +1,249 @@
 use super::*;
 
+fn embedded_fixture_tags() -> crate::model::MusicTags {
+    crate::model::MusicTags {
+        title: Some("Embedded title".into()),
+        artist: Some("Embedded artist".into()),
+        album: Some("Embedded album".into()),
+        track: Some(2),
+        disc: Some(1),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn metadata_hydration_updates_duplicate_queue_remote_and_session_without_restart() {
+    use crate::mpris::Backend;
+    let controller = stopped_controller();
+    let duplicate = controller.current_track().unwrap();
+    controller.queue.borrow_mut().append(vec![duplicate]);
+    controller.update_identities();
+    controller.queue.borrow_mut().set_shuffle(true, 42);
+    controller.queue.borrow_mut().repeat = Repeat::All;
+    controller.resume_position.set(7_000_000);
+    controller.play_intent.set(true);
+    let identity = controller.track_id();
+    let order: Vec<_> = controller
+        .queue
+        .borrow()
+        .ordered()
+        .iter()
+        .map(|(index, _)| *index)
+        .collect();
+    let generation = controller.generation.get();
+    let seek_revision = controller.seek_revision();
+    let queue_revision = controller.queue_revision.get();
+    let session_revision = controller.session_revision.get();
+    let calls = Rc::new(Cell::new(0));
+    let observed = calls.clone();
+    let weak = Rc::downgrade(&controller);
+    let callback: Rc<dyn Fn()> = Rc::new(move || {
+        let controller = weak.upgrade().unwrap();
+        assert_eq!(
+            controller.current_track().unwrap().title(),
+            "Embedded title"
+        );
+        assert_eq!(
+            controller.snapshot().track.unwrap().artist(),
+            "Embedded artist"
+        );
+        observed.set(observed.get() + 1);
+    });
+    controller.observe(&callback);
+    let request = controller.begin_metadata_request().unwrap();
+    assert!(controller.begin_metadata_request().is_none());
+    assert!(controller.complete_metadata_request(&request, Some(embedded_fixture_tags())));
+    assert_eq!(calls.get(), 1);
+    assert_eq!(controller.queue_revision.get(), queue_revision + 1);
+    assert_eq!(controller.session_revision.get(), session_revision + 1);
+    assert_eq!(controller.track_id(), identity);
+    assert_eq!(controller.generation.get(), generation);
+    assert_eq!(controller.seek_revision(), seek_revision);
+    assert_eq!(controller.position(), 7_000_000);
+    assert!(controller.play_intent.get());
+    assert!(controller.stream().is_none());
+    assert_eq!(controller.snapshot().status, "Stopped");
+    let queue = controller.queue.borrow();
+    assert_eq!(
+        queue
+            .ordered()
+            .iter()
+            .map(|(index, _)| *index)
+            .collect::<Vec<_>>(),
+        order
+    );
+    assert_eq!(queue.tracks[0].tags, embedded_fixture_tags());
+    assert_eq!(queue.tracks[3].tags, embedded_fixture_tags());
+    assert_eq!(queue.tracks[1].tags, crate::model::MusicTags::default());
+    let restored =
+        crate::music::session::Session::capture(&queue, controller.position(), controller.volume())
+            .into_queue();
+    assert_eq!(restored.tracks, queue.tracks);
+    assert_eq!(restored.current, queue.current);
+    assert_eq!(restored.repeat, Repeat::All);
+    assert!(restored.shuffle);
+    drop(queue);
+    assert!(controller.begin_metadata_request().is_none());
+    assert!(!controller.complete_metadata_request(&request, Some(embedded_fixture_tags())));
+    assert_eq!(calls.get(), 1);
+}
+
+#[test]
+fn metadata_attempts_are_bounded_for_untagged_files_and_failures() {
+    let controller = stopped_controller();
+    let request = controller.begin_metadata_request().unwrap();
+    assert!(!controller.complete_metadata_request(&request, None));
+    assert!(controller.begin_metadata_request().is_none());
+    assert!(!controller.complete_metadata_request(&request, Some(Default::default())));
+    assert!(controller.begin_metadata_request().is_none());
+    controller.next();
+    assert!(request.cancellation.is_cancelled());
+    assert!(controller.begin_metadata_request().is_some());
+}
+
+#[test]
+fn metadata_completion_rejects_navigation_stop_replacement_duplicates_and_shutdown() {
+    for action in 0..6 {
+        let controller = stopped_controller();
+        let request = controller.begin_metadata_request().unwrap();
+        let duplicate = controller.current_track().unwrap();
+        match action {
+            0 => controller.next(),
+            1 => controller.stop(),
+            2 => {
+                let mut replacement = Queue::default();
+                replacement.replace(vec![duplicate], 0);
+                controller.restore_queue(replacement);
+            }
+            3 => {
+                controller.queue.borrow_mut().append(vec![duplicate]);
+                controller.update_identities();
+                controller.queue.borrow_mut().select(3);
+            }
+            4 => controller.shutdown(),
+            _ => request.cancellation.cancel(),
+        }
+        let before = controller.queue.borrow().tracks.clone();
+        let revision = controller.queue_revision.get();
+        assert!(!controller.complete_metadata_request(&request, Some(embedded_fixture_tags())));
+        assert!(!controller.complete_metadata_request(&request, None));
+        assert_eq!(controller.queue.borrow().tracks, before);
+        assert_eq!(controller.queue_revision.get(), revision);
+    }
+}
+
+#[test]
+fn metadata_completion_survives_reordering_but_preserves_newer_tag_values() {
+    let controller = stopped_controller();
+    controller.queue.borrow_mut().select(1);
+    let request = controller.begin_metadata_request().unwrap();
+    controller.queue.borrow_mut().tracks[1].tags.title = Some("Newer title".into());
+    controller.move_queue(1, 3);
+    controller.remove_queue(0);
+    assert!(controller.complete_metadata_request(&request, Some(embedded_fixture_tags())));
+    assert_eq!(controller.current_track().unwrap().title(), "Newer title");
+    assert_eq!(
+        controller.current_track().unwrap().artist(),
+        "Embedded artist"
+    );
+    assert!(controller.stream().is_none());
+}
+
+#[test]
+#[ignore = "Requires private GTK display, FFmpeg and built sandbox; generated silent FLAC, no playback"]
+fn desktop_current_track_metadata_hydrates_missing_queued_tags_and_persists_without_playback() {
+    use crate::mpris::Backend;
+    gtk::init().unwrap();
+    let folder =
+        std::env::temp_dir().join(format!("hermes-metadata-hydration-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("02 Filename Is Not Metadata.flac");
+    assert!(
+        std::process::Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-nostdin",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=8000:cl=mono",
+                "-t",
+                "1",
+                "-metadata",
+                "title=Embedded title",
+                "-metadata",
+                "artist=Embedded artist",
+                "-metadata",
+                "album=Embedded album",
+                "-metadata",
+                "track=2",
+                "-metadata",
+                "disc=1"
+            ])
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let session_path = folder.join("queue.json");
+    let controller = Controller::with_session(None);
+    controller
+        .session_store
+        .replace(Some(crate::music::session::Store::new(
+            session_path.clone(),
+        )));
+    let mut queue = Queue::default();
+    let track = Track {
+        path,
+        tags: Default::default(),
+    };
+    queue.replace(vec![track.clone(), track], 0);
+    queue.set_shuffle(true, 42);
+    queue.repeat = Repeat::All;
+    controller.restore_queue(queue);
+    controller.resume_position.set(3_000_000);
+    let identity = controller.track_id();
+    let generation = controller.generation.get();
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    while controller.current_track().unwrap().needs_metadata()
+        && std::time::Instant::now() < deadline
+    {
+        if !glib::MainContext::default().iteration(false) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    assert_eq!(
+        controller.current_track().unwrap().tags,
+        embedded_fixture_tags()
+    );
+    assert_eq!(
+        controller.snapshot().track.unwrap().tags,
+        embedded_fixture_tags()
+    );
+    assert_eq!(
+        controller.queue.borrow().tracks[1].tags,
+        embedded_fixture_tags()
+    );
+    assert_eq!(controller.track_id(), identity);
+    assert_eq!(controller.generation.get(), generation);
+    assert_eq!(controller.position(), 3_000_000);
+    assert_eq!(controller.status(), PlaybackStatus::Stopped);
+    assert!(!controller.play_intent.get());
+    assert!(controller.stream().is_none());
+    controller.shutdown();
+    let saved = crate::music::session::load(&session_path).unwrap().unwrap();
+    assert_eq!(saved.position, 3_000_000);
+    let queue = saved.into_queue();
+    assert_eq!(queue.tracks[0].tags, embedded_fixture_tags());
+    assert_eq!(queue.tracks[1].tags, embedded_fixture_tags());
+    assert_eq!(queue.current, Some(0));
+    assert_eq!(queue.repeat, Repeat::All);
+    assert!(queue.shuffle);
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
 fn pump(player: &MusicPlayer, predicate: impl Fn() -> bool) {
     let deadline = std::time::Instant::now() + Duration::from_secs(15);
     while !predicate() && std::time::Instant::now() < deadline {

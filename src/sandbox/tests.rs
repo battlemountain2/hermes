@@ -143,6 +143,23 @@ fn one_shot_office_previews_preserve_format_and_text_limits() {
         cancellation.cancel();
         assert!(super::parse(&path, ParseOperation::PreviewOffice, 0, &cancellation).is_err());
     }
+    let slides = directory.0.join("generated.PPTX");
+    write_package(&slides, &[
+        ("ppt/presentation.xml", b"<presentation><sldId r:id=\"first\"/></presentation>"),
+        ("ppt/_rels/presentation.xml.rels", b"<Relationships><Relationship Id=\"first\" Type=\"internal/slide\" Target=\"slides/slide1.xml\"/></Relationships>"),
+        ("ppt/slides/slide1.xml", b"<sld><p><t>Generated slide body</t></p></sld>"),
+    ]);
+    let result = super::parse_one_shot_with_executable(
+        &slides,
+        ParseOperation::PreviewOffice,
+        1024,
+        &Cancellation::default(),
+        &helper,
+    )
+    .unwrap();
+    let text = String::from_utf8(result.data).unwrap();
+    assert!(text.contains("Slide 1"));
+    assert!(text.contains("Generated slide body"));
 }
 
 #[test]

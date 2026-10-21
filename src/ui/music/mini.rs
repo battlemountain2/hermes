@@ -93,7 +93,9 @@ impl MiniPlayer {
             expand_cb();
         });
         top_row.append(&expand_btn);
-        root_box.append(&top_row);
+        let header = gtk::WindowHandle::builder().child(&top_row).build();
+        header.add_css_class("mini-player-header");
+        window.set_titlebar(Some(&header));
 
         // Middle Row: Scrubber
         let seek_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -118,12 +120,14 @@ impl MiniPlayer {
 
         // Bottom Row: Controls & Volume
         let bottom_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let prev = gtk::Button::builder().tooltip_text("Previous track").build();
+        let prev = gtk::Button::builder()
+            .tooltip_text("Previous track")
+            .build();
         prev.set_child(Some(&assets::primary_icon(icons::ARROW_LEFT, 15)));
         prev.add_css_class("mini-control-btn");
 
         let play = gtk::Button::builder().tooltip_text("Play / Pause").build();
-        play.set_child(Some(&assets::primary_icon(icons::PLAY, 16)));
+        play.set_child(Some(&assets::on_accent_icon(icons::PLAY, 16)));
         play.add_css_class("mini-play-btn");
 
         let next = gtk::Button::builder().tooltip_text("Next track").build();
@@ -225,6 +229,21 @@ impl MiniPlayer {
             glib::Propagation::Stop
         });
 
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let weak_window = window.downgrade();
+        keys.connect_key_pressed(move |_, key, _, _| {
+            if key == gtk::gdk::Key::Escape {
+                if let Some(window) = weak_window.upgrade() {
+                    window.set_visible(false);
+                }
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+        window.add_controller(keys);
+
         // Sync on tick
         let tick_state = Rc::downgrade(&state);
         window.add_tick_callback(move |win, _| {
@@ -283,7 +302,8 @@ impl MiniPlayerState {
             self.displayed_track.replace(track.clone());
             if let Some(ref track) = track {
                 self.title.set_text(&track.title());
-                self.artist.set_text(&format!("{} · {}", track.artist(), track.album()));
+                self.artist
+                    .set_text(&format!("{} · {}", track.artist(), track.album()));
                 let ext = track
                     .path
                     .extension()
@@ -310,10 +330,7 @@ impl MiniPlayerState {
         self.volume.set_value(self.controller.volume());
 
         let playing = self.controller.status() == super::controller::PlaybackStatus::Playing;
-        if self.playing_icon.replace(playing) != playing {
-            let icon = if playing { icons::PAUSE } else { icons::PLAY };
-            self.play.set_child(Some(&assets::primary_icon(icon, 16)));
-        }
+        self.sync_play_icon(playing);
 
         let muted = self
             .controller
@@ -328,6 +345,13 @@ impl MiniPlayerState {
         self.syncing.set(false);
 
         self.sync_progress();
+    }
+
+    fn sync_play_icon(&self, playing: bool) {
+        if self.playing_icon.replace(playing) != playing {
+            let icon = if playing { icons::PAUSE } else { icons::PLAY };
+            self.play.set_child(Some(&assets::on_accent_icon(icon, 16)));
+        }
     }
 
     fn sync_progress(&self) {
@@ -346,6 +370,7 @@ impl MiniPlayerState {
 
         self.elapsed.set_text(&time_label(position));
         let rem = duration - position;
-        self.remaining.set_text(&format!("-{}", time_label(rem.max(0))));
+        self.remaining
+            .set_text(&format!("-{}", time_label(rem.max(0))));
     }
 }

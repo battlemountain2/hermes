@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{borrow::Cow, path::Path};
+use std::{
+    borrow::Cow,
+    fs::File,
+    io::{BufReader, Read, Seek},
+    path::Path,
+};
 
 use calamine::{Data, Reader};
 use serde::{Deserialize, Serialize};
@@ -54,13 +59,7 @@ impl SpreadsheetData {
     }
 
     pub fn read_workbook(path: &Path) -> Result<Self, String> {
-        let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
-        if meta.len() > WORKBOOK_BYTE_LIMIT {
-            return Err("Workbook is too large to preview safely".to_string());
-        }
-
-        let mut workbook = calamine::open_workbook_auto(path)
-            .map_err(|e| format!("Invalid or corrupted spreadsheet: {e}"))?;
+        let mut workbook = open_workbook(path)?;
 
         let sheet_names: Vec<String> = workbook.sheet_names();
         Self::preview_workbook(sheet_names, |idx| {
@@ -123,6 +122,41 @@ impl SpreadsheetData {
             truncated,
             sheets,
         })
+    }
+}
+
+fn open_workbook(path: &Path) -> Result<calamine::Sheets<BufReader<File>>, String> {
+    let mut file = File::open(path).map_err(|error| error.to_string())?;
+    if file.metadata().map_err(|error| error.to_string())?.len() > WORKBOOK_BYTE_LIMIT {
+        return Err("Workbook is too large to preview safely".into());
+    }
+    let mut magic = [0; 8];
+    file.read_exact(&mut magic)
+        .map_err(|error| error.to_string())?;
+    file.rewind().map_err(|error| error.to_string())?;
+    if magic == [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1] {
+        return calamine::Xls::new(BufReader::new(file))
+            .map(calamine::Sheets::Xls)
+            .map_err(|error| error.to_string());
+    }
+    let mut package = crate::sandbox_helper::office::Package::open(
+        file.try_clone().map_err(|error| error.to_string())?,
+    )?;
+    let xlsx = package.workbook_part()?.is_some();
+    if !xlsx && !package.contains("content.xml") {
+        return Err("This package does not contain a supported workbook".into());
+    }
+    package.validate_spreadsheet_xml()?;
+    drop(package);
+    file.rewind().map_err(|error| error.to_string())?;
+    if xlsx {
+        calamine::Xlsx::new(BufReader::new(file))
+            .map(calamine::Sheets::Xlsx)
+            .map_err(|error| error.to_string())
+    } else {
+        calamine::Ods::new(BufReader::new(file))
+            .map(calamine::Sheets::Ods)
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -244,7 +278,7 @@ fn format_cell(cell: &Data) -> String {
         Data::DateTime(d) => format!("{d}"),
         Data::DateTimeIso(d) => d.clone(),
         Data::DurationIso(d) => d.clone(),
-        Data::Error(e) => format!("#{e}"),
+        Data::Error(e) => e.to_string(),
         other => other.to_string(),
     }
 }

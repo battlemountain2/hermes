@@ -35,10 +35,14 @@ const COLUMN_TRANSITION: Duration = Duration::from_millis(220);
 
 mod retained;
 mod preview_menu;
+pub(super) mod loading;
+
+use loading::LoadingTransition;
 
 #[derive(Clone)]
 struct LoadPresentation {
     stack: gtk::Stack,
+    transition: LoadingTransition,
     skeleton: gtk::Box,
     feedback: gtk::Box,
     message: gtk::Label,
@@ -104,7 +108,11 @@ struct PeekView {
 }
 
 impl LoadPresentation {
-    fn new(content: &impl IsA<gtk::Widget>, retry: Option<gtk::Button>) -> Self {
+    fn new(
+        content: &impl IsA<gtk::Widget>,
+        retry: Option<gtk::Button>,
+        spinner: &gtk::Spinner,
+    ) -> Self {
         let skeleton = gtk::Box::new(gtk::Orientation::Vertical, 9);
         skeleton.add_css_class("loading-skeleton");
         for width in [168, 124, 192, 148, 176, 112] {
@@ -130,18 +138,17 @@ impl LoadPresentation {
         }
 
         let stack = gtk::Stack::builder()
-            .transition_type(gtk::StackTransitionType::Crossfade)
-            .transition_duration(100)
             .hexpand(true)
             .vexpand(true)
             .build();
         stack.add_named(content, Some("content"));
         stack.add_named(&skeleton, Some("loading"));
         stack.add_named(&feedback, Some("feedback"));
-        stack.set_visible_child_name("loading");
+        let transition = LoadingTransition::new(&stack, spinner);
 
         Self {
             stack,
+            transition,
             skeleton,
             feedback,
             message,
@@ -155,11 +162,11 @@ impl LoadPresentation {
         if let Some(retry) = self.retry.as_ref() {
             retry.set_visible(false);
         }
-        self.stack.set_visible_child_name("loading");
+        self.transition.begin();
     }
 
     fn show_content(&self) {
-        self.stack.set_visible_child_name("content");
+        self.transition.show("content");
     }
 
     fn show_empty(&self) {
@@ -168,7 +175,7 @@ impl LoadPresentation {
         if let Some(retry) = self.retry.as_ref() {
             retry.set_visible(false);
         }
-        self.stack.set_visible_child_name("feedback");
+        self.transition.show("feedback");
     }
 
     fn show_error(&self, message: &str) {
@@ -177,7 +184,7 @@ impl LoadPresentation {
         if let Some(retry) = self.retry.as_ref() {
             retry.set_visible(true);
         }
-        self.stack.set_visible_child_name("feedback");
+        self.transition.show("feedback");
     }
 }
 
@@ -2636,12 +2643,10 @@ impl ViewState {
             BrowserEvent::ColumnReloaded { depth } => {
                 if let Some(column) = self.columns.borrow().get(depth) {
                     column.notice.set_visible(false);
+                    column.presentation.show_loading();
                     column.model.splice(0, column.model.n_items(), &[]);
                     column.entry_count.set(0);
                     set_filter_placeholder(column, 0);
-                    column.spinner.set_visible(true);
-                    column.spinner.start();
-                    column.presentation.show_loading();
                 }
             }
             BrowserEvent::LoadNotice { depth, message } => {
@@ -3585,7 +3590,7 @@ impl ViewState {
         });
         new_folder_entry.add_controller(new_folder_focus);
 
-        let presentation = LoadPresentation::new(&scroll, Some(retry));
+        let presentation = LoadPresentation::new(&scroll, Some(retry), &spinner);
         install_directory_drop_target(self, &presentation.stack, location.clone());
         install_folder_context_menu(
             self,
@@ -3868,7 +3873,7 @@ impl ViewState {
             .max_content_height(240)
             .propagate_natural_height(true)
             .build();
-        let presentation = LoadPresentation::new(&scroll, None);
+        let presentation = LoadPresentation::new(&scroll, None, &spinner);
         presentation.stack.set_size_request(-1, 120);
         content.append(&presentation.stack);
 
@@ -6666,3 +6671,6 @@ mod layout_tests;
 
 #[cfg(test)]
 mod formatting_tests;
+
+#[cfg(test)]
+mod transition_tests;

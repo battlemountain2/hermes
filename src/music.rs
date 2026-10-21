@@ -12,38 +12,71 @@ pub(crate) struct Track {
 }
 
 impl Track {
+    pub(crate) fn needs_metadata(&self) -> bool {
+        tagged_text(&self.tags.title).is_none()
+            || (tagged_text(&self.tags.artist).is_none()
+                && tagged_text(&self.tags.album_artist).is_none())
+            || tagged_text(&self.tags.album).is_none()
+    }
+
+    pub(crate) fn hydrate_metadata(&mut self, tags: &MusicTags) -> bool {
+        let before = self.tags.clone();
+        for (current, incoming) in [
+            (&mut self.tags.title, &tags.title),
+            (&mut self.tags.artist, &tags.artist),
+            (&mut self.tags.album_artist, &tags.album_artist),
+            (&mut self.tags.album, &tags.album),
+        ] {
+            if tagged_text(current).is_none() {
+                *current = tagged_text(incoming).map(str::to_owned);
+            }
+        }
+        self.tags.disc = self.tags.disc.or(tags.disc.filter(|number| *number > 0));
+        self.tags.track = self.tags.track.or(tags.track.filter(|number| *number > 0));
+        self.tags != before
+    }
+
     pub fn title(&self) -> String {
-        self.tags.title.clone().unwrap_or_else(|| {
-            self.path
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned()
-        })
+        tagged_text(&self.tags.title)
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                self.path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            })
     }
 
     pub fn artist(&self) -> &str {
-        self.tags
-            .artist
-            .as_deref()
-            .or(self.tags.album_artist.as_deref())
+        tagged_text(&self.tags.artist)
+            .or_else(|| tagged_text(&self.tags.album_artist))
             .unwrap_or("Unknown artist")
     }
 
     pub fn album(&self) -> String {
-        self.tags.album.clone().unwrap_or_else(|| {
-            self.path
-                .parent()
-                .and_then(|path| path.file_name())
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned()
-        })
+        tagged_text(&self.tags.album)
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                self.path
+                    .parent()
+                    .and_then(|path| path.file_name())
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            })
     }
 
     pub fn album_key(&self) -> PathBuf {
         self.path.parent().unwrap_or(&self.path).to_owned()
     }
+}
+
+fn tagged_text(value: &Option<String>) -> Option<&str> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 pub(crate) fn compare_tracks(left: &Track, right: &Track) -> Ordering {

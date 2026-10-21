@@ -44,6 +44,7 @@ pub(crate) enum ParseOperation {
     PreviewArchiveCover,
     PreviewSpreadsheet,
     PreviewAudioMetadata,
+    PreviewAudioArtwork,
     MusicTags,
     MusicWaveform,
     ExtractSpreadsheetText,
@@ -73,6 +74,7 @@ impl ParseOperation {
             Self::PreviewArchiveCover => "preview-archive-cover",
             Self::PreviewSpreadsheet => "preview-spreadsheet",
             Self::PreviewAudioMetadata => "preview-audio-metadata",
+            Self::PreviewAudioArtwork => "preview-audio-artwork",
             Self::ExtractSpreadsheetText => "extract-spreadsheet-text",
         }
     }
