@@ -1,5 +1,32 @@
 # Hermes music player and desktop integration plan
 
+## Artwork, metadata and mini-player polish — 2026-10-20
+
+The current track fills missing title/artist/album fields from bounded, off-thread embedded-tag
+reads instead of retaining an incomplete queued entry. Existing nonblank tags win; tagged album
+artist can replace a blank artist. Filenames/folder names remain display fallbacks, never invented
+tags for online lyrics queries. Queue duplicates, session state and MPRIS receive the same update
+without replacing the stream, seeking, changing order or autoplaying. Failed/untagged reads are
+attempted once per current playback identity rather than polled repeatedly.
+
+Immersive artwork now uses a selected-preview route: up to1400px for adjacent covers and1024px
+for embedded art, rather than the thumbnail worker's fixed256px output. Artwork is contained,
+not cropped. The background takes its hue from the cover while retaining the theme's background
+luminance; a cached64px softened texture adds detail. Two native GTK snapshot nodes replace the
+full-screen Cairo aura. There is no live blur, new animation loop or forced GPU backend. Visualizer
+colors follow the cover with a light/dark legibility adjustment; controls retain semantic theme
+colors and on-accent Lucide icons. Low-resolution originals cannot gain missing detail.
+
+Playback and seek controls fade into their reserved space when the artwork deck is hovered or
+keyboard focus enters it; the visualizer dock follows the same pattern. Reduced motion removes
+the fade. Metadata-only refreshes retain loaded artwork and local lyrics; unchanged online query
+metadata retains pending results, while changed title/artist cancels and rearms lookup.
+
+The mini-player has a native draggable title area, readable filled Play/Pause states, and capture-
+phase Escape handling. Escape and window close hide the player without stopping music or losing
+its position; the existing mini-player action shows it again. Wayland compositor dragging and
+real-device audio remain separate user checks; no live user window or audio was exercised.
+
 ## Lyrics and immersive modes — 2026-10-19
 
 Lyrics and Visualizer are now explicit, mutually exclusive modes; toggling either off leaves

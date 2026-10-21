@@ -54,6 +54,7 @@ Responsive icon tiles with high-performance thumbnail caching.
   - Queue additions never interrupt currently playing tracks.
   - Automatically checkpointed to `$XDG_STATE_HOME/strata/music-queue-v1.json`—restarts restore your queue without annoying autoplay.
 - **Persistent Bottom Transport Bar**: Always accessible during playback, featuring album art, draggable scrub timeline, volume slider, shuffle, and repeat.
+- **Immersive and Mini Players**: Higher-resolution local artwork and cover-colored immersive backgrounds, hover/keyboard-revealed controls, and a draggable mini-player title area. Escape hides the mini-player without stopping music. Missing queued metadata is refreshed from real embedded tags without restarting playback.
 - **Live Audio Waveforms**: Real-time waveform visualization in the Music view with a one-click visibility toggle.
 - **Desktop MPRIS v2 Bridge**: Exposes `org.mpris.MediaPlayer2.hermes` for native desktop widgets, lock screens, and hardware media keys (play/pause, skip, seek, volume, and cover art).
 - **Whole-Library Music Search (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd>)**: Instantly search song titles, artists, and albums across your entire music collection with live background metadata indexing.
@@ -74,6 +75,7 @@ Image/document renderers use a **[Bubblewrap (`bwrap`) sandbox](docs/preview-san
 - **Animated GIF Previews**: Sandboxed loopable playback with VP8 alpha-transparency retention.
 - **Photo Preview Menus**: Right-click an image in the drawer or fullscreen for file actions and Fullscreen/Fit/100% controls.
 - **Rich Text & Syntax Highlighting**: View source code and formatted text via GtkSourceView 5 with selectable mono fonts.
+- **Office Previews**: Read bounded DOCX/ODT paragraph and table text, ordered PPTX slide text, and multi-sheet XLSX/ODS tables. Parsers identify package structure rather than relying on filenames, preserve hyperlink labels without fetching targets, and bound ZIP expansion and worksheet allocation. These are read-only content previews, not faithful Office page/slide rendering or editing.
 - **Format & Speed Audit**: See the [preview audit](docs/preview-format-audit.md) for verified coverage, Dolphin/Strata comparisons, measurements and remaining cold-loading work.
 - **Separate Streaming and Generation Limits**: The configured preview file-size ceiling limits thumbnail generation and image/document previews, not incremental audio/video playback. Format switches and sandbox decoder/resource limits still apply; raising the ceiling is not required to preview a large FLAC, MP4 or MOV.
 

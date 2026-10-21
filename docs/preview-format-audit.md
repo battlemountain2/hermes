@@ -5,6 +5,22 @@ do not change Hermes's version, license, design choices or music-player behavior
 
 ## What changes in this pass
 
+### Office content-preview increment — October20
+
+DOCX and ODF extraction now preserves paragraphs, tabs, line breaks and table boundaries. PPTX,
+PPSX and POTX gain ordered slide-text previews, following presentation relationships rather than
+ZIP entry/filename order. XLSX/ODS use structure-selected workbook readers, including anonymous
+file descriptors, with bounded multi-sheet tables and consistent search-text extraction. Ordinary
+hyperlink labels remain readable; targets are not fetched. External data/slide references remain
+unsupported. ZIP expansion, XML events/nesting and worksheet coordinates are bounded before dense
+allocation, including implicit cells and relocated worksheet parts. No new dependencies or host
+network/file access are enabled.
+
+This is not full Office fidelity: DOCX styles/pagination, PPTX slide layouts/images, charts and
+formula recalculation are not implemented. Workbook size/table limits still apply, and some
+unusual packages may be rejected by the bounded reader. The older format matrix below is an
+October12 snapshot; its PPTX-not-supported and first-sheet-only descriptions are superseded here.
+
 ### Heavy photo/video follow-up — October13
 
 Large supported JPEG and standard8-bit HEIF native-fallback selections can use installed optional

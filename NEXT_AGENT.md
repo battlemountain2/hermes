@@ -1,5 +1,65 @@
 # Next agent: Hermes performance, file features and media polish
 
+## Backup authorized; next implementation is Office page/slide previews — 2026-10-20
+
+The user approved backing up the current polish batch to the existing feature branch/draftPR5,
+then starting proper Office page/slide previews ahead of hover cards. The local/uncommitted labels
+below describe the pre-backup snapshot, not a continuing prohibition on this authorized backup.
+New Office-rendering work remains separate from that backup; do not merge, release or bump1.0.
+Keep conversion isolated, bounded, off the UI thread and cancellable; reuse existing PDF page/
+selection/find/fullscreen behavior rather than writing an Office editor. Preserve readable text
+fallback when an optional renderer is unavailable. Never modify originals or contact external
+document resources, and do not move/restart the user's window during development.
+
+## Current local polish batch — 2026-10-20
+
+User requested smoother folder switches, improved DOCX/PPTX/XLSX support, missing-tag fixes,
+Cider-inspired cover-colored/high-resolution immersive presentation with hidden-until-hover
+controls, draggable/legible mini-player and Escape to hide it. Three parallel agents implemented
+and reviewed separate areas; all are closed. Their actionable review findings were integrated.
+This batch is LOCAL/UNCOMMITTED atop43bb42d on the existing feature branch/draftPR5. The previous
+backup approval does not authorize pushing future changes. Do not merge/release/bump1.0.
+
+- Shared150ms loading grace removes fast skeleton/spinner crossfades in Columns/Grid/Explorer.
+  Pending rows are not actionable; errors survive alternate-view rebuilds. No old file rows are
+  exposed under a new directory identity. Slow feedback and timer/disposal guards are tested.
+- Current-track bounded off-thread embedded-tag hydration fills only missing values, including
+  blank artist versus tagged album-artist fallback. Queue duplicates/session/MPRIS update without
+  restarting playback. Path/generation/track identity/cancellation guards reject stale work and
+  keep failures/untagged reads bounded. A reported DGD FLAC has real title/artist/album tags;
+  the observed Unknown artist was an incomplete queued snapshot, not proof that the tags were absent.
+- High-resolution selected art uses1400px adjacent-image and new1024px embedded-art operation26,
+  not the thumbnail worker's fixed256px path. One-shot and pooled routes are wired. Cover-derived
+  backdrop hue retains theme luminance;64px softened texture and a base color are native GTK
+  nodes, not per-frame Cairo blur. Extreme-cover legibility tests cover Graphite/Paper. Play icons
+  remain semantic on-accent, and controls reserve space while fading on deck/dock hover or focus.
+- Same-path/generation tag refresh preserves existing artwork/local lyrics and compatible online
+  requests; changed query metadata cancels/rearms online lookup. Filename/folder fallbacks never
+  become tags or online query metadata. Mini title uses WindowHandle; Escape/close hide only.
+- Bounded Office ZIP/XML readers preserve DOCX/ODF paragraph/table text, add ordered PPTX/PPSX/POTX
+  slide text, and improve structure-selected multi-sheet workbooks. Hyperlink labels are accepted
+  without fetching targets; external data/slide references remain rejected. Preflight covers
+  relocated worksheet parts and implicit/explicit coordinates before Calamine dense allocation.
+  Read-only content previews are NOT faithful DOCX pagination, slide images/layouts, charts or
+  formula recalculation. Keep these remaining document-parity goals visible rather than done.
+
+Validation:927 regular tests (926 serial + the known GLib-context thumbnail case separately),187
+optional excluded;21 exact isolated GTK/sandbox tests pass. Production build/all-target check pass;
+five pre-existing test-only lint expectations remain. No full-format/strict-Clippy/CI-green claim.
+Logs and generated fixtures are under the directory in /tmp/hermes-polish-path. Initial failed
+runs caught the new wire-op boundary assertion, Office empty-element handling and a relocated
+fixture path; they are corrected. A concurrent-rebuild child-exec failure did not reproduce in
+the final stable-binary run. Headless Broadway later repaint screenshots were unreliable; optional
+capture now reports absence without crashing a realized renderer. Core style assertions still
+run, keyboard reveal classes/bounds pass, and native backdrop nodes are snapshotted directly.
+Do not claim full hover/fade/physical compositor validation from these tests.
+
+No user window/audio/settings/media modified and no lyrics network request made. Reopen only
+when the user chooses; ask for compositor drag/fade and listening feedback then. Technical sources
+remain repo docs; the prior Obsidian Hermes/Iris hub is still a separate local vault change.
+Next: user feedback on this polish, optional richer hover cards, search/index controls/coverage,
+transfer conflicts/per-folder views, then real document and measured release validation.
+
 ## Git backup and shared coordination authorized — 2026-10-19
 
 The user explicitly authorized committing/pushing all current Hermes work and refreshing the

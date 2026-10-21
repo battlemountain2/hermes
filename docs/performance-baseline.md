@@ -1,5 +1,42 @@
 # Performance Baseline
 
+## Folder transitions and selected music artwork — 2026-10-20
+
+Columns, Grid and Explorer share a150ms loading-feedback grace period. Quick loads no longer
+crossfade through a skeleton/spinner; pending rows are non-actionable, and delayed/error/empty
+states remain explicit. Rapid navigation, canceled timers, destroyed panes, stale batches and
+view changes retain generation guards. This reduces transition flashes; it is not a measured
+cold-directory speedup or a promise that every compositor paints without flicker.
+
+Selected immersive covers no longer use the fixed256px thumbnail operation. Adjacent artwork
+uses the existing1400px image-preview bound; embedded artwork has a separate1024px selected
+worker operation. A generated1400px embedded cover proves256px thumbnail versus1024px selected
+output through the real sandbox. No decoder/resource budget is raised. Low-resolution sources
+still have their original limits, and high-resolution cold decoding still costs time.
+
+Palette analysis and64px softened-backdrop preparation run off GTK once per selected source.
+The background is two retained native nodes (base color and an opacity-wrapped texture), with
+no per-frame full-screen Cairo aura, live blur or additional animation timer. Cover-derived hue
+retains theme-background luminance, with adjusted visualizer colors for extreme covers. Control
+opacity changes reserve layout space; keyboard-focus and stable bounds are checked. These are
+structural improvements, not a newly measured GPU/onscreen-FPS or audio-latency claim.
+
+Validation:927 regular cases across926 serial cases plus the known process-global GLib thumbnail
+case in a separate process;187 optional cases remain excluded from that normal run. All21 exact
+isolated GTK/sandbox cases pass: folder transitions, tag hydration, mini Escape/close/icon states,
+live theme contrast, lyrics mode/identity/cancellation, metadata-only retention, native backdrop
+nodes, selected artwork resolution and real one-shot DOCX/ODT/PPTX extraction. Generated Office
+unit cases also cover hyperlink labels, relocated parts, implicit cells and allocation bounds.
+
+Production build and all-target check pass; the test target retains five old unfulfilled lint
+expectations. Artifacts: /tmp/hermes-polish-path. A Graphite control snapshot was inspected;
+the hidden Broadway display did not reliably deliver later repaint screenshots, so light/dark
+coverage is computed style/palette and lifecycle coverage, not a full visual/compositor sign-off.
+Actual pointer dragging/fades, user Office documents, cold media and live audio remain user checks.
+No user media/tags/settings were changed, no online lyrics request was sent and no user window
+was restarted, focused, moved or closed. One reported FLAC was probed read-only to confirm its
+title/artist/album tags exist; generated fixtures exercise the actual hydration/sandbox path.
+
 ## Prism / Orbit and mode-switch polish — 2026-10-19
 
 The user still reported Tunnel/Cosmic stutter and unreliable returns to Lyrics after the native
