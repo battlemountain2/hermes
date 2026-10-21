@@ -59,6 +59,8 @@ fn main() -> gtk::glib::ExitCode {
         .build();
 
     application.connect_startup(ui::initialize_music);
+    application.connect_startup(ui::initialize_saved_searches);
+    application.connect_startup(ui::initialize_ratings);
     application.connect_activate(ui::present);
     application.connect_open(|application, files, _| {
         let location = files.first().and_then(gio::File::path);

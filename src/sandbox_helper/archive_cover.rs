@@ -292,7 +292,11 @@ fn extract_epub_cover(input: &Path) -> Result<Vec<u8>, String> {
 fn extract_cbr_cover(input: &Path) -> Result<Vec<u8>, String> {
     let output = Command::new("bsdtar")
         .arg("-tf")
-        .arg(input)
+        .arg("-")
+        .stdin(std::process::Stdio::from(
+            fs::File::open(input)
+                .map_err(|error| format!("Unable to open CBR input: {error}"))?,
+        ))
         .output()
         .map_err(|e| format!("Unable to invoke bsdtar for CBR listing: {e}"))?;
 
@@ -326,8 +330,13 @@ fn extract_cbr_cover(input: &Path) -> Result<Vec<u8>, String> {
 
     let extract_output = Command::new("bsdtar")
         .args(["-xOf"])
-        .arg(input)
+        .arg("-")
+        .arg("--")
         .arg(chosen_entry)
+        .stdin(std::process::Stdio::from(
+            fs::File::open(input)
+                .map_err(|error| format!("Unable to open CBR input: {error}"))?,
+        ))
         .output()
         .map_err(|e| format!("Unable to invoke bsdtar for CBR extraction: {e}"))?;
 
@@ -342,19 +351,44 @@ fn extract_cbr_cover(input: &Path) -> Result<Vec<u8>, String> {
     Ok(extract_output.stdout)
 }
 
-pub(crate) fn render_cover(input: &Path, target_size: i32) -> Result<Vec<u8>, String> {
-    let size = target_size.clamp(16, 1400);
-    let ext = input
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|s| s.to_ascii_lowercase())
-        .unwrap_or_default();
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CoverFormat {
+    Epub,
+    Cbz,
+    Cbr,
+}
 
-    let raw_bytes = match ext.as_str() {
-        "epub" => extract_epub_cover(input)?,
-        "cbz" => extract_cbz_cover(input)?,
-        "cbr" => extract_cbr_cover(input)?,
-        _ => return Err("Unsupported archive cover format".to_string()),
+impl CoverFormat {
+    pub(crate) fn for_path(input: &Path) -> Option<Self> {
+        match input
+            .extension()?
+            .to_str()?
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "epub" => Some(Self::Epub),
+            "cbz" => Some(Self::Cbz),
+            "cbr" => Some(Self::Cbr),
+            _ => None,
+        }
+    }
+}
+
+pub(crate) fn render_cover(input: &Path, target_size: i32) -> Result<Vec<u8>, String> {
+    let format = CoverFormat::for_path(input).ok_or("Unsupported archive cover format")?;
+    render_cover_with_format(input, target_size, format)
+}
+
+pub(crate) fn render_cover_with_format(
+    input: &Path,
+    target_size: i32,
+    format: CoverFormat,
+) -> Result<Vec<u8>, String> {
+    let size = target_size.clamp(16, 1400);
+    let raw_bytes = match format {
+        CoverFormat::Epub => extract_epub_cover(input)?,
+        CoverFormat::Cbz => extract_cbz_cover(input)?,
+        CoverFormat::Cbr => extract_cbr_cover(input)?,
     };
 
     let loader = gdk_pixbuf::PixbufLoader::new();
@@ -391,6 +425,9 @@ pub(crate) fn render_cover(input: &Path, target_size: i32) -> Result<Vec<u8>, St
         .save_to_bufferv("png", &[])
         .map_err(|e| format!("Failed to encode cover PNG: {e}"))
 }
+
+#[cfg(test)]
+mod format_tests;
 
 #[cfg(test)]
 mod tests {

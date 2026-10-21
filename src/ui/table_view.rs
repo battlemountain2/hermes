@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::{
+    cell::RefCell,
     cmp::Ordering,
     rc::Rc,
 };
 
 use gtk::{gio, glib, prelude::*};
 
-use crate::services::table::SpreadsheetData;
+use crate::{
+    assets::{self, icons},
+    services::table::{SheetData, SpreadsheetData},
+};
 
 #[derive(Clone, Debug, PartialEq)]
 enum SortKey {
@@ -39,29 +43,248 @@ impl SortKey {
     }
 }
 
-pub fn build_spreadsheet_view(data: &SpreadsheetData) -> gtk::Widget {
-    let container = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    container.set_vexpand(true);
-    container.set_hexpand(true);
+pub struct SpreadsheetView {
+    pub widget: gtk::Box,
+    window: Rc<RefCell<Option<gtk::Window>>>,
+    expand: gtk::Button,
+}
 
-    // Sheet tabs or active sheet title if multi-sheet
-    if data.sheet_names.len() > 1 {
-        let sheet_bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        sheet_bar.add_css_class("spreadsheet-sheet-bar");
-        for (idx, name) in data.sheet_names.iter().enumerate() {
-            let label = gtk::Label::new(Some(name));
-            if idx == data.active_sheet {
-                label.add_css_class("active-sheet-tab");
-            } else {
-                label.add_css_class("sheet-tab");
-            }
-            sheet_bar.append(&label);
+impl SpreadsheetView {
+    pub fn open_fullscreen(&self) -> bool {
+        let existing = self.window.borrow().clone();
+        if let Some(window) = existing {
+            window.present();
+            return true;
         }
-        container.append(&sheet_bar);
+        self.expand.emit_clicked();
+        true
     }
 
-    let rows_rc = Rc::new(data.rows.clone());
-    let cols = data.headers.len().max(
+    pub fn stop(&self) {
+        let window = self.window.borrow_mut().take();
+        if let Some(window) = window {
+            window.close();
+        }
+    }
+}
+
+impl Drop for SpreadsheetView {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> SpreadsheetView {
+    let home = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    home.set_vexpand(true);
+    home.set_hexpand(true);
+
+    let viewer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    viewer.add_css_class("spreadsheet-container");
+    viewer.set_vexpand(true);
+    viewer.set_hexpand(true);
+
+    // Header bar with title, dimensions pill, and fullscreen toggle
+    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    controls.add_css_class("spreadsheet-header");
+
+    let name_label = gtk::Label::new(Some(title));
+    name_label.add_css_class("music-title");
+    name_label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    name_label.set_xalign(0.0);
+    name_label.set_hexpand(true);
+    controls.append(&name_label);
+
+    let dim_label = gtk::Label::new(None);
+    dim_label.add_css_class("spreadsheet-dimension-pill");
+    controls.append(&dim_label);
+
+    let expand = gtk::Button::builder()
+        .tooltip_text("Fullscreen spreadsheet (F)")
+        .build();
+    expand.add_css_class("hermes-media-action");
+    expand.set_child(Some(&assets::primary_icon(icons::MAXIMIZE, 16)));
+    controls.append(&expand);
+
+    viewer.append(&controls);
+
+    // Sheets stack
+    let stack = gtk::Stack::builder()
+        .transition_type(gtk::StackTransitionType::Crossfade)
+        .transition_duration(100)
+        .vexpand(true)
+        .hexpand(true)
+        .build();
+
+    let sheets: Vec<SheetData> = if !data.sheets.is_empty() {
+        data.sheets.clone()
+    } else {
+        vec![SheetData {
+            name: data.sheet_names.first().cloned().unwrap_or_else(|| "Sheet1".to_string()),
+            headers: data.headers.clone(),
+            rows: data.rows.clone(),
+            total_rows: data.total_rows,
+            total_cols: data.total_cols,
+            truncated: data.truncated,
+        }]
+    };
+
+    let dim_label_for_tabs = dim_label.clone();
+    let sheet_buttons: Rc<RefCell<Vec<glib::WeakRef<gtk::Button>>>> = Rc::new(RefCell::new(Vec::new()));
+
+    if sheets.len() > 1 {
+        let sheet_bar = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        sheet_bar.add_css_class("spreadsheet-sheet-bar");
+
+        for (idx, sheet) in sheets.iter().enumerate() {
+            let btn = gtk::Button::with_label(&sheet.name);
+            btn.add_css_class("spreadsheet-sheet-button");
+            if idx == 0 {
+                btn.add_css_class("active-sheet-tab");
+            }
+
+            let stack = stack.clone();
+            let sheet_name = format!("sheet_{idx}");
+            let buttons = sheet_buttons.clone();
+            let dim_lbl = dim_label_for_tabs.clone();
+            let s_rows = sheet.total_rows.max(sheet.rows.len() + if sheet.headers.is_empty() { 0 } else { 1 });
+            let s_cols = sheet.total_cols.max(sheet.headers.len());
+            let sheets_count = sheets.len();
+
+            btn.connect_clicked(move |clicked| {
+                for candidate in buttons.borrow().iter().filter_map(glib::WeakRef::upgrade) {
+                    candidate.remove_css_class("active-sheet-tab");
+                }
+                clicked.add_css_class("active-sheet-tab");
+                stack.set_visible_child_name(&sheet_name);
+                dim_lbl.set_text(&format!(
+                    "{} rows · {} cols · Sheet {} of {}",
+                    s_rows, s_cols, idx + 1, sheets_count
+                ));
+            });
+
+            sheet_buttons.borrow_mut().push(btn.downgrade());
+            sheet_bar.append(&btn);
+        }
+        viewer.append(&sheet_bar);
+    }
+
+    // Set initial dimension label
+    if let Some(first) = sheets.first() {
+        let s_rows = first.total_rows.max(first.rows.len() + if first.headers.is_empty() { 0 } else { 1 });
+        let s_cols = first.total_cols.max(first.headers.len());
+        if sheets.len() > 1 {
+            dim_label.set_text(&format!(
+                "{} rows · {} cols · Sheet 1 of {}",
+                s_rows, s_cols, sheets.len()
+            ));
+        } else {
+            dim_label.set_text(&format!("{} rows · {} cols", s_rows, s_cols));
+        }
+    }
+
+    // Build each sheet's table page
+    for (idx, sheet) in sheets.iter().enumerate() {
+        let sheet_page = build_sheet_table_page(sheet);
+        stack.add_named(&sheet_page, Some(&format!("sheet_{idx}")));
+    }
+
+    viewer.append(&stack);
+
+    if data.truncated {
+        let warning = gtk::Label::new(Some(
+            "Table preview capped at 200 rows and 256 columns; open file for complete data."
+        ));
+        warning.add_css_class("dim-label");
+        warning.set_margin_top(4);
+        warning.set_margin_bottom(4);
+        viewer.append(&warning);
+    }
+
+    home.append(&viewer);
+
+    // Fullscreen controller wiring
+    let slot = Rc::new(RefCell::new(None::<gtk::Window>));
+    let shared_slot = slot.clone();
+    let weak_home = home.downgrade();
+    let weak_viewer = viewer.downgrade();
+    let expand_btn = expand.clone();
+    let title_string = title.to_string();
+
+    expand.connect_clicked(move |button| {
+        let existing = shared_slot.borrow().clone();
+        if let Some(window) = existing {
+            window.close();
+            return;
+        }
+        let (Some(home), Some(viewer)) = (weak_home.upgrade(), weak_viewer.upgrade()) else {
+            return;
+        };
+        let window = gtk::Window::builder()
+            .title(&format!("Hermes — {}", title_string))
+            .destroy_with_parent(true)
+            .build();
+        if let Some(parent) = home.root().and_downcast::<gtk::Window>() {
+            window.set_transient_for(Some(&parent));
+            window.set_application(parent.application().as_ref());
+        }
+        home.remove(&viewer);
+        window.set_child(Some(&viewer));
+        button.set_child(Some(&assets::primary_icon(icons::MINIMIZE, 16)));
+        button.set_tooltip_text(Some("Exit fullscreen (F or Escape)"));
+
+        let weak_slot = Rc::downgrade(&shared_slot);
+        let weak_home = home.downgrade();
+        let weak_viewer = viewer.downgrade();
+        let weak_button = button.downgrade();
+
+        window.connect_close_request(move |window| {
+            let viewer = weak_viewer.upgrade();
+            window.set_child(None::<&gtk::Widget>);
+            if let (Some(home), Some(viewer)) = (weak_home.upgrade(), viewer) {
+                if viewer.parent().is_none() {
+                    home.append(&viewer);
+                }
+            }
+            if let Some(button) = weak_button.upgrade() {
+                button.set_child(Some(&assets::primary_icon(icons::MAXIMIZE, 16)));
+                button.set_tooltip_text(Some("Fullscreen spreadsheet (F)"));
+            }
+            if let Some(slot) = weak_slot.upgrade() {
+                slot.borrow_mut().take();
+            }
+            glib::Propagation::Proceed
+        });
+
+        let keys = gtk::EventControllerKey::new();
+        keys.set_name(Some("hermes-table-fullscreen"));
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let weak_window = window.downgrade();
+        keys.connect_key_pressed(move |_, key, _, modifiers| {
+            if key == gtk::gdk::Key::Escape || ((key == gtk::gdk::Key::F || key == gtk::gdk::Key::f) && modifiers.is_empty()) {
+                if let Some(window) = weak_window.upgrade() {
+                    window.close();
+                }
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        window.add_controller(keys);
+        shared_slot.replace(Some(window.clone()));
+        window.fullscreen();
+        window.present();
+    });
+
+    SpreadsheetView {
+        widget: home,
+        window: slot,
+        expand: expand_btn,
+    }
+}
+
+fn build_sheet_table_page(sheet: &SheetData) -> gtk::Widget {
+    let rows_rc = Rc::new(sheet.rows.clone());
+    let cols = sheet.headers.len().max(
         rows_rc.iter().map(Vec::len).max().unwrap_or(0)
     );
 
@@ -77,8 +300,8 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData) -> gtk::Widget {
     column_view.set_show_column_separators(true);
 
     for col_idx in 0..cols {
-        let title = if col_idx < data.headers.len() && !data.headers[col_idx].is_empty() {
-            data.headers[col_idx].clone()
+        let title = if col_idx < sheet.headers.len() && !sheet.headers[col_idx].is_empty() {
+            sheet.headers[col_idx].clone()
         } else {
             column_name(col_idx)
         };
@@ -148,19 +371,7 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData) -> gtk::Widget {
         .hexpand(true)
         .build();
 
-    container.append(&scroll);
-
-    if data.truncated {
-        let warning = gtk::Label::new(Some(
-            "Table preview capped at 200 rows and 256 columns; open file for complete data."
-        ));
-        warning.add_css_class("dim-label");
-        warning.set_margin_top(4);
-        warning.set_margin_bottom(4);
-        container.append(&warning);
-    }
-
-    container.upcast::<gtk::Widget>()
+    scroll.upcast()
 }
 
 fn column_name(mut idx: usize) -> String {
@@ -177,28 +388,4 @@ fn column_name(mut idx: usize) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_sort_key_comparisons() {
-        let n1 = SortKey::new("10");
-        let n2 = SortKey::new("2");
-        assert_eq!(n2.compare(&n1), Ordering::Less);
-
-        let t1 = SortKey::new("apple");
-        let t2 = SortKey::new("banana");
-        assert_eq!(t1.compare(&t2), Ordering::Less);
-
-        let empty = SortKey::new("");
-        assert_eq!(n1.compare(&empty), Ordering::Less);
-        assert_eq!(empty.compare(&n1), Ordering::Greater);
-    }
-
-    #[test]
-    fn test_column_name_generation() {
-        assert_eq!(column_name(0), "A");
-        assert_eq!(column_name(25), "Z");
-        assert_eq!(column_name(26), "AA");
-    }
-}
+mod tests;

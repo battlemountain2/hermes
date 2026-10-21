@@ -20,7 +20,7 @@ thread_local! {
     static SOURCE_BUFFERS: RefCell<Vec<glib::WeakRef<sourceview5::Buffer>>> = const { RefCell::new(Vec::new()) };
 }
 
-const BUILTIN_THEMES: [(&str, &str); 6] = [
+const BUILTIN_THEMES: [(&str, &str); 8] = [
     (
         "azure-glow",
         include_str!("../../data/themes/azure-glow.toml"),
@@ -41,10 +41,9 @@ const BUILTIN_THEMES: [(&str, &str); 6] = [
         "rose-pine",
         include_str!("../../data/themes/rose-pine.toml"),
     ),
-    (
-        "omarchy-light",
-        include_str!("../../data/themes/omarchy-light.toml"),
-    ),
+    ("graphite", include_str!("../../data/themes/graphite.toml")),
+    ("paper", include_str!("../../data/themes/paper.toml")),
+    ("midnight", include_str!("../../data/themes/midnight.toml")),
 ];
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -83,6 +82,8 @@ struct Preferences {
     show_recent_folders: bool,
     #[serde(default)]
     show_folder_tree: bool,
+    #[serde(default)]
+    show_smart_folders: bool,
     #[serde(default = "default_recent_folders_limit")]
     recent_folders_limit: u32,
     #[serde(default = "default_browser_mode")]
@@ -91,6 +92,54 @@ struct Preferences {
     browser_density: String,
     #[serde(default = "default_interface_font")]
     interface_font: String,
+    #[serde(default = "default_font_size")]
+    interface_font_size: u32,
+    #[serde(default)]
+    context_menu: super::context_menu::Options,
+    #[serde(default = "default_enabled")]
+    audio_continuity: bool,
+    #[serde(default = "default_enabled")]
+    audio_spin_animation: bool,
+    #[serde(default = "default_spectrum_bands")]
+    audio_spectrum_bands: u32,
+    #[serde(default = "default_spectrum_decay")]
+    audio_spectrum_decay: String,
+    #[serde(default)]
+    online_lyrics: bool,
+    #[serde(default = "default_enabled")]
+    search_exclude_hidden: bool,
+    #[serde(default = "default_enabled")]
+    search_exclude_build_artifacts: bool,
+    #[serde(default = "default_enabled")]
+    search_reconcile_periodically: bool,
+    #[serde(default = "default_startup_location")]
+    startup_location: String,
+    #[serde(default = "default_confirm_delete")]
+    confirm_permanent_delete: bool,
+    #[serde(default)]
+    reduce_motion: bool,
+    #[serde(default = "default_date_format")]
+    date_format: String,
+    #[serde(default = "default_size_unit")]
+    size_unit: String,
+    #[serde(default)]
+    show_hidden_default: bool,
+    #[serde(default = "default_max_preview_size")]
+    max_preview_size_mb: u32,
+    #[serde(default = "default_enabled")]
+    preview_audio: bool,
+    #[serde(default = "default_enabled")]
+    preview_images: bool,
+    #[serde(default = "default_enabled")]
+    preview_videos: bool,
+    #[serde(default = "default_enabled")]
+    preview_pdf: bool,
+    #[serde(default = "default_enabled")]
+    preview_spreadsheets: bool,
+    #[serde(default = "default_enabled")]
+    preview_code: bool,
+    #[serde(default = "default_music_player_layout")]
+    music_player_layout: String,
 }
 
 impl Default for Preferences {
@@ -103,16 +152,73 @@ impl Default for Preferences {
             show_recent_files: false,
             show_recent_folders: true,
             show_folder_tree: false,
+            show_smart_folders: false,
             recent_folders_limit: default_recent_folders_limit(),
             browser_mode: default_browser_mode(),
             browser_density: default_browser_density(),
             interface_font: default_interface_font(),
+            interface_font_size: default_font_size(),
+            context_menu: super::context_menu::Options::default(),
+            audio_continuity: true,
+            audio_spin_animation: true,
+            audio_spectrum_bands: default_spectrum_bands(),
+            audio_spectrum_decay: default_spectrum_decay(),
+            online_lyrics: false,
+            search_exclude_hidden: true,
+            search_exclude_build_artifacts: true,
+            search_reconcile_periodically: true,
+            startup_location: default_startup_location(),
+            confirm_permanent_delete: default_confirm_delete(),
+            reduce_motion: false,
+            date_format: default_date_format(),
+            size_unit: default_size_unit(),
+            show_hidden_default: false,
+            max_preview_size_mb: default_max_preview_size(),
+            preview_audio: true,
+            preview_images: true,
+            preview_videos: true,
+            preview_pdf: true,
+            preview_spreadsheets: true,
+            preview_code: true,
+            music_player_layout: default_music_player_layout(),
         }
     }
 }
 
+fn default_music_player_layout() -> String {
+    "top".to_owned()
+}
+
+fn default_startup_location() -> String {
+    "home".to_owned()
+}
+
+fn default_confirm_delete() -> bool {
+    true
+}
+
+fn default_date_format() -> String {
+    "relative".to_owned()
+}
+
+fn default_size_unit() -> String {
+    "decimal".to_owned()
+}
+
+fn default_max_preview_size() -> u32 {
+    50
+}
+
 fn default_enabled() -> bool {
     true
+}
+
+fn default_spectrum_bands() -> u32 {
+    32
+}
+
+fn default_spectrum_decay() -> String {
+    "studio".to_owned()
 }
 
 fn default_recent_folders_limit() -> u32 {
@@ -131,6 +237,28 @@ fn default_interface_font() -> String {
     "maple".to_owned()
 }
 
+fn default_font_size() -> u32 {
+    13
+}
+
+pub(super) const INTERFACE_FONTS: [(&str, &str); 4] = [
+    ("maple", "Maple Mono"),
+    ("jetbrains", "JetBrains Mono"),
+    ("sans", "System sans-serif"),
+    ("mono", "System monospace"),
+];
+
+fn normalized_font(font: &str) -> &'static str {
+    INTERFACE_FONTS
+        .iter()
+        .find(|(id, _)| *id == font)
+        .map_or("maple", |(id, _)| id)
+}
+
+fn migrate_theme_id(id: &str) -> &str {
+    if id == "omarchy-light" { "paper" } else { id }
+}
+
 pub struct ThemeManager {
     provider: gtk::CssProvider,
     themes: RefCell<Vec<Theme>>,
@@ -144,6 +272,8 @@ pub struct ThemeManager {
     pending_noctalia_refresh: RefCell<Option<glib::SourceId>>,
     noctalia_poll: RefCell<Option<glib::SourceId>>,
     previewing: Cell<bool>,
+    layout_observers: RefCell<Vec<Rc<dyn Fn()>>>,
+    lyrics_observers: RefCell<Vec<std::rc::Weak<dyn Fn()>>>,
 }
 
 impl ThemeManager {
@@ -164,6 +294,9 @@ impl ThemeManager {
         let omarchy_available = load_omarchy_theme().is_some();
         let mut preferences = read_preferences().unwrap_or_default();
         if !themes.iter().any(|theme| theme.id == preferences.theme) {
+            preferences.theme = migrate_theme_id(&preferences.theme).to_owned();
+        }
+        if !themes.iter().any(|theme| theme.id == preferences.theme) {
             preferences.theme = "azure-glow".to_owned();
         }
         if preferences.mode == "omarchy" && !omarchy_available {
@@ -172,6 +305,13 @@ impl ThemeManager {
             preferences.mode = "omarchy".to_owned();
         }
 
+        super::motion::set_reduce_motion(preferences.reduce_motion);
+        super::formatting::configure(&preferences.date_format, &preferences.size_unit);
+        super::audio_preferences::configure(
+            preferences.audio_spin_animation,
+            preferences.audio_spectrum_bands,
+            &preferences.audio_spectrum_decay,
+        );
         let manager = Rc::new(Self {
             provider: gtk::CssProvider::new(),
             themes: RefCell::new(themes),
@@ -187,6 +327,8 @@ impl ThemeManager {
             pending_noctalia_refresh: RefCell::new(None),
             noctalia_poll: RefCell::new(None),
             previewing: Cell::new(false),
+            layout_observers: RefCell::new(Vec::new()),
+            lyrics_observers: RefCell::new(Vec::new()),
         });
         manager.noctalia.borrow_mut().refresh();
         manager.install_provider();
@@ -242,6 +384,15 @@ impl ThemeManager {
         self.preferences.borrow().show_recent_files
     }
 
+    pub(super) fn context_menu_options(&self) -> super::context_menu::Options {
+        self.preferences.borrow().context_menu.clone()
+    }
+
+    pub(super) fn set_context_menu_options(&self, options: super::context_menu::Options) {
+        self.preferences.borrow_mut().context_menu = options;
+        self.save_preferences();
+    }
+
     pub fn set_show_recent_files(&self, enabled: bool) {
         self.preferences.borrow_mut().show_recent_files = enabled;
         self.save_preferences();
@@ -265,6 +416,19 @@ impl ThemeManager {
         self.save_preferences();
     }
 
+    pub fn show_smart_folders(&self) -> bool {
+        self.preferences.borrow().show_smart_folders
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Saved search visibility toggle and test helper")
+    )]
+    pub fn set_show_smart_folders(&self, show: bool) {
+        self.preferences.borrow_mut().show_smart_folders = show;
+        self.save_preferences();
+    }
+
     pub fn recent_folders_limit(&self) -> u32 {
         self.preferences.borrow().recent_folders_limit
     }
@@ -274,21 +438,285 @@ impl ThemeManager {
         self.save_preferences();
     }
 
-    pub fn interface_font(&self) -> &str {
-        if self.preferences.borrow().interface_font == "jetbrains" {
-            "jetbrains"
-        } else {
-            "maple"
+    pub fn audio_spin_animation(&self) -> bool {
+        self.preferences.borrow().audio_spin_animation
+    }
+
+    pub(crate) fn online_lyrics(&self) -> bool {
+        self.preferences.borrow().online_lyrics
+    }
+
+    pub(crate) fn set_online_lyrics(&self, enabled: bool) {
+        if self.online_lyrics() == enabled {
+            return;
+        }
+        self.preferences.borrow_mut().online_lyrics = enabled;
+        self.save_preferences();
+        let callbacks: Vec<_> = {
+            let mut observers = self.lyrics_observers.borrow_mut();
+            observers.retain(|observer| observer.strong_count() > 0);
+            observers
+                .iter()
+                .filter_map(std::rc::Weak::upgrade)
+                .collect()
+        };
+        for callback in callbacks {
+            callback();
         }
     }
 
-    pub fn set_interface_font(&self, font: &str) {
-        let font = if font == "jetbrains" {
-            "jetbrains"
+    pub(crate) fn observe_online_lyrics(&self, callback: &Rc<dyn Fn()>) {
+        let mut observers = self.lyrics_observers.borrow_mut();
+        observers.retain(|observer| observer.strong_count() > 0);
+        let weak = Rc::downgrade(callback);
+        if !observers.iter().any(|observer| observer.ptr_eq(&weak)) {
+            observers.push(weak);
+        }
+    }
+
+    pub fn set_audio_spin_animation(&self, enabled: bool) {
+        if self.audio_spin_animation() == enabled {
+            return;
+        }
+        self.preferences.borrow_mut().audio_spin_animation = enabled;
+        self.refresh_audio_preferences();
+        self.save_preferences();
+    }
+
+    pub fn audio_spectrum_bands(&self) -> u32 {
+        if self.preferences.borrow().audio_spectrum_bands == 16 {
+            16
         } else {
-            "maple"
-        };
+            32
+        }
+    }
+
+    pub fn set_audio_spectrum_bands(&self, columns: u32) {
+        if !matches!(columns, 16 | 32) || self.preferences.borrow().audio_spectrum_bands == columns
+        {
+            return;
+        }
+        self.preferences.borrow_mut().audio_spectrum_bands = columns;
+        self.refresh_audio_preferences();
+        self.save_preferences();
+    }
+
+    pub fn audio_spectrum_decay(&self) -> String {
+        super::audio_preferences::Decay::from_id(&self.preferences.borrow().audio_spectrum_decay)
+            .id()
+            .to_owned()
+    }
+
+    pub fn set_audio_spectrum_decay(&self, decay: &str) {
+        if !matches!(decay, "studio" | "snappy" | "smooth")
+            || self.preferences.borrow().audio_spectrum_decay == decay
+        {
+            return;
+        }
+        self.preferences.borrow_mut().audio_spectrum_decay = decay.to_owned();
+        self.refresh_audio_preferences();
+        self.save_preferences();
+    }
+
+    fn refresh_audio_preferences(&self) {
+        super::audio_preferences::configure(
+            self.audio_spin_animation(),
+            self.audio_spectrum_bands(),
+            &self.audio_spectrum_decay(),
+        );
+    }
+
+    pub fn search_exclude_hidden(&self) -> bool {
+        self.preferences.borrow().search_exclude_hidden
+    }
+
+    pub fn search_exclude_build_artifacts(&self) -> bool {
+        self.preferences.borrow().search_exclude_build_artifacts
+    }
+
+    pub fn search_reconcile_periodically(&self) -> bool {
+        self.preferences.borrow().search_reconcile_periodically
+    }
+
+    pub fn startup_location(&self) -> String {
+        match self.preferences.borrow().startup_location.as_str() {
+            "music" => "music",
+            "last" => "last",
+            _ => "home",
+        }
+        .to_owned()
+    }
+
+    pub fn set_startup_location(&self, location: &str) {
+        if !matches!(location, "home" | "music" | "last") {
+            return;
+        }
+        self.preferences.borrow_mut().startup_location = location.to_owned();
+        self.save_preferences();
+    }
+
+    pub fn confirm_permanent_delete(&self) -> bool {
+        self.preferences.borrow().confirm_permanent_delete
+    }
+
+    pub fn set_confirm_permanent_delete(&self, enabled: bool) {
+        self.preferences.borrow_mut().confirm_permanent_delete = enabled;
+        self.save_preferences();
+    }
+
+    pub fn reduce_motion(&self) -> bool {
+        self.preferences.borrow().reduce_motion
+    }
+
+    pub fn set_reduce_motion(&self, reduced: bool) {
+        self.preferences.borrow_mut().reduce_motion = reduced;
+        super::motion::set_reduce_motion(reduced);
+        self.save_preferences();
+    }
+
+    pub fn date_format(&self) -> String {
+        if self.preferences.borrow().date_format == "iso" {
+            "iso"
+        } else {
+            "relative"
+        }
+        .to_owned()
+    }
+
+    pub fn set_date_format(&self, format: &str) {
+        if !matches!(format, "relative" | "iso") || self.preferences.borrow().date_format == format
+        {
+            return;
+        }
+        self.preferences.borrow_mut().date_format = format.to_owned();
+        super::formatting::configure(&self.date_format(), &self.size_unit());
+        self.save_preferences();
+    }
+
+    pub fn size_unit(&self) -> String {
+        if self.preferences.borrow().size_unit == "binary" {
+            "binary"
+        } else {
+            "decimal"
+        }
+        .to_owned()
+    }
+
+    pub fn set_size_unit(&self, unit: &str) {
+        if !matches!(unit, "decimal" | "binary") || self.preferences.borrow().size_unit == unit {
+            return;
+        }
+        self.preferences.borrow_mut().size_unit = unit.to_owned();
+        super::formatting::configure(&self.date_format(), &self.size_unit());
+        self.save_preferences();
+    }
+
+    pub fn show_hidden_default(&self) -> bool {
+        self.preferences.borrow().show_hidden_default
+    }
+
+    pub fn set_show_hidden_default(&self, enabled: bool) {
+        self.preferences.borrow_mut().show_hidden_default = enabled;
+        self.save_preferences();
+    }
+
+    pub fn max_preview_size_mb(&self) -> u32 {
+        self.preferences.borrow().max_preview_size_mb
+    }
+
+    pub fn set_max_preview_size_mb(&self, size: u32) {
+        self.preferences.borrow_mut().max_preview_size_mb = size;
+        self.save_preferences();
+    }
+
+    pub fn preview_audio(&self) -> bool {
+        self.preferences.borrow().preview_audio
+    }
+
+    pub fn set_preview_audio(&self, enabled: bool) {
+        self.preferences.borrow_mut().preview_audio = enabled;
+        self.save_preferences();
+    }
+
+    pub fn preview_images(&self) -> bool {
+        self.preferences.borrow().preview_images
+    }
+
+    pub fn set_preview_images(&self, enabled: bool) {
+        self.preferences.borrow_mut().preview_images = enabled;
+        self.save_preferences();
+    }
+
+    pub fn preview_videos(&self) -> bool {
+        self.preferences.borrow().preview_videos
+    }
+
+    pub fn set_preview_videos(&self, enabled: bool) {
+        self.preferences.borrow_mut().preview_videos = enabled;
+        self.save_preferences();
+    }
+
+    pub fn preview_pdf(&self) -> bool {
+        self.preferences.borrow().preview_pdf
+    }
+
+    pub fn set_preview_pdf(&self, enabled: bool) {
+        self.preferences.borrow_mut().preview_pdf = enabled;
+        self.save_preferences();
+    }
+
+    pub fn preview_spreadsheets(&self) -> bool {
+        self.preferences.borrow().preview_spreadsheets
+    }
+
+    pub fn set_preview_spreadsheets(&self, enabled: bool) {
+        self.preferences.borrow_mut().preview_spreadsheets = enabled;
+        self.save_preferences();
+    }
+
+    pub fn preview_code(&self) -> bool {
+        self.preferences.borrow().preview_code
+    }
+
+    pub fn set_preview_code(&self, enabled: bool) {
+        self.preferences.borrow_mut().preview_code = enabled;
+        self.save_preferences();
+    }
+
+    pub fn observe_layout<F: Fn() + 'static>(&self, callback: F) {
+        self.layout_observers.borrow_mut().push(Rc::new(callback));
+    }
+
+    pub fn music_player_layout(&self) -> String {
+        self.preferences.borrow().music_player_layout.clone()
+    }
+
+    pub fn set_music_player_layout(&self, layout: &str) {
+        self.preferences.borrow_mut().music_player_layout = layout.to_owned();
+        self.save_preferences();
+        let observers = self.layout_observers.borrow().clone();
+        for observer in observers {
+            observer();
+        }
+    }
+
+    pub fn interface_font(&self) -> &str {
+        normalized_font(&self.preferences.borrow().interface_font)
+    }
+
+    pub fn set_interface_font(&self, font: &str) {
+        let font = normalized_font(font);
         self.preferences.borrow_mut().interface_font = font.to_owned();
+        self.apply_selected();
+        self.save_preferences();
+    }
+
+    pub fn interface_font_size(&self) -> u32 {
+        self.preferences.borrow().interface_font_size.clamp(10, 22)
+    }
+
+    pub fn set_interface_font_size(&self, size: u32) {
+        self.preferences.borrow_mut().interface_font_size = size.clamp(10, 22);
         self.apply_selected();
         self.save_preferences();
     }
@@ -435,6 +863,10 @@ impl ThemeManager {
         ))
     }
 
+    pub fn applied_tokens(&self) -> Option<ThemeTokens> {
+        self.applied_tokens.borrow().clone()
+    }
+
     fn install_provider(&self) {
         if let Some(display) = gdk::Display::default() {
             gtk::style_context_add_provider_for_display(
@@ -475,11 +907,15 @@ impl ThemeManager {
     }
 
     fn apply_tokens(&self, tokens: &ThemeTokens) {
-        self.provider
-            .load_from_string(&tokens_css(tokens, self.interface_font()));
+        self.provider.load_from_string(&format!(
+            "{}\nwindow, popover, .search-dialog, .search-filter-popover, .search-filter-panel, .app-modal-layer {{ font-size: {}px; }}\n",
+            tokens_css(tokens, self.interface_font()),
+            self.interface_font_size()
+        ));
         self.applied_tokens.replace(Some(tokens.clone()));
         crate::assets::set_primary_icon_color(&tokens.accent);
         crate::assets::set_text_icon_color(&tokens.text);
+        crate::assets::set_on_accent_icon_color(on_accent_color(tokens));
         crate::assets::set_danger_icon_color(&tokens.danger);
         install_source_style_scheme(tokens);
     }
@@ -863,13 +1299,14 @@ fn source_style_scheme_xml(tokens: &ThemeTokens) -> String {
 }
 
 fn tokens_css(tokens: &ThemeTokens, interface_font: &str) -> String {
-    let font_family = if interface_font == "jetbrains" {
-        r#""JetBrains Mono", "JetBrainsMono Nerd Font", monospace"#
-    } else {
-        r#""Maple Mono Normal", "JetBrains Mono", monospace"#
+    let font_family = match normalized_font(interface_font) {
+        "jetbrains" => r#""JetBrains Mono", "JetBrainsMono Nerd Font", monospace"#,
+        "sans" => "sans-serif",
+        "mono" => "monospace",
+        _ => r#""Maple Mono Normal", "JetBrains Mono", monospace"#,
     };
     format!(
-        "@define-color theme_bg {};\n@define-color theme_surface {};\n@define-color theme_text {};\n@define-color theme_accent {};\n@define-color theme_danger {};\n@define-color theme_muted {};\n@define-color theme_highlight {};\n@define-color theme_border {};\n@define-color theme_dim_text {};\nwindow, .preview-text, .preview-text text, .monospace, .search-filter-shortcut, .grid-thumbnail-value {{ font-family: {}; }}\n",
+        "@define-color theme_bg {};\n@define-color theme_surface {};\n@define-color theme_text {};\n@define-color theme_accent {};\n@define-color theme_danger {};\n@define-color theme_muted {};\n@define-color theme_highlight {};\n@define-color theme_border {};\n@define-color theme_dim_text {};\nwindow, popover, .search-dialog, .search-filter-popover, .search-filter-panel, .app-modal-layer, .preview-text, .preview-text text, .monospace, .search-filter-shortcut, .grid-thumbnail-value {{ font-family: {}; }}\n@define-color theme_on_accent {};\n",
         tokens.background,
         tokens.surface,
         tokens.text,
@@ -880,7 +1317,40 @@ fn tokens_css(tokens: &ThemeTokens, interface_font: &str) -> String {
         tokens.border,
         tokens.dim_text,
         font_family,
+        on_accent_color(tokens),
     )
+}
+
+fn on_accent_color(tokens: &ThemeTokens) -> &str {
+    let luminance = |color: &str| {
+        let color = gdk::RGBA::parse(color).ok()?;
+        let linear = |channel: f32| {
+            let channel = f64::from(channel);
+            if channel <= 0.04045 {
+                channel / 12.92
+            } else {
+                ((channel + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        Some(
+            0.2126 * linear(color.red())
+                + 0.7152 * linear(color.green())
+                + 0.0722 * linear(color.blue()),
+        )
+    };
+    let Some(accent) = luminance(&tokens.accent) else {
+        return &tokens.text;
+    };
+    let contrast = |color: &str| {
+        luminance(color).map_or(0.0, |value| {
+            (accent.max(value) + 0.05) / (accent.min(value) + 0.05)
+        })
+    };
+    if contrast(&tokens.background) >= contrast(&tokens.text) {
+        &tokens.background
+    } else {
+        &tokens.text
+    }
 }
 
 fn blend(left: &str, right: &str, amount: f64) -> String {

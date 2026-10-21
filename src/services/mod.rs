@@ -3,11 +3,15 @@
 mod custom_actions;
 mod file_source;
 mod formats;
+pub(crate) mod music_collections;
 pub(crate) mod music_library;
+pub(crate) mod lyrics;
 pub(crate) mod model_preview;
 mod operations;
 pub(crate) mod preview;
-mod search;
+pub(crate) mod ratings;
+pub(crate) mod search;
+pub(crate) mod saved_searches;
 pub(crate) mod table;
 mod trails;
 pub(crate) mod waveform;
@@ -35,7 +39,8 @@ pub use preview::{
     PreviewRequestId,
 };
 pub(crate) use search::{
-    SearchEvent, SearchFilterValues, SearchHandle, SearchItem, SearchScope, ScopedSearch, TextExtractionProvider, index_tree,
-    search_filter_values,
+    InferredFilterChip, SearchCounts, SearchEntity, SearchEntityKey, SearchEvent, SearchFilterValues, SearchGroup,
+    SearchGroups, SearchHandle, SearchItem, SearchPage, SearchResult, SearchResultKey, SearchScope, ScopedSearch,
+    TextExtractionProvider, index_tree, search_filter_values, search_filter_terms,
 };
 pub use trails::{StoredTrails, TRAIL_SCHEMA_VERSION, TrailStore};

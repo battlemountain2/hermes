@@ -1,5 +1,367 @@
 # Performance Baseline
 
+## Folder transitions and selected music artwork — 2026-10-20
+
+Columns, Grid and Explorer share a150ms loading-feedback grace period. Quick loads no longer
+crossfade through a skeleton/spinner; pending rows are non-actionable, and delayed/error/empty
+states remain explicit. Rapid navigation, canceled timers, destroyed panes, stale batches and
+view changes retain generation guards. This reduces transition flashes; it is not a measured
+cold-directory speedup or a promise that every compositor paints without flicker.
+
+Selected immersive covers no longer use the fixed256px thumbnail operation. Adjacent artwork
+uses the existing1400px image-preview bound; embedded artwork has a separate1024px selected
+worker operation. A generated1400px embedded cover proves256px thumbnail versus1024px selected
+output through the real sandbox. No decoder/resource budget is raised. Low-resolution sources
+still have their original limits, and high-resolution cold decoding still costs time.
+
+Palette analysis and64px softened-backdrop preparation run off GTK once per selected source.
+The background is two retained native nodes (base color and an opacity-wrapped texture), with
+no per-frame full-screen Cairo aura, live blur or additional animation timer. Cover-derived hue
+retains theme-background luminance, with adjusted visualizer colors for extreme covers. Control
+opacity changes reserve layout space; keyboard-focus and stable bounds are checked. These are
+structural improvements, not a newly measured GPU/onscreen-FPS or audio-latency claim.
+
+Validation:927 regular cases across926 serial cases plus the known process-global GLib thumbnail
+case in a separate process;187 optional cases remain excluded from that normal run. All21 exact
+isolated GTK/sandbox cases pass: folder transitions, tag hydration, mini Escape/close/icon states,
+live theme contrast, lyrics mode/identity/cancellation, metadata-only retention, native backdrop
+nodes, selected artwork resolution and real one-shot DOCX/ODT/PPTX extraction. Generated Office
+unit cases also cover hyperlink labels, relocated parts, implicit cells and allocation bounds.
+
+Production build and all-target check pass; the test target retains five old unfulfilled lint
+expectations. Artifacts: /tmp/hermes-polish-path. A Graphite control snapshot was inspected;
+the hidden Broadway display did not reliably deliver later repaint screenshots, so light/dark
+coverage is computed style/palette and lifecycle coverage, not a full visual/compositor sign-off.
+Actual pointer dragging/fades, user Office documents, cold media and live audio remain user checks.
+No user media/tags/settings were changed, no online lyrics request was sent and no user window
+was restarted, focused, moved or closed. One reported FLAC was probed read-only to confirm its
+title/artist/album tags exist; generated fixtures exercise the actual hydration/sandbox path.
+
+## Prism / Orbit and mode-switch polish — 2026-10-19
+
+The user still reported Tunnel/Cosmic stutter and unreliable returns to Lyrics after the native
+snapshot migration below. Native nodes alone were not sufficient: the old elapsed-since-render
+limiter produced about48updates/second on144Hz displays, and raw audio bins moved geometry abruptly.
+The new deadline scheduler maintains approximately60updates across60/144/240/1000Hz synthetic
+clocks without catch-up bursts; time-based attack/release smooths the32 bins. Hidden/paused/
+motion-disabled modes still stop ticks, and leaving Visualizer clears its retained frame.
+
+Prism uses six nested rectangular frames (24 strokes). Orbit uses two sparse arcs,12 stable stars,
+six short trails and16 grouped spectrum columns. Audio changes brightness/size, not star positions.
+Both avoid the old large translucent ring/particle paint regions, full-screen blur and new timers.
+Lyrics/Visualizer buttons synchronize modes, missing lyrics keep stable panel geometry, unchanged
+empty states reuse widgets, and active lyrics no longer animate font dimensions or weight.
+
+Initial isolated Vulkan offscreen render-plus-readback medians at3840×2160: Prism5.70ms and
+Orbit6.15ms, with CPU snapshot recording around0.04/0.07ms. Ribbons5.81ms. These debug measurements
+include synchronization/download and do NOT measure onscreen FPS or hardware-decoder activity.
+The old Cairo comparator draws the old designs, so it is not a like-for-like speedup comparison.
+After visual inspection, long crossing Orbit links were shortened to trails; final profiling
+artifacts, generated PNGs and validation are recorded in NEXT_AGENT.md. No user's running window
+was presented, moved or restarted; the renderer fixture realizes an explicitly unmapped window.
+
+Final sparse-design3840×2160 medians: Vulkan render-plus-readback Prism5.10ms/Orbit5.21ms;
+explicit Cairo fallback1.27ms/1.01ms. GPU synchronization/readback can dominate this synthetic test,
+so these numbers are not a reason to force a backend or a claim that GPU rendering always wins.
+Production keeps GTK's automatic selection. Both fixture paths pass, including bounded native
+geometry and normal widget disposal; actual onscreen cadence still needs user verification.
+
+## Native immersive scene rendering — 2026-10-18
+
+Ribbons, Tunnel and Cosmic now snapshot bounded native GTK4.12 GSK color, transform, border and
+rounded-clip nodes instead of repainting a viewport-sized Cairo surface every frame. GTK keeps
+its normal Vulkan/GL/software renderer selection; no forced backend, unsafe code, dependency,
+custom GLArea or shader was added. The static ambient aura remains cached Cairo. Native frames
+contain no Cairo nodes, texture uploads/downloads, timers, I/O or spectrum analysis. Animation
+only runs when mapped, enabled, motion-enabled and playing, capped near60fps; pause keeps a
+static frame and suspension clears it. Theme/style/size changes still redraw correctly.
+
+An initial CPU-only debug probe (reused Cairo image surface,20 frames,3 warmup frames excluded)
+found4K Tunnel drawing~4.535ms median versus~0.220ms for the1024-sample spectrum analysis. That
+motivated examining render/upload cost rather than replacing the analyzer or audio pipeline.
+
+Paired offscreen probe:15 frames per style/size/path, first3 excluded, same synthetic32-band input,
+palette and time steps, debug build. Measures snapshot construction plus render_texture and a
+completed TextureDownloader readback. Final native Wayland run selected GskVulkanRenderer without
+GSK_RENDERER overrides. The window was realized solely to obtain a surface, never presented or
+mapped; assertions enforce this. No personal media/audio was opened or played.
+
+| Style,3840x2160 | Cairo-node median / p95 | Native GSK median / p95 |
+| --- | --- | --- |
+| Ribbons |31.092 /33.322ms |8.031 /8.648ms |
+| Tunnel |35.260 /36.338ms |8.035 /10.160ms |
+| Cosmic |29.524 /32.022ms |7.383 /8.328ms |
+
+These include synchronization/readback and are NOT pure GPU timestamps, actual onscreen frame
+times, guaranteed FPS or a universal speedup. DRM engine counters were unavailable. Native node
+construction remains CPU work: final4K Ribbons~0.276ms, Tunnel~0.037ms and Cosmic~0.038ms median.
+Ribbons use at most128 segments per curve to bound scene complexity; this is a polyline
+approximation, not pixel-identical Cairo antialiasing. Synthetic side-by-side PNGs were inspected.
+
+Explicit GskCairoRenderer/Broadway fallback passed the same comparison. A representative fallback
+run at4K had Ribbons2.588→2.523ms, Tunnel5.757→5.600ms and Cosmic0.555→0.703ms median. Some small
+software-rendered cases are slightly slower (1080p Ribbons0.971→1.354ms); do not promise a CPU
+fallback speedup. Output stays bounded, clipped and theme-driven on all paths.
+
+Separately, library hero speaker/repeat icons now update only on state changes instead of being
+recreated every100ms, including while hidden behind immersive. Hidden waveform avoids redraw.
+827 regular tests pass;137 optional ignored. Seventeen focused isolated GTK checks pass, including
+bounded native nodes, invalid input, live palette, clear/reuse/allocation/drop and transport icon
+identity. Synthetic profile tests are optional/ignored and run explicitly, never on app startup.
+Production and all-target checks pass (existing test-only lint-expectation warnings remain).
+
+Tests: src/ui/music/immersive/performance_tests.rs and canvas/tests.rs. Logs/screenshots are in
+the directory recorded by /tmp/hermes-render-path: cairo-baseline.log, native-comparison.log
+(prototype), native-final.log (final), software-comparison.log, software-final.log, unit-final.log
+and ui-final.log.
+Private HOME/XDG/DBus and a private hidden Broadway connection isolate these from the user's
+running Hermes/preferences. Real compositor presentation/frame pacing and live audio under load
+remain user-verification gates; neither an application restart nor renderer setting was forced.
+
+## Heavy first-load photo/video follow-up — 2026-10-13
+
+Eligible large JPEG/standard8-bit HEIF selected previews now try installed optional libvips inside
+the existing sandbox before ImageMagick. Input is seekable stdin, not an exposed original path.
+Two processing threads, operation cache0, downsize-only1400px output, encoded input128MiB and
+existing source/output ceilings. Direct host decoded-frame budgets are unchanged. Missing tools,
+failed/invalid output, HDR/high precision/unsupported NCLX or uncertain HEIF primary/thumbnail
+selection retain fallback. No Rust dependency or automatic package installation was added.
+
+Generated12MP debug/warm-filesystem samples: JPEG scaled~64–91ms vs~81–105ms after tool startup;
+first scaled calls~140–154ms vs~84–127ms were sometimes slower. HEIC scaled~159–202ms vs~212–265ms.
+Optional process/plugin startup still costs time: this is not a universal first-file speedup.
+1400x1050 output and all-eight-EXIF rotations checked; representative meanRGB differences0.34
+JPEG/0.046 HEIC against prior output. Different resamplers are not bit-identical or exhaustive
+ICC/HDR/camera tests. Actual pooled/one-shot rendering and missing-tool fallback are verified.
+
+Video now drops excess display-rate frames before transforms, then scales before RGB conversion.
+Same generated4K60 two-second clip, no-clock fakesink: early-order drain~0.78–0.79s vs~1.22–1.34s,
+user CPU~1.08–1.10s vs~1.98–2.02s. A fused conversion/scaling alternative was slower and rejected.
+These are processing/CPU samples, not playback FPS or cold startup. Full-length playback, audio,
+1280x720/30fps limits, rotation and seek epochs remain. Codec reference frames still decode.
+
+Native first frames after warming the private registry~149–173ms across4K H.264, rotated MOV,
+HEVC and VFR; seek/end pass and rotated output405x720. Generated4K color bars have meanRGBA
+difference0.24 with opaque alpha. Real desktop rendering and first registry costs remain separate.
+The first portrait fixture lacked rotation because an older ffmpeg metadata option was ignored;
+the corrected display_rotation fixture has a verified90-degree matrix and passes. No renderer
+rotation defect was inferred from that failed fixture.
+
+Validation:597 normal pass,88 optional ignored;12 distinct targeted optional tests run explicitly.
+All-target/debug/release/scoped formatting/diff checks pass. Logs /tmp/hermes-heavy-preview-qa and
+/tmp/hermes-preview-audit.J7eOla. No personal media/config changes, app restart, version bump or
+branch/commit/PR. Existing warnings and unrelated broad stress failures are outside this pass.
+No cold-disk/physical-pointer/Dolphin parity claim; ask for real remaining slow camera samples.
+
+## Visible-first shared thumbnail jobs — 2026-10-12
+
+Thumbnail source resolution, cache lookup and rendering now enter one bounded UI-owned queue
+instead of each bound image starting its own independent background pipeline. Admission uses
+the default sandbox worker limit (at most four); canceled workers keep their slots until they
+actually complete. Visible targets rank before a half-viewport prefetch band. Far-offscreen and
+unmapped/hidden-tab requests wait. Popovers form their own clipping boundary. Map/unmap/completion
+wake the queue immediately; mapped pending visibility is sampled every32ms for scrolling, with
+no polling when all waiting targets are unmapped. Folder-nonempty and desktop icon checks are
+unchanged and are not part of this admission limit.
+
+Equal resolved requests share one render only when original and artwork identities, operation,
+kind and logical size match. Weak subscribers retain individual cancellation/request guards.
+Rebinding one leaves a visible peer working; disappearing eligible subscribers cancel the shared
+job. Returning subscribers re-resolve the source rather than reviving an old result. All metadata,
+source validation, disk I/O and parsing stay off GTK; cache budgets and selected-preview workers
+are unchanged. Shared results save to the optional persistent cache once, not once per widget.
+This does not yet coalesce different tracks that happen to reference the same cover file.
+
+A generated private GTK fixture showed two visible images for one source after~70–100ms with one
+lookup/render/decode; warm rebind samples took~7.5–7.8ms without decoding. Distant and hidden-tab images did
+no work until scrolling/showing them; final total was three original decodes for three sources.
+These debug, warm-filesystem/Broadway observations include window/helper initialization and are
+not a before/after speed percentage, physical paint benchmark or Dolphin parity. A separate shared
+render/rebind test proves the old result cannot overwrite the rebound image or cancel its peer.
+
+595 normal tests pass,85 optional ignored by default; fourteen distinct targeted optional tests
+pass for the new behavior and existing cache/media/zoom/artwork/layout/peek/tab lifecycles. A pure
+1,000-job admission test verifies the four-slot bound even while a canceled job has not returned.
+The selected-photo-under-occupied-thumbnail-pool fixture remains independent (~136ms in one run).
+All-target checking, debug/release builds, scoped formatting and diff checks pass. Existing warnings
+and historical unrelated integration failures remain. Logs: /tmp/hermes-thumbnail-scheduling-qa
+and /tmp/hermes-preview-audit.4h33ra/scheduling-*.log. No personal media/config changes, app restart,
+version bump, branch/commit/PR. Heavy first-load photo/video, model/cover tiers and actual desktop
+confirmation remain; avoiding unnecessary work is not a claim to accelerate every individual codec.
+
+## Ghost-free transitions and persistent media thumbnails — 2026-10-12 follow-up
+
+Loading thumbnails and full photos now share the image viewport/footer layout, fit on the first
+draw and paint an opaque semantic background within the viewport. This prevents old letterbox
+pixels showing through. GSK/Cairo, layout, request-lifecycle and zoom/fullscreen regressions pass;
+actual user-session compositor/pointer confirmation is still needed for the supplied recording.
+
+A private asynchronous raw-RGBA thumbnail store survives app restarts, with strong file/cover
+identity checks, bounded validation and atomic writes: 256px raster limit, 512 records / 128 MiB,
+eight queued saves, private directory/files. Corrupt, changed, symlinked or FIFO records miss safely.
+Cache reads never send attacker-controlled encoded cache bytes directly to native image parsers.
+Larger model/comic rasters are not persisted; optional pending writes can be dropped on exit.
+
+Sandboxed selected JPEG/HEIF previews now have bounded native paths with the original fallback.
+JPEG supports RGB 8-bit within the decoded-frame budget; HEIF decodes the primary image for
+supported 8-bit/NCLX profiles. Grayscale/CMYK/high precision, large and HDR/wide-gamut cases still
+need the fallback. Generated orientation/dimension/color checks and real pooled/one-shot routes
+pass. These are not exhaustive camera/ICC tests or a change to original selected-image quality limits.
+
+Fresh debug/private Broadway samples on this host, warm filesystem: persisted thumbnail reload
+~1.03ms after RAM clearing; deliberately pending cached-photo display ~9.9ms; generated JPEG
+eight orientations ~41–55ms native versus ~65–76ms previous; rotated HEIF primary ~40–55ms
+versus ~68–74ms. These small generated inputs differ from the large textured fixtures below.
+The additional sandbox-routing rerun under higher load varied to JPEG ~72–191ms versus
+~161–213ms, HEIF ~63–108ms versus ~211–276ms; all quality/routing assertions still passed.
+
+Media initialization starts once off-thread 1.2 seconds after window presentation, without
+autoplay. A fresh private registry warmup took ~4.09s, followed by a first HEVC frame in ~100ms.
+The scan still costs time/CPU and immediate selection may pay it. Native video decoding is already
+isolated in its own worker; host initialization/audio output are distinct from user-media decoding.
+
+Validation: 588 normal tests pass, 83 optional ignored by default; ten targeted private optional
+tests pass, with the two native tests additionally rerun for actual pooled/one-shot routing.
+All-target check and debug/release builds pass. Existing warnings remain; unrelated broad stress
+tests were not rerun. Logs: /tmp/hermes-preview-resume-qa and /tmp/hermes-preview-audit.4h33ra.
+Earlier temporary logs vanished between sessions; the earlier 60-format matrix was not regenerated.
+Only the explicitly supplied recording was inspected; no personal media/config changes or app
+restart, version bump, branch, commit or PR. Next: visible-first/in-flight work coalescing, distinct
+model/cover tiers, heavy first-load photo/video profiling and user-session ghosting confirmation.
+
+## Preview format audit and progressive loading — 2026-10-12
+
+See [the format/performance audit](preview-format-audit.md) for all registry families,
+representative generated fixtures, Dolphin/KIO comparisons and the latest Strata review.
+Upstream 1.0 was released today; Hermes intentionally stays at 0.2.0.
+
+Selected photos reuse an existing source-validated thumbnail while the full preview loads.
+Videos reuse cached posters and skip redundant fallback rendering when a real frame or valid
+poster is already present. Stale sources, errors, cancellation and completed full previews
+cannot receive late placeholder results. No thumbnail means the cold decode still runs.
+The private GTK photo fixture displayed a cached image in ~4.4ms while its full provider
+was deliberately pending; this does not measure full-resolution decoding or physical paint.
+
+Worker-cache expiry increases from 30 to 300 seconds with unchanged entry/byte limits and
+strong identity checks; a real 31-second revisit remains cached. There is no new persistent
+disk cache. Pooled PDF thumbnails use a 256px bounding box instead of full-page rendering;
+selected full-size PDF/text layers remain. AVIF/SVG/JPE/JFIF get thumbnail requests.
+
+Format transport fixes cover typed model/ebook/comic operations and sanitized one-shot input
+suffixes. An additional adapter bug supplied the PDF page number as the office/archive text
+limit: previews now receive the actual bounded text budget, avoiding blank office results and
+one-byte archive listings. XLSX descriptor detection already worked and was not rewritten.
+
+Repeated final debug adapter runs: textured JPEG ~148–272ms first / ~0.5–1.4ms cache hits;
+textured HEIC ~739–1128ms first / ~0.5–2.7ms cache hits; MOV posters ~38–66ms H.264 / ~51–102ms HEVC.
+Earlier native HEVC probes measured ~6.86s with a fresh private GStreamer registry, then
+~145–147ms decoded frames. These generated, warm-filesystem timings do not prove cold-disk
+improvements or Dolphin parity. First-use video initialization and heavy HEIC decode remain.
+
+Validation: 579 normal binary tests pass (76 optional ignored), targeted generated pooled
+3MF/EPUB/CBZ/PDF and one-shot DOCX/ODT pass, plus private GTK photo/poster guards, MOV startup/
+seek, full-length fullscreen and image zoom. Generated matrix: 60 fixtures, 321 measurements;
+malformed/over-budget and unsupported files are expected rejections, not universal successes.
+Cancellation/source replacement/revisit/contention probes pass. Real CBR/RAR generation is
+unavailable, so its optional fixture is not counted as tested. All-target check and debug/
+release build logs: /tmp/hermes-preview-final-*.log; generated logs: /tmp/hermes-preview-audit.q2u1x6.
+Existing warnings and historical unrelated broad integration failures remain; no personal
+media/config edits, user-app restart or commit/branch/PR.
+
+## Clipboard, volume and music-collection stability — 2026-10-11
+
+Volume changes no longer capture the entire queue and refresh every Music view for each slider
+event. The existing 100ms tick coalesces notifications, persistence waits 250ms after the latest
+motion, and graceful shutdown captures the final value. Native gain/mute property writes run
+off GTK with atomic newest state and one bounded wakeup, preventing a stalled audio-property
+writer from blocking slider input. Startup reapplies the latest settings; gain is set before
+unmuting. This is a bounded-work improvement, not a measured production frame-rate claim.
+
+Music collections persist on a bounded background worker, with atomic private writes, retry/backoff
+and explicit graceful-shutdown flush. Independent processes cannot simultaneously write the same
+store; external byte changes/corruption/symlinks are preserved rather than silently overwritten.
+Playlist and group models retain unchanged content, including on favorite changes and save
+acknowledgments; drag versions change with membership, not global storage revisions. Rejected
+catalog observations coalesce and retry in bounded batches without changing first-seen dates.
+Path-based membership intentionally does not infer renamed files. Abrupt process termination and
+noncooperating external edits racing the final rename are not covered by the shutdown guarantees.
+
+Clipboard feedback uses a compact count badge and explicit item-list activation, avoiding the
+previous simultaneous hover popover and tooltip. Explicit URI/KDE-URI export is checked against
+actual Dolphin for single/multiple generated folders, nested contents and empty folders under
+isolated X11 and native Wayland sessions. The old FileList baseline also worked privately; the
+user's original folder failure was not reproduced, and portal involvement remains unconfirmed.
+Photo drawer/fullscreen menus capture the preview file and release on close/replacement without
+altering left-button zoom/pan.
+
+Validation: all-target checking, debug/release builds and 565 normal unit tests pass; 62 helper/
+desktop tests are ignored by default. Targeted private GTK checks cover the clipboard badge,
+single/multi-selection URI export/import, cut outcomes, photo menus/fullscreen teardown, volume
+multiview/MPRIS/latest-state synchronization, separate playlist editor/drag/model stability,
+music context-menu snapshot targeting, meaningful main-player history/preview exclusion, and
+image zoom/fullscreen. Store tests cover file-lock ownership in an independent process, external
+edits/corruption, retry, bounds and immediate shutdown flush. Logs: /tmp/hermes-polish-qa.TPAYfn,
+/tmp/hermes-directory-clipboard-qa, /tmp/hermes-volume-qa and /tmp/hermes-photo-menu-qa.KCbtF0.
+Fixtures are generated and isolated; no personal media or user-app restart. Existing lint
+expectations and local missing libadwaita stylesheet warnings remain unrelated. Historical broad
+integration failures were not revisited. Version remains 0.2.0; no Dolphin-parity claim.
+
+## Thumbnail isolation, pooled MOV posters and JPEG encoding — 2026-10-11
+
+Thumbnail operations now use the thumbnail pool; selected photo/document previews use their
+separate pool. Media thumbnails use pooled ffmpegthumbnailer workers with seekable input passed
+through stdin and identity-checked caching, preserving representative 10%-position posters.
+Cancellation while waiting for either pool does not spawn a fallback renderer. A generated fixture
+holds every thumbnail lease while a selected JPEG preview still completes independently.
+
+Generated 1080p MOV, 256px poster, debug production paths:
+
+| Path | Fixture time |
+| --- | ---: |
+| One-shot, three samples | 80.4–80.7ms |
+| First pooled request | 75–78ms |
+| Cached request | 1.5–15µs |
+| Selected JPEG preview while thumbnail pool is full | ~86ms |
+
+The main benefit is reuse and avoiding thumbnail contention, not eliminating the first decode.
+Replacement, cancellation, invalid media and decoded-pixel equivalence are covered. Embedded
+MP3 artwork and adjacent-cover fallback also use these bounded paths; fallbacks validate both
+track and cover identities and do not rewrite tags.
+
+JPEG rendering now selects PNG compression strategy 2 (Huffman-only), retaining lossless decoded
+pixels, output dimensions, orientation and existing limits. Three warm-filesystem shell renderer
+samples on a generated textured 4000×3000 JPEG at 1400px: previous ~130–132ms versus ~105–107ms,
+roughly 18–20% less renderer time. This fixture's PNG output was ~3.5MiB versus ~2.1MiB, with
+ImageMagick absolute pixel error 0. Output size and gains depend on image content.
+
+Native video decoding is unchanged. Isolated generated 720p H.264 MOV checks showed a first
+GStreamer registry initialization of ~3.87s, then frames in ~106–127ms. First-use registry cost,
+HEVC/4K, real storage and compositor behavior remain separate work. Logs/fixtures are under
+`/tmp/hermes-cold-media-qa`; no personal media used. These are generated renderer/state timings,
+not cold-disk, completed UI paint, physical-pointer FPS or Dolphin parity measurements.
+
+## Preview sizing and bounded image zoom — 2026-10-11
+
+Thumbnail-size changes now reach mounted Grid cards through their actual Overlay wrapper.
+Preview splits no longer intentionally reserve 10% of unused space; Columns and Explorer
+reserve their content, while Grid uses a stable half-workspace reservation. Explorer's initial
+Name width is 320px and the details table reserves 684px including separators. Narrow windows
+retain the preview minimum and allow horizontal Explorer scrolling; user divider drags remain.
+
+Image pixels are converted to an immutable Cairo source once and reused during zoom/pan and
+fullscreen, with a safe allocation fallback. Painting is bounded to the visible viewport instead
+of a zoom-sized DrawingArea.
+Virtual scroll extents still track zoom, but the painted canvas stays viewport-sized. Clear old
+pixels, clip the canvas, ease pointer-anchored zoom and hand off projected offsets to panning
+before adjustment/layout updates complete. Reduced motion keeps immediate scaling. Generated
+Cairo pixels verify clearing; GTK fixtures cover rapid zoom/pan, canvas bounds, fit/100%/fullscreen,
+thumbnail slider changes, detail-column visibility and split updates/manual sizing.
+
+Logs: /tmp/hermes-refresh-qa. These are synthetic isolated GTK/state/pixel checks, with explicit
+public frame phases for headless Broadway where needed. They do not establish physical-pointer
+smoothness, production compositor painting, real HEIC/MOV/JPG cold-load speed or Dolphin parity.
+Representative cold-media profiling remains after the approved library/playlist work.
+
 ## Tab corners, scrubbing and JPEG/MOV loading — 2026-10-10 follow-up
 
 File-tab surfaces and selection buttons now have square corners; compact tab widths, control
@@ -9,7 +371,10 @@ while playback timestamps arrive, commit on release and coalesce outstanding tar
 stays enabled during seeking. Keyboard/click changes remain immediate; paused streams stay paused.
 Cancelled/unmapped controls and changed streams discard pending targets; programmatic time updates
 do not trigger seeks. Deterministic GTK state-machine tests and native paused-music checks pass.
-These tests do not inject physical mouse events; confirm actual thumb dragging in the user's session.
+These tests do not inject physical mouse events; the user subsequently confirmed real thumb dragging
+feels good. Follow-up tab work removes strip padding/centering and inter-tab gaps, not just corner
+radius. Tabs stay compact horizontally while filling the strip vertically; the expanded GTK fixture
+checks wide/narrow/one-tab layouts, adjacent boundaries and overflow without a connected browser.
 
 JPEG thumbnails now check an embedded EXIF JPEG before original-image decoding. Read at most 128 KiB
 of headers, honor both primary and thumbnail orientation, require adequate dimensions and matching

@@ -38,15 +38,16 @@ impl TabBar {
         capture_view: Rc<dyn Fn() -> TrailViewState>,
         activate_tab: Rc<dyn Fn(Trail)>,
     ) -> Rc<Self> {
-        let tabs = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         tabs.add_css_class("tab-strip-content");
-        tabs.set_valign(gtk::Align::Center);
+        tabs.set_valign(gtk::Align::Fill);
         tabs.set_halign(gtk::Align::Start);
         let root = gtk::ScrolledWindow::builder()
             .child(&tabs)
             .hscrollbar_policy(gtk::PolicyType::Automatic)
             .vscrollbar_policy(gtk::PolicyType::Never)
             .hexpand(true)
+            .vexpand(false)
             .height_request(40)
             .overlay_scrolling(true)
             .build();
@@ -226,7 +227,7 @@ impl TabBar {
     fn tab(self: &Rc<Self>, tab: &Trail, count: usize, active: Option<&TrailId>) -> gtk::Box {
         let item = gtk::Box::new(gtk::Orientation::Horizontal, 2);
         item.add_css_class("file-tab");
-        item.set_valign(gtk::Align::Center);
+        item.set_valign(gtk::Align::Fill);
         item.set_hexpand(false);
         if active == Some(&tab.id) {
             item.add_css_class("active");
@@ -234,7 +235,7 @@ impl TabBar {
 
         let select = gtk::Button::with_label(&tab.name);
         select.add_css_class("file-tab-select");
-        select.set_valign(gtk::Align::Center);
+        select.set_valign(gtk::Align::Fill);
         select.set_hexpand(false);
         if let Some(label) = select
             .child()

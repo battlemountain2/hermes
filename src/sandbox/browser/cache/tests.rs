@@ -74,6 +74,36 @@ fn entry_count_is_bounded_even_for_empty_payloads() {
 }
 
 #[test]
+fn unchanged_previews_survive_a_normal_revisit_without_increasing_cache_budgets() {
+    let mut cache = Cache::new(8);
+    let path = Path::new("photo");
+    cache.insert(path, identity(), Operation::PreviewImage, vec![1; 8], None);
+    cache.entries.front_mut().unwrap().timestamp =
+        Instant::now() - std::time::Duration::from_secs(90);
+    assert_eq!(
+        cache
+            .get(path, identity(), Operation::PreviewImage)
+            .unwrap()
+            .0,
+        vec![1; 8]
+    );
+    assert_eq!(cache.bytes, 8);
+    cache.insert(
+        Path::new("next"),
+        identity(),
+        Operation::PreviewImage,
+        vec![2; 8],
+        None,
+    );
+    assert!(
+        cache
+            .get(path, identity(), Operation::PreviewImage)
+            .is_none()
+    );
+    assert_eq!(cache.bytes, 8);
+}
+
+#[test]
 fn same_size_same_second_edits_and_atomic_replacements_have_distinct_identity() {
     use std::fs::{self, File, FileTimes};
     use std::sync::atomic::{AtomicU64, Ordering};

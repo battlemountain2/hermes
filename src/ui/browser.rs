@@ -25,6 +25,7 @@ use crate::{
 use super::{
     blur::BlurBin,
     browser_modes::{BrowserDensity, BrowserMode, ModeViews},
+    formatting::{self, Value},
     motion::{animations_enabled, emphasized_deceleration},
 };
 
@@ -33,10 +34,15 @@ const COLUMN_OFFSET: i32 = 24;
 const COLUMN_TRANSITION: Duration = Duration::from_millis(220);
 
 mod retained;
+mod preview_menu;
+pub(super) mod loading;
+
+use loading::LoadingTransition;
 
 #[derive(Clone)]
 struct LoadPresentation {
     stack: gtk::Stack,
+    transition: LoadingTransition,
     skeleton: gtk::Box,
     feedback: gtk::Box,
     message: gtk::Label,
@@ -64,6 +70,7 @@ struct ColumnView {
     bound_rows: Rc<RefCell<Vec<BoundRow>>>,
     entry_count: Rc<Cell<usize>>,
     spinner: gtk::Spinner,
+    notice: gtk::Label,
     new_folder_row: gtk::Box,
     new_folder_entry: gtk::Entry,
 }
@@ -101,7 +108,11 @@ struct PeekView {
 }
 
 impl LoadPresentation {
-    fn new(content: &impl IsA<gtk::Widget>, retry: Option<gtk::Button>) -> Self {
+    fn new(
+        content: &impl IsA<gtk::Widget>,
+        retry: Option<gtk::Button>,
+        spinner: &gtk::Spinner,
+    ) -> Self {
         let skeleton = gtk::Box::new(gtk::Orientation::Vertical, 9);
         skeleton.add_css_class("loading-skeleton");
         for width in [168, 124, 192, 148, 176, 112] {
@@ -127,18 +138,17 @@ impl LoadPresentation {
         }
 
         let stack = gtk::Stack::builder()
-            .transition_type(gtk::StackTransitionType::Crossfade)
-            .transition_duration(100)
             .hexpand(true)
             .vexpand(true)
             .build();
         stack.add_named(content, Some("content"));
         stack.add_named(&skeleton, Some("loading"));
         stack.add_named(&feedback, Some("feedback"));
-        stack.set_visible_child_name("loading");
+        let transition = LoadingTransition::new(&stack, spinner);
 
         Self {
             stack,
+            transition,
             skeleton,
             feedback,
             message,
@@ -152,11 +162,11 @@ impl LoadPresentation {
         if let Some(retry) = self.retry.as_ref() {
             retry.set_visible(false);
         }
-        self.stack.set_visible_child_name("loading");
+        self.transition.begin();
     }
 
     fn show_content(&self) {
-        self.stack.set_visible_child_name("content");
+        self.transition.show("content");
     }
 
     fn show_empty(&self) {
@@ -165,7 +175,7 @@ impl LoadPresentation {
         if let Some(retry) = self.retry.as_ref() {
             retry.set_visible(false);
         }
-        self.stack.set_visible_child_name("feedback");
+        self.transition.show("feedback");
     }
 
     fn show_error(&self, message: &str) {
@@ -174,7 +184,7 @@ impl LoadPresentation {
         if let Some(retry) = self.retry.as_ref() {
             retry.set_visible(true);
         }
-        self.stack.set_visible_child_name("feedback");
+        self.transition.show("feedback");
     }
 }
 
@@ -220,6 +230,7 @@ pub(super) struct ViewState {
     transfer_cut_generation: Cell<Option<u64>>,
     clipboard_indicator: gtk::Button,
     clipboard_popover: gtk::Popover,
+    indicated_clipboard: RefCell<Option<gtk::gdk::ContentProvider>>,
     clipboard_list: gtk::Box,
     horizontal_scroll_generation: Rc<Cell<u64>>,
     peek: RefCell<Option<PeekView>>,
@@ -247,7 +258,8 @@ impl BrowserView {
     pub fn new(source: Rc<dyn FileSource>, peek_behavior: PeekBehavior) -> Self {
         let columns_widget = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         columns_widget.add_css_class("columns");
-        columns_widget.set_halign(gtk::Align::Start);
+        columns_widget.set_halign(gtk::Align::Fill);
+        columns_widget.set_hexpand(true);
         columns_widget.set_vexpand(true);
 
         let scroller = gtk::ScrolledWindow::builder()
@@ -316,6 +328,10 @@ impl BrowserView {
         location_stack.set_valign(gtk::Align::Center);
 
         let browser = Browser::new(source);
+        browser.set_preferences(crate::model::ViewPreferences {
+            show_hidden: super::theme::ThemeManager::shared().show_hidden_default(),
+            ..crate::model::ViewPreferences::default()
+        });
         let mode_views = ModeViews::new(&scroller, browser.clone());
         let presentations = gtk::Stack::builder().hexpand(true).vexpand(true)
             .hhomogeneous(false).vhomogeneous(false).build();
@@ -325,9 +341,8 @@ impl BrowserView {
         clipboard_indicator.add_css_class("clipboard-indicator");
         clipboard_indicator.set_halign(gtk::Align::Start);
         clipboard_indicator.set_valign(gtk::Align::End);
-        clipboard_indicator.set_margin_start(12);
-        clipboard_indicator.set_margin_bottom(12);
-        clipboard_indicator.set_can_focus(false);
+        clipboard_indicator.set_margin_start(8);
+        clipboard_indicator.set_margin_bottom(6);
         clipboard_indicator.set_visible(false);
         overlay.add_overlay(&clipboard_indicator);
         let clipboard_list = gtk::Box::new(gtk::Orientation::Vertical, 3);
@@ -352,10 +367,12 @@ impl BrowserView {
                 popover.unparent();
             }
         });
-        let clipboard_hover = gtk::EventControllerMotion::new();
-        let shown_clipboard = clipboard_popover.clone();
-        clipboard_hover.connect_enter(move |_, _, _| shown_clipboard.popup());
-        clipboard_indicator.add_controller(clipboard_hover);
+        let shown_clipboard = clipboard_popover.downgrade();
+        clipboard_indicator.connect_clicked(move |_| {
+            if let Some(popover) = shown_clipboard.upgrade() {
+                if popover.is_visible() { popover.popdown(); } else { popover.popup(); }
+            }
+        });
         let state = Rc::new(ViewState {
             open_handler: RefCell::new(None),
             overlay,
@@ -376,6 +393,7 @@ impl BrowserView {
             transfer_cut_generation: Cell::new(None),
             clipboard_indicator,
             clipboard_popover,
+            indicated_clipboard: RefCell::new(None),
             clipboard_list,
             horizontal_scroll_generation: Rc::new(Cell::new(0)),
             peek: RefCell::new(None),
@@ -393,6 +411,25 @@ impl BrowserView {
             retained_tabs: RefCell::new(Vec::new()),
             pending_tab_view: Cell::new(None),
         });
+
+        if let Some(display) = gtk::gdk::Display::default() {
+            let clipboard = display.clipboard();
+            let weak_state = Rc::downgrade(&state);
+            let changed = clipboard.connect_changed(move |clipboard| {
+                if let Some(state) = weak_state.upgrade()
+                    && state.indicated_clipboard.borrow().is_some()
+                    && clipboard.content() != *state.indicated_clipboard.borrow()
+                {
+                    state.indicated_clipboard.borrow_mut().take();
+                    state.clipboard_indicator.set_visible(false);
+                    state.clipboard_popover.popdown();
+                }
+            });
+            let changed = RefCell::new(Some(changed));
+            state.overlay.connect_destroy(move |_| {
+                if let Some(changed) = changed.borrow_mut().take() { clipboard.disconnect(changed); }
+            });
+        }
 
         let weak_state = Rc::downgrade(&state);
         state.mode_views.borrow().set_transfer_handler(Rc::new(
@@ -512,15 +549,17 @@ impl BrowserView {
             || self.state.mode_views.borrow().new_folder_is_active()
     }
 
-    pub fn preview_occupied_width(&self) -> i32 {
-        if self.view_mode() != BrowserMode::Columns {
-            return single_pane_preview_reservation(self.state.overlay.width());
+    pub fn preview_occupied_width(&self, available: i32) -> i32 {
+        match self.view_mode() {
+            BrowserMode::Grid => return single_pane_preview_reservation(available),
+            BrowserMode::Explorer => return super::browser_modes::explorer_preview_reservation(),
+            BrowserMode::Columns => {}
         }
         self.state
             .columns
             .borrow()
             .iter()
-            .map(|column| column.shell.width().max(COLUMN_WIDTH))
+            .map(|column| column.shell.measure(gtk::Orientation::Horizontal, -1).0.max(COLUMN_WIDTH))
             .fold(0, i32::saturating_add)
     }
 
@@ -1129,11 +1168,11 @@ impl ViewState {
 
     fn show_clipboard_items(&self, items: &[(Location, String)], cut: bool) {
         let action = if cut { "Cut" } else { "Copied" };
-        let label = match items {
-            [(_, name)] => format!("{action} {name}"),
-            _ => format!("{action} {} items", items.len()),
-        };
+        let label = format!("{action} · {}", items.len());
         self.clipboard_indicator.set_label(&label);
+        self.indicated_clipboard.replace(gtk::gdk::Display::default()
+            .and_then(|display| display.clipboard().content()));
+        self.clipboard_popover.popdown();
         while let Some(child) = self.clipboard_list.first_child() {
             self.clipboard_list.remove(&child);
         }
@@ -1142,14 +1181,12 @@ impl ViewState {
             item.add_css_class("clipboard-list-item");
             item.set_xalign(0.0);
             item.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+            item.set_max_width_chars(30);
             item.set_tooltip_text(Some(&location.display_path()));
             self.clipboard_list.append(&item);
         }
-        let details = items
-            .iter()
-            .map(|(_, name)| name.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
+        let details = format!("{action} {} {} · Click to view", items.len(),
+            if items.len() == 1 { "item" } else { "items" });
         self.clipboard_indicator.set_tooltip_text(Some(&details));
         self.clipboard_indicator.set_visible(true);
     }
@@ -1750,13 +1787,19 @@ impl ViewState {
         let title = gtk::Label::new(Some("Empty Trash?"));
         title.add_css_class("delete-confirmation-title");
         title.set_xalign(0.0);
-        let subtitle = gtk::Label::new(Some(&format!(
-            "{} · {} will be reclaimed",
-            item_count_label(summary.item_count),
-            format_file_size(summary.total_size)
+        let subtitle = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let count = gtk::Label::new(Some(&format!(
+            "{} ·",
+            item_count_label(summary.item_count)
         )));
-        subtitle.add_css_class("delete-confirmation-subtitle");
-        subtitle.set_xalign(0.0);
+        let reclaimed = gtk::Label::new(None);
+        formatting::bind(&reclaimed, Value::Size(summary.total_size));
+        let explanation = gtk::Label::new(Some("will be reclaimed"));
+        for label in [&count, &reclaimed, &explanation] {
+            label.add_css_class("delete-confirmation-subtitle");
+            label.set_xalign(0.0);
+            subtitle.append(label);
+        }
         heading.append(&title);
         heading.append(&subtitle);
         let close = gtk::Button::new();
@@ -1834,6 +1877,13 @@ impl ViewState {
     }
 
     fn show_delete_confirmation(self: &Rc<Self>, entries: Vec<FileEntry>, permanent: bool) {
+        if entries.is_empty() {
+            return;
+        }
+        if permanent && !super::theme::ThemeManager::shared().confirm_permanent_delete() {
+            self.browser.delete(entries, true);
+            return;
+        }
         let Some(window_overlay) = self
             .overlay
             .root()
@@ -1899,15 +1949,12 @@ impl ViewState {
             name.set_hexpand(true);
             name.set_xalign(0.0);
             name.set_tooltip_text(Some(&entry.location.display_path()));
-            let metadata = gtk::Label::new(Some(&if entry.is_directory() {
-                "Folder".to_owned()
-            } else {
-                match entry.size {
-                    crate::model::MetadataValue::Known(size) => format_file_size(size),
-                    crate::model::MetadataValue::Unknown
-                    | crate::model::MetadataValue::Unavailable => "—".to_owned(),
-                }
-            }));
+            let metadata = gtk::Label::new(None);
+            bind_entry_size(
+                &metadata,
+                Some(entry),
+                if entry.is_directory() { "Folder" } else { "—" },
+            );
             metadata.add_css_class("delete-confirmation-file-metadata");
             row.append(&icon);
             row.append(&name);
@@ -2078,27 +2125,16 @@ impl ViewState {
         let location_value = properties_row(&details, "LOCATION", &compact_display_path(&location));
         location_value.set_tooltip_text(Some(&location.display_path()));
         let trash_root = is_trash_root(&location);
-        let initial_size = if trash_root {
-            "Calculating…".to_owned()
+        let size = properties_row(&details, "SIZE", "—");
+        if trash_root {
+            formatting::clear(&size, "Calculating…");
+        } else if let Some(crate::model::MetadataValue::Known(bytes)) = entry.as_ref().map(|entry| &entry.size) {
+            formatting::bind(&size, Value::Size(*bytes));
         } else {
-            entry
-                .as_ref()
-                .and_then(|entry| match entry.size {
-                    crate::model::MetadataValue::Known(size) => Some(format_file_size(size)),
-                    crate::model::MetadataValue::Unknown
-                    | crate::model::MetadataValue::Unavailable => None,
-                })
-                .unwrap_or_else(|| "—".to_owned())
-        };
-        let size = properties_row(&details, "SIZE", &initial_size);
-        let modified = properties_row(
-            &details,
-            "MODIFIED",
-            &entry
-                .as_ref()
-                .map(metadata_modified)
-                .unwrap_or_else(|| "—".to_owned()),
-        );
+            formatting::clear(&size, "—");
+        }
+        let modified = properties_row(&details, "MODIFIED", "—");
+        bind_entry_modified(&modified, entry.as_ref(), "—");
         let opens_with = properties_row(&details, "OPENS WITH", "—");
         let hidden = properties_row(
             &details,
@@ -2202,10 +2238,10 @@ impl ViewState {
                 };
                 match summary {
                     Ok(summary) => {
-                        size.set_text(&format_file_size(summary.total_size));
+                        formatting::bind(&size, Value::Size(summary.total_size));
                         size.set_tooltip_text(Some(&item_count_label(summary.item_count)));
                     }
-                    Err(_) => size.set_text("Unavailable"),
+                    Err(_) => formatting::clear(&size, "Unavailable"),
                 }
             });
         }
@@ -2222,17 +2258,7 @@ impl ViewState {
             else {
                 return;
             };
-            if !is_directory {
-                size.set_text(&format_file_size(info.size().max(0) as u64));
-            }
-            if let Some(time) = info.modification_date_time() {
-                modified.set_text(
-                    &time
-                        .format("%Y-%m-%d %H:%M")
-                        .map(|value| value.to_string())
-                        .unwrap_or_else(|_| "—".to_owned()),
-                );
-            }
+            bind_properties_metadata(&size, &modified, &info, is_directory);
             hidden.set_text(if info.is_hidden() { "Yes" } else { "No" });
             if let Some(content_type) = info.content_type() {
                 kind.set_text(&gio::content_type_get_description(&content_type));
@@ -2616,12 +2642,16 @@ impl ViewState {
             }
             BrowserEvent::ColumnReloaded { depth } => {
                 if let Some(column) = self.columns.borrow().get(depth) {
+                    column.notice.set_visible(false);
+                    column.presentation.show_loading();
                     column.model.splice(0, column.model.n_items(), &[]);
                     column.entry_count.set(0);
                     set_filter_placeholder(column, 0);
-                    column.spinner.set_visible(true);
-                    column.spinner.start();
-                    column.presentation.show_loading();
+                }
+            }
+            BrowserEvent::LoadNotice { depth, message } => {
+                if let Some(column) = self.columns.borrow().get(depth) {
+                    super::browser_modes::set_search_notice(&column.notice, message.as_deref());
                 }
             }
             BrowserEvent::LoadFinished { depth } => {
@@ -3327,16 +3357,18 @@ impl ViewState {
                 icon.set_opacity(0.72);
                 chevron.set_visible(false);
             }
-            let size_text = entry
-                .as_ref()
-                .filter(|entry| !entry.is_directory())
-                .and_then(|entry| match entry.size {
-                    crate::model::MetadataValue::Known(bytes) => Some(format_file_size(bytes)),
-                    crate::model::MetadataValue::Unknown
-                    | crate::model::MetadataValue::Unavailable => None,
-                })
-                .unwrap_or_default();
-            size.set_label(&size_text);
+            bind_entry_size(&size, entry.as_ref(), "");
+        });
+        factory.connect_unbind(|_, item| {
+            if let Some(size) = item
+                .downcast_ref::<gtk::ListItem>()
+                .and_then(|item| item.child())
+                .and_then(|row| row.last_child())
+                .and_then(|chevron| chevron.prev_sibling())
+                .and_downcast::<gtk::Label>()
+            {
+                formatting::clear(&size, "");
+            }
         });
 
         let list = gtk::ListView::new(Some(selection.clone()), Some(factory));
@@ -3558,7 +3590,7 @@ impl ViewState {
         });
         new_folder_entry.add_controller(new_folder_focus);
 
-        let presentation = LoadPresentation::new(&scroll, Some(retry));
+        let presentation = LoadPresentation::new(&scroll, Some(retry), &spinner);
         install_directory_drop_target(self, &presentation.stack, location.clone());
         install_folder_context_menu(
             self,
@@ -3591,10 +3623,13 @@ impl ViewState {
             depth,
         );
         column.append(&new_folder_row);
+        let notice = super::browser_modes::search_notice_label();
+        column.append(&notice);
         column.append(&presentation.stack);
 
         let shell = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         shell.set_size_request(COLUMN_WIDTH, -1);
+        shell.set_hexpand(true);
         shell.set_vexpand(true);
         shell.set_overflow(gtk::Overflow::Hidden);
         let column_overlay = gtk::Overlay::new();
@@ -3649,6 +3684,9 @@ impl ViewState {
             .checked_sub(1)
             .and_then(|previous| self.columns.borrow().get(previous).cloned())
             .map(|column| column.shell);
+        if let Some(previous) = previous.as_ref() {
+            previous.set_hexpand(false);
+        }
         self.columns_widget.borrow()
             .insert_child_after(&shell, previous.as_ref());
         self.columns.borrow_mut().push(ColumnView {
@@ -3666,6 +3704,7 @@ impl ViewState {
             bound_rows,
             entry_count,
             spinner,
+            notice,
             new_folder_row,
             new_folder_entry,
         });
@@ -3834,7 +3873,7 @@ impl ViewState {
             .max_content_height(240)
             .propagate_natural_height(true)
             .build();
-        let presentation = LoadPresentation::new(&scroll, None);
+        let presentation = LoadPresentation::new(&scroll, None, &spinner);
         presentation.stack.set_size_request(-1, 120);
         content.append(&presentation.stack);
 
@@ -3949,6 +3988,7 @@ impl ViewState {
             .last()
             .map(|column| column.shell.clone());
         if let Some(retained) = retained {
+            retained.set_hexpand(true);
             self.reveal_column(retained);
         }
     }
@@ -4013,20 +4053,49 @@ fn basic_label_factory() -> gtk::SignalListItemFactory {
     factory
 }
 
+#[cfg(test)]
 pub(super) fn format_file_size(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "kB", "MB", "GB", "TB"];
-    if bytes < 1_000 {
-        return format!("{bytes} B");
-    }
+    formatting::format_size(bytes)
+}
 
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1_000.0 && unit < UNITS.len() - 1 {
-        value /= 1_000.0;
-        unit += 1;
+pub(super) fn bind_entry_size(label: &gtk::Label, entry: Option<&FileEntry>, fallback: &str) {
+    if let Some(entry) = entry.filter(|entry| !entry.is_directory())
+        && let crate::model::MetadataValue::Known(bytes) = entry.size
+    {
+        formatting::bind(label, Value::Size(bytes));
+    } else {
+        formatting::clear(label, fallback);
     }
-    let formatted = format!("{value:.1}");
-    format!("{} {}", formatted.trim_end_matches(".0"), UNITS[unit])
+}
+
+pub(super) fn bind_entry_modified(label: &gtk::Label, entry: Option<&FileEntry>, fallback: &str) {
+    if let Some(entry) = entry
+        && let crate::model::MetadataValue::Known(seconds) = entry.modified_unix_seconds
+    {
+        formatting::bind(label, Value::Timestamp(seconds));
+    } else {
+        formatting::clear(label, fallback);
+    }
+}
+
+fn bind_properties_metadata(
+    size: &gtk::Label,
+    modified: &gtk::Label,
+    info: &gio::FileInfo,
+    is_directory: bool,
+) {
+    if !is_directory {
+        if info.has_attribute("standard::size") && info.size() >= 0 {
+            formatting::bind(size, Value::Size(info.size() as u64));
+        } else {
+            formatting::clear(size, "—");
+        }
+    }
+    if let Some(time) = info.modification_date_time() {
+        formatting::bind(modified, Value::Timestamp(time.to_unix()));
+    } else {
+        formatting::clear(modified, "—");
+    }
 }
 
 fn set_filter_placeholder(column: &ColumnView, count: usize) {
@@ -4107,17 +4176,28 @@ pub(super) fn install_folder_context_menu(
         .build();
     popover.add_css_class("folder-context-popover");
 
-    let new_folder = context_menu_option("New Folder", Some("Ctrl+Shift+N"));
-    let new_file = context_menu_option("New File…", None);
-    let paste = context_menu_option("Paste", Some("Ctrl+V"));
-    let select_all = context_menu_option("Select All", Some("Ctrl+A"));
-    let properties = context_menu_option("Properties", None);
+    let new_folder = item_context_option(crate::assets::icons::FOLDER, "New Folder", "Ctrl+Shift+N");
+    let new_file = item_context_option(crate::assets::icons::DOCUMENTS, "New File…", "");
+    let paste = item_context_option(crate::assets::icons::COPY, "Paste", "Ctrl+V");
+    let select_all = item_context_option(crate::assets::icons::CHECK, "Select All", "Ctrl+A");
+    let copy_location = item_context_option(crate::assets::icons::COPY, "Copy location", "");
+    let properties = item_context_option(crate::assets::icons::INFO, "Properties", "Alt+Enter");
     content.append(&new_folder);
     content.append(&new_file);
     content.append(&paste);
     content.append(&select_all);
+    content.append(&copy_location);
     content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     content.append(&properties);
+
+    let copied_location = location.clone();
+    let location_popover = popover.downgrade();
+    copy_location.connect_clicked(move |_| {
+        if let Some(display) = gtk::gdk::Display::default() {
+            display.clipboard().set_text(&copied_location.display_path());
+        }
+        if let Some(popover) = location_popover.upgrade() { popover.popdown(); }
+    });
 
     let pending_new_folder = Rc::new(Cell::new(false));
     let pending_for_click = pending_new_folder.clone();
@@ -4254,12 +4334,7 @@ pub(super) fn install_folder_context_menu(
             return;
         }
         gesture.set_state(gtk::EventSequenceState::Claimed);
-        paste.set_sensitive(gtk::gdk::Display::default().is_some_and(|display| {
-            display
-                .clipboard()
-                .formats()
-                .contains_type(gtk::gdk::FileList::static_type())
-        }));
+        paste.set_sensitive(clipboard_has_files());
         select_all.set_sensitive(selection.n_items() > 0);
         if popover_for_click.parent().is_none()
             && let Some(parent) = gesture.widget()
@@ -4322,8 +4397,49 @@ pub(super) fn install_item_context_menu(
     music_actions.set_visible(false);
     content.append(&music_actions);
 
+    let rating_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    rating_row.add_css_class("item-context-rating-row");
+    let rating_label = gtk::Label::new(Some("Rating"));
+    rating_label.add_css_class("item-context-rating-label");
+    rating_label.set_xalign(0.0);
+    rating_label.set_hexpand(true);
+    rating_row.append(&rating_label);
+
+    let stars_box = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    stars_box.set_valign(gtk::Align::Center);
+    let mut rating_buttons = Vec::with_capacity(5);
+    let mut rating_images = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let btn = gtk::Button::new();
+        btn.add_css_class("preview-rating-star");
+        btn.add_css_class("flat");
+        let img = crate::assets::text_icon(crate::assets::icons::STAR, 13);
+        btn.set_child(Some(&img));
+        stars_box.append(&btn);
+        rating_buttons.push(btn);
+        rating_images.push(img);
+    }
+    let clear_rating_btn = gtk::Button::new();
+    clear_rating_btn.add_css_class("preview-rating-star");
+    clear_rating_btn.add_css_class("flat");
+    let clear_img = crate::assets::text_icon(crate::assets::icons::X, 11);
+    clear_rating_btn.set_child(Some(&clear_img));
+    clear_rating_btn.set_tooltip_text(Some("Clear rating"));
+    stars_box.append(&clear_rating_btn);
+
+    rating_row.append(&stars_box);
+    rating_row.set_visible(false);
+    content.append(&rating_row);
+    content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+
     let single = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let open = item_context_option(crate::assets::icons::EXTERNAL_LINK, "Open", "↵");
+    let (open, open_label) =
+        item_context_option_labeled(crate::assets::icons::EXTERNAL_LINK, "Open", "↵");
+    let open_in_hermes_player = item_context_option(
+        crate::assets::icons::PLAY,
+        "Open in Hermes Player",
+        "Ctrl+Enter",
+    );
     let open_with = item_context_option(crate::assets::icons::EXTERNAL_LINK, "Open With…", "");
     let preview = item_context_option(crate::assets::icons::EYE, "Quick preview", "Space");
     let extract_here = item_context_option(crate::assets::icons::FILE_ARCHIVE, "Extract Here", "");
@@ -4332,11 +4448,13 @@ pub(super) fn install_item_context_menu(
     let restore = item_context_option(crate::assets::icons::FOLDER, "Restore", "");
     restore.set_visible(in_trash);
     let pin = item_context_option(crate::assets::icons::PIN, "Pin to sidebar", "P");
-    let copy_path = item_context_option(crate::assets::icons::COPY, "Copy path", "Y");
+    let copy_path = item_context_option(crate::assets::icons::COPY, "Copy location", "Y");
     let move_to = item_context_option(crate::assets::icons::FOLDER, "Move to…", "");
     let copy_to = item_context_option(crate::assets::icons::COPY, "Copy to…", "");
     let rename = item_context_option(crate::assets::icons::PENCIL, "Rename", "F2");
     let cut = item_context_option(crate::assets::icons::SCISSORS, "Cut", "Ctrl+X");
+    let copy = item_context_option(crate::assets::icons::COPY, "Copy", "Ctrl+C");
+    let paste_folder = item_context_option(crate::assets::icons::COPY, "Paste into folder", "");
     let delete_label = if in_trash {
         "Permanently delete"
     } else {
@@ -4347,21 +4465,25 @@ pub(super) fn install_item_context_menu(
     move_to_trash.add_css_class("danger");
     let properties = item_context_option(crate::assets::icons::INFO, "Properties", "Alt+Enter");
     single.append(&open);
+    single.append(&open_in_hermes_player);
     single.append(&open_with);
     single.append(&preview);
+    single.append(&restore);
+    single.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    single.append(&cut);
+    single.append(&copy);
+    single.append(&paste_folder);
+    single.append(&copy_path);
+    single.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    single.append(&rename);
+    single.append(&pin);
+    single.append(&move_to);
+    single.append(&copy_to);
+    single.append(&move_to_trash);
+    single.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     single.append(&extract_here);
     single.append(&extract_to);
     single.append(&compress);
-    single.append(&restore);
-    single.append(&pin);
-    single.append(&copy_path);
-    single.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-    single.append(&move_to);
-    single.append(&copy_to);
-    single.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-    single.append(&rename);
-    single.append(&cut);
-    single.append(&move_to_trash);
     single.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     single.append(&properties);
     content.append(&single);
@@ -4369,46 +4491,34 @@ pub(super) fn install_item_context_menu(
     let multiple = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let restore_multiple = item_context_option(crate::assets::icons::FOLDER, "Restore items", "");
     restore_multiple.set_visible(in_trash);
-    let copy_paths = item_context_option(crate::assets::icons::COPY, "Copy paths", "Y");
+    let copy_paths = item_context_option(crate::assets::icons::COPY, "Copy locations", "Y");
     let compress_multiple =
         item_context_option(crate::assets::icons::FILE_ARCHIVE, "Compress items…", "");
     let move_multiple = item_context_option(crate::assets::icons::FOLDER, "Move to…", "");
     let copy_multiple = item_context_option(crate::assets::icons::COPY, "Copy to…", "");
     let cut_multiple = item_context_option(crate::assets::icons::SCISSORS, "Cut", "Ctrl+X");
+    let copy_clipboard_multiple = item_context_option(crate::assets::icons::COPY, "Copy", "Ctrl+C");
     let trash_multiple =
         item_context_danger_option(crate::assets::icons::TRASH, delete_label, "Del");
     trash_multiple.add_css_class("danger");
     multiple.append(&restore_multiple);
+    multiple.append(&cut_multiple);
+    multiple.append(&copy_clipboard_multiple);
     multiple.append(&copy_paths);
-    multiple.append(&compress_multiple);
     multiple.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     multiple.append(&move_multiple);
     multiple.append(&copy_multiple);
     multiple.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-    multiple.append(&cut_multiple);
     multiple.append(&trash_multiple);
+    multiple.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    multiple.append(&compress_multiple);
     multiple.set_visible(false);
     content.append(&multiple);
 
     let custom_separator = gtk::Separator::new(gtk::Orientation::Horizontal);
     let custom = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let custom_buttons = match load_custom_actions() {
-        Ok(actions) => actions
-            .into_iter()
-            .map(|action| {
-                let button =
-                    item_context_option(crate::assets::icons::SETTINGS_2, &action.name, "");
-                custom.append(&button);
-                (action, button)
-            })
-            .collect::<Vec<_>>(),
-        Err(error) => {
-            tracing::warn!(%error, "unable to load custom actions");
-            Vec::new()
-        }
-    };
-    custom_separator.set_visible(!custom_buttons.is_empty());
-    custom.set_visible(!custom_buttons.is_empty());
+    custom_separator.set_visible(false);
+    custom.set_visible(false);
     content.append(&custom_separator);
     content.append(&custom);
 
@@ -4429,6 +4539,7 @@ pub(super) fn install_item_context_menu(
     for (button, action) in [
         (&play_music, "win.play-music-selection"),
         (&queue_music, "win.queue-music-selection"),
+        (&open_in_hermes_player, "win.play-music-selection"),
     ] {
         let parent = widget.downgrade();
         let popover = popover.downgrade();
@@ -4444,10 +4555,42 @@ pub(super) fn install_item_context_menu(
         });
     }
 
-    let target = Rc::new(RefCell::new(None::<(usize, FileEntry)>));
-    for (action, button) in &custom_buttons {
-        connect_custom_action(button, &popover, state, &target, widget, action.clone());
+    let target_ratable_paths: Rc<RefCell<Vec<PathBuf>>> = Rc::new(RefCell::new(Vec::new()));
+    for (idx, btn) in rating_buttons.iter().enumerate() {
+        let star_num = (idx + 1) as u8;
+        let paths_target = target_ratable_paths.clone();
+        let popover_weak = popover.downgrade();
+        btn.connect_clicked(move |_| {
+            if let Some(popover) = popover_weak.upgrade() {
+                popover.popdown();
+            }
+            let paths = paths_target.borrow().clone();
+            if !paths.is_empty() {
+                let store = crate::services::ratings::Store::shared();
+                let all_have_same = paths.iter().all(|p| store.get(p) == Some(star_num));
+                let new_rating = if all_have_same { None } else { Some(star_num) };
+                if let Err(error) = store.set_many(paths, new_rating) {
+                    tracing::warn!(%error, "failed to update rating from context menu");
+                }
+            }
+        });
     }
+
+    let paths_target = target_ratable_paths.clone();
+    let popover_weak = popover.downgrade();
+    clear_rating_btn.connect_clicked(move |_| {
+        if let Some(popover) = popover_weak.upgrade() {
+            popover.popdown();
+        }
+        let paths = paths_target.borrow().clone();
+        if !paths.is_empty() {
+            if let Err(error) = crate::services::ratings::Store::shared().set_many(paths, None) {
+                tracing::warn!(%error, "failed to clear rating from context menu");
+            }
+        }
+    });
+
+    let target = Rc::new(RefCell::new(None::<(usize, FileEntry)>));
     let weak = Rc::downgrade(state);
     let open_target = target.clone();
     let open_popover = popover.downgrade();
@@ -4582,8 +4725,20 @@ pub(super) fn install_item_context_menu(
     connect_context_transfer(&copy_to, &popover, state, &target, false);
     connect_context_transfer(&move_multiple, &popover, state, &target, true);
     connect_context_transfer(&copy_multiple, &popover, state, &target, false);
-    connect_context_cut(&cut, &popover, state, &target);
-    connect_context_cut(&cut_multiple, &popover, state, &target);
+    connect_context_clipboard(&cut, &popover, state, &target, true);
+    connect_context_clipboard(&cut_multiple, &popover, state, &target, true);
+    connect_context_clipboard(&copy, &popover, state, &target, false);
+    connect_context_clipboard(&copy_clipboard_multiple, &popover, state, &target, false);
+    let weak = Rc::downgrade(state);
+    let paste_target = target.clone();
+    let paste_popover = popover.downgrade();
+    paste_folder.connect_clicked(move |_| {
+        if let Some(popover) = paste_popover.upgrade() { popover.popdown(); }
+        if let Some(state) = weak.upgrade()
+            && let Some((_, entry)) = paste_target.borrow().as_ref()
+            && entry.is_directory()
+        { state.paste_into(entry.location.clone()); }
+    });
     connect_context_trash(&move_to_trash, &popover, state, &target, in_trash);
     connect_context_trash(&trash_multiple, &popover, state, &target, in_trash);
     connect_extract_here(&extract_here, &popover, state, &target);
@@ -4653,39 +4808,130 @@ pub(super) fn install_item_context_menu(
             .set_selection(depth, &selected_positions, Some(resolved_position));
         target.replace(Some((resolved_position, entry.clone())));
         let entries = state.browser.selected_entries();
-        music_actions.set_visible(audio_context_actions_visible(&entries));
+        let options = super::theme::ThemeManager::shared().context_menu_options();
+        music_actions.set_visible(options.music && !in_trash && audio_context_actions_visible(&entries));
+        let ratable_paths = entries
+            .iter()
+            .filter_map(|entry| {
+                let path = entry.location.native_path()?;
+                if crate::services::ratings::is_ratable_format(path) {
+                    Some(path.to_path_buf())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        let rating_visible = !in_trash && !ratable_paths.is_empty();
+        rating_row.set_visible(rating_visible);
+        if rating_visible {
+            target_ratable_paths.replace(ratable_paths.clone());
+            let store = crate::services::ratings::Store::shared();
+            let common_rating = {
+                let first = store.get(&ratable_paths[0]);
+                if ratable_paths.iter().all(|p| store.get(p) == first) {
+                    first
+                } else {
+                    None
+                }
+            };
+            let active = common_rating.unwrap_or(0);
+            for (i, img) in rating_images.iter().enumerate() {
+                if (i as u8) < active {
+                    crate::assets::set_primary_icon(img, crate::assets::icons::STAR_FILLED);
+                } else {
+                    crate::assets::set_text_icon(img, crate::assets::icons::STAR);
+                }
+            }
+            for (i, btn) in rating_buttons.iter().enumerate() {
+                let star_num = i + 1;
+                btn.set_tooltip_text(Some(&if active == star_num as u8 {
+                    format!("Click to remove {star_num}-star rating")
+                } else {
+                    format!("Rate {star_num} star{}", if star_num == 1 { "" } else { "s" })
+                }));
+            }
+            clear_rating_btn.set_sensitive(
+                common_rating.is_some() || ratable_paths.iter().any(|p| store.get(p).is_some()),
+            );
+        } else {
+            target_ratable_paths.replace(Vec::new());
+        }
+        open_with.set_visible(options.open_with && !entry.is_directory() && !in_trash);
+        for button in [&move_to, &copy_to, &move_multiple, &copy_multiple] {
+            button.set_visible(options.transfer_destinations && !in_trash);
+        }
         let custom_paths = entries
             .iter()
             .filter_map(|entry| entry.location.native_path().map(Path::to_path_buf))
             .collect::<Vec<_>>();
         let mut custom_visible = false;
-        for (action, button) in &custom_buttons {
-            let visible = !in_trash
-                && custom_paths.len() == entries.len()
-                && action.applies_to(&custom_paths);
-            button.set_visible(visible);
-            custom_visible |= visible;
+        while let Some(child) = custom.first_child() { custom.remove(&child); }
+        if options.custom_actions && !in_trash && custom_paths.len() == entries.len()
+            && let Some(popover) = weak_popover.upgrade()
+            && let Some(parent) = gesture.widget()
+        {
+            match load_custom_actions() {
+                Ok(actions) => {
+                    for action in actions.into_iter().filter(|action| action.applies_to(&custom_paths)) {
+                        let button = item_context_option(crate::assets::icons::SETTINGS_2, &action.name, "");
+                        connect_custom_action(&button, &popover, &state, &target, &parent, action);
+                        custom.append(&button);
+                        custom_visible = true;
+                    }
+                }
+                Err(error) => tracing::warn!(%error, "unable to load custom actions"),
+            }
         }
         custom.set_visible(custom_visible);
         custom_separator.set_visible(custom_visible);
-        preview.set_visible(entry_supports_quick_preview(&entry));
-        let archive = is_archive_entry(&entry) && !in_trash;
+        preview.set_visible(options.preview && entry_supports_quick_preview(&entry) && !in_trash);
+        let archive = options.archives && is_archive_entry(&entry) && !in_trash;
         extract_here.set_visible(archive);
         extract_to.set_visible(archive);
-        compress.set_visible(!in_trash);
-        compress_multiple.set_visible(!in_trash);
-        pin.set_visible(entry.is_directory() && !is_trash_location(&entry.location));
+        compress.set_visible(options.archives && !in_trash && (entry.is_directory() || options.compress_files));
+        compress_multiple.set_visible(options.archives && !in_trash && (entries.iter().all(FileEntry::is_directory) || options.compress_files));
+        pin.set_visible(options.pin && entry.is_directory() && !is_trash_location(&entry.location));
+        paste_folder.set_visible(entry.is_directory() && !in_trash);
+        paste_folder.set_sensitive(clipboard_has_files());
         if entries.len() > 1 {
             heading.set_text(&format!("{} items selected", entries.len()));
             summary.set_text(&selected_items_summary(&entries));
+            if entries.iter().all(FileEntry::is_directory) {
+                open_label.set_text("Open folders");
+            } else {
+                open_label.set_text("Open items");
+            }
+            open_in_hermes_player.set_visible(false);
             single.set_visible(false);
             multiple.set_visible(true);
         } else {
             heading.set_text(&entry.display_name);
             summary.set_text(&compact_display_path(&entry.location));
+            if entry.is_directory() {
+                open_label.set_text("Open folder");
+                let show_open_in_hermes =
+                    options.music && !in_trash && folder_has_audio_or_is_music(&entry);
+                open_in_hermes_player.set_visible(show_open_in_hermes);
+            } else {
+                open_in_hermes_player.set_visible(false);
+                let (content_type, _) = gio::content_type_guess(
+                    entry.location.native_path().map(Path::new),
+                    None::<&[u8]>,
+                );
+                let app_name = gio::AppInfo::default_for_type(&content_type, false)
+                    .map(|app| app.display_name().to_string());
+                if let Some(app) = app_name {
+                    open_label.set_text(&format!("Open in {app}"));
+                } else {
+                    open_label.set_text("Open");
+                }
+            }
             single.set_visible(true);
             multiple.set_visible(false);
         }
+        super::context_menu::tidy_separators(&single);
+        super::context_menu::tidy_separators(&multiple);
+        super::context_menu::tidy_separators(&content);
         let Some(popover) = weak_popover.upgrade() else {
             return;
         };
@@ -5249,11 +5495,12 @@ fn connect_context_transfer(
     });
 }
 
-fn connect_context_cut(
+fn connect_context_clipboard(
     button: &gtk::Button,
     popover: &gtk::Popover,
     state: &Rc<ViewState>,
     target: &Rc<RefCell<Option<(usize, FileEntry)>>>,
+    cut: bool,
 ) {
     let weak = Rc::downgrade(state);
     let target = target.clone();
@@ -5263,7 +5510,8 @@ fn connect_context_cut(
             popover.popdown();
         }
         if let Some(state) = weak.upgrade() {
-            state.cut_entries(&context_entries(&state, &target));
+            let entries = context_entries(&state, &target);
+            if cut { state.cut_entries(&entries); } else { state.copy_entries(&entries); }
         }
     });
 }
@@ -5521,22 +5769,41 @@ fn set_files_clipboard(entries: &[FileEntry]) -> bool {
     )
 }
 
-fn set_location_files_clipboard(locations: &[Location]) -> bool {
-    let files = locations
-        .iter()
-        .map(gio_file_for_location)
-        .collect::<Vec<_>>();
-    if files.is_empty() {
-        return false;
-    }
+fn clipboard_has_files() -> bool {
     gtk::gdk::Display::default().is_some_and(|display| {
-        display
-            .clipboard()
-            .set_content(Some(&gtk::gdk::ContentProvider::for_value(
-                &gtk::gdk::FileList::from_array(&files).to_value(),
-            )))
-            .is_ok()
+        let formats = display.clipboard().formats();
+        formats.contains_type(gtk::gdk::FileList::static_type())
+            || formats.contain_mime_type("text/uri-list")
     })
+}
+
+fn set_location_files_clipboard(locations: &[Location]) -> bool {
+    let Some(content) = native_file_clipboard_content(locations) else {
+        return false;
+    };
+    gtk::gdk::Display::default().is_some_and(|display| {
+        display.clipboard().set_content(Some(&content)).is_ok()
+    })
+}
+
+fn native_file_clipboard_content(locations: &[Location]) -> Option<gtk::gdk::ContentProvider> {
+    let bytes = file_clipboard_uri_list(locations)?;
+    Some(gtk::gdk::ContentProvider::new_union(&[
+        gtk::gdk::ContentProvider::for_bytes("text/uri-list", &bytes),
+        gtk::gdk::ContentProvider::for_bytes("application/x-kde4-urilist", &bytes),
+    ]))
+}
+
+fn file_clipboard_uri_list(locations: &[Location]) -> Option<glib::Bytes> {
+    if locations.is_empty() {
+        return None;
+    }
+    let mut uri_list = String::new();
+    for location in locations {
+        uri_list.push_str(&gio_file_for_location(location).uri());
+        uri_list.push_str("\r\n");
+    }
+    Some(glib::Bytes::from_owned(uri_list.into_bytes()))
 }
 
 fn should_preserve_drag_selection(clicked_selected: bool, selected_count: u64) -> bool {
@@ -5572,6 +5839,55 @@ fn item_context_option(icon: &str, label: &str, accelerator: &str) -> gtk::Butto
     item_context_option_with_icon(crate::assets::text_icon(icon, 15), label, accelerator)
 }
 
+fn item_context_option_labeled(icon: &str, label: &str, accelerator: &str) -> (gtk::Button, gtk::Label) {
+    let button = gtk::Button::new();
+    button.add_css_class("item-context-option");
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let icon_img = crate::assets::text_icon(icon, 15);
+    icon_img.add_css_class("item-context-icon");
+    let title = gtk::Label::new(Some(label));
+    title.set_xalign(0.0);
+    title.set_hexpand(true);
+    row.append(&icon_img);
+    row.append(&title);
+    if !accelerator.is_empty() {
+        let shortcut = gtk::Label::new(Some(accelerator));
+        shortcut.add_css_class("item-context-shortcut");
+        row.append(&shortcut);
+    }
+    button.set_child(Some(&row));
+    (button, title)
+}
+
+fn folder_has_audio_or_is_music(entry: &FileEntry) -> bool {
+    let Some(path) = entry.location.native_path() else {
+        return false;
+    };
+    if let Some(music_dir) = glib::user_special_dir(glib::UserDirectory::Music) {
+        if path.starts_with(&music_dir) {
+            return true;
+        }
+    }
+    if path
+        .components()
+        .any(|c| c.as_os_str().to_string_lossy().eq_ignore_ascii_case("music"))
+    {
+        return true;
+    }
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for item in entries.flatten() {
+            let item_path = item.path();
+            if item_path.is_file()
+                && crate::services::classify_by_name(item_path.as_os_str())
+                    == crate::services::FormatFamily::Audio
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn item_context_danger_option(icon: &str, label: &str, accelerator: &str) -> gtk::Button {
     item_context_option_with_icon(crate::assets::danger_icon(icon, 15), label, accelerator)
 }
@@ -5589,23 +5905,6 @@ fn item_context_option_with_icon(icon: gtk::Image, label: &str, accelerator: &st
     if !accelerator.is_empty() {
         let shortcut = gtk::Label::new(Some(accelerator));
         shortcut.add_css_class("item-context-shortcut");
-        row.append(&shortcut);
-    }
-    button.set_child(Some(&row));
-    button
-}
-
-fn context_menu_option(label: &str, accelerator: Option<&str>) -> gtk::Button {
-    let button = gtk::Button::new();
-    button.add_css_class("folder-context-option");
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 18);
-    let title = gtk::Label::new(Some(label));
-    title.set_xalign(0.0);
-    title.set_hexpand(true);
-    row.append(&title);
-    if let Some(accelerator) = accelerator {
-        let shortcut = gtk::Label::new(Some(accelerator));
-        shortcut.add_css_class("folder-context-shortcut");
         row.append(&shortcut);
     }
     button.set_child(Some(&row));
@@ -6126,16 +6425,6 @@ fn compact_native_path(path: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
-fn metadata_modified(entry: &FileEntry) -> String {
-    let crate::model::MetadataValue::Known(seconds) = entry.modified_unix_seconds else {
-        return "—".to_owned();
-    };
-    glib::DateTime::from_unix_local(seconds)
-        .and_then(|date| date.format("%Y-%m-%d %H:%M"))
-        .map(|value| value.to_string())
-        .unwrap_or_else(|_| "—".to_owned())
-}
-
 fn properties_row(parent: &gtk::Box, label: &str, value: &str) -> gtk::Label {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     row.add_css_class("properties-row");
@@ -6373,3 +6662,15 @@ fn show_error_dialog(parent: &impl IsA<gtk::Widget>, message: &str, detail: &str
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod clipboard_tests;
+
+#[cfg(test)]
+mod layout_tests;
+
+#[cfg(test)]
+mod formatting_tests;
+
+#[cfg(test)]
+mod transition_tests;

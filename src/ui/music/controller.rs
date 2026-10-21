@@ -1,6 +1,8 @@
 use super::*;
 use std::rc::Weak;
 
+mod listening;
+
 thread_local! {
     static CONTROLLERS: RefCell<Vec<(glib::WeakRef<gtk::Application>, Weak<Controller>)>> = const { RefCell::new(Vec::new()) };
 }
@@ -53,6 +55,14 @@ impl TrackIdentity {
     }
 }
 
+#[derive(Clone)]
+struct MetadataRequest {
+    track_id: (u64, u64),
+    generation: u64,
+    path: PathBuf,
+    cancellation: Cancellation,
+}
+
 pub(crate) struct Controller {
     weak: Weak<Self>,
     pub(super) stream: RefCell<Option<PlaybackStream>>,
@@ -61,6 +71,7 @@ pub(crate) struct Controller {
     pub(super) peaks: RefCell<Vec<f32>>,
     pub(super) folder_cancel: RefCell<Cancellation>,
     waveform_cancel: RefCell<Cancellation>,
+    metadata_request: RefCell<Option<MetadataRequest>>,
     pub(super) queue_revision: Cell<u64>,
     pub(super) drag_identity: u64,
     pub(super) session_store: RefCell<Option<crate::music::session::Store>>,
@@ -70,6 +81,8 @@ pub(crate) struct Controller {
     pub(super) play_intent: Cell<bool>,
     pub(super) closed: Cell<bool>,
     pub(super) volume_value: Cell<f64>,
+    volume_notify_pending: Cell<bool>,
+    volume_save_pending: Cell<Option<std::time::Instant>>,
     pub(super) transport_visible: Cell<bool>,
     pub(super) notice: RefCell<String>,
     pub(super) waveform_notice: RefCell<String>,
@@ -80,6 +93,8 @@ pub(crate) struct Controller {
     pending_notify: Cell<bool>,
     seek_revision: Cell<u64>,
     checkpoint: Cell<std::time::Instant>,
+    pub(super) collection_store: RefCell<CollectionStore>,
+    listening: RefCell<listening::Listening>,
 }
 
 impl Controller {
@@ -94,6 +109,7 @@ impl Controller {
     }
 
     pub(super) fn restore_queue(&self, queue: Queue) {
+        self.cancel_metadata_request();
         self.identities.borrow_mut().replace(queue.tracks.len());
         self.queue.replace(queue);
         self.queue_revision
@@ -101,7 +117,12 @@ impl Controller {
     }
 
     pub(crate) fn for_application(application: &gtk::Application) -> Rc<Self> {
-        Self::for_application_with_session(application, Some(crate::music::session::path()))
+        let controller =
+            Self::for_application_with_session(application, Some(crate::music::session::path()));
+        controller
+            .collection_store
+            .replace(CollectionStore::shared());
+        controller
     }
 
     fn for_application_with_session(
@@ -154,6 +175,7 @@ impl Controller {
             peaks: RefCell::new(Vec::new()),
             folder_cancel: RefCell::new(Cancellation::default()),
             waveform_cancel: RefCell::new(Cancellation::default()),
+            metadata_request: RefCell::new(None),
             queue_revision: Cell::new(0),
             drag_identity: {
                 static NEXT_CONTROLLER: std::sync::atomic::AtomicU64 =
@@ -171,6 +193,8 @@ impl Controller {
             play_intent: Cell::new(false),
             closed: Cell::new(false),
             volume_value: Cell::new(0.75),
+            volume_notify_pending: Cell::new(false),
+            volume_save_pending: Cell::new(None),
             transport_visible: Cell::new(false),
             notice: RefCell::new(String::new()),
             waveform_notice: RefCell::new("Now playing waveform · click to seek".into()),
@@ -181,6 +205,8 @@ impl Controller {
             pending_notify: Cell::new(false),
             seek_revision: Cell::new(0),
             checkpoint: Cell::new(std::time::Instant::now()),
+            collection_store: RefCell::new(CollectionStore::start(None)),
+            listening: RefCell::new(listening::Listening::default()),
         });
         controller
     }
@@ -200,8 +226,11 @@ impl Controller {
                 }
                 controller.report_save_error();
             }
+            let volume_changed = controller.flush_volume_changes();
+            controller.hydrate_current_metadata();
+            controller.sample_listening();
             let has_stream = controller.stream.borrow().is_some();
-            if has_stream {
+            if has_stream || volume_changed {
                 controller.notify();
             }
             glib::ControlFlow::Continue
@@ -228,6 +257,7 @@ impl Controller {
         }
         loop {
             self.pending_notify.set(false);
+            self.volume_notify_pending.set(false);
             let views: Vec<_> = {
                 let mut views = self.views.borrow_mut();
                 views.retain(|view| view.strong_count() > 0);
@@ -257,10 +287,112 @@ impl Controller {
         self.queue.borrow().playing().cloned()
     }
 
+    fn cancel_metadata_request(&self) {
+        if let Some(request) = self.metadata_request.borrow_mut().take() {
+            request.cancellation.cancel();
+        }
+    }
+
+    fn begin_metadata_request(&self) -> Option<MetadataRequest> {
+        if self.closed.get() {
+            return None;
+        }
+        let track = self.current_track();
+        let track_id = self.track_id();
+        let generation = self.generation.get();
+        if let Some(request) = self.metadata_request.borrow().as_ref()
+            && Some(request.track_id) == track_id
+            && request.generation == generation
+            && track
+                .as_ref()
+                .is_some_and(|track| track.path == request.path)
+        {
+            return None;
+        }
+        self.cancel_metadata_request();
+        let track = track.filter(Track::needs_metadata)?;
+        let request = MetadataRequest {
+            track_id: track_id?,
+            generation,
+            path: track.path,
+            cancellation: Cancellation::default(),
+        };
+        self.metadata_request.replace(Some(request.clone()));
+        Some(request)
+    }
+
+    fn hydrate_current_metadata(&self) {
+        let Some(request) = self.begin_metadata_request() else {
+            return;
+        };
+        let weak = self.weak.clone();
+        glib::MainContext::default().spawn_local(async move {
+            let worker_request = request.clone();
+            let result = gtk::gio::spawn_blocking(move || {
+                let output = crate::adapters::music_metadata::read_audio_metadata(
+                    &worker_request.path,
+                    &worker_request.cancellation,
+                )
+                .ok()?;
+                serde_json::from_slice::<crate::model::MusicTags>(&output.data).ok()
+            })
+            .await;
+            if let Some(controller) = weak.upgrade() {
+                controller.complete_metadata_request(&request, result.ok().flatten());
+            }
+        });
+    }
+
+    fn complete_metadata_request(
+        &self,
+        request: &MetadataRequest,
+        tags: Option<crate::model::MusicTags>,
+    ) -> bool {
+        if self.closed.get()
+            || request.cancellation.is_cancelled()
+            || self.generation.get() != request.generation
+            || self.track_id() != Some(request.track_id)
+            || !self
+                .current_track()
+                .is_some_and(|track| track.path == request.path)
+        {
+            return false;
+        }
+        let Some(tags) = tags else {
+            return false;
+        };
+        let mut changed = false;
+        {
+            let mut queue = self.queue.borrow_mut();
+            for track in &mut queue.tracks {
+                if track.path == request.path {
+                    changed |= track.hydrate_metadata(&tags);
+                }
+            }
+        }
+        if changed {
+            self.queue_changed();
+        }
+        changed
+    }
+
     pub(crate) fn track_id(&self) -> Option<(u64, u64)> {
         self.identities
             .borrow()
             .current(self.queue.borrow().current)
+    }
+
+    pub(crate) fn stream(&self) -> Option<PlaybackStream> {
+        self.stream.borrow().clone()
+    }
+
+    pub(crate) fn spectrum_bands(&self) -> [f32; crate::playback::SPECTRUM_BANDS] {
+        self.stream
+            .borrow()
+            .as_ref()
+            .map_or([0.0; crate::playback::SPECTRUM_BANDS], |stream| {
+                stream.spectrum_bands()
+            })
     }
 
     pub(crate) fn position(&self) -> i64 {
@@ -362,6 +494,8 @@ impl Controller {
         if self.closed.get() {
             return;
         }
+        self.sample_listening();
+        self.listening.borrow_mut().discontinue();
         self.play_intent.set(false);
         let stream = self.stream.borrow().clone();
         if let Some(stream) = stream {
@@ -394,6 +528,9 @@ impl Controller {
     }
 
     fn release_stream(&self) {
+        self.cancel_metadata_request();
+        self.sample_listening();
+        self.listening.borrow_mut().reset(None);
         self.play_intent.set(false);
         self.transport_visible.set(false);
         self.generation.set(self.generation.get().wrapping_add(1));
@@ -472,6 +609,8 @@ impl Controller {
         if let Some(stream) = stream.filter(|stream| {
             stream.is_prepared() && stream.is_seekable() && stream.error().is_none()
         }) {
+            self.sample_listening();
+            self.listening.borrow_mut().discontinue();
             stream.seek(position.min(stream.duration().saturating_sub(1).max(0)));
         }
     }
@@ -488,8 +627,28 @@ impl Controller {
         if let Some(stream) = stream {
             stream.set_volume(volume);
         }
-        self.changed_session();
-        self.notify();
+        if !self.restoring.get() {
+            self.session_revision
+                .set(self.session_revision.get().wrapping_add(1));
+            self.volume_save_pending
+                .set(Some(std::time::Instant::now()));
+        }
+        self.volume_notify_pending.set(true);
+        if self.notifying.get() {
+            self.pending_notify.set(true);
+        }
+    }
+
+    fn flush_volume_changes(&self) -> bool {
+        if self
+            .volume_save_pending
+            .get()
+            .is_some_and(|changed| changed.elapsed() >= Duration::from_millis(250))
+        {
+            self.volume_save_pending.set(None);
+            self.save_session();
+        }
+        self.volume_notify_pending.replace(false)
     }
 
     pub(crate) fn set_repeat(&self, repeat: Repeat) {
@@ -535,6 +694,7 @@ impl Controller {
         let resume_position = self.resume_position.replace(0);
         let was_visible = self.transport_visible.get();
         self.release_stream();
+        self.listening.borrow_mut().reset(Some(track.path.clone()));
         self.resume_position.set(resume_position);
         self.play_intent.set(autoplay);
         self.transport_visible.set(was_visible);
@@ -572,9 +732,12 @@ impl Controller {
         stream.connect_playing_notify(move |stream| {
             if let Some(controller) = weak.upgrade()
                 && controller.generation.get() == generation
-                && stream.is_playing()
             {
-                controller.transport_visible.set(true);
+                controller.sample_listening();
+                controller.listening.borrow_mut().discontinue();
+                if stream.is_playing() {
+                    controller.transport_visible.set(true);
+                }
                 controller.notify();
             }
         });
@@ -738,11 +901,16 @@ impl Controller {
         if self.closed.replace(true) {
             return;
         }
+        self.volume_notify_pending.set(false);
+        self.volume_save_pending.set(None);
         self.save_session();
         self.release_stream();
         self.notify();
         if let Some(mut store) = self.session_store.borrow_mut().take() {
             store.finish();
+        }
+        if let Err(error) = self.collection_store.borrow().flush(Duration::from_secs(2)) {
+            tracing::warn!(%error, "Collections could not be flushed during shutdown");
         }
     }
 }

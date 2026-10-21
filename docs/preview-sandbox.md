@@ -10,6 +10,7 @@ The following providers run in a short-lived helper process:
 - libheif HEIC/HEIF thumbnail decoding through safe Rust bindings;
 - Poppler PDF thumbnail and page rendering;
 - ImageMagick and `dcraw`/`dcraw_emu` RAW fallbacks;
+- optional `vips` scaled JPEG/standard HEIF rendering inside the same sandbox;
 - `ffmpegthumbnailer` media thumbnails;
 - `bsdtar` archive listings and DOCX/ODT XML extraction; and
 - Poppler PDF text extraction for opt-in content search.
@@ -27,10 +28,41 @@ Thumbnail decoding considers at most 32 embedded thumbnail IDs, picks the smalle
 matching-aspect candidate, applies HEIF container transforms through libheif, validates RGBA
 dimensions/stride, preserves an available ICC profile, and encodes a small PNG. Direct decoded
 buffers stay within the existing 32 MiB frame budget; missing/inadequate/broken thumbnails or
-larger primary images fall back to sandboxed ImageMagick. Full previews continue to decode the
-original image with ImageMagick at 1400 pixels. No HEIF native parser runs in GTK, and a thumbnail
+larger primary images fall back to sandboxed ImageMagick. Full previews decode the primary image
+at 1400 pixels through libheif for bounded 8-bit images with supported NCLX profiles; oversized,
+high-bit-depth, wide-gamut/HDR or failed native decodes retain the ImageMagick fallback. Both the
+pooled and one-shot routes use the same renderer. No HEIF native parser runs in GTK, and a thumbnail
 cache hit cannot substitute its smaller image for a full preview. The build requires libheif >=1.17;
 no embedded native library or unsafe Rust implementation was added to Hermes.
+
+Selected JPEG previews can use codec-scaled decoding for bounded 8-bit three-component images,
+with EXIF orientation and ICC propagation. Grayscale, CMYK, high-precision, oversized or failed
+native decodes use the existing fallback. These original-file parsers stay inside the sandbox.
+
+Eligible large JPEG and standard 8-bit HEIF selected previews now try the optional `vips` executable
+before ImageMagick. Input is a seekable stdin descriptor, not the original basename or directory;
+arguments are fixed, with two processing threads, operation caching disabled and no upscaling.
+Encoded input is capped at128 MiB; source pixel ceilings and PNG output/dimension budgets remain.
+The command inherits the existing sandbox deadlines, address-space and CPU limits. Native host
+decoded-frame budgets are not increased. Absent/failing tools or invalid outputs fall back safely.
+HEIF eligibility inspects at most two top-level IDs and32 thumbnail IDs; HDR/high precision,
+unsupported NCLX profiles, multi-image containers and potentially selectable large embedded
+thumbnails keep the existing fallback, preventing a thumbnail from silently replacing the primary.
+This path preserves the preview bounding box/orientation but uses a different resampling filter;
+it is not bit-identical to ImageMagick or verified against every camera/ICC encoding.
+
+Video drops excess display-rate frames before rotation/scaling and scales before RGBA conversion,
+avoiding full-resolution color conversion for frames that will not be displayed. Frame limits remain
+1280×720 at up to30fps, with full-length playback, audio, rotation, seek epochs and sandbox isolation
+unchanged. This does not skip codec reference decoding, enable new GPU device access, or remove the
+first GStreamer registry scan.
+
+The host's persistent thumbnail cache stores bounded raw sRGB RGBA, not decoder-ready files from
+untrusted cache storage. Records validate dimensions, checksum and strong source identities before
+encoding a fresh PNG. Disk reads/writes occur off GTK in private storage with bounded queue,
+entry and byte limits. This cache does not extend original-file parser permissions or substitute
+a thumbnail for the full selected preview. Native video decoding uses a separate isolated worker;
+host-side initialization and audio output are distinct from decoding user media.
 
 Strata starts its own executable in a bubblewrap sandbox. The sandbox has:
 
@@ -72,6 +104,20 @@ Closing or replacing the drawer cancels metadata/artwork work and stops its own 
 never automatically resumes persistent music. Request IDs, weak UI references, cancellation
 and source identities prevent stale results from updating a replacement preview.
 
+The player card uses GTK height-for-width measurement/allocation, not a nonexistent `width`
+property notification or an idle resize poll. Artwork and controls share a row at widths of at
+least500px only when both children's measured widths fit with16px spacing; otherwise they stack.
+The minimum width remains the stacked width, so widening does not prevent shrinking again.
+Metadata stays below the player in the existing scroller, and wide layout follows text direction.
+
+The vinyl and PCM spectrum own removable frame callbacks with weak widget/stream references.
+Unmapping removes animation callbacks immediately; pause permits bounded peak/rotation decay,
+then no animation callbacks remain. Both obey Hermes Reduce Motion and GTK animation settings
+at startup and on active frames. Preview stop/drop cancels artwork, disconnects playback refresh
+and visualizer signal handlers, removes frame callbacks, and stops only its own session. The
+visualizer draw function reads the latest frame's bands; repainting does not re-run spectrum
+analysis. This does not claim the playback stream's separate polling has zero idle CPU.
+
 Playback has the same namespace isolation, empty environment, read-only selected input, and private
 temporary filesystem. A read-only host GStreamer plugin registry may also be mounted to avoid
 rescanning installed plugins for each selection; it does not expose the user's cache directory.
@@ -90,3 +136,23 @@ The GUI retains only the latest frame; the audio queue is limited to 96 KB/16 bu
 old queued buffers instead of growing without bound. Seek generations reject stale packets and
 flush audio output. Closing/changing a preview signals cancellation; the monitor kills/reaps
 bubblewrap and therefore all decoder descendants off the interface thread.
+
+Host PCM packets carry durations calculated from their48kHz stereo sample counts, including split
+packet tails. After the volume element, nonempty zero-gain/muted PCM retains its actual zero bytes
+but no longer carries the GStreamer GAP hint. With the output sink running unsynchronized to the
+decoder's separate clock, that hint otherwise skips normal PCM submission and resets the sink's
+next-sample position. Keeping real silence flowing avoids that zero-volume scheduling transition;
+it does not pause/restart decoding, substitute a nearly-zero gain, or change the desktop mixer.
+Empty gap markers and all other buffer flags/timestamps remain untouched. Volume requests still
+use the bounded, coalesced off-interface writer. Native capture regressions check repeated zero/gain
+and mute/unmute transitions, exact samples, duration/timestamps, and shared-buffer safety without
+opening an audio device.
+
+Decoded audio buffers need not match the transport packet size. The worker splits aligned F32
+stereo buffers into packets of at most64KiB, preserving their order and seek epoch without raising
+any receiver or queue limit. Empty decoded buffers produce no audio packet; misaligned buffers and
+transport errors still stop playback, with callback-level diagnostic messages. Regression coverage
+includes the147440-byte PCM buffer that previously failed a short HEVC camera clip, a generated
+160000-byte decoded sample, seeking and full playback/replay. This is a transport correction, not
+a codec/GPU permission change. GStreamer permits empty buffers and buffers with multiple memory
+blocks; see its [buffer documentation](https://gstreamer.freedesktop.org/documentation/gstreamer/gstbuffer.html).

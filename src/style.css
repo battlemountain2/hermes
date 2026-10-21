@@ -1,6 +1,23 @@
+.search-coverage-notice {
+  color: @theme_dim_text;
+  background: @theme_surface;
+  border-bottom: 1px solid @theme_border;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
 window {
   background: @theme_bg;
   color: @theme_text;
+  font-family: "JetBrains Mono", "JetBrainsMono Nerd Font", monospace;
+  font-size: 13px;
+}
+
+popover,
+.search-dialog,
+.search-filter-popover,
+.search-filter-panel,
+.app-modal-layer {
   font-family: "JetBrains Mono", "JetBrainsMono Nerd Font", monospace;
   font-size: 13px;
 }
@@ -117,7 +134,7 @@ headerbar menubutton.header-action > button:focus-visible image {
 }
 
 .tab-strip-content {
-  padding: 3px 8px;
+  padding: 0;
   background: @theme_surface;
 }
 
@@ -126,7 +143,7 @@ headerbar menubutton.header-action > button:focus-visible image {
   min-height: 30px;
   margin: 0 0 0 4px;
   padding: 0;
-  border-radius: 5px;
+  border-radius: 0;
   color: @theme_text;
   background: @theme_surface;
   background-image: none;
@@ -142,12 +159,13 @@ headerbar menubutton.header-action > button:focus-visible image {
 }
 
 .file-tab {
-  min-height: 32px;
+  min-height: 40px;
   padding: 0 3px 0 7px;
   border-radius: 0;
   color: @theme_dim_text;
   background: @theme_surface;
-  border: 1px solid transparent;
+  border: 0;
+  border-right: 1px solid @theme_border;
   box-shadow: none;
   transition: background-color 120ms ease, color 120ms ease;
 }
@@ -160,7 +178,6 @@ headerbar menubutton.header-action > button:focus-visible image {
 .file-tab.active {
   color: @theme_text;
   background: @theme_bg;
-  border-color: transparent;
   box-shadow: inset 0 2px @theme_accent;
 }
 
@@ -199,15 +216,24 @@ headerbar menubutton.header-action > button:focus-visible image {
 }
 
 .file-tab-close {
-  min-width: 28px;
-  min-height: 28px;
+  min-width: 24px;
+  min-height: 24px;
   padding: 0;
-  border-radius: 5px;
+  border-radius: 0;
+  outline: none;
 }
 
 .file-tab-close:hover {
   color: @theme_accent;
   background: @theme_muted;
+}
+
+.file-tab-close:active {
+  color: @theme_accent;
+  background: alpha(@theme_muted, 0.75);
+  background-image: none;
+  border: 0;
+  box-shadow: none;
 }
 
 .file-tab-close image {
@@ -223,10 +249,14 @@ headerbar menubutton.header-action > button:focus-visible image {
 }
 
 .file-tab-select:focus-visible,
-.file-tab-close:focus-visible,
 .tab-strip-new:focus-visible {
   outline: 2px solid @theme_accent;
   outline-offset: -2px;
+}
+
+.file-tab-close:focus-visible {
+  outline: 1px solid @theme_accent;
+  outline-offset: -3px;
 }
 
 .file-tab-rename {
@@ -237,7 +267,7 @@ headerbar menubutton.header-action > button:focus-visible image {
   caret-color: @theme_accent;
   background: @theme_bg;
   border: 1px solid @theme_accent;
-  border-radius: 5px;
+  border-radius: 0;
 }
 
 .appearance-popover contents {
@@ -404,42 +434,64 @@ headerbar menubutton.header-action > button:focus-visible image {
 }
 
 .clipboard-indicator {
-  background: @theme_surface;
-  border: 1px solid alpha(@theme_accent, 0.42);
-  border-radius: 7px;
-  box-shadow: 0 8px 24px alpha(@theme_bg, 0.72);
-  color: @theme_text;
-  font-weight: 600;
-  min-height: 30px;
-  padding: 4px 10px;
+  background: alpha(@theme_surface, 0.86);
+  border: 1px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
+  color: @theme_dim_text;
+  font-size: 0.82em;
+  font-weight: 400;
+  min-height: 20px;
+  padding: 2px 6px;
 }
 
 .clipboard-indicator:hover {
-  background: alpha(@theme_highlight, 0.92);
-  border-color: alpha(@theme_accent, 0.72);
+  background: @theme_highlight;
+  color: @theme_text;
+}
+
+.clipboard-indicator:focus-visible {
+  outline: 1px solid @theme_accent;
+  outline-offset: -1px;
 }
 
 .clipboard-popover contents {
   background: @theme_surface;
-  border: 1px solid alpha(@theme_accent, 0.42);
-  border-radius: 7px;
-  box-shadow: 0 12px 30px alpha(@theme_bg, 0.76);
-  min-width: 260px;
-  padding: 8px;
+  border: 1px solid @theme_border;
+  border-radius: 0;
+  box-shadow: 0 8px 20px alpha(@theme_bg, 0.56);
+  min-width: 160px;
+  padding: 4px;
 }
 
 .clipboard-list-item {
   color: @theme_text;
-  padding: 4px 7px;
+  font-size: 0.85em;
+  padding: 4px 6px;
 }
 
 .search-dialog {
   background: @theme_surface;
   border: 1px solid @theme_accent;
-  border-radius: 9px;
+  border-radius: 0;
   box-shadow: 0 12px 38px alpha(@theme_bg, 0.82), 0 0 14px alpha(@theme_accent, 0.24);
   min-height: 452px;
   min-width: 760px;
+}
+
+.search-dialog,
+.search-dialog entry,
+.search-dialog entry text,
+.search-group-header,
+.search-filter-popover,
+.search-filter-panel,
+.search-filter-panel entry,
+.search-filter-panel entry text,
+.search-filter-panel dropdown,
+.search-filter-panel dropdown button,
+.search-scope-bar,
+.search-scope-bar button {
+  font-family: inherit;
 }
 
 .search-bar {
@@ -448,8 +500,24 @@ headerbar menubutton.header-action > button:focus-visible image {
   padding: 0 16px;
 }
 
-.search-field {
+.search-bar .search-field {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  min-height: 38px;
+  font-size: 1.15em;
+  font-family: inherit;
+  color: @theme_text;
+  padding: 0 4px;
   outline: none;
+  border-radius: 0;
+}
+
+.search-bar .search-field:focus,
+.search-bar .search-field:focus-visible {
+  outline: none;
+  border: none;
+  box-shadow: none;
 }
 
 .search-field placeholder {
@@ -462,10 +530,29 @@ headerbar menubutton.header-action > button:focus-visible image {
   color: @theme_bg;
 }
 
+.search-scope-bar {
+  background: alpha(@theme_bg, 0.25);
+  border-bottom: 1px solid alpha(@theme_border, 0.45);
+  min-height: 38px;
+  padding: 0 16px;
+}
+
+.search-scope-bar dropdown > button {
+  background: @theme_bg;
+  color: @theme_text;
+  border: 1px solid alpha(@theme_border, 0.7);
+  border-radius: 0;
+  box-shadow: none;
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 0.88em;
+  font-family: inherit;
+}
+
 .search-filter-button {
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: 0;
   box-shadow: none;
   color: @theme_dim_text;
   min-height: 28px;
@@ -487,7 +574,7 @@ headerbar menubutton.header-action > button:focus-visible image {
 .search-filter-popover > contents {
   background: @theme_surface;
   border: 1px solid alpha(@theme_border, 0.78);
-  border-radius: 7px;
+  border-radius: 0;
   box-shadow: 0 12px 34px alpha(@theme_bg, 0.72);
   padding: 0;
 }
@@ -499,19 +586,28 @@ headerbar menubutton.header-action > button:focus-visible image {
 
 .search-filter-title {
   color: @theme_dim_text;
-  font-size: 10px;
+  font-size: 0.78em;
   font-weight: 700;
   letter-spacing: 0.09em;
+  margin-bottom: 2px;
+}
+
+.search-filter-section-title {
+  color: @theme_dim_text;
+  font-size: 0.78em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin-top: 6px;
   margin-bottom: 2px;
 }
 
 .search-filter-shortcut {
   background: alpha(@theme_muted, 0.62);
   border: 1px solid alpha(@theme_border, 0.68);
-  border-radius: 4px;
+  border-radius: 0;
   color: @theme_text;
-  font-family: "JetBrains Mono", "JetBrainsMono Nerd Font", monospace;
-  font-size: 10px;
+  font-family: inherit;
+  font-size: 0.78em;
   padding: 2px 6px;
 }
 
@@ -521,17 +617,21 @@ headerbar menubutton.header-action > button:focus-visible image {
 
 .search-filter-label {
   color: @theme_dim_text;
-  font-size: 12px;
+  font-size: 0.88em;
 }
 
 .search-content-toggle {
   color: @theme_text;
-  font-size: 12px;
+  font-size: 0.88em;
 }
 
 .search-content-note {
   color: @theme_dim_text;
-  font-size: 10px;
+  font-size: 0.78em;
+}
+
+.search-filter-panel dropdown {
+  min-height: 28px;
 }
 
 .search-filter-entry,
@@ -540,10 +640,12 @@ headerbar menubutton.header-action > button:focus-visible image {
 .search-filter-panel dropdown > button {
   background: @theme_bg;
   border: 1px solid alpha(@theme_border, 0.7);
-  border-radius: 5px;
+  border-radius: 0;
   box-shadow: none;
   color: @theme_text;
   min-height: 28px;
+  font-family: inherit;
+  font-size: 0.88em;
 }
 
 .search-filter-entry:focus,
@@ -554,9 +656,11 @@ headerbar menubutton.header-action > button:focus-visible image {
 
 .search-filter-clear,
 .search-filter-apply {
-  border-radius: 5px;
-  min-height: 30px;
+  border-radius: 0;
+  min-height: 28px;
   padding: 0 12px;
+  font-family: inherit;
+  font-size: 0.88em;
 }
 
 .search-filter-clear {
@@ -571,9 +675,66 @@ headerbar menubutton.header-action > button:focus-visible image {
   color: @theme_bg;
 }
 
+.search-interpretation-slot {
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.search-interpretation-view,
+.search-interpretation-view > viewport {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.search-inferred-chip {
+  background: alpha(@theme_highlight, 0.45);
+  border: 1px solid alpha(@theme_border, 0.75);
+  border-radius: 0;
+  padding: 2px 6px;
+  min-height: 22px;
+}
+
+.search-inferred-chip-label {
+  color: @theme_text;
+  font-size: 0.82em;
+  font-family: inherit;
+}
+
+.search-inferred-chip-remove {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 0 2px;
+  color: @theme_dim_text;
+  min-width: 14px;
+  min-height: 14px;
+}
+
+.search-inferred-chip-remove:hover {
+  background: alpha(@theme_muted, 0.6);
+  color: @theme_accent;
+}
+
 .search-status {
   color: @theme_dim_text;
   padding: 28px 24px;
+}
+
+.search-notice-slot {
+  min-height: 32px;
+  padding: 0 16px;
+  border-bottom: 1px solid alpha(@theme_border, 0.35);
+  background: alpha(@theme_bg, 0.15);
+}
+
+.search-notice {
+  color: @theme_dim_text;
+  padding: 0;
+  font-size: 0.82em;
+  font-family: inherit;
 }
 
 .search-results-scroll {
@@ -623,17 +784,66 @@ headerbar menubutton.header-action > button:focus-visible image {
   font-size: 0.9em;
 }
 
+.search-group-header {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: @theme_dim_text;
+  font-size: 0.74em;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  padding: 4px 0 2px;
+  font-family: inherit;
+}
+
 .search-result-type {
   color: @theme_accent;
   background: alpha(@theme_highlight, 0.55);
   border: 1px solid @theme_border;
-  border-radius: 6px;
+  border-radius: 0;
   padding: 4px 7px;
   font-size: 0.8em;
 }
 
 .search-result-art {
   color: @theme_accent;
+}
+
+.search-dialog dropdown > button {
+  background: @theme_bg;
+  color: @theme_text;
+  border: 1px solid @theme_border;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.search-categories {
+  padding: 6px 16px;
+  border-bottom: 1px solid alpha(@theme_border, 0.45);
+}
+
+.search-category {
+  background: transparent;
+  color: @theme_dim_text;
+  border: 1px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
+  min-height: 28px;
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 0.88em;
+}
+
+.search-category:hover {
+  background: @theme_muted;
+  color: @theme_text;
+}
+
+.search-category:checked {
+  background: @theme_highlight;
+  color: @theme_accent;
+  border-color: @theme_border;
 }
 
 .search-result:selected .search-result-path {
@@ -849,59 +1059,98 @@ headerbar menubutton.header-action > button:focus-visible image {
 .settings-dialog {
   background: @theme_surface;
   border: 1px solid alpha(@theme_accent, 0.22);
-  border-radius: 7px;
+  border-radius: 6px;
   box-shadow: 0 18px 54px alpha(black, 0.6);
 }
 
 .settings-navigation {
   background: @theme_bg;
   border-right: 1px solid alpha(@theme_border, 0.26);
-  border-radius: 7px 0 0 7px;
-  min-width: 220px;
-  padding: 18px 12px;
+  border-radius: 6px 0 0 6px;
+  min-width: 236px;
+  padding: 14px 10px 10px;
+}
+
+.settings-nav-filter {
+  background: alpha(@theme_surface, 0.7);
+  border: 1px solid alpha(@theme_border, 0.35);
+  border-radius: 4px;
+  color: @theme_text;
+  font-size: 0.88em;
+  min-height: 30px;
+  margin: 4px 2px 10px;
+  padding: 2px 6px;
+  box-shadow: none;
+}
+
+.settings-nav-filter:focus-within {
+  background: @theme_surface;
+  border-color: @theme_accent;
+}
+
+.settings-nav-filter text {
+  color: @theme_text;
+}
+
+.settings-nav-filter placeholder {
+  color: @theme_dim_text;
+}
+
+.settings-nav-scroll {
+  background: transparent;
+}
+
+.settings-nav-scroll viewport {
+  background: transparent;
 }
 
 .settings-navigation button {
   background: transparent;
   border: none;
-  border-radius: 5px;
+  border-left: 2px solid transparent;
+  border-radius: 4px;
   box-shadow: none;
   color: @theme_dim_text;
-  min-height: 38px;
+  min-height: 34px;
   padding: 5px 10px;
+  font-size: 0.90em;
+  transition: all 120ms ease;
 }
 
 .settings-navigation button:hover {
-  background: alpha(@theme_muted, 0.62);
+  background: alpha(@theme_muted, 0.45);
   color: @theme_text;
 }
 
 .settings-navigation button.settings-nav-active {
-  background: alpha(@theme_highlight, 0.82);
-  color: @theme_accent;
+  background: alpha(@theme_highlight, 0.55);
+  border-left: 2px solid @theme_accent;
+  color: @theme_text;
+  font-weight: 600;
 }
 
 .settings-page {
   background: @theme_surface;
-  border-radius: 0 7px 7px 0;
+  border-radius: 0 6px 6px 0;
 }
 
 .settings-titlebar {
   border-bottom: 1px solid alpha(@theme_border, 0.24);
-  min-height: 46px;
-  padding: 0 14px 0 20px;
+  min-height: 48px;
+  padding: 0 16px 0 24px;
 }
 
 .settings-title {
   color: @theme_text;
-  font-size: 1.08em;
+  font-size: 1.06em;
   font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .settings-close {
   background: transparent;
   border: none;
-  border-radius: 5px;
+  border-radius: 4px;
   box-shadow: none;
   min-height: 28px;
   min-width: 28px;
@@ -910,17 +1159,245 @@ headerbar menubutton.header-action > button:focus-visible image {
 
 .settings-close:hover {
   background: alpha(@theme_muted, 0.62);
+  color: @theme_text;
 }
 
 .settings-preferences {
-  padding: 18px 24px 26px;
+  padding: 18px 26px 28px;
+}
+
+.settings-preferences .menu-heading {
+  color: @theme_dim_text;
+  font-size: 0.74em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin: 16px 4px 6px;
+}
+
+.settings-preferences .menu-heading:first-child {
+  margin-top: 2px;
+}
+
+.settings-card {
+  background: alpha(@theme_bg, 0.55);
+  border: 1px solid alpha(@theme_border, 0.24);
+  border-radius: 4px;
+  margin-bottom: 12px;
+}
+
+.settings-card .settings-option {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid alpha(@theme_border, 0.12);
+  border-radius: 0;
+  min-height: 52px;
+  padding: 10px 14px;
+  transition: background 100ms ease;
+}
+
+.settings-card .settings-option:last-child {
+  border-bottom: none;
+}
+
+.settings-card .settings-option:hover {
+  background: alpha(@theme_muted, 0.2);
+}
+
+.settings-card .keybinding-row {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid alpha(@theme_border, 0.12);
+  border-radius: 0;
+  min-height: 38px;
+  padding: 7px 14px;
+}
+
+.settings-card .keybinding-row:last-child {
+  border-bottom: none;
+}
+
+.settings-card .about-detail-row {
+  border-bottom: 1px solid alpha(@theme_border, 0.14);
+}
+
+.settings-card .about-detail-row:last-child {
+  border-bottom: none;
+}
+
+.settings-telemetry-badge {
+  font-family: monospace;
+  font-size: 0.82em;
+  padding: 3px 8px;
+  background: alpha(@theme_surface, 0.7);
+  border: 1px solid alpha(@theme_border, 0.25);
+  color: @theme_accent;
+  border-radius: 3px;
+  letter-spacing: 0.02em;
+}
+
+.settings-action-button {
+  background: alpha(@theme_surface, 0.9);
+  color: @theme_text;
+  border: 1px solid alpha(@theme_border, 0.5);
+  border-radius: 3px;
+  min-height: 28px;
+  padding: 4px 12px;
+  font-size: 0.88em;
+  font-weight: 600;
+  box-shadow: none;
+  transition: all 120ms ease;
+}
+
+.settings-action-button:hover {
+  background: @theme_accent;
+  color: @theme_bg;
+  border-color: @theme_accent;
+}
+
+.settings-action-button:disabled {
+  opacity: 0.5;
+}
+
+.settings-choice-cards {
+  margin-bottom: 14px;
+}
+
+.settings-choice-card {
+  background: alpha(@theme_bg, 0.65);
+  border: 1px solid alpha(@theme_border, 0.28);
+  border-radius: 6px;
+  box-shadow: none;
+  padding: 12px 14px;
+  transition: all 120ms ease;
+}
+
+.settings-choice-card:hover {
+  background: alpha(@theme_surface, 0.85);
+  border-color: alpha(@theme_accent, 0.4);
+}
+
+.settings-choice-card.selected {
+  background: alpha(@theme_highlight, 0.55);
+  border-color: @theme_accent;
+  box-shadow: 0 0 0 1px @theme_accent;
+}
+
+.settings-choice-card-tag {
+  color: @theme_dim_text;
+  font-size: 0.68em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.settings-choice-card-title {
+  color: @theme_text;
+  font-size: 0.94em;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.settings-choice-card-desc {
+  color: @theme_dim_text;
+  font-size: 0.78em;
+  line-height: 1.35;
+  margin-top: 2px;
+}
+
+.settings-choice-indicator {
+  min-width: 12px;
+  min-height: 12px;
+  border-radius: 50%;
+  border: 1px solid alpha(@theme_border, 0.5);
+  background: transparent;
+}
+
+.settings-choice-card.selected .settings-choice-indicator {
+  border-color: @theme_accent;
+  background: @theme_accent;
+}
+
+.settings-choice-icon-box {
+  min-height: 44px;
+  margin: 4px 0;
+}
+
+.settings-wireframe-box {
+  background: alpha(@theme_surface, 0.5);
+  border: 1px solid alpha(@theme_border, 0.16);
+  border-radius: 4px;
+  padding: 6px;
+  min-height: 48px;
+  margin: 6px 0 8px;
+}
+
+.settings-wireframe-col {
+  background: alpha(@theme_border, 0.15);
+  border-radius: 2px;
+  padding: 3px;
+  min-width: 24px;
+}
+
+.settings-wireframe-col.active {
+  background: alpha(@theme_accent, 0.16);
+  border: 1px solid alpha(@theme_accent, 0.4);
+}
+
+.settings-wireframe-bar {
+  background: alpha(@theme_dim_text, 0.35);
+  border-radius: 1px;
+  min-height: 3px;
+  margin-bottom: 2px;
+}
+
+.settings-wireframe-bar.accent {
+  background: @theme_accent;
+}
+
+.settings-format-grid {
+  margin-bottom: 12px;
+}
+
+.settings-format-tile {
+  background: alpha(@theme_bg, 0.55);
+  border: 1px solid alpha(@theme_border, 0.22);
+  border-radius: 6px;
+  padding: 10px 14px;
+  transition: all 120ms ease;
+}
+
+.settings-format-tile:hover {
+  background: alpha(@theme_surface, 0.75);
+  border-color: alpha(@theme_accent, 0.35);
+}
+
+.settings-format-icon {
+  background: alpha(@theme_surface, 0.6);
+  border: 1px solid alpha(@theme_border, 0.2);
+  border-radius: 4px;
+  min-width: 36px;
+  min-height: 36px;
+}
+
+.settings-format-ext {
+  color: @theme_dim_text;
+  font-size: 0.72em;
+}
+
+.settings-live-chip {
+  color: @theme_accent;
+  background: alpha(@theme_accent, 0.12);
+  border: 1px solid alpha(@theme_accent, 0.32);
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
 }
 
 .settings-option {
   background: alpha(@theme_bg, 0.55);
   border: 1px solid alpha(@theme_border, 0.24);
-  border-radius: 6px;
-  min-height: 60px;
+  border-radius: 4px;
+  min-height: 56px;
   padding: 10px 14px;
 }
 
@@ -937,7 +1414,7 @@ headerbar menubutton.header-action > button:focus-visible image {
 .settings-choice > button {
   background: @theme_surface;
   border: 1px solid alpha(@theme_border, 0.68);
-  border-radius: 5px;
+  border-radius: 0;
   box-shadow: none;
   color: @theme_text;
   min-height: 30px;
@@ -946,6 +1423,28 @@ headerbar menubutton.header-action > button:focus-visible image {
 
 .about-page {
   color: @theme_text;
+}
+
+.settings-font-preview {
+  background: @theme_bg;
+  color: @theme_text;
+  border: 1px solid @theme_border;
+  padding: 16px;
+}
+
+.settings-font-reset,
+.settings-page spinbutton {
+  background: @theme_bg;
+  color: @theme_text;
+  border: 1px solid @theme_border;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.settings-font-reset:hover,
+.settings-page spinbutton button:hover {
+  background: @theme_muted;
+  color: @theme_accent;
 }
 
 .about-identity {
@@ -1211,6 +1710,20 @@ paned > separator {
   font-size: 0.86em;
 }
 
+.preview-rating-star {
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  box-shadow: none;
+  min-height: 18px;
+  min-width: 18px;
+  padding: 0 1px;
+}
+
+.preview-rating-star:hover {
+  background: alpha(@theme_muted, 0.6);
+}
+
 .preview-content,
 .preview-content scrolledwindow,
 .preview-content viewport {
@@ -1266,6 +1779,11 @@ paned > separator {
 .hermes-image-zoom-label {
   color: @theme_dim_text;
   font-size: 0.8em;
+}
+
+.hermes-image-canvas {
+  color: @theme_bg;
+  background: @theme_bg;
 }
 
 .hermes-media-action:hover,
@@ -1337,6 +1855,15 @@ paned > separator {
 
 .preview-feedback-detail {
   color: @theme_dim_text;
+}
+
+.preview-loading-progress {
+  background: alpha(@theme_surface, 0.9);
+  border: 1px solid @theme_border;
+  border-radius: 0;
+  color: @theme_dim_text;
+  font-size: 0.82em;
+  padding: 4px 6px;
 }
 
 .preview-spinner {
@@ -1947,6 +2474,18 @@ menubutton.column-header-action > button:focus-visible image {
 .item-context-summary {
   color: @theme_dim_text;
   font-size: 0.82em;
+}
+
+.item-context-rating-row {
+  padding: 3px 6px;
+}
+
+.item-context-rating-label {
+  color: @theme_dim_text;
+  font-size: 0.82em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .item-context-menu separator {
@@ -2933,6 +3472,123 @@ button.music-cover-button:focus-visible {
   background: @theme_highlight;
 }
 
+.music-navigation .music-control {
+  background: transparent;
+  border-radius: 0;
+  border: 1px solid transparent;
+  border-bottom-width: 2px;
+  box-shadow: none;
+  color: @theme_dim_text;
+  padding: 5px 12px;
+}
+
+.music-navigation .music-control:hover {
+  background: alpha(@theme_highlight, 0.5);
+  color: @theme_text;
+}
+
+.music-navigation .music-control:checked {
+  background: @theme_highlight;
+  border-bottom-color: @theme_accent;
+  color: @theme_accent;
+}
+
+.music-navigation .music-control:focus-visible,
+.music-favorite:focus-visible {
+  outline: 1px solid @theme_accent;
+  outline-offset: -1px;
+}
+
+.music-playlist-editor {
+  background: @theme_surface;
+  color: @theme_text;
+}
+
+.music-playlist-editor listview {
+  background: @theme_bg;
+  color: @theme_text;
+}
+
+.music-playlist-editor row:hover {
+  background: alpha(@theme_highlight, 0.5);
+}
+
+.music-playlist-editor row:selected {
+  background: @theme_highlight;
+  color: @theme_accent;
+}
+
+.music-playlist-row {
+  color: @theme_text;
+  border-top: 2px solid transparent;
+  border-bottom: 2px solid transparent;
+  padding: 4px 6px;
+}
+
+.music-playlist-row.queue-drop-before {
+  border-top-color: @theme_accent;
+}
+
+.music-playlist-row.queue-drop-after {
+  border-bottom-color: @theme_accent;
+}
+
+.music-favorite {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  color: @theme_dim_text;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 4px;
+}
+
+.music-favorite:hover {
+  background: @theme_highlight;
+  color: @theme_accent;
+}
+
+.music-favorite:checked {
+  color: @theme_accent;
+}
+
+.music-favorite:disabled {
+  opacity: 0.45;
+}
+
+.music-album-row {
+  border-radius: 6px;
+  padding: 4px;
+}
+
+.music-album-row:hover {
+  background: alpha(@theme_highlight, 0.4);
+}
+
+.music-album-play {
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  box-shadow: none;
+  color: @theme_dim_text;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 4px;
+  opacity: 0.75;
+}
+
+.music-album-row:hover .music-album-play,
+.music-album-play:hover {
+  opacity: 1.0;
+  color: @theme_accent;
+  background: @theme_highlight;
+}
+
+.music-album-play:active {
+  background: alpha(@theme_accent, 0.2);
+}
+
 .music-actions {
   padding-top: 4px;
 }
@@ -3016,16 +3672,116 @@ button.music-cover-button:focus-visible {
   color: @theme_text;
 }
 
-.preview-audio-artwork {
+.preview-audio-player-card {
+  background: transparent;
+}
+
+.preview-audio-hero {
+  margin: 0;
+}
+
+.preview-audio-hero-overlay {
+  border-radius: 0;
+}
+
+.preview-audio-jacket {
   color: @theme_accent;
   background: @theme_surface;
-  border-radius: 8px;
+  border: 1px solid @theme_border;
+  border-radius: 0;
+}
+
+.preview-audio-track-number {
+  color: @theme_dim_text;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .preview-audio-title {
   color: @theme_text;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 700;
+}
+
+.preview-audio-subtitle {
+  color: @theme_dim_text;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.preview-audio-visualizer {
+  background: transparent;
+  border-radius: 0;
+  min-height: 54px;
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+
+.preview-audio-seek-box {
+  margin-top: 2px;
+}
+
+.preview-audio-time {
+  color: @theme_dim_text;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.preview-audio-transport {
+  margin-top: 2px;
+}
+
+.preview-audio-transport-button {
+  background: transparent;
+  color: @theme_text;
+  border: none;
+  border-radius: 4px;
+  padding: 6px;
+}
+
+.preview-audio-transport-button:hover {
+  background: @theme_surface;
+  color: @theme_accent;
+}
+
+.preview-audio-play-button {
+  background: @theme_accent;
+  color: @theme_on_accent;
+  border: 1px solid @theme_accent;
+  border-radius: 4px;
+  padding: 6px 10px;
+}
+
+.preview-audio-play-button:hover {
+  background: @theme_accent;
+  color: @theme_on_accent;
+  border-color: @theme_text;
+}
+
+.preview-audio-play-button:active,
+.immersive-play-btn:active {
+  background: @theme_accent;
+  color: @theme_on_accent;
+  border-color: @theme_on_accent;
+}
+
+.preview-audio-play-button:focus-visible,
+.immersive-play-btn:focus-visible {
+  outline: 2px solid @theme_accent;
+  outline-offset: 3px;
+}
+
+.preview-audio-play-button:disabled,
+.immersive-play-btn:disabled {
+  background: @theme_accent;
+  color: @theme_on_accent;
+  opacity: 0.45;
+}
+
+.preview-audio-volume-scale {
+  min-width: 64px;
 }
 
 .preview-audio-heading {
@@ -3053,12 +3809,14 @@ button.music-cover-button:focus-visible {
 }
 
 .preview-audio-tag-value:focus-visible,
-.preview-audio-title:focus-visible {
+.preview-audio-title:focus-visible,
+.preview-audio-subtitle:focus-visible {
   outline: 1px solid @theme_accent;
 }
 
 .preview-audio-tag-value selection,
-.preview-audio-title selection {
+.preview-audio-title selection,
+.preview-audio-subtitle selection {
   color: @theme_text;
   background: @theme_highlight;
 }
@@ -3144,4 +3902,442 @@ button.music-cover-button:focus-visible {
 
 .music-queue-action {
   padding: 4px;
+}
+
+/* Spreadsheet viewer & multi-sheet tabs */
+.spreadsheet-container {
+  background: @theme_surface;
+  border: 1px solid alpha(@theme_border, 0.4);
+}
+
+.spreadsheet-header {
+  background: @theme_bg;
+  border-bottom: 1px solid alpha(@theme_border, 0.3);
+  padding: 6px 12px;
+  min-height: 38px;
+}
+
+.spreadsheet-sheet-bar {
+  background: @theme_bg;
+  border-bottom: 1px solid alpha(@theme_border, 0.3);
+  padding: 4px 8px;
+}
+
+.spreadsheet-sheet-button {
+  background: transparent;
+  color: @theme_dim_text;
+  border: 1px solid transparent;
+  border-radius: 0;
+  padding: 4px 12px;
+  font-size: 0.88em;
+  font-weight: 500;
+}
+
+.spreadsheet-sheet-button:hover {
+  background: alpha(@theme_muted, 0.5);
+  color: @theme_text;
+}
+
+.spreadsheet-sheet-button.active-sheet-tab {
+  background: @theme_surface;
+  color: @theme_accent;
+  border: 1px solid alpha(@theme_border, 0.4);
+  border-bottom: 2px solid @theme_accent;
+  font-weight: 700;
+}
+
+.spreadsheet-dimension-pill {
+  color: @theme_dim_text;
+  font-size: 0.82em;
+  font-family: monospace;
+  padding: 2px 6px;
+  background: alpha(@theme_bg, 0.6);
+  border: 1px solid alpha(@theme_border, 0.2);
+}
+
+/* -------------------------------------------------------------
+   Music Player Upgrade: Top Hero Deck & Tabular Track Rows
+   ------------------------------------------------------------- */
+.music-hero-deck {
+  background: @theme_surface;
+  border: 1px solid alpha(@theme_border, 0.4);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+}
+
+.music-hero-cover {
+  border-radius: 6px;
+  border: 1px solid alpha(@theme_border, 0.3);
+}
+
+.music-hero-title {
+  color: @theme_text;
+  font-weight: 700;
+  font-size: 1.1em;
+}
+
+.music-hero-seek trough {
+  background: alpha(@theme_border, 0.4);
+  min-height: 4px;
+}
+
+.music-hero-seek highlight {
+  background: @theme_accent;
+}
+
+.music-hero-transport .music-control {
+  padding: 6px;
+}
+
+.music-track-row {
+  padding: 5px 8px;
+  border-radius: 4px;
+}
+
+.music-track-row:hover {
+  background: alpha(@theme_highlight, 0.35);
+}
+
+.music-track-num {
+  color: @theme_dim_text;
+  font-size: 0.85em;
+  font-family: inherit;
+  margin-right: 4px;
+}
+
+/* -------------------------------------------------------------
+   Immersive Listening Mode (Cider Inspiration + Visualizer)
+   ------------------------------------------------------------- */
+.immersive-root {
+  background: @theme_bg;
+}
+
+.immersive-ambient-aura,
+.immersive-visualizer-canvas {
+  background: transparent;
+}
+
+.immersive-content {
+  padding: 24px 32px;
+  background: alpha(@theme_bg, 0.25);
+}
+
+.immersive-top-bar {
+  padding-bottom: 8px;
+}
+
+.immersive-pill-btn {
+  background: alpha(@theme_surface, 0.6);
+  border: 1px solid alpha(@theme_border, 0.4);
+  border-radius: 20px;
+  color: @theme_text;
+  padding: 6px 14px;
+  font-size: 0.82em;
+  font-weight: 600;
+}
+
+.immersive-pill-btn:hover {
+  background: @theme_highlight;
+  color: @theme_accent;
+  border-color: @theme_accent;
+}
+
+.immersive-pill-btn:checked {
+  background: alpha(@theme_accent, 0.18);
+  border-color: @theme_accent;
+  color: @theme_accent;
+}
+
+.immersive-style-selector {
+  background: alpha(@theme_surface, 0.5);
+  border: 1px solid alpha(@theme_border, 0.3);
+  border-radius: 16px;
+  padding: 2px 6px;
+}
+
+.immersive-style-opt {
+  background: transparent;
+  border: none;
+  border-radius: 12px;
+  color: @theme_dim_text;
+  padding: 4px 10px;
+  font-size: 0.78em;
+  font-weight: 600;
+}
+
+.immersive-style-opt:hover {
+  color: @theme_text;
+}
+
+.immersive-style-opt:checked {
+  background: alpha(@theme_accent, 0.25);
+  color: @theme_accent;
+}
+
+
+.immersive-stage-solo .immersive-art-box {
+  border-radius: 18px;
+}
+
+.immersive-art-box {
+  border-radius: 16px;
+  border: 1px solid alpha(@theme_border, 0.35);
+  box-shadow: 0 20px 50px alpha(@theme_bg, 0.65);
+  background: alpha(@theme_surface, 0.85);
+}
+
+.immersive-art-pic,
+.immersive-art-img {
+  border-radius: 14px;
+}
+
+.immersive-title {
+  color: @theme_text;
+  font-size: 1.5em;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.immersive-artist {
+  color: @theme_dim_text;
+  font-size: 1.05em;
+}
+
+.immersive-time {
+  color: @theme_dim_text;
+  font-size: 0.85em;
+  font-family: inherit;
+}
+
+.immersive-scrub-scale trough {
+  background: alpha(@theme_border, 0.35);
+  min-height: 4px;
+}
+
+.immersive-scrub-scale highlight {
+  background: @theme_accent;
+}
+
+.immersive-controls {
+  padding-top: 10px;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.immersive-scrub-region,
+.immersive-floating-dock {
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.immersive-deck:hover .immersive-controls,
+.immersive-deck.controls-focused .immersive-controls,
+.immersive-deck:hover .immersive-scrub-region,
+.immersive-deck.controls-focused .immersive-scrub-region,
+.immersive-floating-dock:hover,
+.immersive-floating-dock.controls-focused {
+  opacity: 1;
+}
+
+.immersive-root.reduced-motion .immersive-controls,
+.immersive-root.reduced-motion .immersive-scrub-region,
+.immersive-root.reduced-motion .immersive-floating-dock {
+  transition: none;
+}
+
+.immersive-control-btn {
+  background: alpha(@theme_surface, 0.6);
+  border: 1px solid alpha(@theme_border, 0.3);
+  border-radius: 6px;
+  color: @theme_text;
+  padding: 6px 10px;
+}
+
+.immersive-control-btn:hover {
+  background: @theme_highlight;
+  color: @theme_accent;
+}
+
+.immersive-play-btn {
+  background: @theme_accent;
+  color: @theme_on_accent;
+  border: 1px solid @theme_accent;
+  border-radius: 50%;
+  padding: 10px;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.immersive-play-btn:hover {
+  background: @theme_accent;
+  color: @theme_on_accent;
+  border-color: @theme_text;
+}
+
+.immersive-vol-scale trough {
+  background: alpha(@theme_border, 0.35);
+  min-height: 4px;
+}
+
+.immersive-vol-scale highlight {
+  background: @theme_accent;
+}
+
+.immersive-lyrics-box {
+  padding: 30px 16px;
+}
+
+.immersive-lyric-line {
+  color: alpha(@theme_text, 0.35);
+  font-size: 1.35em;
+  font-weight: 600;
+  line-height: 1.4;
+  padding: 6px 10px;
+  border-radius: 6px;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.immersive-lyric-line:hover {
+  color: alpha(@theme_text, 0.7);
+}
+
+.immersive-lyric-line.active-lyric {
+  color: @theme_text;
+  font-weight: 600;
+  background: alpha(@theme_highlight, 0.2);
+}
+
+.immersive-floating-dock {
+  background: alpha(@theme_surface, 0.78);
+  border: 1px solid alpha(@theme_border, 0.35);
+  border-radius: 28px;
+  padding: 8px 20px;
+  box-shadow: 0 8px 30px alpha(@theme_bg, 0.5);
+}
+
+.immersive-floating-title {
+  color: @theme_text;
+  font-weight: 700;
+  font-size: 0.9em;
+}
+
+.immersive-floating-artist {
+  color: @theme_dim_text;
+  font-size: 0.8em;
+}
+
+/* -------------------------------------------------------------
+   Floating Mini-Player Window
+   ------------------------------------------------------------- */
+.hermes-mini-window {
+  background: @theme_surface;
+}
+
+.mini-player-root {
+  background: @theme_surface;
+  padding: 12px 14px;
+}
+
+.mini-player-cover {
+  border-radius: 6px;
+  border: 1px solid alpha(@theme_border, 0.3);
+}
+
+.mini-player-title {
+  color: @theme_text;
+  font-weight: 700;
+  font-size: 0.9em;
+}
+
+.mini-player-artist {
+  color: @theme_dim_text;
+  font-size: 0.8em;
+}
+
+.mini-subtle-badge {
+  color: @theme_dim_text;
+  background: alpha(@theme_border, 0.25);
+  border: 1px solid alpha(@theme_border, 0.35);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 0.72em;
+  font-weight: 600;
+}
+
+.mini-player-time {
+  color: @theme_dim_text;
+  font-size: 0.74em;
+  font-family: inherit;
+}
+
+.mini-scrub-scale trough {
+  background: alpha(@theme_border, 0.3);
+  min-height: 4px;
+}
+
+.mini-scrub-scale highlight {
+  background: @theme_accent;
+}
+
+.mini-control-btn {
+  background: alpha(@theme_border, 0.15);
+  border: 1px solid alpha(@theme_border, 0.25);
+  border-radius: 4px;
+  color: @theme_text;
+  padding: 4px 8px;
+}
+
+.mini-control-btn:hover {
+  background: @theme_highlight;
+  color: @theme_accent;
+}
+
+.mini-play-btn {
+  background: @theme_accent;
+  background-image: none;
+  color: @theme_on_accent;
+  border: 1px solid @theme_accent;
+  border-radius: 5px;
+  padding: 5px 10px;
+  box-shadow: none;
+}
+
+.mini-play-btn:hover,
+.mini-play-btn:active {
+  background: @theme_accent;
+  background-image: none;
+  color: @theme_on_accent;
+  border-color: @theme_text;
+  box-shadow: none;
+}
+
+.mini-play-btn:focus-visible {
+  outline: 2px solid @theme_text;
+  outline-offset: -3px;
+}
+
+.mini-player-header {
+  padding: 2px 0;
+}
+
+.mini-expand-btn {
+  background: transparent;
+  border: none;
+  color: @theme_dim_text;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.mini-expand-btn:hover {
+  color: @theme_text;
+}
+
+.mini-vol-scale trough {
+  background: alpha(@theme_border, 0.3);
+  min-height: 4px;
+}
+
+.mini-vol-scale highlight {
+  background: @theme_accent;
 }

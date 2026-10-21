@@ -201,6 +201,7 @@ impl Browser {
             | DirectoryEvent::MusicMetadata { request_id, .. }
             | DirectoryEvent::Batch { request_id, .. }
             | DirectoryEvent::Finished { request_id }
+            | DirectoryEvent::Notice { request_id, .. }
             | DirectoryEvent::Failed { request_id, .. } => *request_id,
         };
         let tabs = self.retained_tabs.borrow();

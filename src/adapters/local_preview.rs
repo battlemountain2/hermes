@@ -5,28 +5,53 @@ use std::rc::Rc;
 use gtk::{gio, glib, prelude::*};
 
 use crate::{
-    model::Location,
+    model::{FileEntry, Location},
     sandbox::{Cancellation, ParseOperation},
     services::{
         FormatFamily, LoadHandle, Preview, PreviewContent, PreviewEvent, PreviewHandler,
         PreviewProvider, PreviewRequest, classify_by_mime, classify_by_name,
     },
+    ui::thumbnail::PreviewPolicy,
 };
 
 #[derive(Default)]
 pub struct LocalPreviewProvider;
 
+impl LocalPreviewProvider {
+    pub(crate) fn check_policy(
+        entry: &FileEntry,
+        content_type: Option<&str>,
+    ) -> Result<(), String> {
+        PreviewPolicy::current().for_streaming_preview().check_entry(entry, content_type)
+    }
+}
+
+fn preview_family(content_type: &str, name: &std::ffi::OsStr) -> FormatFamily {
+    let family = classify_by_mime(content_type);
+    if family != FormatFamily::Unknown {
+        family
+    } else if gio::content_type_is_a(content_type, "text/plain") {
+        FormatFamily::PlainText
+    } else {
+        classify_by_name(name)
+    }
+}
+
 impl PreviewProvider for LocalPreviewProvider {
     fn load(&self, request: PreviewRequest, emit: Rc<dyn Fn(PreviewEvent)>) -> LoadHandle {
         let request_id = request.id;
         let entry = request.entry.clone();
+        if let Err(message) = Self::check_policy(&entry, None) {
+            emit(PreviewEvent::Failed { request_id, entry, message });
+            return LoadHandle::new(|| {});
+        }
         let cancellation = Cancellation::default();
         let cancellation_for_task = cancellation.clone();
         let task = glib::MainContext::default().spawn_local(async move {
             let file = file_for_location(&entry.location);
             let info = match file
                 .query_info_future(
-                    "standard::content-type",
+                    "standard::content-type,standard::size",
                     gio::FileQueryInfoFlags::NONE,
                     glib::Priority::DEFAULT,
                 )
@@ -46,16 +71,20 @@ impl PreviewProvider for LocalPreviewProvider {
                 .content_type()
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "application/octet-stream".to_owned());
-            let mut family = classify_by_mime(&content_type);
-            if family == FormatFamily::Unknown {
-                if gio::content_type_is_a(&content_type, "text/plain") {
-                    family = FormatFamily::PlainText;
-                } else {
-                    family = classify_by_name(&entry.native_name);
-                }
+            let family = preview_family(&content_type, &entry.native_name);
+            let source_size = (!entry.is_directory()
+                && info.has_attribute("standard::size")
+                && info.size() >= 0)
+                .then(|| info.size() as u64);
+            let policy = PreviewPolicy::current();
+            let permitted = policy.for_streaming_preview().check_source(&entry, &content_type, source_size);
+            if let Err(message) = permitted {
+                emit(PreviewEvent::Failed { request_id, entry, message });
+                return;
             }
 
-            let handler = family.preview_handler();
+            let handler = if entry.is_directory() { None } else { family.preview_handler() };
+            let mut folder_source = None;
             let mut content = match handler {
                 Some(PreviewHandler::Text) => PreviewContent::Text {
                     content: String::new(),
@@ -99,7 +128,7 @@ impl PreviewProvider for LocalPreviewProvider {
                 _ => PreviewContent::Unsupported,
             };
 
-            let operation = if crate::services::is_gif_image(&entry.native_name, &content_type) {
+            let operation = if !entry.is_directory() && crate::services::is_gif_image(&entry.native_name, &content_type) {
                 Some(ParseOperation::PreviewAnimation)
             } else {
                 handler.and_then(preview_operation)
@@ -113,7 +142,8 @@ impl PreviewProvider for LocalPreviewProvider {
                     });
                     return;
                 };
-                let value = request.pdf_page;
+                let value =
+                    preview_operation_value(operation, request.pdf_page, request.text_byte_limit);
                 let cancellation = cancellation_for_task.clone();
                 let result = gio::spawn_blocking(move || {
                     if operation == ParseOperation::PreviewAudioMetadata {
@@ -199,16 +229,21 @@ impl PreviewProvider for LocalPreviewProvider {
                     }
                     Err(_) => return,
                 };
-            } else if entry.kind == crate::model::EntryKind::Directory {
+            } else if entry.is_directory() && (policy.images || policy.audio) {
                 if let Some(path) = entry.location.native_path().map(ToOwned::to_owned) {
                     let cancellation = cancellation_for_task.clone();
-                    if let Ok(Some(output)) = gio::spawn_blocking(move || {
+                    if let Ok(Some((output, family, size))) = gio::spawn_blocking(move || {
                         crate::ui::thumbnail::folder_album_art(&path).and_then(|(art, op)| {
-                            crate::sandbox::parse(&art, op, 800, &cancellation).ok()
+                            let size = std::fs::metadata(&art).ok()?.len();
+                            let family = classify_by_name(art.as_os_str());
+                            policy.check(family, Some(size)).ok()?;
+                            let output = crate::sandbox::parse(&art, op, 800, &cancellation).ok()?;
+                            Some((output, family, size))
                         })
                     })
                     .await
                     {
+                        folder_source = Some((family, size));
                         content = PreviewContent::Rasterized { png: output.data };
                     }
                 }
@@ -226,6 +261,18 @@ impl PreviewProvider for LocalPreviewProvider {
                 };
             }
 
+            let current_policy = PreviewPolicy::current();
+            let permitted = current_policy.for_streaming_preview().check_source(&entry, &content_type, source_size).and_then(|()| {
+                if let Some((family, size)) = folder_source {
+                    current_policy.check(family, Some(size))
+                } else {
+                    Ok(())
+                }
+            });
+            if let Err(message) = permitted {
+                emit(PreviewEvent::Failed { request_id, entry, message });
+                return;
+            }
             emit(PreviewEvent::Ready(Preview {
                 request_id,
                 entry,
@@ -255,6 +302,22 @@ fn preview_operation(handler: PreviewHandler) -> Option<ParseOperation> {
         PreviewHandler::Model => Some(ParseOperation::PreviewModel),
         PreviewHandler::ArchiveCover => Some(ParseOperation::PreviewArchiveCover),
         PreviewHandler::Spreadsheet => Some(ParseOperation::PreviewSpreadsheet),
+    }
+}
+
+fn preview_operation_value(
+    operation: ParseOperation,
+    pdf_page: i32,
+    text_byte_limit: usize,
+) -> i32 {
+    match operation {
+        ParseOperation::PreviewPdf => pdf_page,
+        ParseOperation::PreviewArchive | ParseOperation::PreviewOffice => {
+            text_byte_limit.clamp(1, crate::sandbox::MAX_OUTPUT_BYTES as usize) as i32
+        }
+        ParseOperation::PreviewModel => 800,
+        ParseOperation::PreviewArchiveCover => 1400,
+        _ => 0,
     }
 }
 

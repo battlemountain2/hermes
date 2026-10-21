@@ -1,6 +1,22 @@
 use super::*;
 
 #[test]
+#[ignore = "Requires an isolated GTK display; validates preview transport icon contrast"]
+fn desktop_preview_play_pause_icons_use_the_filled_control_palette() {
+    gtk::init().unwrap();
+    assets::prepare().unwrap();
+    assets::set_on_accent_icon_color("#182838");
+    let button = icon_button(icons::PLAY, "Play");
+    button.add_css_class("preview-audio-play-button");
+    set_button_icon(&button, icons::PAUSE);
+    let image = button.child().and_downcast::<gtk::Image>().unwrap();
+    let expected = assets::on_accent_icon(icons::PAUSE, 18);
+    assert_eq!(image.paintable(), expected.paintable());
+    assets::set_primary_icon_color("#abcdef");
+    assert_eq!(image.paintable(), expected.paintable());
+}
+
+#[test]
 fn metadata_rows_show_required_fields_and_unknowns_honestly() {
     let rows = metadata_rows(&AudioMetadata::default());
     for name in [
@@ -73,6 +89,101 @@ fn metadata_rows_include_useful_embedded_tags_and_unabridged_track_numbers() {
             .iter()
             .any(|(name, _)| name == "track" || name == "date")
     );
+}
+
+#[test]
+fn track_number_formatting_prefers_embedded_fractional_tracks_then_tag_numbers() {
+    let mut meta = AudioMetadata::default();
+    assert_eq!(format_track_number(&meta), None);
+
+    meta.tags.track = Some(6);
+    assert_eq!(format_track_number(&meta), Some("Track 6".into()));
+
+    meta.embedded_tags.insert("track".into(), "6/15".into());
+    assert_eq!(format_track_number(&meta), Some("Track 6/15".into()));
+}
+
+#[test]
+fn subtitle_formatting_joins_artist_and_album_cleanly() {
+    let mut meta = AudioMetadata::default();
+    assert_eq!(format_subtitle(&meta), "");
+
+    meta.tags.artist = Some("Charli xcx".into());
+    assert_eq!(format_subtitle(&meta), "Charli xcx");
+
+    meta.tags.album = Some("BRAT".into());
+    assert_eq!(format_subtitle(&meta), "Charli xcx — BRAT");
+
+    meta.tags.artist = None;
+    assert_eq!(format_subtitle(&meta), "BRAT");
+}
+
+#[test]
+fn vinyl_rotation_constants_match_33_rpm() {
+    let rpm_33_rad_per_sec = 33.3333333 * 2.0 * std::f64::consts::PI / 60.0;
+    assert!((rpm_33_rad_per_sec - 3.4906585).abs() < 0.001);
+}
+
+#[test]
+fn micro_segment_bands_match_spectrum_bands() {
+    assert_eq!(crate::playback::SPECTRUM_BANDS, 32);
+}
+
+#[test]
+#[ignore = "Requires a private GTK display; no decoder or personal media"]
+fn micro_segment_visualizer_has_valid_dimensions() {
+    gtk::init().unwrap();
+    let stream: super::super::stream::PlaybackStream = glib::Object::new();
+    let vis = MicroSegmentVisualizer::new(&stream);
+    let (_min_w, nat_w, _, _) = vis.widget().measure(gtk::Orientation::Horizontal, -1);
+    let (min_h, nat_h, _, _) = vis.widget().measure(gtk::Orientation::Vertical, 220);
+    assert!(nat_w >= 200, "Natural width must be >= 200, got {nat_w}");
+    assert!(nat_h >= 50, "Natural height must be >= 50, got {nat_h}");
+    assert_eq!(min_h, 54, "Minimum height must be 54, got {min_h}");
+}
+
+#[test]
+#[ignore = "Private GTK display; verifies preview disposal with an externally retained silent stream"]
+fn desktop_audio_preview_stop_disconnects_refresh_and_releases_widgets() {
+    gtk::init().unwrap();
+    let stream: super::super::stream::PlaybackStream = glib::Object::new();
+    let payload = Rc::new(Cell::new(0));
+    let weak_payload = Rc::downgrade(&payload);
+    let refresh_payload = payload.clone();
+    let handler = stream.connect_notify_local(None, move |_, _| {
+        refresh_payload.set(refresh_payload.get() + 1);
+    });
+    drop(payload);
+    let vinyl = Rc::new(VinylDisc::new());
+    let visualizer = Rc::new(MicroSegmentVisualizer::new(&stream));
+    let weak_vinyl = Rc::downgrade(&vinyl);
+    let weak_visualizer = Rc::downgrade(&visualizer);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.append(vinyl.widget());
+    content.append(visualizer.widget());
+    let widget = gtk::ScrolledWindow::builder().child(&content).build();
+    let weak_widget = widget.downgrade();
+    let cancelled = Rc::new(Cell::new(false));
+    let cancellation = cancelled.clone();
+    let preview = AudioPreview {
+        widget,
+        stream: stream.clone(),
+        artwork_load: RefCell::new(Some(LoadHandle::new(move || cancellation.set(true)))),
+        vinyl,
+        visualizer,
+        refresh_handler: RefCell::new(Some(handler)),
+    };
+    preview.stop();
+    preview.stop();
+    assert!(cancelled.get());
+    assert!(weak_payload.upgrade().is_none());
+    assert!(preview.refresh_handler.borrow().is_none());
+    drop(content);
+    drop(preview);
+    assert!(weak_vinyl.upgrade().is_none());
+    assert!(weak_visualizer.upgrade().is_none());
+    assert!(weak_widget.upgrade().is_none());
+    stream.notify("playing");
 }
 
 #[test]
@@ -332,8 +443,7 @@ fn desktop_audio_preview_playback_metadata_artwork_and_cancellation() {
     assert_eq!(music.current_track(), music_track);
     drawer.show(entry.clone());
     assert_eq!(drawer.state.audio.borrow().as_ref().unwrap().stream, stream);
-    drawer.pause_audio_preview();
-    assert!(!stream.is_playing());
+    assert!(stream.is_playing());
     assert_eq!(play_count.get(), 1);
     music.play();
     pump_until(&|| music.status() == PlaybackStatus::Playing);

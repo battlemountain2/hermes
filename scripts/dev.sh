@@ -65,18 +65,42 @@ if ! cargo watch --version >/dev/null 2>&1; then
   cargo install --locked cargo-watch
 fi
 
-# cargo-watch restarts running commands by default when a change is detected.
 log_directory="${XDG_STATE_HOME:-$HOME/.local/state}/hermes"
 mkdir -p "$log_directory"
 exec > >(tee -a "$log_directory/dev.log") 2>&1
-run_command="run"
-if [[ "${HERMES_DEV_RELEASE:-0}" == "1" ]]; then
-  run_command="run --release"
+build_command="build --jobs 2"
+build_runner=(nice -n 10)
+if command -v ionice >/dev/null 2>&1; then
+  build_runner+=(ionice -c 3)
 fi
+run_command="run"
+binary="target/debug/strata"
+if [[ "${HERMES_DEV_RELEASE:-0}" == "1" ]]; then
+  build_command="build --release --jobs 2"
+  run_command="run --release"
+  binary="target/release/strata"
+fi
+if [[ "${HERMES_DEV_AUTO_RESTART:-0}" == "1" ]]; then
+  exec cargo watch \
+    --watch src \
+    --watch data \
+    --watch Cargo.toml \
+    --watch Cargo.lock \
+    --watch build.rs \
+    --exec "$run_command"
+fi
+if [[ "${HERMES_DEV_RELEASE:-0}" == "1" ]]; then
+  "${build_runner[@]}" cargo build --release --jobs 2
+else
+  "${build_runner[@]}" cargo build --jobs 2
+fi
+"$binary" &
+echo "Hermes stays open while edits rebuild in the background. Reopen Hermes when ready to use the new build."
 exec cargo watch \
+  --postpone \
   --watch src \
   --watch data \
   --watch Cargo.toml \
   --watch Cargo.lock \
   --watch build.rs \
-  --exec "$run_command"
+  --shell "${build_runner[*]} cargo $build_command"

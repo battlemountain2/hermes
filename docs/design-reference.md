@@ -10,6 +10,15 @@ The prototype is a reference, not a native implementation specification. Native 
 
 ## Visual character
 
+October20 music exception: immersive backgrounds are decorative cover-derived surfaces, not a
+replacement for semantic UI colors. Native snapshot textures keep theme-relative brightness;
+visualizer colors are adjusted for legibility, including black/white artwork under light/dark
+themes. Filled transport icons use `theme_on_accent` across normal/hover/pressed/focus states.
+Controls hide by opacity, retaining layout and keyboard access, and reveal on deck/dock hover or
+focus-within. Reduced motion disables fades. The mini-player title area is a native WindowHandle;
+Escape hides it without changing transport. These patterns are independently implemented, inspired
+by the requested Cider immersive feel, not copied upstream code or assets.
+
 - Dark, low-chroma surfaces with a bright cyan primary/accent
 - Fine, low-contrast separators between structural regions
 - Compact, terminal-influenced typography

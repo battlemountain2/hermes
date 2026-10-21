@@ -94,7 +94,9 @@ fn render_job(operation: Operation, input_fd: &OwnedFd) -> Result<Response, Stri
             None,
         ),
         Operation::Image => (crate::sandbox_helper::render_image(input_path, 256)?, None),
+        Operation::Video => (crate::sandbox_helper::render_media(input_path, 256)?, None),
         Operation::PreviewImage => (crate::sandbox_helper::render_image(input_path, 1400)?, None),
+        Operation::PreviewAudioArtwork => (crate::sandbox_helper::render_media(input_path, 1024)?, None),
         Operation::Heif => (
             crate::sandbox_helper::render_heif_thumbnail(input_path, 256)?,
             None,
@@ -109,18 +111,41 @@ fn render_job(operation: Operation, input_fd: &OwnedFd) -> Result<Response, Stri
             (png, Some(meta_json.into_bytes()))
         }
         Operation::Raw => (crate::sandbox_helper::render_raw(input_path, 256)?, None),
-        Operation::Pdf => {
-            let (png, page, pages, _text) = crate::sandbox_helper::render_pdf_page(input_path, 0)?;
-            (png, Some(format!("{page} {pages}").into_bytes()))
-        }
+        Operation::Pdf => (crate::sandbox_helper::render_pdf_thumbnail(input_path, 256)?, None),
         Operation::PreviewModel => (
-            crate::sandbox_helper::model::render_model(input_path, 800)?,
+            crate::sandbox_helper::model::render_model_with_format(
+                input_path,
+                800,
+                crate::services::model_preview::ModelFormat::Stl,
+            )?,
             None,
         ),
-        Operation::PreviewArchiveCover => (
-            crate::sandbox_helper::archive_cover::render_cover(input_path, 1400)?,
+        Operation::PreviewThreeMf => (
+            crate::sandbox_helper::model::render_model_with_format(
+                input_path,
+                800,
+                crate::services::model_preview::ModelFormat::ThreeMf,
+            )?,
             None,
         ),
+        Operation::PreviewEpubCover | Operation::PreviewCbzCover | Operation::PreviewCbrCover => {
+            use crate::sandbox_helper::archive_cover::CoverFormat;
+            let format = match operation {
+                Operation::PreviewEpubCover => CoverFormat::Epub,
+                Operation::PreviewCbzCover => CoverFormat::Cbz,
+                Operation::PreviewCbrCover => CoverFormat::Cbr,
+                _ => unreachable!(),
+            };
+            (
+                crate::sandbox_helper::archive_cover::render_cover_with_format(
+                    input_path, 1400, format,
+                )?,
+                None,
+            )
+        }
+        Operation::PreviewArchiveCover => {
+            return Err("Archive cover request requires an explicit format".into());
+        }
         Operation::PreviewSpreadsheet => {
             let (png, json) = crate::sandbox_helper::table::render_spreadsheet(input_path)?;
             (png, Some(json.into_bytes()))
@@ -138,3 +163,6 @@ fn render_job(operation: Operation, input_fd: &OwnedFd) -> Result<Response, Stri
         metadata: metadata.unwrap_or_default(),
     })
 }
+
+#[cfg(test)]
+mod format_tests;

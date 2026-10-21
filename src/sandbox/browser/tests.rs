@@ -29,10 +29,160 @@ fn test_wire_operation_parse() {
 }
 
 #[test]
+fn selected_audio_artwork_has_its_own_high_resolution_operation() {
+    assert_eq!(map_preview_op(&ParseOperation::PreviewAudioArtwork), Some(Operation::PreviewAudioArtwork));
+    assert_eq!(Operation::parse(26).unwrap(), Operation::PreviewAudioArtwork);
+    assert!(map_thumbnail_op(&ParseOperation::PreviewAudioArtwork).is_none());
+    assert_ne!(map_preview_op(&ParseOperation::PreviewAudioArtwork), map_thumbnail_op(&ParseOperation::ThumbnailVideo));
+}
+
+#[test]
+#[ignore = "Requires built sandbox helper and FFmpeg; generated cover only, no playback"]
+fn generated_embedded_artwork_preview_preserves_more_detail_than_thumbnail() {
+    let root = std::env::temp_dir().join(format!("hermes-artwork-resolution-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let cover = root.join("cover.png");
+    let pixels = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 1400, 1400).unwrap();
+    pixels.fill(0xee8020ff);
+    pixels.savev(&cover, "png", &[]).unwrap();
+    let track = root.join("generated.mp3");
+    assert!(std::process::Command::new("ffmpeg").args([
+        "-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+        "-i",
+    ]).arg(&cover).args([
+        "-t", "0.2", "-map", "0:a", "-map", "1:v", "-c:a", "libmp3lame", "-c:v", "png",
+        "-threads", "1", "-id3v2_version", "3", "-metadata:s:v", "title=Album cover",
+        "-metadata:s:v", "comment=Cover (front)",
+    ]).arg(&track).status().unwrap().success());
+    let cancellation = Cancellation::default();
+    let small = crate::sandbox::parse(&track, ParseOperation::ThumbnailVideo, 1024, &cancellation).unwrap();
+    let large = crate::sandbox::parse(&track, ParseOperation::PreviewAudioArtwork, 1024, &cancellation).unwrap();
+    let width = |bytes: &[u8]| u32::from_be_bytes(bytes[16..20].try_into().unwrap());
+    assert_eq!(width(&small.data), 256);
+    assert_eq!(width(&large.data), 1024);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn heif_thumbnails_and_full_previews_use_distinct_cached_operations() {
-    assert_eq!(map_preview_op(&ParseOperation::ThumbnailHeif), Some(Operation::Heif));
+    assert_eq!(map_thumbnail_op(&ParseOperation::ThumbnailHeif), Some(Operation::Heif));
     assert_eq!(map_preview_op(&ParseOperation::PreviewHeif), Some(Operation::PreviewHeif));
-    assert_ne!(map_preview_op(&ParseOperation::ThumbnailHeif), map_preview_op(&ParseOperation::PreviewHeif));
+    assert_ne!(map_thumbnail_op(&ParseOperation::ThumbnailHeif), map_preview_op(&ParseOperation::PreviewHeif));
+}
+
+#[test]
+fn thumbnails_and_selected_previews_have_independent_worker_queues() {
+    for operation in [
+        ParseOperation::ThumbnailImage,
+        ParseOperation::ThumbnailHeif,
+        ParseOperation::ThumbnailRaw,
+        ParseOperation::ThumbnailPdf,
+        ParseOperation::ThumbnailVideo,
+    ] {
+        assert!(map_preview_op(&operation).is_none());
+        assert!(map_thumbnail_op(&operation).is_some());
+    }
+    assert_eq!(map_thumbnail_op(&ParseOperation::ThumbnailVideo), Some(Operation::Video));
+    assert!(map_thumbnail_op(&ParseOperation::PreviewImage).is_none());
+    assert!(map_thumbnail_op(&ParseOperation::PreviewAudioMetadata).is_none());
+    assert!(map_preview_op(&ParseOperation::PreviewImage).is_some());
+}
+
+#[test]
+#[ignore = "Requires FFmpeg, bubblewrap and a built worker; generated media only"]
+fn generated_media_thumbnails_reuse_workers_cache_and_leave_photo_previews_unblocked() {
+    use gtk::prelude::*;
+    let directory = std::env::temp_dir().join(format!("hermes-media-pool-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("clip.mov");
+    let replacement = directory.join("replacement.mov");
+    for (output, input) in [
+        (&path, "testsrc2=size=1920x1080:rate=24"),
+        (&replacement, "color=c=blue:size=1920x1080:rate=24"),
+    ] {
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-v", "error", "-nostdin", "-y", "-f", "lavfi", "-i", input,
+                "-t", "2", "-an", "-c:v", "libx264", "-threads", "2", "-preset", "veryfast"])
+            .arg(output).status().unwrap().success());
+    }
+    let executable = crate::sandbox::helper_executable().unwrap();
+    let mut one_shot = Vec::new();
+    let mut baseline = Vec::new();
+    for _ in 0..3 {
+        let start = Instant::now();
+        baseline = crate::sandbox::parse_one_shot_with_executable(
+            &path, ParseOperation::ThumbnailVideo, 256, &Cancellation::default(), &executable,
+        ).unwrap().data;
+        one_shot.push(start.elapsed());
+    }
+    let start = Instant::now();
+    let first = thumbnail_parse(&path, ParseOperation::ThumbnailVideo, &Cancellation::default())
+        .expect("Pooled video operation").unwrap();
+    let cold = start.elapsed();
+    let mut warm = Vec::new();
+    for _ in 0..3 {
+        let start = Instant::now();
+        let result = thumbnail_parse(&path, ParseOperation::ThumbnailVideo, &Cancellation::default())
+            .unwrap().unwrap();
+        warm.push(start.elapsed());
+        assert_eq!(first, result);
+    }
+    let decode = |bytes: &[u8]| {
+        let loader = gtk::gdk_pixbuf::PixbufLoader::new();
+        loader.write(bytes).unwrap();
+        loader.close().unwrap();
+        loader.pixbuf().unwrap()
+    };
+    let expected = decode(&baseline);
+    let actual = decode(&first);
+    assert_eq!((actual.width(), actual.height()), (256, 144));
+    assert_eq!(actual.read_pixel_bytes(), expected.read_pixel_bytes());
+    std::fs::rename(&replacement, &path).unwrap();
+    let changed = thumbnail_parse(&path, ParseOperation::ThumbnailVideo, &Cancellation::default())
+        .unwrap().unwrap();
+    assert_ne!(changed, first);
+    let cancelled = Cancellation::default();
+    cancelled.cancel();
+    assert!(thumbnail_parse(&path, ParseOperation::ThumbnailVideo, &cancelled).unwrap().is_err());
+    std::fs::write(&path, b"not valid media").unwrap();
+    assert!(thumbnail_parse(&path, ParseOperation::ThumbnailVideo, &Cancellation::default())
+        .unwrap().is_err());
+
+    let photo = directory.join("photo.jpg");
+    let pixels = gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, false, 8, 1600, 1200).unwrap();
+    pixels.fill(0x2040d0ff);
+    pixels.savev(&photo, "jpeg", &[]).unwrap();
+    let occupied: Vec<_> = (0..pool().limit.load(Ordering::Relaxed))
+        .map(|_| pool().acquire(&Cancellation::default()).unwrap()).collect();
+    let queued = Cancellation::default();
+    let cancel = queued.clone();
+    let cancellation_thread = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(40));
+        cancel.cancel();
+    });
+    assert!(thumbnail_parse(&path, ParseOperation::ThumbnailVideo, &queued)
+        .expect("Cancelled queued thumbnails must not fall back to a new one-shot process").is_err());
+    cancellation_thread.join().unwrap();
+    let cancellation = Cancellation::default();
+    let timeout = cancellation.clone();
+    let completed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let done = completed.clone();
+    let guard = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline && !done.load(Ordering::Acquire) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if !done.load(Ordering::Acquire) { timeout.cancel(); }
+    });
+    let start = Instant::now();
+    let selected = preview(&photo, &ParseOperation::PreviewImage, &cancellation).unwrap();
+    completed.store(true, Ordering::Release);
+    guard.join().unwrap();
+    drop(occupied);
+    let selected = selected.expect("Photo preview must not wait for thumbnail workers");
+    assert_eq!(decode(&selected.0).width(), 1400);
+    eprintln!("MOV thumbnails: one-shot={one_shot:?}, pooled cold={cold:?}, cached={warm:?}; photo with full thumbnail queue={:?}", start.elapsed());
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

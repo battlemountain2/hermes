@@ -65,7 +65,8 @@ fn sandbox_exposes_only_runtime_input_and_private_output() {
 
     assert!(joined.contains("--unshare-all"));
     assert!(joined.contains("--clearenv"));
-    assert!(joined.contains("--ro-bind /home/alice/Downloads/untrusted.pdf /input"));
+    assert!(joined.contains("--ro-bind /home/alice/Downloads/untrusted.pdf /input.pdf"));
+    assert!(joined.contains("--preview-helper preview-pdf /input.pdf /output/result.png"));
     assert!(joined.contains("--bind /tmp/private-output /output"));
     assert!(joined.contains("--as=1342177280"));
     assert!(joined.contains("--cpu=10"));
@@ -75,6 +76,90 @@ fn sandbox_exposes_only_runtime_input_and_private_output() {
     assert!(!joined.contains("--nproc"));
     assert!(!joined.contains("--ro-bind /home /home"));
     assert!(!joined.contains("--share-net"));
+}
+
+#[test]
+fn sandbox_keeps_only_a_bounded_safe_format_suffix() {
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+    for (name, expected) in [
+        ("private-name.DOCX", "/input.docx"),
+        ("private-name.3MF", "/input.3mf"),
+        ("private-name.odt", "/input.odt"),
+        ("private-name", "/input"),
+        ("private-name.bad suffix", "/input"),
+        ("private-name.abcdefghijklmnopq", "/input"),
+    ] {
+        assert_eq!(super::sandbox_input_path(Path::new(name)), expected);
+    }
+    assert_eq!(
+        super::sandbox_input_path(Path::new(OsStr::from_bytes(b"private.\xff"))),
+        "/input"
+    );
+}
+
+#[test]
+#[ignore = "Requires bubblewrap and a built helper; generated office documents only"]
+fn one_shot_office_previews_preserve_format_and_text_limits() {
+    use crate::sandbox::browser::format_tests::{FixtureDirectory, write_package};
+    let directory = FixtureDirectory::new();
+    let helper = super::helper_executable().unwrap();
+    for (name, member, xml) in [
+        (
+            "private.DOCX",
+            "word/document.xml",
+            "<w:document><w:p><w:t>Hermes generated office document</w:t></w:p></w:document>",
+        ),
+        (
+            "private.ODT",
+            "content.xml",
+            "<office:document-content><text:p>Hermes generated office document</text:p></office:document-content>",
+        ),
+    ] {
+        let path = directory.0.join(name);
+        write_package(&path, &[(member, xml.as_bytes())]);
+        let result = super::parse_one_shot_with_executable(
+            &path,
+            ParseOperation::PreviewOffice,
+            1024,
+            &Cancellation::default(),
+            &helper,
+        )
+        .unwrap();
+        assert!(
+            String::from_utf8(result.data)
+                .unwrap()
+                .contains("Hermes generated office document")
+        );
+        let limited = super::parse_one_shot_with_executable(
+            &path,
+            ParseOperation::ExtractOfficeText,
+            8,
+            &Cancellation::default(),
+            &helper,
+        )
+        .unwrap();
+        assert!(limited.data.len() <= 8);
+        let cancellation = Cancellation::default();
+        cancellation.cancel();
+        assert!(super::parse(&path, ParseOperation::PreviewOffice, 0, &cancellation).is_err());
+    }
+    let slides = directory.0.join("generated.PPTX");
+    write_package(&slides, &[
+        ("ppt/presentation.xml", b"<presentation><sldId r:id=\"first\"/></presentation>"),
+        ("ppt/_rels/presentation.xml.rels", b"<Relationships><Relationship Id=\"first\" Type=\"internal/slide\" Target=\"slides/slide1.xml\"/></Relationships>"),
+        ("ppt/slides/slide1.xml", b"<sld><p><t>Generated slide body</t></p></sld>"),
+    ]);
+    let result = super::parse_one_shot_with_executable(
+        &slides,
+        ParseOperation::PreviewOffice,
+        1024,
+        &Cancellation::default(),
+        &helper,
+    )
+    .unwrap();
+    let text = String::from_utf8(result.data).unwrap();
+    assert!(text.contains("Slide 1"));
+    assert!(text.contains("Generated slide body"));
 }
 
 #[test]

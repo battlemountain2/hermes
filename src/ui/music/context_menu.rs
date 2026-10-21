@@ -13,6 +13,7 @@ struct Target {
     tracks: Vec<Track>,
     playback: Vec<Track>,
     album: bool,
+    playlist: Option<u64>,
 }
 
 impl Target {
@@ -33,6 +34,7 @@ impl Target {
                     playback: tracks.clone(),
                     tracks,
                     album: true,
+                    playlist: None,
                 })
             }
             Kind::Track => {
@@ -40,12 +42,10 @@ impl Target {
                 Some(Self {
                     title: track.title(),
                     detail: format!("{} · {}", track.artist(), track.album()),
-                    playback: crate::music::folder_queue(
-                        album_tracks(&state.library.borrow(), &track.album_key()),
-                        &track.path,
-                    ),
+                    playback: state.track_playback(&track.path),
                     tracks: vec![track],
                     album: false,
+                    playlist: state.current_playlist(),
                 })
             }
         }
@@ -175,6 +175,15 @@ fn show(
         control.set_child(Some(&control_contents(icon, label)));
         control.add_css_class("music-control");
         control.update_property(&[gtk::accessible::Property::Label(label)]);
+        if let Some(current) = state.upgrade() {
+            control.set_sensitive(target.tracks.iter().any(|track| {
+                current
+                    .library
+                    .borrow()
+                    .iter()
+                    .any(|entry| entry.path == track.path)
+            }));
+        }
         let state = state.clone();
         let target = target.clone();
         let menu = popover.downgrade();
@@ -204,6 +213,120 @@ fn show(
         });
         contents.append(&control);
     }
+    if let Some(current) = state.upgrade() {
+        let snapshot = current.collection_snapshot.borrow();
+        let paths: Vec<_> = target
+            .tracks
+            .iter()
+            .map(|track| track.path.clone())
+            .collect();
+        let favorites = snapshot.data.favorite_paths();
+        let favorite = !paths.iter().all(|path| favorites.contains(path));
+        contents.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        collection_action(
+            &contents,
+            &popover,
+            state.clone(),
+            if favorite {
+                "Add to favorites"
+            } else {
+                "Remove from favorites"
+            },
+            CollectionCommand::Favorite(paths.clone(), favorite),
+        );
+        if let Some(id) = target.playlist {
+            collection_action(
+                &contents,
+                &popover,
+                state.clone(),
+                "Remove from playlist",
+                CollectionCommand::Remove(id, paths.clone()),
+            );
+            if let Some(path) = paths.first() {
+                if !path.exists() {
+                    let repair_path = path.clone();
+                    let repair_state = state.clone();
+                    let repair_popover = popover.downgrade();
+                    let control = gtk::Button::with_label("Locate missing file…");
+                    control.set_child(Some(&control_contents(icons::SEARCH, "Locate missing file…")));
+                    control.add_css_class("music-control");
+                    control.connect_clicked(move |btn| {
+                        if let Some(menu) = repair_popover.upgrade() {
+                            menu.popdown();
+                        }
+                        let Some(root) = btn.root().and_downcast::<gtk::Window>() else {
+                            return;
+                        };
+                        #[allow(deprecated)]
+                        let dialog = gtk::FileChooserNative::new(
+                            Some("Locate Track File"),
+                            Some(&root),
+                            gtk::FileChooserAction::Open,
+                            Some("Select"),
+                            Some("Cancel"),
+                        );
+                        let old_path = repair_path.clone();
+                        let state = repair_state.clone();
+                        #[allow(deprecated)]
+                        dialog.connect_response(move |dialog, response| {
+                            if response == gtk::ResponseType::Accept {
+                                if let Some(new_path) = dialog.file().and_then(|f| f.path()) {
+                                    if let Some(state) = state.upgrade().filter(|s| !s.disposed.get()) {
+                                        state.collection_command(CollectionCommand::Relocate {
+                                            from: old_path.clone(),
+                                            to: new_path,
+                                        });
+                                    }
+                                }
+                            }
+                        });
+                        dialog.show();
+                    });
+                    contents.append(&control);
+                }
+                collection_action(
+                    &contents,
+                    &popover,
+                    state.clone(),
+                    "Move up in playlist",
+                    CollectionCommand::Move(id, path.clone(), -1),
+                );
+                collection_action(
+                    &contents,
+                    &popover,
+                    state.clone(),
+                    "Move down in playlist",
+                    CollectionCommand::Move(id, path.clone(), 1),
+                );
+            }
+        }
+        if !snapshot.data.playlists.is_empty() {
+            contents.append(&text("Add to playlist", "music-heading"));
+            let playlists = gtk::Box::new(gtk::Orientation::Vertical, 3);
+            playlists.add_css_class("music-playlist-targets");
+            for playlist in &snapshot.data.playlists {
+                collection_action(
+                    &playlists,
+                    &popover,
+                    state.clone(),
+                    &playlist.name,
+                    CollectionCommand::Add(playlist.id, paths.clone()),
+                );
+            }
+            let scroll = gtk::ScrolledWindow::builder()
+                .child(&playlists)
+                .hscrollbar_policy(gtk::PolicyType::Never)
+                .propagate_natural_height(true)
+                .max_content_height(180)
+                .build();
+            contents.append(&scroll);
+        } else {
+            contents.append(&text(
+                "Create a playlist in Music → Playlists",
+                "music-detail",
+            ));
+        }
+    }
     popover.set_child(Some(&contents));
     popover.connect_closed(|menu| {
         if menu.parent().is_some() {
@@ -212,6 +335,35 @@ fn show(
     });
     popover.popup();
     popover
+}
+
+fn collection_action(
+    contents: &gtk::Box,
+    popover: &gtk::Popover,
+    state: std::rc::Weak<State>,
+    label: &str,
+    command: CollectionCommand,
+) {
+    let control = gtk::Button::with_label(label);
+    let icon = match &command {
+        CollectionCommand::Favorite(_, _) => icons::HEART,
+        CollectionCommand::Remove(_, _) => icons::X,
+        CollectionCommand::Move(_, _, offset) if *offset < 0 => icons::ARROW_UP,
+        CollectionCommand::Move(_, _, _) => icons::ARROW_DOWN,
+        _ => icons::PLUS,
+    };
+    control.set_child(Some(&control_contents(icon, label)));
+    control.add_css_class("music-control");
+    let menu = popover.downgrade();
+    control.connect_clicked(move |_| {
+        if let Some(menu) = menu.upgrade() {
+            menu.popdown();
+        }
+        if let Some(state) = state.upgrade().filter(|state| !state.disposed.get()) {
+            state.collection_command(command.clone());
+        }
+    });
+    contents.append(&control);
 }
 
 #[cfg(test)]

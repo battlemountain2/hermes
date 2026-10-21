@@ -11,11 +11,16 @@ pub struct RecentFolders {
 impl RecentFolders {
     pub fn load() -> Self {
         let path = Self::storage_path();
-        let locations = fs::read_to_string(&path)
+        let locations: Vec<Location> = fs::read_to_string(&path)
             .ok()
             .and_then(|contents| toml::from_str(&contents).ok())
             .unwrap_or_default();
-        Self { locations }
+        Self {
+            locations: locations
+                .into_iter()
+                .filter(is_folder_history_location)
+                .collect(),
+        }
     }
 
     pub fn save(&self) {
@@ -28,6 +33,9 @@ impl RecentFolders {
     }
 
     pub fn record(&mut self, location: &Location, limit: usize) {
+        if !is_folder_history_location(location) {
+            return;
+        }
         if let Some(path) = location.native_path() {
             let home = gtk::glib::home_dir();
             if path == home {
@@ -63,3 +71,12 @@ impl RecentFolders {
             .join("recent-folders.toml")
     }
 }
+
+fn is_folder_history_location(location: &Location) -> bool {
+    !location
+        .uri_value()
+        .is_some_and(|uri| uri.starts_with("search://"))
+}
+
+#[cfg(test)]
+mod tests;

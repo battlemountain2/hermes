@@ -2,6 +2,8 @@
 <gresources>
   <gresource prefix="/io/github/lgse/Strata">
     <file>icons/scalable/actions/strata-play.svg</file>
+    <file>icons/scalable/actions/strata-heart.svg</file>
+    <file>icons/scalable/actions/strata-heart-selected.svg</file>
     <file>icons/scalable/actions/strata-pause.svg</file>
     <file>icons/scalable/actions/strata-volume-2.svg</file>
     <file>icons/scalable/actions/strata-volume-x.svg</file>
@@ -56,5 +58,7 @@
     <file>icons/scalable/actions/strata-trash.svg</file>
     <file>icons/scalable/actions/strata-video.svg</file>
     <file>icons/scalable/actions/strata-x.svg</file>
+    <file>icons/scalable/actions/strata-star.svg</file>
+    <file>icons/scalable/actions/strata-star-filled.svg</file>
   </gresource>
 </gresources>

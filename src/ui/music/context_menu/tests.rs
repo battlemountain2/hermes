@@ -52,6 +52,7 @@ fn desktop_context_menus_target_clicked_rows_and_preserve_queue_playback() {
     window.set_default_size(1000, 700);
     window.set_child(Some(&player.view()));
     window.present();
+    player.state.scan.borrow_mut().take();
     for _ in 0..100 {
         if !glib::MainContext::default().iteration(false) {
             break;
@@ -116,7 +117,7 @@ fn desktop_context_menus_target_clicked_rows_and_preserve_queue_playback() {
         .into_iter()
         .filter_map(|widget| widget.downcast::<gtk::Button>().ok())
         .collect();
-    assert_eq!(controls.len(), 3);
+    assert_eq!(controls.len(), 4);
     player.state.library.borrow_mut().reverse();
     player.state.render_library();
     controls[2].emit_clicked();
@@ -127,6 +128,29 @@ fn desktop_context_menus_target_clicked_rows_and_preserve_queue_playback() {
     assert_eq!(player.state.queue.borrow().current, Some(0));
     assert!(player.state.stream.borrow().is_none());
     assert!(menu.parent().is_none());
+    controls[3].emit_clicked();
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while player
+        .state
+        .collection_store
+        .snapshot()
+        .data
+        .favorite_paths()
+        .len()
+        != 3
+    {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        !player
+            .state
+            .collection_store
+            .snapshot()
+            .data
+            .favorite_paths()
+            .contains(&other.path)
+    );
     let menu_probe = menu.downgrade();
     drop(controls);
     drop(menu);
@@ -158,6 +182,65 @@ fn desktop_context_menus_target_clicked_rows_and_preserve_queue_playback() {
     controls[1].emit_clicked();
     assert_eq!(player.state.queue.borrow().ordered()[1].1, &third);
     assert_eq!(player.state.queue.borrow().current, Some(0));
+    assert!(player.state.stream.borrow().is_none());
+    player
+        .state
+        .collection_command(CollectionCommand::Create("Menu fixture".into()));
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while player
+        .state
+        .collection_store
+        .snapshot()
+        .data
+        .playlists
+        .is_empty()
+    {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    player.state.poll_collections();
+    player.state.filter.set_text("Third");
+    let target = Target::resolve(&player.state, Kind::Track, 0).unwrap();
+    let playlist_menu = show(
+        view.upcast_ref(),
+        Rc::downgrade(&player.state),
+        target,
+        24.0,
+        24.0,
+    );
+    let add_to_playlist = super::super::tests::descendants(playlist_menu.upcast_ref())
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::Button>().ok())
+        .last()
+        .unwrap();
+    player.state.filter.set_text("Other");
+    add_to_playlist.emit_clicked();
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while player
+        .state
+        .collection_store
+        .snapshot()
+        .data
+        .playlist(1)
+        .unwrap()
+        .tracks
+        .is_empty()
+    {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        player
+            .state
+            .collection_store
+            .snapshot()
+            .data
+            .playlist(1)
+            .unwrap()
+            .tracks[0]
+            .native_path(),
+        Some(third.path.as_path())
+    );
     assert!(player.state.stream.borrow().is_none());
     assert!(Target::resolve(&player.state, Kind::Track, gtk::INVALID_LIST_POSITION).is_none());
     assert!(Target::resolve(&player.state, Kind::Album, 99).is_none());

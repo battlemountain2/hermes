@@ -9,6 +9,47 @@ use crate::{
 };
 
 #[test]
+fn hidden_visibility_updates_loads_monitors_and_closes_stale_peeks() {
+    struct RecordingSource(Rc<RefCell<Vec<(bool, bool)>>>);
+
+    impl FileSource for RecordingSource {
+        fn validate_location(&self, _: &Location) -> Result<(), LocationValidationError> {
+            Ok(())
+        }
+
+        fn enumerate(&self, request: DirectoryRequest, _: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
+            self.0.borrow_mut().push((false, request.include_hidden));
+            LoadHandle::new(|| {})
+        }
+
+        fn watch(&self, _: Location, include_hidden: bool, _: Rc<dyn Fn(DirectoryChange)>) -> Option<LoadHandle> {
+            self.0.borrow_mut().push((true, include_hidden));
+            Some(LoadHandle::new(|| {}))
+        }
+    }
+
+    let requests = Rc::new(RefCell::new(Vec::new()));
+    let browser = Browser::new(Rc::new(RecordingSource(requests.clone())));
+    browser.navigate(Location::local("/generated-hidden"));
+    requests.borrow_mut().clear();
+    browser.set_show_hidden(false);
+    assert!(requests.borrow().is_empty());
+    browser.begin_peek(0, Location::local("/generated-hidden/child"));
+    assert!(browser.peek_request.get().is_some());
+    requests.borrow_mut().clear();
+    browser.set_show_hidden(true);
+    assert!(browser.peek_request.get().is_none());
+    assert!(browser.column_preferences(0).unwrap().show_hidden);
+    assert_eq!(*requests.borrow(), vec![(false, true), (true, true)]);
+    requests.borrow_mut().clear();
+    browser.set_show_hidden(true);
+    assert!(requests.borrow().is_empty());
+    browser.toggle_hidden();
+    assert!(!browser.column_preferences(0).unwrap().show_hidden);
+    assert_eq!(*requests.borrow(), vec![(false, false), (true, false)]);
+}
+
+#[test]
 fn search_snapshot_observer_can_navigate_without_stale_selection_events() {
     let browser = Browser::new(Rc::new(FakeFileSource));
     browser.state.borrow_mut().navigate(Location::local("/search"), RequestId(101));

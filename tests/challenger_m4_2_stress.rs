@@ -389,32 +389,29 @@ pub fn generate_massive_ods(num_rows: usize, num_cols: usize) -> Vec<u8> {
 "#);
 
     // Header row
-    xml.push_str("        <table:table-row>\n");
+    xml.push_str("<table:table-row>");
     for c in 0..num_cols {
         xml.push_str(&format!(
-            "          <table:table-cell office:value-type=\"string\"><text:p>Col_{}</text:p></table:table-cell>\n",
+            "<table:table-cell office:value-type=\"string\"><text:p>Col_{}</text:p></table:table-cell>",
             c
         ));
     }
-    xml.push_str("        </table:table-row>\n");
+    xml.push_str("</table:table-row>");
 
     // Data rows
     for r in 0..num_rows {
-        xml.push_str("        <table:table-row>\n");
+        xml.push_str("<table:table-row>");
         for c in 0..num_cols {
             xml.push_str(&format!(
-                "          <table:table-cell office:value-type=\"float\" office:value=\"{}\"><text:p>{}</text:p></table:table-cell>\n",
+                "<table:table-cell office:value-type=\"float\" office:value=\"{}\"><text:p>{}</text:p></table:table-cell>",
                 r * 100 + c,
                 r * 100 + c
             ));
         }
-        xml.push_str("        </table:table-row>\n");
+        xml.push_str("</table:table-row>");
     }
 
-    xml.push_str(r#"      </table:table>
-    </office:spreadsheet>
-  </office:body>
-</office:document-content>"#);
+    xml.push_str(r#"</table:table></office:spreadsheet></office:body></office:document-content>"#);
 
     create_zip(&[
         ("mimetype", b"application/vnd.oasis.opendocument.spreadsheet"),
@@ -432,31 +429,11 @@ pub fn generate_formula_ods() -> Vec<u8> {
   <office:body>
     <office:spreadsheet>
       <table:table table:name="FormulaSheet">
-        <table:table-row>
-          <table:table-cell office:value-type="string"><text:p>Formula Type</text:p></table:table-cell>
-          <table:table-cell office:value-type="string"><text:p>Expression</text:p></table:table-cell>
-          <table:table-cell office:value-type="string"><text:p>Evaluated Result</text:p></table:table-cell>
-        </table:table-row>
-        <table:table-row>
-          <table:table-cell office:value-type="string"><text:p>Sum</text:p></table:table-cell>
-          <table:table-cell table:formula="of:=SUM([.A1:.A10])" office:value-type="float" office:value="1050"><text:p>1050</text:p></table:table-cell>
-          <table:table-cell office:value-type="float" office:value="1050"><text:p>1050</text:p></table:table-cell>
-        </table:table-row>
-        <table:table-row>
-          <table:table-cell office:value-type="string"><text:p>DivisionByZero</text:p></table:table-cell>
-          <table:table-cell table:formula="of:=1/0" office:value-type="string"><text:p>#DIV/0!</text:p></table:table-cell>
-          <table:table-cell office:value-type="string"><text:p>#DIV/0!</text:p></table:table-cell>
-        </table:table-row>
-        <table:table-row>
-          <table:table-cell office:value-type="string"><text:p>Concat</text:p></table:table-cell>
-          <table:table-cell table:formula="of:=CONCATENATE(&quot;Hermes&quot;, &quot; &quot;, &quot;Preview&quot;)" office:value-type="string"><text:p>Hermes Preview</text:p></table:table-cell>
-          <table:table-cell office:value-type="string"><text:p>Hermes Preview</text:p></table:table-cell>
-        </table:table-row>
-        <table:table-row>
-          <table:table-cell office:value-type="string"><text:p>LogicalIF</text:p></table:table-cell>
-          <table:table-cell table:formula="of:=IF(1>0, &quot;PASS&quot;, &quot;FAIL&quot;)" office:value-type="string"><text:p>PASS</text:p></table:table-cell>
-          <table:table-cell office:value-type="string"><text:p>PASS</text:p></table:table-cell>
-        </table:table-row>
+        <table:table-row><table:table-cell office:value-type="string"><text:p>Formula Type</text:p></table:table-cell><table:table-cell office:value-type="string"><text:p>Expression</text:p></table:table-cell><table:table-cell office:value-type="string"><text:p>Evaluated Result</text:p></table:table-cell></table:table-row>
+        <table:table-row><table:table-cell office:value-type="string"><text:p>Sum</text:p></table:table-cell><table:table-cell table:formula="of:=SUM([.A1:.A10])" office:value-type="float" office:value="1050"><text:p>1050</text:p></table:table-cell><table:table-cell office:value-type="float" office:value="1050"><text:p>1050</text:p></table:table-cell></table:table-row>
+        <table:table-row><table:table-cell office:value-type="string"><text:p>DivisionByZero</text:p></table:table-cell><table:table-cell table:formula="of:=1/0" office:value-type="string"><text:p>#DIV/0!</text:p></table:table-cell><table:table-cell office:value-type="string"><text:p>#DIV/0!</text:p></table:table-cell></table:table-row>
+        <table:table-row><table:table-cell office:value-type="string"><text:p>Concat</text:p></table:table-cell><table:table-cell table:formula="of:=CONCATENATE(&quot;Hermes&quot;, &quot; &quot;, &quot;Preview&quot;)" office:value-type="string"><text:p>Hermes Preview</text:p></table:table-cell><table:table-cell office:value-type="string"><text:p>Hermes Preview</text:p></table:table-cell></table:table-row>
+        <table:table-row><table:table-cell office:value-type="string"><text:p>LogicalIF</text:p></table:table-cell><table:table-cell table:formula="of:=IF(1>0, &quot;PASS&quot;, &quot;FAIL&quot;)" office:value-type="string"><text:p>PASS</text:p></table:table-cell><table:table-cell office:value-type="string"><text:p>PASS</text:p></table:table-cell></table:table-row>
       </table:table>
     </office:spreadsheet>
   </office:body>
@@ -1078,7 +1055,7 @@ fn test_pdf_escape_key_deselection_contract() {
     // 1. Verify selection clearing contract:
     // When ranges exist, applying an empty map clears all selection ranges.
     let ranges = RefCell::new(HashMap::from([(1, (0, 10)), (2, (0, 5))]));
-    let layers: RefCell<HashMap<i32, Arc<PdfTextLayer>>> = RefCell::new(HashMap::new());
+    let _layers: RefCell<HashMap<i32, Arc<PdfTextLayer>>> = RefCell::new(HashMap::new());
     let _visible: HashMap<i32, bool> = HashMap::new();
 
     assert!(!ranges.borrow().is_empty(), "Initial selection ranges must be non-empty");
