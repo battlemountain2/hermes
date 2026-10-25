@@ -7,6 +7,7 @@ mod browser_modes;
 mod context_menu;
 mod formatting;
 pub mod folder_tree;
+pub mod home_dashboard;
 mod motion;
 mod music;
 mod seek;

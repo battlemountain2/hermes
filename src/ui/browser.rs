@@ -6213,7 +6213,7 @@ pub(super) fn entry_icon(entry: &FileEntry) -> &'static str {
     icon_for_name(&entry.display_name)
 }
 
-fn icon_for_name(name: &str) -> &'static str {
+pub(crate) fn icon_for_name(name: &str) -> &'static str {
     let extension = name
         .rsplit_once('.')
         .map(|(_, extension)| extension.to_ascii_lowercase());

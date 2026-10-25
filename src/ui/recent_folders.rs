@@ -73,9 +73,10 @@ impl RecentFolders {
 }
 
 fn is_folder_history_location(location: &Location) -> bool {
-    !location
-        .uri_value()
-        .is_some_and(|uri| uri.starts_with("search://"))
+    !location.is_home_dashboard()
+        && !location
+            .uri_value()
+            .is_some_and(|uri| uri.starts_with("search://"))
 }
 
 #[cfg(test)]

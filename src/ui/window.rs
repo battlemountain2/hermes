@@ -239,6 +239,27 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     let context_preferences = theme_manager.clone();
     let context_browser = browser.clone();
     let context_folder_views_loc = Rc::new(RefCell::new(startup.trail.active_location().cloned()));
+    let home_dashboard = Rc::new(super::home_dashboard::HomeDashboard::new(
+        browser.clone(),
+        Some(music_player.clone()),
+    ));
+    let content_stack = gtk::Stack::new();
+    content_stack.set_transition_type(gtk::StackTransitionType::Crossfade);
+    content_stack.set_hexpand(true);
+    content_stack.set_vexpand(true);
+    content_stack.add_named(&browser.widget(), Some("browser"));
+    content_stack.add_named(home_dashboard.widget(), Some("home"));
+    if startup
+        .trail
+        .active_location()
+        .is_some_and(|l| l.is_home_dashboard())
+    {
+        content_stack.set_visible_child_name("home");
+    } else {
+        content_stack.set_visible_child_name("browser");
+    }
+    let context_content_stack = content_stack.clone();
+    let context_home_dashboard = home_dashboard.clone();
     controller.observe(move |event| {
         if matches!(
             event,
@@ -272,6 +293,25 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
                             prefs.sort_direction,
                         );
                     }
+                }
+            }
+        }
+
+        if matches!(
+            event,
+            BrowserEvent::ColumnAdded { .. }
+                | BrowserEvent::TabRestored { .. }
+                | BrowserEvent::FocusChanged { .. }
+                | BrowserEvent::ColumnsTruncated { .. }
+        ) {
+            if let Some(loc) = context_controller.active_location() {
+                if loc.is_home_dashboard() {
+                    if context_content_stack.visible_child_name().as_deref() != Some("home") {
+                        context_content_stack.set_visible_child_name("home");
+                        context_home_dashboard.refresh();
+                    }
+                } else if context_content_stack.visible_child_name().as_deref() != Some("browser") {
+                    context_content_stack.set_visible_child_name("browser");
                 }
             }
         }
@@ -431,7 +471,7 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
 
     tree_paned.set_start_child(Some(&folder_tree));
     let browser_vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    browser_vbox.append(&browser.widget());
+    browser_vbox.append(&content_stack);
     browser_vbox.append(&status_bar.container);
     
     tree_paned.set_end_child(Some(&browser_vbox));
@@ -1513,7 +1553,7 @@ impl SidebarState {
                     "home",
                     crate::assets::icons::HOME,
                     "Home",
-                    Location::local(home_directory()),
+                    Location::uri("home:///"),
                 ),
                 "trash" => self.append_trash_place(),
                 id => {
@@ -2442,6 +2482,9 @@ fn remove_pinned_place(places: &mut Vec<(Location, String)>, location: &Location
 }
 
 fn is_standard_place_location(location: &Location) -> bool {
+    if location.is_home_dashboard() {
+        return true;
+    }
     let Some(path) = location.native_path() else {
         return false;
     };
@@ -2721,7 +2764,7 @@ fn save_place_order(order: Vec<&'static str>) {
     });
 }
 
-fn load_pinned_places() -> Vec<(Location, String)> {
+pub(crate) fn load_pinned_places() -> Vec<(Location, String)> {
     std::fs::read_to_string(pinned_places_path())
         .map(|contents| parse_pinned_places(&contents))
         .unwrap_or_default()
@@ -2781,7 +2824,7 @@ fn save_pinned_places(places: Vec<(Location, String)>) {
     });
 }
 
-fn home_directory() -> PathBuf {
+pub(crate) fn home_directory() -> PathBuf {
     env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/"))

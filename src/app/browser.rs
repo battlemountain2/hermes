@@ -233,6 +233,8 @@ impl Browser {
             .unwrap_or_else(|| {
                 if input == "trash:///" {
                     Location::uri(input)
+                } else if input == "home:///" || input == "home" {
+                    Location::uri("home:///")
                 } else {
                     Location::local(PathBuf::from(input))
                 }

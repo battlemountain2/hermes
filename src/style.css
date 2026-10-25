@@ -4348,3 +4348,189 @@ button.music-cover-button:focus-visible {
 .mini-vol-scale highlight {
   background: @theme_accent;
 }
+
+/* Home Dashboard */
+.home-dashboard-scroller {
+  background: @theme_bg;
+}
+
+.home-dashboard-container {
+  background: transparent;
+}
+
+.home-header-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: @theme_text;
+}
+
+.home-header-subtitle {
+  font-size: 13px;
+  color: @theme_dim_text;
+}
+
+.home-section-header {
+  margin-top: 10px;
+  margin-bottom: 2px;
+}
+
+.home-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: @theme_dim_text;
+}
+
+.home-quick-access-flow {
+  background: transparent;
+}
+
+.home-folder-card {
+  background: @theme_surface;
+  border: 1px solid alpha(@theme_border, 0.7);
+  border-radius: 8px;
+  padding: 12px 14px;
+  min-width: 140px;
+  min-height: 80px;
+  transition: all 120ms ease;
+  box-shadow: none;
+}
+
+.home-folder-card:hover {
+  background: alpha(@theme_muted, 0.65);
+  border-color: @theme_accent;
+}
+
+.home-card-icon {
+  margin-bottom: 2px;
+}
+
+.home-card-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: @theme_text;
+}
+
+.home-card-subtitle {
+  font-size: 11px;
+  color: @theme_dim_text;
+}
+
+.home-music-shelf {
+  background: @theme_surface;
+  border: 1px solid alpha(@theme_border, 0.7);
+  border-radius: 8px;
+  padding: 12px 16px;
+  align-items: center;
+}
+
+.home-music-artwork {
+  border-radius: 6px;
+}
+
+.home-music-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: @theme_text;
+}
+
+.home-music-detail {
+  font-size: 12px;
+  color: @theme_dim_text;
+}
+
+.home-music-play-btn {
+  background: @theme_accent;
+  color: @theme_on_accent;
+  border-radius: 50%;
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0;
+  border: none;
+  box-shadow: none;
+}
+
+.home-music-play-btn:hover {
+  opacity: 0.9;
+}
+
+.home-recent-files-container {
+  background: @theme_surface;
+  border: 1px solid alpha(@theme_border, 0.7);
+  border-radius: 8px;
+  padding: 14px 18px;
+}
+
+.home-bucket-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: @theme_accent;
+  margin-top: 6px;
+  margin-bottom: 2px;
+}
+
+.home-recent-list {
+  background: transparent;
+}
+
+.home-recent-row {
+  padding: 7px 10px;
+  border-radius: 6px;
+  transition: background 100ms ease;
+}
+
+.home-recent-row:hover {
+  background: alpha(@theme_muted, 0.55);
+}
+
+.home-file-icon {
+  margin-right: 2px;
+}
+
+.home-file-name {
+  font-weight: 500;
+  font-size: 13px;
+  color: @theme_text;
+}
+
+.home-file-folder {
+  font-size: 11px;
+  color: @theme_dim_text;
+}
+
+.home-file-time {
+  font-size: 11px;
+  color: @theme_dim_text;
+  margin-right: 8px;
+}
+
+.home-row-action-btn {
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 6px;
+  color: @theme_dim_text;
+  box-shadow: none;
+}
+
+.home-row-action-btn:hover {
+  background: alpha(@theme_muted, 0.8);
+  color: @theme_text;
+}
+
+.home-recent-empty {
+  padding: 24px;
+  align-items: center;
+}
+
+.home-empty-text {
+  font-weight: 600;
+  font-size: 14px;
+  color: @theme_text;
+}
+
+.home-empty-subtext {
+  font-size: 12px;
+  color: @theme_dim_text;
+}

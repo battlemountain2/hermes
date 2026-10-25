@@ -42,6 +42,9 @@ impl RoutedFileSource {
 
 impl FileSource for RoutedFileSource {
     fn invalidate(&self, location: &Location) {
+        if location.is_home_dashboard() {
+            return;
+        }
         if location
             .uri_value()
             .is_some_and(|uri| uri.starts_with("search://"))
@@ -58,6 +61,9 @@ impl FileSource for RoutedFileSource {
         include_hidden: bool,
         notify: Rc<dyn Fn(DirectoryChange)>,
     ) -> Option<LoadHandle> {
+        if location.is_home_dashboard() {
+            return None;
+        }
         if location
             .uri_value()
             .is_some_and(|uri| uri.starts_with("search://"))
@@ -69,6 +75,9 @@ impl FileSource for RoutedFileSource {
     }
 
     fn watch_invalidation(&self, location: &Location, notify: Rc<dyn Fn()>) -> Option<LoadHandle> {
+        if location.is_home_dashboard() {
+            return None;
+        }
         if location
             .uri_value()
             .is_some_and(|uri| uri.starts_with("search://"))
@@ -78,7 +87,11 @@ impl FileSource for RoutedFileSource {
             self.local.watch_invalidation(location, notify)
         }
     }
+
     fn validate_location(&self, location: &Location) -> Result<(), LocationValidationError> {
+        if location.is_home_dashboard() {
+            return Ok(());
+        }
         if location
             .uri_value()
             .is_some_and(|u| u.starts_with("search://"))
@@ -90,6 +103,13 @@ impl FileSource for RoutedFileSource {
     }
 
     fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
+        if request.location.is_home_dashboard() {
+            let request_id = request.id;
+            gtk::glib::idle_add_local_once(move || {
+                emit(DirectoryEvent::Finished { request_id });
+            });
+            return LoadHandle::new(|| {});
+        }
         if request
             .location
             .uri_value()
