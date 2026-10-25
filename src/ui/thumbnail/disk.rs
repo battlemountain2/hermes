@@ -25,8 +25,8 @@ const MAX_PIXELS: usize = 256 * 256 * 4;
 const MAX_FILE: usize = MAGIC.len() + 4 + MAX_HEADER + MAX_PIXELS;
 const MAX_FILES: usize = 512;
 const MAX_BYTES: u64 = 128 * 1024 * 1024;
-const NO_FOLLOW: i32 = 0x20000;
-const DIRECTORY: i32 = 0x10000;
+const NO_FOLLOW: i32 = 0x8000;
+const DIRECTORY: i32 = 0x4000;
 const NON_BLOCK: i32 = 0x800;
 
 #[derive(Serialize, Deserialize, PartialEq)]

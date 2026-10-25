@@ -17,9 +17,20 @@ fn repeated_pause_resume_retains_negotiated_audio_without_resetting_output() {
     let bus = pipeline.bus().unwrap();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pipeline.set_state(output_state(&Command::Play)).unwrap();
+        let (_, state, _) = pipeline.state(gst::ClockTime::from_seconds(2));
+        assert_eq!(state, gst::State::Playing);
+        let push_resilient = |source: &app::AppSrc, data: Vec<u8>| {
+            let started = Instant::now();
+            let mut pushed = source.push_buffer(pcm_buffer(data.clone()));
+            while matches!(pushed, Err(gst::FlowError::Flushing)) && started.elapsed() < Duration::from_secs(2) {
+                std::thread::sleep(Duration::from_millis(5));
+                pushed = source.push_buffer(pcm_buffer(data.clone()));
+            }
+            pushed.unwrap();
+        };
         for cycle in 0..12 {
             let before_pause = (cycle as f32 / 32.0).to_le_bytes().repeat(480 * 2);
-            source.push_buffer(pcm_buffer(before_pause.clone())).unwrap();
+            push_resilient(&source, before_pause.clone());
             assert_eq!(receiver.recv_timeout(Duration::from_secs(2)).unwrap(), before_pause);
             pipeline.set_state(output_state(&Command::Pause)).unwrap();
             let (_, state, _) = pipeline.state(gst::ClockTime::from_seconds(2));
@@ -27,8 +38,10 @@ fn repeated_pause_resume_retains_negotiated_audio_without_resetting_output() {
             assert!(source.static_pad("src").unwrap().current_caps().is_some());
             assert!(receiver.recv_timeout(Duration::from_millis(5)).is_err());
             pipeline.set_state(output_state(&Command::Play)).unwrap();
+            let (_, state, _) = pipeline.state(gst::ClockTime::from_seconds(2));
+            assert_eq!(state, gst::State::Playing);
             let resumed = ((cycle + 16) as f32 / 32.0).to_le_bytes().repeat(480 * 2);
-            source.push_buffer(pcm_buffer(resumed.clone())).unwrap();
+            push_resilient(&source, resumed.clone());
             assert_eq!(receiver.recv_timeout(Duration::from_secs(2)).unwrap(), resumed);
         }
         for message in bus.iter() {

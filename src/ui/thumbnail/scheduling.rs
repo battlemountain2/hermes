@@ -185,7 +185,7 @@ pub(super) fn wake() {
         }
     });
     if TICK_PENDING.with(|pending| !pending.replace(true)) {
-        glib::idle_add_local_once(tick);
+        glib::idle_add_once(tick);
     }
 }
 
@@ -253,7 +253,7 @@ fn tick() {
     if interested && TICK_PENDING.with(|pending| !pending.get()) {
         TIMER.with(|timer| {
             if timer.borrow().is_none() {
-                timer.replace(Some(glib::timeout_add_local_once(
+                timer.replace(Some(glib::timeout_add_once(
                     Duration::from_millis(32),
                     || {
                         TIMER.with(|timer| timer.borrow_mut().take());

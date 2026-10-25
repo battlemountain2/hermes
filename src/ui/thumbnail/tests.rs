@@ -133,20 +133,34 @@ fn clearing_memory_cancels_inflight_results_and_prevents_cache_repopulation() {
     let request = 9_100;
     let image_id = 9_100;
     ACTIVE_REQUESTS.with(|requests| {
-        requests.borrow_mut().insert(image_id, ActiveRequest {
-            id: request,
-            image: glib::WeakRef::new(),
-            cancellation: cancellation.clone(),
-            wake_handlers: Vec::new(),
-        });
+        requests.borrow_mut().insert(
+            image_id,
+            ActiveRequest {
+                id: request,
+                image: glib::WeakRef::new(),
+                cancellation: cancellation.clone(),
+                wake_handlers: Vec::new(),
+            },
+        );
     });
-    THUMBNAIL_CACHE.with(|cache| cache.borrow_mut().insert(key("cached.png"), glib::Bytes::from_static(b"cached")));
+    THUMBNAIL_CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .insert(key("cached.png"), glib::Bytes::from_static(b"cached"))
+    });
     let before = super::CACHE_GENERATION.with(std::cell::Cell::get);
     super::invalidate_memory_cache();
     assert!(cancellation.is_cancelled());
     assert_ne!(before, super::CACHE_GENERATION.with(std::cell::Cell::get));
     assert!(ACTIVE_REQUESTS.with(|requests| requests.borrow().is_empty()));
-    complete_thumbnail(image_id, request, &cancellation, key("late.png"), glib::Bytes::from_static(b"late"), |_| panic!("cancelled result must not paint"));
+    complete_thumbnail(
+        image_id,
+        request,
+        &cancellation,
+        key("late.png"),
+        glib::Bytes::from_static(b"late"),
+        |_| panic!("cancelled result must not paint"),
+    );
     THUMBNAIL_CACHE.with(|cache| {
         let cache = cache.borrow();
         assert!(cache.entries.is_empty());

@@ -8,7 +8,7 @@ use std::{
 
 use super::{Document, MAX_FILE_BYTES};
 
-const NO_FOLLOW: i32 = 0o400000;
+const NO_FOLLOW: i32 = 0o100000;
 const NON_BLOCKING: i32 = 0o4000;
 
 pub(super) struct Storage {

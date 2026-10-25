@@ -29,9 +29,9 @@ const MAX_STDERR_BYTES: usize = 4096;
 const DEADLINE: Duration = Duration::from_secs(13);
 const LOOKUP_DEADLINE: Duration = Duration::from_secs(20);
 const RETRY_DELAYS: [Duration; 2] = [Duration::from_millis(500), Duration::from_millis(1500)];
-const NO_FOLLOW: i32 = 0o400000;
+const NO_FOLLOW: i32 = 0o100000;
 const NONBLOCK: i32 = 0o4000;
-const DIRECTORY: i32 = 0o200000;
+const DIRECTORY: i32 = 0o40000;
 const CACHE_SLOTS: u64 = 32;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
