@@ -14,7 +14,7 @@ use crate::{
     adapters::{LocalOperationProvider, LocalPreviewProvider, LocalTrailStore, RoutedFileSource},
     app::{Browser, BrowserEvent, Trails},
     model::{
-        Location, Trail, TrailBrowserDensity,
+        Location, SortDirection, Trail, TrailBrowserDensity,
         TrailBrowserMode, TrailViewState,
     },
 };
@@ -183,6 +183,7 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     let mode_preferences = theme_manager.clone();
     let mode_trails = trails.clone();
     let mode_capture = capture_view.clone();
+    let mode_controller = controller.clone();
     mode_action.connect_activate(move |action, parameter| {
         let Some(mode) = parameter
             .and_then(|parameter| parameter.str())
@@ -193,6 +194,11 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         mode_browser.set_view_mode(mode);
         mode_preferences.set_browser_mode(mode);
         action.set_state(&mode.action_name().to_variant());
+        if mode_preferences.remember_folder_views() {
+            if let Some(loc) = mode_controller.active_location() {
+                crate::services::FolderViewStore::shared().set_mode(&loc.display_path(), trail_browser_mode(mode));
+            }
+        }
         if let Err(error) = mode_trails.update_active_view(mode_capture()) {
             tracing::warn!(%error, "unable to save Trail view mode");
         }
@@ -230,6 +236,9 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     let context_controller = controller.clone();
     let context_startup = startup_restore.clone();
     let context_applying_startup = applying_startup.clone();
+    let context_preferences = theme_manager.clone();
+    let context_browser = browser.clone();
+    let context_folder_views_loc = Rc::new(RefCell::new(startup.trail.active_location().cloned()));
     controller.observe(move |event| {
         if matches!(
             event,
@@ -251,6 +260,61 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
                 }
             }
             context_tab_bar.refresh();
+        }
+
+        if let BrowserEvent::SortingFinished { depth } = event {
+            if !context_applying_startup.get() && context_preferences.remember_folder_views() {
+                if let Some(prefs) = context_controller.column_preferences(depth) {
+                    if let Some(loc) = context_controller.column_location(depth) {
+                        crate::services::FolderViewStore::shared().set_sort(
+                            &loc.display_path(),
+                            prefs.sort_key,
+                            prefs.sort_direction,
+                        );
+                    }
+                }
+            }
+        }
+
+        if matches!(
+            event,
+            BrowserEvent::ColumnAdded { .. }
+                | BrowserEvent::FocusChanged { .. }
+                | BrowserEvent::ColumnsTruncated { .. }
+        ) {
+            if !context_applying_startup.get() && context_preferences.remember_folder_views() {
+                if let Some(loc) = context_controller.active_location() {
+                    let changed = context_folder_views_loc.borrow().as_ref() != Some(&loc);
+                    if changed {
+                        context_folder_views_loc.replace(Some(loc.clone()));
+                        let path_str = loc.display_path();
+                        if let Some(saved) = crate::services::FolderViewStore::shared().get(&path_str) {
+                            if let Some(saved_mode) = saved.mode {
+                                let target = browser_mode(saved_mode);
+                                if context_browser.view_mode() != target {
+                                    context_browser.set_view_mode(target);
+                                }
+                            }
+                            if let Some(saved_density) = saved.density {
+                                let target = browser_density(saved_density);
+                                if context_browser.density() != target {
+                                    context_browser.set_density(target);
+                                }
+                            }
+                            if let Some(sort_key) = saved.sort_key {
+                                let sort_dir = saved.sort_direction.unwrap_or(SortDirection::Ascending);
+                                if let Some(current_depth) = context_controller.active_depth() {
+                                    if let Some(current_prefs) = context_controller.column_preferences(current_depth) {
+                                        if current_prefs.sort_key != sort_key || current_prefs.sort_direction != sort_dir {
+                                            context_controller.set_sort(current_depth, sort_key, sort_dir);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         if matches!(
             event,
@@ -1213,12 +1277,18 @@ fn build_appearance_menu(
         let preferences = preferences.clone();
         let trails = trails.clone();
         let capture_view = capture_view.clone();
+        let controller_for_mode = controller.clone();
         button.connect_clicked(move |_| {
             view.set_view_mode(mode);
             preferences.set_browser_mode(mode);
             list_check.set_visible(mode == BrowserMode::Columns);
             grid_check.set_visible(mode == BrowserMode::Grid);
             explorer_check.set_visible(mode == BrowserMode::Explorer);
+            if preferences.remember_folder_views() {
+                if let Some(loc) = controller_for_mode.active_location() {
+                    crate::services::FolderViewStore::shared().set_mode(&loc.display_path(), trail_browser_mode(mode));
+                }
+            }
             if let Err(error) = trails.update_active_view(capture_view()) {
                 tracing::warn!(%error, "unable to save Trail view mode");
             }
@@ -1250,11 +1320,17 @@ fn build_appearance_menu(
         let preferences = preferences.clone();
         let trails = trails.clone();
         let capture_view = capture_view.clone();
+        let controller_for_compact = controller.clone();
         compact.connect_clicked(move |_| {
             view.set_density(BrowserDensity::Compact);
             preferences.set_browser_density(BrowserDensity::Compact);
             compact_check.set_visible(true);
             airy_check.set_visible(false);
+            if preferences.remember_folder_views() {
+                if let Some(loc) = controller_for_compact.active_location() {
+                    crate::services::FolderViewStore::shared().set_density(&loc.display_path(), TrailBrowserDensity::Compact);
+                }
+            }
             if let Err(error) = trails.update_active_view(capture_view()) {
                 tracing::warn!(%error, "unable to save Trail density");
             }
@@ -1264,11 +1340,18 @@ fn build_appearance_menu(
         let view = view.clone();
         let trails = trails.clone();
         let capture_view = capture_view.clone();
+        let preferences = preferences.clone();
+        let controller_for_airy = controller.clone();
         airy.connect_clicked(move |_| {
             view.set_density(BrowserDensity::Airy);
             preferences.set_browser_density(BrowserDensity::Airy);
             compact_check.set_visible(false);
             airy_check.set_visible(true);
+            if preferences.remember_folder_views() {
+                if let Some(loc) = controller_for_airy.active_location() {
+                    crate::services::FolderViewStore::shared().set_density(&loc.display_path(), TrailBrowserDensity::Airy);
+                }
+            }
             if let Err(error) = trails.update_active_view(capture_view()) {
                 tracing::warn!(%error, "unable to save Trail density");
             }

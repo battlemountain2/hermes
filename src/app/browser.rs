@@ -625,6 +625,10 @@ impl Browser {
         self.state.borrow().column_preferences(depth)
     }
 
+    pub fn column_location(&self, depth: usize) -> Option<Location> {
+        self.state.borrow().columns.get(depth).map(|c| c.location.clone())
+    }
+
     pub fn set_preferences(&self, preferences: ViewPreferences) {
         self.preferences.set(preferences);
         self.state.borrow_mut().set_preferences(preferences);

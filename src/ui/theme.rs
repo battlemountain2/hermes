@@ -124,6 +124,8 @@ struct Preferences {
     size_unit: String,
     #[serde(default)]
     show_hidden_default: bool,
+    #[serde(default = "default_enabled")]
+    remember_folder_views: bool,
     #[serde(default = "default_max_preview_size")]
     max_preview_size_mb: u32,
     #[serde(default = "default_enabled")]
@@ -173,6 +175,7 @@ impl Default for Preferences {
             date_format: default_date_format(),
             size_unit: default_size_unit(),
             show_hidden_default: false,
+            remember_folder_views: true,
             max_preview_size_mb: default_max_preview_size(),
             preview_audio: true,
             preview_images: true,
@@ -617,6 +620,15 @@ impl ThemeManager {
 
     pub fn set_show_hidden_default(&self, enabled: bool) {
         self.preferences.borrow_mut().show_hidden_default = enabled;
+        self.save_preferences();
+    }
+
+    pub fn remember_folder_views(&self) -> bool {
+        self.preferences.borrow().remember_folder_views
+    }
+
+    pub fn set_remember_folder_views(&self, remember: bool) {
+        self.preferences.borrow_mut().remember_folder_views = remember;
         self.save_preferences();
     }
 

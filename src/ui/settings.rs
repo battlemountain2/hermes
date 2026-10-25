@@ -639,6 +639,18 @@ fn view_formats_page(
         browser_for_hidden.set_show_hidden(toggle.is_active());
     });
     general_card.append(&hidden_row);
+
+    let (remember_row, remember_toggle) = settings_option(
+        "Remember display style per folder",
+        "Save and restore view mode (Columns, Grid, Explorer) and sort order for each visited directory.",
+        manager.remember_folder_views(),
+    );
+    let manager_for_remember = manager.clone();
+    remember_toggle.connect_active_notify(move |toggle| {
+        manager_for_remember.set_remember_folder_views(toggle.is_active());
+    });
+    general_card.append(&remember_row);
+
     content.append(&general_card);
 
     append_heading(&content, "DATE & TIME DISPLAY");

@@ -2,6 +2,7 @@
 
 mod custom_actions;
 mod file_source;
+pub(crate) mod folder_views;
 mod formats;
 pub(crate) mod music_collections;
 pub(crate) mod music_library;
@@ -19,6 +20,7 @@ pub(crate) mod waveform;
 pub(crate) use custom_actions::{
     CustomAction, actions_path, create_custom_actions_template, load_custom_actions,
 };
+pub(crate) use folder_views::FolderViewStore;
 pub use file_source::{
     DirectoryChange, DirectoryEvent, DirectoryRequest, FileSource, LoadHandle,
     LocationValidationError, RequestId,

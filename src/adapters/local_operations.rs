@@ -174,7 +174,8 @@ impl OperationProvider for LocalOperationProvider {
                 Ok(new_file) => {
                     if let (Some(from), Some(to)) = (request.entry.location.native_path(), new_file.path()) {
                         let _ = crate::services::music_collections::Store::shared().relocate(from.to_path_buf(), to.clone());
-                        let _ = crate::services::ratings::Store::shared().relocate(from.to_path_buf(), to);
+                        let _ = crate::services::ratings::Store::shared().relocate(from.to_path_buf(), to.clone());
+                        crate::services::FolderViewStore::shared().relocate(&from.to_string_lossy(), &to.to_string_lossy());
                     }
                     emit(OperationEvent::Renamed {
                         request_id: request.id,
@@ -294,7 +295,8 @@ impl OperationProvider for LocalOperationProvider {
                         if request.move_sources {
                             if let (Some(from), Some(to)) = (location.native_path(), target.path()) {
                                 let _ = crate::services::music_collections::Store::shared().relocate(from.to_path_buf(), to.clone());
-                                let _ = crate::services::ratings::Store::shared().relocate(from.to_path_buf(), to);
+                                let _ = crate::services::ratings::Store::shared().relocate(from.to_path_buf(), to.clone());
+                                crate::services::FolderViewStore::shared().relocate(&from.to_string_lossy(), &to.to_string_lossy());
                             }
                         }
                         emit(OperationEvent::TransferItemCompleted {
