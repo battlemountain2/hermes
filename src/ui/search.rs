@@ -48,6 +48,15 @@ const SEARCH_GROUPS: [SearchGroup; 5] = [
     SearchGroup::Artists,
 ];
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OmnibarCommand {
+    pub id: &'static str,
+    pub title: &'static str,
+    pub description: &'static str,
+    pub shortcut: Option<&'static str>,
+    pub icon: &'static str,
+}
+
 #[derive(Clone)]
 pub struct SearchDialog {
     state: Rc<SearchState>,
@@ -74,6 +83,8 @@ struct SearchState {
     selected_key: RefCell<Option<SearchResultKey>>,
     rendering: Cell<bool>,
     visible_results: RefCell<Vec<SearchResult>>,
+    visible_commands: RefCell<Vec<OmnibarCommand>>,
+    command_handler: RefCell<Option<Rc<dyn Fn(&str)>>>,
     group: Cell<SearchGroup>,
     entity_scope: RefCell<Option<EntityScope>>,
     grouped_headers: Cell<bool>,
@@ -120,6 +131,171 @@ struct SearchFilterPanel {
     clear: gtk::Button,
 }
 
+pub fn all_omnibar_commands() -> Vec<OmnibarCommand> {
+    vec![
+        OmnibarCommand {
+            id: "home",
+            title: "Go to Home Dashboard",
+            description: "Open Home start page with Quick Access & Recent Files",
+            shortcut: None,
+            icon: crate::assets::icons::HOME,
+        },
+        OmnibarCommand {
+            id: "settings",
+            title: "Open Preferences / Settings",
+            description: "Customize theme, audio playback, layouts, and display options",
+            shortcut: Some("Ctrl+,"),
+            icon: crate::assets::icons::PALETTE,
+        },
+        OmnibarCommand {
+            id: "view_columns",
+            title: "View Mode: Columns",
+            description: "Switch active browser view to Miller Columns",
+            shortcut: Some("Alt+1"),
+            icon: crate::assets::icons::LIST,
+        },
+        OmnibarCommand {
+            id: "view_explorer",
+            title: "View Mode: Explorer",
+            description: "Switch active browser view to Explorer tree",
+            shortcut: Some("Alt+2"),
+            icon: crate::assets::icons::FOLDER,
+        },
+        OmnibarCommand {
+            id: "view_grid",
+            title: "View Mode: Grid",
+            description: "Switch active browser view to Icon Grid",
+            shortcut: Some("Alt+3"),
+            icon: crate::assets::icons::GRID,
+        },
+        OmnibarCommand {
+            id: "view_list",
+            title: "View Mode: List",
+            description: "Switch active browser view to Detailed List",
+            shortcut: Some("Alt+4"),
+            icon: crate::assets::icons::LIST,
+        },
+        OmnibarCommand {
+            id: "density_compact",
+            title: "Density: Compact",
+            description: "Set compact item spacing",
+            shortcut: None,
+            icon: crate::assets::icons::ROWS,
+        },
+        OmnibarCommand {
+            id: "density_comfortable",
+            title: "Density: Comfortable",
+            description: "Set spacious item spacing",
+            shortcut: None,
+            icon: crate::assets::icons::ROWS,
+        },
+        OmnibarCommand {
+            id: "toggle_hidden",
+            title: "Toggle Hidden Files",
+            description: "Show or hide dotfiles and hidden folders",
+            shortcut: Some("Ctrl+H"),
+            icon: crate::assets::icons::EYE,
+        },
+        OmnibarCommand {
+            id: "toggle_sidebar",
+            title: "Toggle Sidebar",
+            description: "Show or hide the places sidebar",
+            shortcut: Some("Ctrl+B"),
+            icon: crate::assets::icons::PANEL_LEFT,
+        },
+        OmnibarCommand {
+            id: "toggle_folder_tree",
+            title: "Toggle Folder Tree",
+            description: "Show or hide the folder tree hierarchy panel",
+            shortcut: None,
+            icon: crate::assets::icons::FOLDER,
+        },
+        OmnibarCommand {
+            id: "new_tab",
+            title: "New Tab",
+            description: "Open a new navigation tab",
+            shortcut: Some("Ctrl+T"),
+            icon: crate::assets::icons::PLUS,
+        },
+        OmnibarCommand {
+            id: "close_tab",
+            title: "Close Tab",
+            description: "Close the active navigation tab",
+            shortcut: Some("Ctrl+W"),
+            icon: crate::assets::icons::X,
+        },
+        OmnibarCommand {
+            id: "music_player",
+            title: "Music Player",
+            description: "Toggle integrated music player and library",
+            shortcut: Some("Ctrl+M"),
+            icon: crate::assets::icons::MUSIC,
+        },
+        OmnibarCommand {
+            id: "empty_trash",
+            title: "Empty Trash",
+            description: "Permanently delete files in trash",
+            shortcut: None,
+            icon: crate::assets::icons::TRASH,
+        },
+    ]
+}
+
+pub(crate) fn matching_commands(filter: &str) -> Vec<OmnibarCommand> {
+    let all = all_omnibar_commands();
+    let term = filter.trim().to_ascii_lowercase();
+    if term.is_empty() {
+        return all;
+    }
+    all.into_iter()
+        .filter(|cmd| {
+            cmd.title.to_ascii_lowercase().contains(&term)
+                || cmd.description.to_ascii_lowercase().contains(&term)
+                || cmd.id.contains(&term)
+        })
+        .collect()
+}
+
+fn build_command_row(cmd: &OmnibarCommand) -> gtk::ListBoxRow {
+    let row = gtk::ListBoxRow::new();
+    row.add_css_class("omnibar-command-row");
+
+    let h_box = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    h_box.set_margin_start(12);
+    h_box.set_margin_end(12);
+    h_box.set_margin_top(8);
+    h_box.set_margin_bottom(8);
+
+    let icon = crate::assets::primary_icon(cmd.icon, 20);
+    icon.add_css_class("omnibar-command-icon");
+    h_box.append(&icon);
+
+    let text_col = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    text_col.set_hexpand(true);
+
+    let title_label = gtk::Label::new(Some(cmd.title));
+    title_label.add_css_class("omnibar-command-title");
+    title_label.set_xalign(0.0);
+
+    let desc_label = gtk::Label::new(Some(cmd.description));
+    desc_label.add_css_class("omnibar-command-desc");
+    desc_label.set_xalign(0.0);
+
+    text_col.append(&title_label);
+    text_col.append(&desc_label);
+    h_box.append(&text_col);
+
+    if let Some(sc) = cmd.shortcut {
+        let sc_label = gtk::Label::new(Some(sc));
+        sc_label.add_css_class("omnibar-command-shortcut");
+        sc_label.set_valign(gtk::Align::Center);
+        h_box.append(&sc_label);
+    }
+
+    row.set_child(Some(&h_box));
+    row
+}
+
 impl SearchDialog {
     pub fn new(activate: Rc<dyn Fn(SearchItem)>, dismiss: Rc<dyn Fn()>) -> Self {
         let layer = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -147,7 +323,7 @@ impl SearchDialog {
             16,
         ));
         let field = gtk::Entry::builder()
-            .placeholder_text("Search songs, artists, albums or files…")
+            .placeholder_text("Search files, music, or type > for commands…")
             .hexpand(true)
             .build();
         field.add_css_class("search-field");
@@ -318,6 +494,8 @@ impl SearchDialog {
             selected_key: RefCell::new(None),
             rendering: Cell::new(false),
             visible_results: RefCell::new(Vec::new()),
+            visible_commands: RefCell::new(Vec::new()),
+            command_handler: RefCell::new(None),
             group: Cell::new(SearchGroup::All),
             entity_scope: RefCell::new(None),
             grouped_headers: Cell::new(false),
@@ -340,6 +518,10 @@ impl SearchDialog {
             let Some(state) = headers.upgrade() else {
                 return;
             };
+            if !state.visible_commands.borrow().is_empty() {
+                results::set_header(row, None);
+                return;
+            }
             let group = if state.grouped_headers.get() {
                 let visible = state.visible_results.borrow();
                 let current = usize::try_from(row.index())
@@ -552,6 +734,10 @@ impl SearchDialog {
 
     pub fn widget(&self) -> gtk::Widget {
         self.state.layer.clone().upcast()
+    }
+
+    pub fn set_command_handler(&self, handler: Rc<dyn Fn(&str)>) {
+        self.state.command_handler.replace(Some(handler));
     }
 
     pub fn show(&self, root: PathBuf) {
@@ -985,6 +1171,62 @@ fn begin_query(state: &Rc<SearchState>, query: &str) {
 fn start_query(state: &Rc<SearchState>, query: &str) {
     state.expected_query_generation.set(None);
     clear_page(state);
+
+    if let Some(cmd_query) = query.strip_prefix('>') {
+        let commands = matching_commands(cmd_query);
+        state.visible_commands.replace(commands.clone());
+        state.visible_results.borrow_mut().clear();
+        state.selected_key.replace(None);
+        state.filters.set_values(&SearchFilterValues::default());
+        render_inferred_chips(state, &[]);
+        update_group_controls(state);
+
+        state.rendering.set(true);
+        while let Some(row) = state.list.row_at_index(0) {
+            state.list.remove(&row);
+        }
+        for cmd in &commands {
+            let row = build_command_row(cmd);
+            state.list.append(&row);
+        }
+        state.rendering.set(false);
+
+        state.notice.set_text(if commands.is_empty() {
+            "No matching commands"
+        } else {
+            "Command Palette · Press Enter to run"
+        });
+        state.notice.set_tooltip_text(None);
+
+        if commands.is_empty() {
+            state.status.set_text(
+                "No matching commands found.\nTry '>settings', '>view', '>music', '>home', or '>tab'.",
+            );
+            state.results.set_visible_child_name("status");
+        } else {
+            state.results.set_visible_child_name("list");
+            if let Some(first) = state.list.row_at_index(0) {
+                state.list.select_row(Some(&first));
+            }
+        }
+        return;
+    }
+
+    state.visible_commands.borrow_mut().clear();
+
+    let query = if let Some(stripped) = query.strip_prefix("home:") {
+        state.scope.set_selected(1);
+        stripped.trim_start()
+    } else if let Some(stripped) = query.strip_prefix("folder:") {
+        state.scope.set_selected(0);
+        stripped.trim_start()
+    } else if let Some(stripped) = query.strip_prefix("music:") {
+        state.scope.set_selected(2);
+        stripped.trim_start()
+    } else {
+        query
+    };
+
     let (_, filters) = search_filter_values(query);
     state.filters.set_values(&filters);
     render_inferred_chips(state, &filters.inferred);
@@ -1175,7 +1417,11 @@ fn render_search_results(
 }
 
 fn move_selection(state: &SearchState, direction: i32) {
-    let count = state.visible_results.borrow().len() as i32;
+    let count = if !state.visible_commands.borrow().is_empty() {
+        state.visible_commands.borrow().len() as i32
+    } else {
+        state.visible_results.borrow().len() as i32
+    };
     if count == 0 {
         return;
     }
@@ -1188,6 +1434,18 @@ fn move_selection(state: &SearchState, direction: i32) {
 }
 
 fn activate_position(state: &Rc<SearchState>, position: i32) {
+    if !state.visible_commands.borrow().is_empty() {
+        if let Some(cmd) = usize::try_from(position)
+            .ok()
+            .and_then(|idx| state.visible_commands.borrow().get(idx).cloned())
+        {
+            hide(state);
+            if let Some(handler) = state.command_handler.borrow().as_ref() {
+                handler(cmd.id);
+            }
+        }
+        return;
+    }
     let Some(item) = usize::try_from(position)
         .ok()
         .and_then(|position| state.visible_results.borrow().get(position).cloned())

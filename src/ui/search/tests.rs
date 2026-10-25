@@ -1649,3 +1649,35 @@ fn desktop_interpretation_slot_and_filter_sections() {
     dialog.hide();
 }
 
+#[test]
+fn test_omnibar_commands_listing_and_filtering() {
+    let all = all_omnibar_commands();
+    assert!(!all.is_empty());
+    assert!(all.iter().any(|c| c.id == "home"));
+    assert!(all.iter().any(|c| c.id == "settings"));
+    assert!(all.iter().any(|c| c.id == "view_columns"));
+    assert!(all.iter().any(|c| c.id == "toggle_hidden"));
+
+    // Empty filter returns all
+    assert_eq!(matching_commands("").len(), all.len());
+    assert_eq!(matching_commands("   ").len(), all.len());
+
+    // Filter "settings"
+    let settings_match = matching_commands("settings");
+    assert!(!settings_match.is_empty());
+    assert_eq!(settings_match[0].id, "settings");
+
+    // Filter "view"
+    let view_matches = matching_commands("view");
+    assert!(view_matches.len() >= 4);
+    assert!(view_matches.iter().any(|c| c.id == "view_columns"));
+    assert!(view_matches.iter().any(|c| c.id == "view_grid"));
+
+    // Filter "tab"
+    let tab_matches = matching_commands("tab");
+    assert!(tab_matches.iter().any(|c| c.id == "new_tab"));
+    assert!(tab_matches.iter().any(|c| c.id == "close_tab"));
+
+    // Unknown command returns empty
+    assert!(matching_commands("nonexistent_command_xyz").is_empty());
+}

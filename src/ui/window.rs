@@ -778,6 +778,7 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
             folder_tree.set_visible(theme_for_refresh.show_folder_tree());
         }
     });
+    let theme_for_cmd = theme_manager.clone();
     let settings_layer = super::settings::build_layer(
         &browser,
         &settings,
@@ -805,6 +806,70 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         glib::Propagation::Stop
     });
     window.add_controller(settings_shortcut);
+
+    let cmd_browser = browser.clone();
+    let cmd_controller = controller.clone();
+    let cmd_sidebar = sidebar.state.clone();
+    let cmd_folder_tree = folder_tree.clone();
+    let cmd_sidebar_toggle = sidebar_toggle.clone();
+    let cmd_music_toggle = music_toggle.clone();
+    let cmd_tab_bar = tab_bar.clone();
+    let cmd_mode_action = mode_action.clone();
+    let cmd_settings_layer = settings_layer.clone();
+    let cmd_settings_btn = settings.clone();
+    let cmd_blurred_root = blurred_root.clone();
+    let cmd_theme = theme_for_cmd.clone();
+
+    search_dialog.set_command_handler(Rc::new(move |command_id| {
+        match command_id {
+            "home" => cmd_browser.navigate_location(Location::uri("home:///")),
+            "settings" => {
+                show_settings(&cmd_settings_layer, &cmd_settings_btn, &cmd_blurred_root);
+            }
+            "view_columns" => {
+                cmd_mode_action.activate(Some(&"columns".to_variant()));
+            }
+            "view_explorer" => {
+                cmd_mode_action.activate(Some(&"explorer".to_variant()));
+            }
+            "view_grid" => {
+                cmd_mode_action.activate(Some(&"grid".to_variant()));
+            }
+            "view_list" => {
+                cmd_mode_action.activate(Some(&"list".to_variant()));
+            }
+            "density_compact" => {
+                cmd_theme.set_browser_density(BrowserDensity::Compact);
+                cmd_browser.set_density(BrowserDensity::Compact);
+            }
+            "density_comfortable" => {
+                cmd_theme.set_browser_density(BrowserDensity::Airy);
+                cmd_browser.set_density(BrowserDensity::Airy);
+            }
+            "toggle_hidden" => {
+                cmd_controller.toggle_hidden();
+            }
+            "toggle_sidebar" => {
+                cmd_sidebar_toggle.set_active(!cmd_sidebar_toggle.is_active());
+            }
+            "toggle_folder_tree" => {
+                cmd_folder_tree.set_visible(!cmd_folder_tree.is_visible());
+            }
+            "music_player" => {
+                cmd_music_toggle.set_active(!cmd_music_toggle.is_active());
+            }
+            "new_tab" => {
+                cmd_tab_bar.new_tab();
+            }
+            "close_tab" => {
+                cmd_tab_bar.close_active();
+            }
+            "empty_trash" => {
+                cmd_sidebar.view.confirm_empty_trash();
+            }
+            _ => {}
+        }
+    }));
     let tab_shortcut = gtk::EventControllerKey::new();
     let shortcut_tabs = tab_bar.clone();
     tab_shortcut.connect_key_pressed(move |_, key, _, modifiers| {

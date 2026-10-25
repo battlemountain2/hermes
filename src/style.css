@@ -4534,3 +4534,39 @@ button.music-cover-button:focus-visible {
   font-size: 12px;
   color: @theme_dim_text;
 }
+
+/* Omnibar Command Palette */
+.omnibar-command-row {
+  border-radius: 6px;
+  margin: 2px 8px;
+  transition: background 100ms ease;
+}
+
+.omnibar-command-row:hover,
+.omnibar-command-row:selected {
+  background: alpha(@theme_muted, 0.7);
+}
+
+.omnibar-command-icon {
+  margin-right: 4px;
+}
+
+.omnibar-command-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: @theme_text;
+}
+
+.omnibar-command-desc {
+  font-size: 11px;
+  color: @theme_dim_text;
+}
+
+.omnibar-command-shortcut {
+  font-size: 11px;
+  font-family: monospace;
+  background: alpha(@theme_border, 0.5);
+  color: @theme_accent;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
