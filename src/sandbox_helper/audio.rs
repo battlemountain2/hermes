@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{fs, path::Path, process::Command};
+use std::{fs, io::Read, path::Path, process::Command};
 
 use serde::{Deserialize, Serialize};
 
@@ -25,8 +25,56 @@ pub(crate) fn read_audio_metadata(input: &Path) -> Result<String, String> {
         "1048576",
         "2000000",
     )?;
-    let metadata = parse_audio_details(&output)?;
+    let mut metadata = parse_audio_details(&output)?;
+    if metadata.properties.duration_seconds.is_none() || metadata.properties.duration_seconds == Some(0.0) {
+        if let Some(duration) = sniff_wav_duration(input) {
+            metadata.properties.duration_seconds = Some(duration);
+            if metadata.properties.container.is_none() {
+                metadata.properties.container = Some("wav".to_string());
+            }
+            if metadata.properties.codec.is_none() {
+                metadata.properties.codec = Some("pcm_s16le".to_string());
+            }
+        }
+    }
     serde_json::to_string(&metadata).map_err(|error| error.to_string())
+}
+
+pub(crate) fn sniff_wav_duration(input: &Path) -> Option<f64> {
+    use std::io::Seek;
+    let mut file = fs::File::open(input).ok()?;
+    let mut header = [0u8; 12];
+    file.read_exact(&mut header).ok()?;
+    if &header[0..4] != b"RIFF" || &header[8..12] != b"WAVE" {
+        return None;
+    }
+    let mut chunk_header = [0u8; 8];
+    let mut byte_rate = 0u32;
+    let mut data_size = 0u32;
+    while file.read_exact(&mut chunk_header).is_ok() {
+        let chunk_id = &chunk_header[0..4];
+        let chunk_size = u32::from_le_bytes(chunk_header[4..8].try_into().ok()?);
+        if chunk_id == b"fmt " {
+            if chunk_size < 16 {
+                return None;
+            }
+            let mut fmt_data = vec![0u8; chunk_size as usize];
+            file.read_exact(&mut fmt_data).ok()?;
+            byte_rate = u32::from_le_bytes(fmt_data[8..12].try_into().ok()?);
+        } else if chunk_id == b"data" {
+            data_size = chunk_size;
+            break;
+        } else {
+            file.seek(std::io::SeekFrom::Current(chunk_size as i64)).ok()?;
+        }
+    }
+    if byte_rate > 0 && data_size > 0 {
+        let duration = data_size as f64 / byte_rate as f64;
+        if duration.is_finite() && duration > 0.0 {
+            return Some(duration);
+        }
+    }
+    None
 }
 
 fn probe_audio(

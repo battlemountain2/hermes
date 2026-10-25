@@ -45,7 +45,7 @@ pub struct SpreadsheetData {
 }
 
 impl SpreadsheetData {
-    #[expect(dead_code, reason = "JSON deserialization helper")]
+    #[cfg_attr(not(test), expect(dead_code, reason = "JSON deserialization helper"))]
     pub fn from_json(bytes: &[u8]) -> Result<Self, String> {
         serde_json::from_slice(bytes).map_err(|e| e.to_string())
     }

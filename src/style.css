@@ -1276,6 +1276,13 @@ headerbar menubutton.header-action > button:focus-visible image {
   border-color: alpha(@theme_accent, 0.4);
 }
 
+.settings-choice-card:focus,
+.settings-choice-card:focus-visible {
+  outline: none;
+  border-color: @theme_accent;
+  box-shadow: 0 0 0 2px alpha(@theme_accent, 0.65);
+}
+
 .settings-choice-card.selected {
   background: alpha(@theme_highlight, 0.55);
   border-color: @theme_accent;

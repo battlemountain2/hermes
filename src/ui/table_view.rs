@@ -210,6 +210,9 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
     let weak_viewer = viewer.downgrade();
     let expand_btn = expand.clone();
     let title_string = title.to_string();
+    let stack_for_keys = stack.clone();
+    let sheet_buttons_for_keys = sheet_buttons.clone();
+    let sheets_count = sheets.len();
 
     expand.connect_clicked(move |button| {
         let existing = shared_slot.borrow().clone();
@@ -256,24 +259,14 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
             glib::Propagation::Proceed
         });
 
-        let keys = gtk::EventControllerKey::new();
-        keys.set_name(Some("hermes-table-fullscreen"));
-        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let weak_window = window.downgrade();
-        keys.connect_key_pressed(move |_, key, _, modifiers| {
-            if key == gtk::gdk::Key::Escape || ((key == gtk::gdk::Key::F || key == gtk::gdk::Key::f) && modifiers.is_empty()) {
-                if let Some(window) = weak_window.upgrade() {
-                    window.close();
-                }
-                return glib::Propagation::Stop;
-            }
-            glib::Propagation::Proceed
-        });
-        window.add_controller(keys);
+        attach_table_key_controller(&window, &stack_for_keys, &sheet_buttons_for_keys, sheets_count, Some(window.downgrade()));
         shared_slot.replace(Some(window.clone()));
         window.fullscreen();
         window.present();
     });
+
+    viewer.set_focusable(true);
+    attach_table_key_controller(&viewer, &stack, &sheet_buttons, sheets.len(), None);
 
     SpreadsheetView {
         widget: home,
@@ -385,6 +378,124 @@ fn column_name(mut idx: usize) -> String {
         idx = (idx / 26) - 1;
     }
     name
+}
+
+fn attach_table_key_controller(
+    target: &impl glib::object::IsA<gtk::Widget>,
+    stack: &gtk::Stack,
+    sheet_buttons: &Rc<RefCell<Vec<glib::WeakRef<gtk::Button>>>>,
+    sheets_count: usize,
+    window_to_close: Option<glib::WeakRef<gtk::Window>>,
+) {
+    let controller = gtk::EventControllerKey::new();
+    if window_to_close.is_some() {
+        controller.set_name(Some("hermes-table-fullscreen"));
+    } else {
+        controller.set_name(Some("hermes-table-viewer"));
+    }
+
+    let stack = stack.clone();
+    let sheet_buttons = sheet_buttons.clone();
+
+    controller.connect_key_pressed(move |_, keyval, _keycode, state| {
+        // Fullscreen exit shortcuts: Escape, F/f (without Ctrl/Alt)
+        if let Some(ref weak_window) = window_to_close {
+            if keyval == gtk::gdk::Key::Escape
+                || (!state.contains(gtk::gdk::ModifierType::CONTROL_MASK)
+                    && !state.contains(gtk::gdk::ModifierType::ALT_MASK)
+                    && (keyval == gtk::gdk::Key::f || keyval == gtk::gdk::Key::F))
+            {
+                if let Some(window) = weak_window.upgrade() {
+                    window.close();
+                    return glib::Propagation::Stop;
+                }
+            }
+        }
+
+        // Sheet tab navigation
+        if sheets_count > 1 {
+            let ctrl = state.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+            let shift = state.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+
+            let next_tab = (ctrl && keyval == gtk::gdk::Key::Page_Down)
+                || (ctrl && !shift && keyval == gtk::gdk::Key::Tab);
+            let prev_tab = (ctrl && keyval == gtk::gdk::Key::Page_Up)
+                || (ctrl && (keyval == gtk::gdk::Key::ISO_Left_Tab || (shift && keyval == gtk::gdk::Key::Tab)));
+
+            if next_tab || prev_tab {
+                if let Some(current_name) = stack.visible_child_name() {
+                    if let Some(idx_str) = current_name.strip_prefix("sheet_") {
+                        if let Ok(idx) = idx_str.parse::<usize>() {
+                            let target_idx = if next_tab {
+                                (idx + 1) % sheets_count
+                            } else if idx == 0 {
+                                sheets_count - 1
+                            } else {
+                                idx - 1
+                            };
+                            let buttons = sheet_buttons.borrow();
+                            if let Some(Some(btn)) = buttons.get(target_idx).map(glib::WeakRef::upgrade) {
+                                btn.emit_clicked();
+                                return glib::Propagation::Stop;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Table scrolling with arrow keys / PageUp / PageDown / Home / End
+        if let Some(child) = stack.visible_child() {
+            if let Some(scrolled) = child.downcast_ref::<gtk::ScrolledWindow>() {
+                let vadj = scrolled.vadjustment();
+                let hadj = scrolled.hadjustment();
+
+                let step_v = vadj.step_increment().max(32.0);
+                let page_v = vadj.page_increment().max(200.0);
+                let step_h = hadj.step_increment().max(40.0);
+
+                match keyval {
+                    gtk::gdk::Key::Up => {
+                        vadj.set_value((vadj.value() - step_v).max(vadj.lower()));
+                        return glib::Propagation::Stop;
+                    }
+                    gtk::gdk::Key::Down => {
+                        vadj.set_value((vadj.value() + step_v).min(vadj.upper() - vadj.page_size()));
+                        return glib::Propagation::Stop;
+                    }
+                    gtk::gdk::Key::Left => {
+                        hadj.set_value((hadj.value() - step_h).max(hadj.lower()));
+                        return glib::Propagation::Stop;
+                    }
+                    gtk::gdk::Key::Right => {
+                        hadj.set_value((hadj.value() + step_h).min(hadj.upper() - hadj.page_size()));
+                        return glib::Propagation::Stop;
+                    }
+                    gtk::gdk::Key::Page_Up => {
+                        vadj.set_value((vadj.value() - page_v).max(vadj.lower()));
+                        return glib::Propagation::Stop;
+                    }
+                    gtk::gdk::Key::Page_Down => {
+                        vadj.set_value((vadj.value() + page_v).min(vadj.upper() - vadj.page_size()));
+                        return glib::Propagation::Stop;
+                    }
+                    gtk::gdk::Key::Home => {
+                        vadj.set_value(vadj.lower());
+                        return glib::Propagation::Stop;
+                    }
+                    gtk::gdk::Key::End => {
+                        vadj.set_value((vadj.upper() - vadj.page_size()).max(vadj.lower()));
+                        return glib::Propagation::Stop;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        glib::Propagation::Proceed
+    });
+
+    target.add_controller(controller);
 }
 
 #[cfg(test)]

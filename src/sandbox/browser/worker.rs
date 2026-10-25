@@ -128,12 +128,16 @@ fn render_job(operation: Operation, input_fd: &OwnedFd) -> Result<Response, Stri
             )?,
             None,
         ),
-        Operation::PreviewEpubCover | Operation::PreviewCbzCover | Operation::PreviewCbrCover => {
+        Operation::PreviewEpubCover
+        | Operation::PreviewCbzCover
+        | Operation::PreviewCbrCover
+        | Operation::PreviewPptxCover => {
             use crate::sandbox_helper::archive_cover::CoverFormat;
             let format = match operation {
                 Operation::PreviewEpubCover => CoverFormat::Epub,
                 Operation::PreviewCbzCover => CoverFormat::Cbz,
                 Operation::PreviewCbrCover => CoverFormat::Cbr,
+                Operation::PreviewPptxCover => CoverFormat::Pptx,
                 _ => unreachable!(),
             };
             (

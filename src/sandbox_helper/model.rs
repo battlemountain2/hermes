@@ -470,16 +470,32 @@ pub(crate) fn shade(
     Ok(png_bytes)
 }
 
-pub(crate) fn render_model(input: &Path, target_size: u32) -> Result<Vec<u8>, String> {
-    let format = if input
+pub(crate) fn detect_model_format(input: &Path) -> Option<ModelFormat> {
+    let mut header = [0u8; 4];
+    if let Ok(mut file) = fs::File::open(input) {
+        if file.read_exact(&mut header).is_ok() && header == [0x50, 0x4b, 0x03, 0x04] {
+            return Some(ModelFormat::ThreeMf);
+        }
+    }
+    if input
         .extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("3mf"))
     {
-        ModelFormat::ThreeMf
+        Some(ModelFormat::ThreeMf)
+    } else if input
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("stl"))
+    {
+        Some(ModelFormat::Stl)
     } else {
-        ModelFormat::Stl
-    };
+        None
+    }
+}
+
+pub(crate) fn render_model(input: &Path, target_size: u32) -> Result<Vec<u8>, String> {
+    let format = detect_model_format(input).unwrap_or(ModelFormat::Stl);
     render_model_with_format(input, target_size, format)
 }
 

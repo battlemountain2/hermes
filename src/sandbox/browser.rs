@@ -124,12 +124,12 @@ pub(crate) fn default_worker_limit() -> usize {
         .min(MAX_WORKERS)
 }
 
-#[expect(dead_code, reason = "Pool worker limit query helper")]
+#[cfg_attr(not(test), expect(dead_code, reason = "Pool worker limit query helper"))]
 pub(crate) fn worker_limit() -> usize {
     pool().limit.load(Ordering::Relaxed)
 }
 
-#[expect(dead_code, reason = "Pool worker limit setter helper")]
+#[cfg_attr(not(test), expect(dead_code, reason = "Pool worker limit setter helper"))]
 pub(crate) fn set_worker_limit(limit: usize) {
     let limit = limit.clamp(1, MAX_WORKERS);
     pool().limit.store(limit, Ordering::Relaxed);
@@ -508,7 +508,9 @@ fn map_format_preview_op(input: &Path, op: &ParseOperation) -> Result<Option<Ope
     use crate::services::model_preview::ModelFormat;
 
     match op {
-        ParseOperation::PreviewModel => match ModelFormat::for_name(input.as_os_str()) {
+        ParseOperation::PreviewModel => match ModelFormat::for_name(input.as_os_str())
+            .or_else(|| crate::sandbox_helper::model::detect_model_format(input))
+        {
             Some(ModelFormat::Stl) => Ok(Some(Operation::PreviewModel)),
             Some(ModelFormat::ThreeMf) => Ok(Some(Operation::PreviewThreeMf)),
             _ => Err("Unsupported pooled model format".into()),
@@ -517,6 +519,7 @@ fn map_format_preview_op(input: &Path, op: &ParseOperation) -> Result<Option<Ope
             Some(CoverFormat::Epub) => Ok(Some(Operation::PreviewEpubCover)),
             Some(CoverFormat::Cbz) => Ok(Some(Operation::PreviewCbzCover)),
             Some(CoverFormat::Cbr) => Ok(Some(Operation::PreviewCbrCover)),
+            Some(CoverFormat::Pptx) => Ok(Some(Operation::PreviewPptxCover)),
             None => Err("Unsupported archive cover format".into()),
         },
         _ => Ok(map_preview_op(op)),

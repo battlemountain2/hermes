@@ -264,7 +264,7 @@ fn configure(connection: &Connection, writable: bool) -> Result<(), String> {
         connection.set_db_config(setting, enabled).map_err(error)?;
     }
     connection
-        .busy_timeout(Duration::from_millis(50))
+        .busy_timeout(Duration::from_millis(5000))
         .map_err(error)?;
     connection.execute_batch("PRAGMA trusted_schema=OFF; PRAGMA cache_size=-2048; PRAGMA mmap_size=0; PRAGMA temp_store=MEMORY; PRAGMA cell_size_check=ON;").map_err(error)?;
     if writable {
@@ -484,8 +484,26 @@ fn location(path: &Path, create: bool) -> Result<(DirectoryHandle, OsString), St
         create,
     )?;
     directory.private()?;
-    directory.0.try_lock().map_err(error)?;
+    lock_directory(&directory.0)?;
     Ok((directory, name.to_owned()))
+}
+
+fn lock_directory(file: &File) -> Result<(), String> {
+    let start = std::time::Instant::now();
+    let mut backoff = Duration::from_millis(1);
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(()),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                if start.elapsed() >= Duration::from_millis(1000) {
+                    return Err("Search catalog: lock acquisition failed because the operation would block".into());
+                }
+                std::thread::sleep(backoff);
+                backoff = (backoff * 2).min(Duration::from_millis(50));
+            }
+            Err(e) => return Err(error(e)),
+        }
+    }
 }
 
 fn existing(directory: &DirectoryHandle, name: &OsStr) -> Result<File, String> {
