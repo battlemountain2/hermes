@@ -23,6 +23,41 @@ fn explorer_initial_layout_keeps_all_details_in_a_compact_name_column() {
 }
 
 #[test]
+#[ignore = "Requires an isolated GTK display; exercises explorer pane header layout"]
+fn explorer_pane_header_remains_outside_horizontal_scroll_to_keep_actions_visible() {
+    let _ = gtk::init();
+    let browser = Browser::new(Rc::new(crate::adapters::LocalFileSource));
+    let pane = build_explorer_pane(
+        browser,
+        Rc::new(Cell::new(false)),
+        Rc::new(RefCell::new(None)),
+        Rc::new(RefCell::new(Vec::new())),
+        Rc::new(RefCell::new(None)),
+        0,
+        "Very Long Folder Name That Might Otherwise Overflow",
+    );
+    let header = pane.shell.first_child().unwrap().downcast::<gtk::Box>().unwrap();
+    assert!(header.has_css_class("mode-pane-header"));
+
+    let heading = header
+        .first_child()
+        .unwrap()
+        .next_sibling()
+        .unwrap()
+        .downcast::<gtk::Label>()
+        .unwrap();
+    assert_eq!(heading.ellipsize(), gtk::pango::EllipsizeMode::End);
+
+    let actions = header.last_child().unwrap().downcast::<gtk::Box>().unwrap();
+    assert!(actions.has_css_class("grid-header-actions"));
+
+    let scroller = pane.shell.last_child().unwrap().downcast::<gtk::ScrolledWindow>().unwrap();
+    assert_eq!(scroller.hscrollbar_policy(), gtk::PolicyType::Automatic);
+    let viewport = scroller.child().unwrap().downcast::<gtk::Viewport>().unwrap();
+    assert_eq!(viewport.child().unwrap(), pane.stack.upcast::<gtk::Widget>());
+}
+
+#[test]
 #[ignore = "Requires an isolated GTK display; real grid slider and Explorer layout fixture"]
 fn desktop_thumbnail_slider_updates_mounted_cards_and_explorer_details_fit() {
     use std::time::{Duration, Instant};

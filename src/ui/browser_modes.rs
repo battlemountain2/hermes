@@ -266,16 +266,6 @@ impl ModeViews {
         explorer_root.add_css_class("mode-explorer");
         explorer_root.set_hexpand(true);
         explorer_root.set_vexpand(true);
-        // Explorer columns have user-resizable fixed widths. Keep their leading edge visible when
-        // the window is narrower than their combined width, and scroll the headings and rows as
-        // one surface instead of letting the stack center and clip the oversized pane.
-        let explorer_scroll = gtk::ScrolledWindow::builder()
-            .child(&explorer_root)
-            .hscrollbar_policy(gtk::PolicyType::Automatic)
-            .vscrollbar_policy(gtk::PolicyType::Never)
-            .hexpand(true)
-            .vexpand(true)
-            .build();
 
         let stack = gtk::Stack::builder()
             .hexpand(true)
@@ -283,7 +273,7 @@ impl ModeViews {
             .build();
         stack.add_named(columns, Some("columns"));
         stack.add_named(&grid_scroll, Some("grid"));
-        stack.add_named(&explorer_scroll, Some("explorer"));
+        stack.add_named(&explorer_root, Some("explorer"));
         stack.set_visible_child_name("columns");
 
         Self {
@@ -1141,6 +1131,7 @@ fn build_grid_pane(
         "grid-pane",
         Some(controls.leading.clone().upcast()),
         Some(controls.actions.clone().upcast()),
+        false,
     );
     if let Some(destination) = browser.location_at(depth) {
         install_mode_directory_drop_target(&stack, destination, transfer_handler.clone());
@@ -1723,6 +1714,7 @@ fn build_explorer_pane(
         "explorer-pane",
         Some(navigation.upcast()),
         Some(actions.upcast()),
+        true,
     );
     if let Some(destination) = browser.location_at(depth) {
         install_mode_directory_drop_target(&stack, destination, transfer_handler.clone());
@@ -2009,6 +2001,7 @@ fn pane_base(
     class: &str,
     header_leading: Option<gtk::Widget>,
     header_actions: Option<gtk::Widget>,
+    scrollable_stack: bool,
 ) -> (
     gtk::Box,
     gtk::Box,
@@ -2027,6 +2020,8 @@ fn pane_base(
     let heading = gtk::Label::new(Some(title));
     heading.set_xalign(0.0);
     heading.set_hexpand(true);
+    heading.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    heading.set_max_width_chars(1);
     let spinner = gtk::Spinner::new();
     spinner.set_visible(false);
     if let Some(leading) = header_leading {
@@ -2055,7 +2050,21 @@ fn pane_base(
     stack.add_named(&loading, Some("loading"));
     stack.add_named(&status, Some("status"));
     stack.set_visible_child_name("content");
-    shell.append(&stack);
+    if scrollable_stack {
+        // Explorer columns have user-resizable fixed widths. Keep their leading edge visible when
+        // the window is narrower than their combined width, and scroll the headings and rows as
+        // one surface while keeping the pane header pinned to the visible window width.
+        let scroll = gtk::ScrolledWindow::builder()
+            .child(&stack)
+            .hscrollbar_policy(gtk::PolicyType::Automatic)
+            .vscrollbar_policy(gtk::PolicyType::Never)
+            .hexpand(true)
+            .vexpand(true)
+            .build();
+        shell.append(&scroll);
+    } else {
+        shell.append(&stack);
+    }
 
     let model = gtk::StringList::new(&[]);
     (shell, content, model, stack, status, spinner, notice)
