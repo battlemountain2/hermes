@@ -111,7 +111,17 @@ fn private_hover_cards_load_only_when_visible_cancel_and_keep_their_size() {
     let theme = super::super::theme::ThemeManager::shared();
     theme.set_hover_previews(true);
     let styles = gtk::CssProvider::new();
+    let errors = Rc::new(RefCell::new(Vec::new()));
+    let parsing_errors = errors.clone();
+    styles.connect_parsing_error(move |_, _, error| {
+        parsing_errors.borrow_mut().push(error.to_string())
+    });
     styles.load_from_string(include_str!("../../style.css"));
+    assert!(
+        errors.borrow().is_empty(),
+        "GTK stylesheet errors: {:?}",
+        errors.borrow()
+    );
     gtk::style_context_add_provider_for_display(
         &gtk::gdk::Display::default().unwrap(),
         &styles,
@@ -123,6 +133,32 @@ fn private_hover_cards_load_only_when_visible_cancel_and_keep_their_size() {
         gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 320, 240).unwrap();
     pixels.fill(0x376f8aff);
     fs::write(&path, pixels.save_to_bufferv("png", &[]).unwrap()).unwrap();
+    let audio_path = root.join("hover-fixtures/silence.wav");
+    let mut wave = Vec::new();
+    wave.extend_from_slice(b"RIFF");
+    wave.extend_from_slice(&16_036u32.to_le_bytes());
+    wave.extend_from_slice(b"WAVEfmt ");
+    wave.extend_from_slice(&16u32.to_le_bytes());
+    wave.extend_from_slice(&1u16.to_le_bytes());
+    wave.extend_from_slice(&1u16.to_le_bytes());
+    wave.extend_from_slice(&8_000u32.to_le_bytes());
+    wave.extend_from_slice(&16_000u32.to_le_bytes());
+    wave.extend_from_slice(&2u16.to_le_bytes());
+    wave.extend_from_slice(&16u16.to_le_bytes());
+    wave.extend_from_slice(b"data");
+    wave.extend_from_slice(&16_000u32.to_le_bytes());
+    wave.resize(16_044, 0);
+    fs::write(&audio_path, wave).unwrap();
+    let audio = crate::sandbox::parse(
+        &audio_path,
+        ParseOperation::MediaMetadata,
+        0,
+        &Cancellation::default(),
+    )
+    .unwrap();
+    let audio: Details = serde_json::from_slice(&audio.data).unwrap();
+    assert_eq!(audio.duration_seconds, Some(1.0));
+    assert_eq!(audio.audio_codec.as_deref(), Some("pcm_s16le"));
     let mut photo = fixture_entry("photo.png");
     Rc::make_mut(&mut photo.0).location = Location::local(&path);
     let card = Card::new();
@@ -130,9 +166,11 @@ fn private_hover_cards_load_only_when_visible_cancel_and_keep_their_size() {
     assert!(!card.widget.is_mapped());
     assert!(card.task.borrow().is_none());
     let window = gtk::Window::new();
+    window.set_decorated(false);
     window.set_resizable(false);
     window.set_child(Some(&card.widget));
     window.present();
+    allocate(&window);
     let wait = |condition: &dyn Fn() -> bool| {
         let deadline = Instant::now() + Duration::from_secs(12);
         while !condition() {
@@ -146,12 +184,21 @@ fn private_hover_cards_load_only_when_visible_cancel_and_keep_their_size() {
             std::thread::sleep(Duration::from_millis(3));
         }
     };
-    wait(&|| card.widget.is_mapped() && card.widget.width() > 0);
+    wait(&|| card.widget.is_mapped() && card.widget.width() > 0 && card.widget.height() > 100);
     let initial = (card.widget.width(), card.widget.height());
+    let title_left = card.title.compute_bounds(&card.widget).unwrap().x();
     wait(&|| card.details.text().contains("320 × 240") && card.image.paintable().is_some());
     settle();
     assert_eq!(initial, (card.widget.width(), card.widget.height()));
+    assert_eq!(
+        title_left,
+        card.title.compute_bounds(&card.widget).unwrap().x()
+    );
+    snapshot(&window, &root.join("hover-photo.png"));
     assert!(card.current(card.generation.get()));
+    theme.set_preview_images(false);
+    assert!(!card.current(card.generation.get()));
+    theme.set_preview_images(true);
     let generation = card.generation.get();
     card.cancel();
     assert!(!card.current(generation));
@@ -174,13 +221,24 @@ fn private_hover_cards_load_only_when_visible_cancel_and_keep_their_size() {
     card.bind(song);
     assert_eq!(card.artist.text(), "Album artist fallback");
     settle();
-    for theme_id in ["azure", "paper"] {
+    for theme_id in ["azure-glow", "paper"] {
         theme.select_theme(theme_id);
         settle();
         snapshot(&window, &root.join(format!("hover-{theme_id}.png")));
     }
+    let normal_height = card.title.measure(gtk::Orientation::Vertical, -1).1;
     theme.set_interface_font_size(22);
+    wait(&|| {
+        card.title
+            .pango_context()
+            .font_description()
+            .unwrap()
+            .size()
+            == 22 * gtk::pango::SCALE
+    });
     settle();
+    allocate(&window);
+    assert!(card.title.measure(gtk::Orientation::Vertical, -1).1 > normal_height);
     let scaled = (card.widget.width(), card.widget.height());
     card.apply_details(
         &Details {
@@ -198,8 +256,10 @@ fn private_hover_cards_load_only_when_visible_cancel_and_keep_their_size() {
     snapshot(&window, &root.join("hover-large-font.png"));
     theme.set_hover_previews(false);
     assert!(!card.current(card.generation.get()));
-    let restored = super::super::theme::ThemeManager::load();
-    assert!(!restored.hover_previews());
+    let saved: toml::Value =
+        toml::from_str(&fs::read_to_string(root.join("config/strata/settings.toml")).unwrap())
+            .unwrap();
+    assert_eq!(saved["hover_previews"].as_bool(), Some(false));
     theme.set_hover_previews(true);
     window.set_visible(false);
     assert!(card.task.borrow().is_none());
@@ -216,6 +276,7 @@ fn settle() {
 }
 
 fn snapshot(window: &gtk::Window, path: &std::path::Path) {
+    allocate(window);
     let snapshot = gtk::Snapshot::new();
     let mut child = window.first_child();
     while let Some(widget) = child {
@@ -230,6 +291,13 @@ fn snapshot(window: &gtk::Window, path: &std::path::Path) {
         .save_to_png(path)
         .unwrap();
     renderer.unrealize();
+}
+
+fn allocate(window: &gtk::Window) {
+    invalidate(window.upcast_ref());
+    let width = window.measure(gtk::Orientation::Horizontal, -1).1.max(300);
+    let height = window.measure(gtk::Orientation::Vertical, width).1.max(216);
+    window.allocate(width, height, -1, None);
 }
 
 fn invalidate(widget: &gtk::Widget) {

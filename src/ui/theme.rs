@@ -932,7 +932,7 @@ impl ThemeManager {
 
     fn apply_tokens(&self, tokens: &ThemeTokens) {
         self.provider.load_from_string(&format!(
-            "{}\nwindow, popover, .search-dialog, .search-filter-popover, .search-filter-panel, .app-modal-layer {{ font-size: {}px; }}\n",
+            "{}\nwindow, popover, .search-dialog, .search-filter-popover, .search-filter-panel, .app-modal-layer, .hermes-hover-card {{ font-size: {}px; }}\n",
             tokens_css(tokens, self.interface_font()),
             self.interface_font_size()
         ));
@@ -1330,7 +1330,7 @@ fn tokens_css(tokens: &ThemeTokens, interface_font: &str) -> String {
         _ => r#""Maple Mono Normal", "JetBrains Mono", monospace"#,
     };
     format!(
-        "@define-color theme_bg {};\n@define-color theme_surface {};\n@define-color theme_text {};\n@define-color theme_accent {};\n@define-color theme_danger {};\n@define-color theme_muted {};\n@define-color theme_highlight {};\n@define-color theme_border {};\n@define-color theme_dim_text {};\nwindow, popover, .search-dialog, .search-filter-popover, .search-filter-panel, .app-modal-layer, .preview-text, .preview-text text, .monospace, .search-filter-shortcut, .grid-thumbnail-value {{ font-family: {}; }}\n@define-color theme_on_accent {};\n",
+        "@define-color theme_bg {};\n@define-color theme_surface {};\n@define-color theme_text {};\n@define-color theme_accent {};\n@define-color theme_danger {};\n@define-color theme_muted {};\n@define-color theme_highlight {};\n@define-color theme_border {};\n@define-color theme_dim_text {};\nwindow, popover, .search-dialog, .search-filter-popover, .search-filter-panel, .app-modal-layer, .hermes-hover-card, .preview-text, .preview-text text, .monospace, .search-filter-shortcut, .grid-thumbnail-value {{ font-family: {}; }}\n@define-color theme_on_accent {};\n",
         tokens.background,
         tokens.surface,
         tokens.text,

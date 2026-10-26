@@ -108,9 +108,14 @@ impl Card {
         let filename = label("hover-filename", 32, 1);
         widget.append(&filename);
         let body = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let visual = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        visual.set_size_request(104, 104);
         let image = gtk::Image::new();
         image.set_size_request(104, 104);
-        body.append(&image);
+        image.set_halign(gtk::Align::Center);
+        image.set_valign(gtk::Align::Center);
+        visual.append(&image);
+        body.append(&visual);
         let text = gtk::Box::new(gtk::Orientation::Vertical, 5);
         let title = label("hover-title", 17, 1);
         let artist = label("hover-secondary", 17, 1);
