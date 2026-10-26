@@ -220,8 +220,9 @@ Hermes remains pre-1.0. Read the [current roadmap](docs/1.0-roadmap.md) and
 are the technical source of truth. [Performance notes](docs/performance-baseline.md) distinguish
 measured results from release targets and real-device checks still needed.
 
-Next priorities are richer optional hover previews, search/index coverage and controls,
-transfer/conflict polish, persistent per-folder views, and release validation. Smart Folders
+Optional [file hover cards](docs/hover-previews.md), folder-view memory, the Home dashboard and
+Omnibar commands are now implemented on the development branch. Next priorities are search/index
+coverage and controls, hover/folder-view acceptance checks, transfer/conflict polish, and release validation. Smart Folders
 are out of pre-1.0 scope; independent split view is optional. Full redo, advanced batch renaming
 and gapless music remain later work.
 

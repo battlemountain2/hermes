@@ -1,6 +1,44 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Visualizer dual mode, Prism/Orbit tuning, and spreadsheet polish — 2026-10-25 (current)
+## Git reconciliation and hover verification — 2026-10-26 (current)
+
+The user finished the concurrent work and asked to keep GitHub current. Re-fetched origin and
+combined the desktop's twelve commits with Omarchy commit `cfccf34` using merge `39edd43`.
+Both histories are retained: no reset/rebase/force-push, no main merge and no version change.
+The combined branch is `feat/6-spreadsheet-and-settings-polish`, still tracked by draft PR #5
+and issue #4. The merge is pushed; final follow-up tests/docs are published with this checkpoint.
+
+- Private GTK checks exposed a missing closing brace before the picker CSS. That error had
+  invalidated the picker rules. Repaired the boundary, kept Home/Omnibar and picker styling,
+  and removed unsupported web-only cursor/align-items properties. The hover fixture now fails
+  on stylesheet parsing errors instead of silently tolerating the broken styling.
+- Hover artwork now has a reserved 104px column: the shared thumbnail helper resets the image's
+  size request for its fallback, so reserving only the image itself allowed text to jump.
+  Tests check both whole-card size and title position before/after thumbnail loading.
+- Added the hover card to the dynamic font policy, including tooltip windows. The private
+  test waits for the actual 22px Pango font before measuring/snapshotting; merely changing
+  preferences and checking an unchanged allocation was not a valid large-font test.
+- The fixture uses generated PNG/WAV only, tests real sandbox metadata transport without audio
+  output, lazy map loading, cancellation/rebinding, preview policy, persisted hover preference,
+  dark/Paper rendering and large-font stability. It is the sixth case in the private picker
+  harness; it does not replace physical pointer/keyboard/Wayland acceptance.
+- Debug/release builds and all-target checking pass without warnings. Regular tests pass1009
+  serially; the process-global thumbnail case and fake-output pause/resume regression each
+  pass in separate exact invocations (1011 total across three runs,216 optional cases ignored
+  in the regular run).31 Python icon/setup/profile checks pass. Six private GTK cases,
+  eight first-call cold activations and real private portal forwarding/restoration pass.
+- Full-repository formatting still reports existing differences; Clippy is not installed in
+  the selected toolchain. Do not claim release CI is green. The overwrite-dialog fixture's
+  pre-existing g_markup_escape_text critical is separate from the fatal-critical hover and
+  preview-visual tests. No real media was played or user document/tag changed.
+
+Verification logs: `/tmp/hermes-sync-checks/`. Persistent pre-sync Git bundle and patch backup:
+`/home/bry/.local/state/hermes/backups/github-sync-2026-10-26-ItKlOa/`.
+This batch does not install or restart Hermes, browsers, or the real portal, nor change desktop
+defaults. Earlier installed-build claims below are historical, not the current verification.
+See docs/hover-previews.md and the October26 roadmap checkpoint for scope and acceptance gates.
+
+## Visualizer dual mode, Prism/Orbit tuning, and spreadsheet polish — 2026-10-25
 
 - Added Visualizer Dual Mode in Immersive View:
   - Users can now enjoy audio visualizers right beside scrolling lyrics! When both `Lyrics` and `Visualizer` top-bar toggles are active, the audio-reactive visualizer embeds directly inside the album art card (`art_stack`), leaving the deck controls, scrubber, and scrolling lyrics visible side by side.
