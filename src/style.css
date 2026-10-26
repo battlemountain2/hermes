@@ -4224,6 +4224,11 @@ button.music-cover-button:focus-visible {
   font-size: 1em;
 }
 
+.spreadsheet-cell selection {
+  background: @theme_accent;
+  color: @theme_on_accent;
+}
+
 .spreadsheet-container scrollbar,
 .spreadsheet-container scrollbar trough,
 .spreadsheet-layout-scroll scrollbar,
@@ -4399,7 +4404,8 @@ button.music-cover-button:focus-visible {
 }
 
 .immersive-stage-solo .immersive-art-pic,
-.immersive-stage-solo .immersive-art-img {
+.immersive-stage-solo .immersive-art-img,
+.immersive-stage-solo .immersive-card-visualizer {
   border-radius: 22px;
 }
 
@@ -4411,7 +4417,8 @@ button.music-cover-button:focus-visible {
 }
 
 .immersive-art-pic,
-.immersive-art-img {
+.immersive-art-img,
+.immersive-card-visualizer {
   border-radius: 18px;
 }
 

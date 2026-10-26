@@ -229,6 +229,7 @@ struct ImmersiveState {
     art_box: gtk::Box,
     art_stack: gtk::Stack,
     art_picture: gtk::Picture,
+    card_visualizer: canvas::VisualizerCanvas,
     title_label: gtk::Label,
     artist_label: gtk::Label,
     scrub_scale: gtk::Scale,
@@ -393,6 +394,11 @@ impl ImmersiveView {
         art_picture.add_css_class("immersive-art-pic");
         art_picture.set_size_request(480, 480);
         art_stack.add_named(&art_picture, Some("picture"));
+
+        let card_visualizer = canvas::VisualizerCanvas::new();
+        card_visualizer.add_css_class("immersive-card-visualizer");
+        card_visualizer.set_size_request(480, 480);
+        art_stack.add_named(&card_visualizer, Some("visualizer"));
 
         let art_fallback = assets::primary_icon(icons::MUSIC, 160);
         art_fallback.add_css_class("immersive-art-img");
@@ -614,6 +620,7 @@ impl ImmersiveView {
             art_box,
             art_stack,
             art_picture,
+            card_visualizer,
             title_label,
             artist_label,
             scrub_scale,
@@ -679,7 +686,7 @@ impl ImmersiveView {
             if let Some(state) = lyrics_state.upgrade()
                 && !state.mode_syncing.get()
             {
-                state.set_mode(btn.is_active(), false);
+                state.set_lyrics_mode(btn.is_active());
             }
         });
 
@@ -688,7 +695,7 @@ impl ImmersiveView {
             if let Some(state) = vis_state.upgrade()
                 && !state.mode_syncing.get()
             {
-                state.set_mode(false, btn.is_active());
+                state.set_visualizer_mode(btn.is_active());
             }
         });
 
@@ -889,6 +896,30 @@ impl Drop for ImmersiveView {
 }
 
 impl ImmersiveState {
+    fn set_lyrics_mode(self: &Rc<Self>, lyrics: bool) {
+        if self.stopped.get() || self.mode_syncing.replace(true) {
+            return;
+        }
+        if !lyrics {
+            self.cancel_online_lyrics();
+        }
+        self.lyrics_active.set(lyrics);
+        self.lyrics_btn.set_active(lyrics);
+        self.mode_syncing.set(false);
+        self.sync();
+    }
+
+    fn set_visualizer_mode(self: &Rc<Self>, visualizer: bool) {
+        if self.stopped.get() || self.mode_syncing.replace(true) {
+            return;
+        }
+        self.visualizer_active.set(visualizer);
+        self.visualizer_btn.set_active(visualizer);
+        self.mode_syncing.set(false);
+        self.sync();
+    }
+
+    #[cfg(test)]
     fn set_mode(self: &Rc<Self>, lyrics: bool, visualizer: bool) {
         if self.stopped.get() || self.mode_syncing.replace(true) {
             return;
@@ -945,6 +976,7 @@ impl ImmersiveState {
         self.visualizer_bands
             .set([0.0; crate::playback::SPECTRUM_BANDS]);
         self.visualizer_canvas.clear();
+        self.card_visualizer.clear();
         self.art_picture
             .set_paintable(Option::<&gdk::Paintable>::None);
         self.art_stack.set_visible_child_name("fallback");
@@ -1017,12 +1049,15 @@ impl ImmersiveState {
 
     fn redraw_visualizer(&self) {
         if self.is_mapped() && !self.stopped.get() && self.visualizer_active.get() {
-            self.visualizer_canvas.set_frame(
-                self.visualizer_style.get(),
-                self.vis_t.get(),
-                self.visualizer_bands.get(),
-                self.palette.get(),
-            );
+            let style = self.visualizer_style.get();
+            let time = self.vis_t.get();
+            let bands = self.visualizer_bands.get();
+            let palette = self.palette.get();
+            if self.lyrics_active.get() {
+                self.card_visualizer.set_frame(style, time, bands, palette);
+            } else {
+                self.visualizer_canvas.set_frame(style, time, bands, palette);
+            }
         }
     }
 
@@ -1060,12 +1095,30 @@ impl ImmersiveState {
             } else {
                 0
             });
-        let active = self.visualizer_active.get();
-        self.visualizer_canvas.set_visible(active);
-        self.style_selector.set_visible(active);
-        self.stage_box.set_visible(!active);
-        self.floating_dock.set_visible(active);
-        if !active {
+        let lyrics = self.lyrics_active.get();
+        let visualizer = self.visualizer_active.get();
+        let full_stage_vis = visualizer && !lyrics;
+        let card_vis = visualizer && lyrics;
+
+        self.visualizer_canvas.set_visible(full_stage_vis);
+        self.floating_dock.set_visible(full_stage_vis);
+        self.stage_box.set_visible(!full_stage_vis);
+        self.style_selector.set_visible(visualizer);
+
+        if card_vis {
+            self.art_stack.set_visible_child_name("visualizer");
+        } else if self.art_picture.paintable().is_some() {
+            self.art_stack.set_visible_child_name("picture");
+        } else {
+            self.art_stack.set_visible_child_name("fallback");
+        }
+
+        if !visualizer {
+            self.visualizer_canvas.clear();
+            self.card_visualizer.clear();
+        } else if full_stage_vis {
+            self.card_visualizer.clear();
+        } else {
             self.visualizer_canvas.clear();
         }
         let track = self.controller.current_track();
@@ -1250,7 +1303,9 @@ impl ImmersiveState {
                 && let Ok(texture) = gdk::Texture::from_bytes(&glib::Bytes::from_owned(bytes))
             {
                 self.art_picture.set_paintable(Some(&texture));
-                self.art_stack.set_visible_child_name("picture");
+                if !(self.visualizer_active.get() && self.lyrics_active.get()) {
+                    self.art_stack.set_visible_child_name("picture");
+                }
             }
             self.current_lyrics.replace(output.lyrics);
         }
@@ -1271,7 +1326,6 @@ impl ImmersiveState {
         if self.stopped.get()
             || !self.is_mapped()
             || !self.lyrics_active.get()
-            || self.visualizer_active.get()
             || self.current_lyrics.borrow().is_some()
             || self.lyrics_attempted.get()
             || *self.lyrics_status.borrow() != LyricsStatus::LocalMissing
@@ -1330,7 +1384,6 @@ impl ImmersiveState {
         if self.stopped.get()
             || !self.is_mapped()
             || !self.lyrics_active.get()
-            || self.visualizer_active.get()
             || !ThemeManager::shared().online_lyrics()
             || self.controller.closed.get()
             || self.controller.generation.get() != generation
@@ -1382,7 +1435,6 @@ impl ImmersiveState {
         if !self.is_mapped()
             || self.stopped.get()
             || !self.lyrics_active.get()
-            || self.visualizer_active.get()
         {
             return;
         }
@@ -1539,7 +1591,7 @@ impl ImmersiveState {
     }
 
     fn update_stage_layout(self: &Rc<Self>) {
-        let show_lyrics = self.lyrics_active.get() && !self.visualizer_active.get();
+        let show_lyrics = self.lyrics_active.get();
         if show_lyrics && !self.lyrics_built.get() {
             self.rebuild_lyrics_ui();
         }
@@ -1549,10 +1601,12 @@ impl ImmersiveState {
             self.stage_box.remove_css_class("immersive-stage-solo");
             self.art_box.set_size_request(480, 480);
             self.art_picture.set_size_request(480, 480);
+            self.card_visualizer.set_size_request(480, 480);
         } else {
             self.stage_box.add_css_class("immersive-stage-solo");
             self.art_box.set_size_request(580, 580);
             self.art_picture.set_size_request(580, 580);
+            self.card_visualizer.set_size_request(580, 580);
         }
     }
 }

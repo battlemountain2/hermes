@@ -226,23 +226,45 @@ fn desktop_lyrics_and_visualizer_modes_switch_cleanly_and_keep_empty_layout_stab
     assert_eq!((labels[0].width(), labels[0].height()), original_bounds);
     labels[0].remove_css_class("active-lyric");
     for _ in 0..5 {
+        // 1. Dual side-by-side mode (both lyrics and visualizer active)
         view.state.visualizer_btn.set_active(true);
         assert!(view.state.visualizer_active.get());
-        assert!(!view.state.lyrics_btn.is_active());
+        assert!(view.state.lyrics_btn.is_active());
+        assert!(view.state.stage_box.is_visible());
+        assert!(view.state.lyrics_scroll.is_visible());
+        assert_eq!(view.state.art_stack.visible_child_name().as_deref(), Some("visualizer"));
+        assert!(!view.state.visualizer_canvas.is_visible());
+
+        // 2. Full-stage visualizer mode (lyrics inactive, visualizer active)
+        view.state.lyrics_btn.set_active(false);
+        assert!(!view.state.lyrics_active.get());
+        assert!(view.state.visualizer_active.get());
         assert!(!view.state.stage_box.is_visible());
-        view.state.lyrics_btn.set_active(true);
+        assert!(view.state.visualizer_canvas.is_visible());
+        assert!(view.state.floating_dock.is_visible());
+
+        // 3. Solo artwork mode (both inactive)
+        view.state.visualizer_btn.set_active(false);
         assert!(!view.state.visualizer_active.get());
-        assert!(!view.state.visualizer_btn.is_active());
+        assert!(view.state.stage_box.is_visible());
+        assert!(!view.state.lyrics_scroll.is_visible());
+        assert!(view.state.stage_box.has_css_class("immersive-stage-solo"));
+        assert!(!view.state.visualizer_canvas.is_visible());
+
+        // 4. Standard lyrics mode (lyrics active, visualizer inactive)
+        view.state.lyrics_btn.set_active(true);
+        assert!(view.state.lyrics_active.get());
+        assert!(!view.state.visualizer_active.get());
         assert!(view.state.stage_box.is_visible());
         assert!(view.state.lyrics_scroll.is_visible());
         assert!(!view.state.visualizer_canvas.is_visible());
         assert!(view.state.tick.borrow().is_none());
         assert_eq!(*view.state.lyric_labels.borrow(), labels);
     }
-    view.state.visualizer_btn.set_active(true);
+    view.state.set_mode(false, true);
     view.state.current_lyrics.replace(None);
     view.state.rebuild_lyrics_ui();
-    view.state.lyrics_btn.set_active(true);
+    view.state.set_mode(true, false);
     assert!(view.state.lyrics_scroll.is_visible());
     assert!(view.state.lyrics_built.get());
     assert!(view.state.lyrics_box.first_child().is_some());

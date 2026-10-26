@@ -1,6 +1,24 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Immersive artwork focus, flicker-free controls, and immediate playback — 2026-10-25 (current)
+## Visualizer dual mode, Prism/Orbit tuning, and spreadsheet polish — 2026-10-25 (current)
+
+- Added Visualizer Dual Mode in Immersive View:
+  - Users can now enjoy audio visualizers right beside scrolling lyrics! When both `Lyrics` and `Visualizer` top-bar toggles are active, the audio-reactive visualizer embeds directly inside the album art card (`art_stack`), leaving the deck controls, scrubber, and scrolling lyrics visible side by side.
+  - When `Visualizer` is active and `Lyrics` is toggled off, Hermes smoothly enters Full-Stage Visualizer Mode (stage box hidden, visualizer expands edge-to-edge, floating pill dock at bottom).
+  - When `Visualizer` is toggled off and `Lyrics` is toggled off, Hermes displays Solo Album Artwork Mode (enlarged 580x580 centered card with deck controls).
+  - When `Visualizer` is toggled off and `Lyrics` is active, Hermes displays standard Album Art + Scrolling Lyrics.
+- Fine-tuned Prism and Orbit visualizer modes to match Aurora Waves:
+  - Prism: increased sub-bass reactivity (`0.025 * sub_bass` breath expansion), reactive per-depth frequency stroke width (`scale * (1.35 - depth * 0.10 + 0.25 * tier_energy)`), and dynamic frequency-tier alpha modulation.
+  - Orbit: enhanced planetary star flare radius (`scale * (1.6 + seed * 1.0 + energy * 1.2)`), reactive star alpha (`0.65 + 0.32 * energy`), and elevated spectrum column height dynamics (`scale * 2.0 + height * 0.11 * energy`).
+  - All sparse GSK render budgets and 4K bounds strictly preserved and verified.
+- Polished Spreadsheet & Table Previews:
+  - Added cell text selection (`label.set_selectable(true)`) allowing users to highlight and copy (`Ctrl+C`) cell text.
+  - Added truncated cell tooltips: hovering over any cell displays the full cell value without needing to resize columns.
+  - Added 2D navigation shortcuts: `Ctrl+Home` jumps to the top-left origin (first row and column), `Ctrl+End` jumps to the bottom-right corner.
+  - Styled cell text selection with `@theme_accent` and `@theme_on_accent` semantic tokens.
+- 1,011 unit tests pass, zero warnings on `cargo check --all-targets`. Built `--release` and installed to `~/.local/bin/hermes`.
+
+## Immersive artwork focus, flicker-free controls, and immediate playback — 2026-10-25
 
 - Elevated artwork presence in Immersive mode with increased stage sizing (480x480 with lyrics, 580x580 solo) and edge-to-edge `Cover` fitting to eliminate letterboxing and center the album artwork.
 - Re-architected Immersive deck layout to follow modern media standards: Title & Artist positioned directly beneath artwork, followed by a unified horizontal scrubber row (elapsed, seek bar, remaining), centered transport buttons, and centered volume slider.

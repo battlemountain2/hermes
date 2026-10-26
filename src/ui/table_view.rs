@@ -341,6 +341,7 @@ fn build_sheet_table_page(sheet: &SheetData) -> gtk::Widget {
             label.add_css_class("spreadsheet-cell");
             label.set_xalign(0.0);
             label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            label.set_selectable(true);
             if let Some(list_item) = item.downcast_ref::<gtk::ColumnViewCell>() {
                 list_item.set_child(Some(&label));
             }
@@ -355,6 +356,11 @@ fn build_sheet_table_page(sheet: &SheetData) -> gtk::Widget {
                 if let Some(row) = rows_for_factory.get(row_idx) {
                     let text = row.get(col_idx).map(String::as_str).unwrap_or("");
                     label.set_text(text);
+                    if !text.is_empty() {
+                        label.set_tooltip_text(Some(text));
+                    } else {
+                        label.set_tooltip_text(None);
+                    }
                 }
             }
         });
@@ -515,10 +521,16 @@ fn attach_table_key_controller(
                         return glib::Propagation::Stop;
                     }
                     gtk::gdk::Key::Home => {
+                        if state.contains(gtk::gdk::ModifierType::CONTROL_MASK) {
+                            hadj.set_value(hadj.lower());
+                        }
                         vadj.set_value(vadj.lower());
                         return glib::Propagation::Stop;
                     }
                     gtk::gdk::Key::End => {
+                        if state.contains(gtk::gdk::ModifierType::CONTROL_MASK) {
+                            hadj.set_value((hadj.upper() - hadj.page_size()).max(hadj.lower()));
+                        }
                         vadj.set_value((vadj.upper() - vadj.page_size()).max(vadj.lower()));
                         return glib::Propagation::Stop;
                     }

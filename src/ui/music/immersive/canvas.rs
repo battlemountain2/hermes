@@ -274,7 +274,8 @@ fn prism_geometry(width: f64, height: f64, frame: Frame) -> [Stroke; PRISM_FRAME
         width * 0.5 + width.min(height) * 0.012 * motion.sin(),
         height * 0.5 + width.min(height) * 0.008 * motion.cos(),
     );
-    let breath = 1.0 + 0.012 * band_energy(frame, 0, 4);
+    let sub_bass = band_energy(frame, 0, 4);
+    let breath = 1.0 + 0.025 * sub_bass;
     std::array::from_fn(|index| {
         let depth = (index / 4) as f64;
         let shrink = 0.77_f64.powf(depth) * breath;
@@ -287,12 +288,13 @@ fn prism_geometry(width: f64, height: f64, frame: Frame) -> [Stroke; PRISM_FRAME
             (half_width, half_height),
             (-half_width, half_height),
         ];
+        let tier_energy = band_energy(frame, (index / 4) * 4, 4);
         Stroke {
             start: rotate_point(corners[index % 4], angle, center),
             end: rotate_point(corners[(index + 1) % 4], angle, center),
-            width: scale * (1.7 - depth * 0.13),
+            width: scale * (1.35 - depth * 0.10 + 0.25 * tier_energy),
             blend: depth / (PRISM_FRAMES - 1) as f64,
-            alpha: 0.78 - depth * 0.055 + 0.12 * band_energy(frame, index / 4 * 4, 4),
+            alpha: (0.72 - depth * 0.045 + 0.22 * tier_energy).clamp(0.15, 0.98),
         }
     })
 }
@@ -349,9 +351,9 @@ fn orbit_geometry(width: f64, height: f64, frame: Frame) -> OrbitGeometry {
         let energy = band_energy(frame, index * 2 + 4, 2);
         Star {
             center: orbit_point(width, height, index % 2, angle),
-            radius: scale * (1.8 + seed * 1.2 + energy * 0.8),
+            radius: (scale * (1.6 + seed * 1.0 + energy * 1.2)).min(7.5),
             blend: seed,
-            alpha: 0.72 + energy * 0.23,
+            alpha: (0.65 + energy * 0.32).clamp(0.2, 0.98),
         }
     });
     OrbitGeometry {
@@ -363,9 +365,9 @@ fn orbit_geometry(width: f64, height: f64, frame: Frame) -> OrbitGeometry {
             Stroke {
                 start: orbit_point(width, height, track, start + segment as f64 * angle),
                 end: orbit_point(width, height, track, start + (segment + 1) as f64 * angle),
-                width: scale * 0.9,
+                width: scale * 1.0,
                 blend: track as f64,
-                alpha: 0.38,
+                alpha: 0.42,
             }
         }),
         links: std::array::from_fn(|index| {
@@ -375,20 +377,20 @@ fn orbit_geometry(width: f64, height: f64, frame: Frame) -> OrbitGeometry {
             Stroke {
                 start: stars[star].center,
                 end: orbit_point(width, height, star % 2, angle - 0.18),
-                width: scale * 0.7,
+                width: scale * 0.75,
                 blend: index as f64 / (ORBIT_STARS / 2 - 1) as f64,
-                alpha: 0.30,
+                alpha: 0.34,
             }
         }),
         stars,
         columns: std::array::from_fn(|index| {
             let spacing = width.min(height * 1.4) * 0.027;
             let energy = band_energy(frame, index * 2, 2);
-            let column_height = scale * 2.0 + height * 0.065 * energy;
+            let column_height = scale * 2.0 + height * 0.11 * energy;
             SpectrumColumn {
                 left: width * 0.5 + (index as f64 - 8.0) * spacing + spacing * 0.3,
                 top: height * 0.77 - column_height,
-                width: spacing * 0.4,
+                width: spacing * 0.42,
                 height: column_height,
                 blend: index as f64 / (ORBIT_COLUMNS - 1) as f64,
             }
