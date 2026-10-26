@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{path::PathBuf, rc::Rc};
+use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use gtk::{gio, glib, prelude::*};
 
@@ -195,6 +195,7 @@ struct State {
     recent_files_container: gtk::Box,
     browser: BrowserView,
     music_player: Option<super::music::MusicPlayer>,
+    open_music_handler: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
 #[derive(Clone)]
@@ -283,6 +284,7 @@ impl HomeDashboard {
             recent_files_container,
             browser,
             music_player,
+            open_music_handler: RefCell::new(None),
         });
 
         let dashboard = Self { scroller, state };
@@ -300,6 +302,10 @@ impl HomeDashboard {
         }
 
         dashboard
+    }
+
+    pub fn connect_open_music(&self, callback: Rc<dyn Fn()>) {
+        self.state.open_music_handler.replace(Some(callback));
     }
 
     pub fn widget(&self) -> &gtk::Widget {
@@ -386,6 +392,17 @@ impl HomeDashboard {
         let shelf = gtk::Box::new(gtk::Orientation::Horizontal, 16);
         shelf.add_css_class("home-music-shelf");
 
+        let click_gesture = gtk::GestureClick::new();
+        let weak_state = Rc::downgrade(&self.state);
+        click_gesture.connect_pressed(move |_, _, _, _| {
+            if let Some(state) = weak_state.upgrade() {
+                if let Some(handler) = state.open_music_handler.borrow().as_ref() {
+                    handler();
+                }
+            }
+        });
+        shelf.add_controller(click_gesture);
+
         let icon = assets::primary_icon(icons::MUSIC, 36);
         icon.add_css_class("home-music-artwork");
         shelf.append(&icon);
@@ -420,16 +437,32 @@ impl HomeDashboard {
         let play_btn = gtk::Button::new();
         play_btn.add_css_class("home-music-play-btn");
         let play_icon = if is_playing {
-            assets::primary_icon(icons::PAUSE, 18)
+            assets::on_accent_icon(icons::PAUSE, 18)
         } else {
-            assets::primary_icon(icons::PLAY, 18)
+            assets::on_accent_icon(icons::PLAY, 18)
         };
         play_btn.set_child(Some(&play_icon));
         play_btn.set_tooltip_text(Some(if is_playing { "Pause" } else { "Play" }));
 
         let ctrl = controller.clone();
+        let weak_player = player.downgrade();
+        let weak_state_for_play = Rc::downgrade(&self.state);
         play_btn.connect_clicked(move |_| {
-            ctrl.toggle();
+            if ctrl.current_track().is_some() {
+                ctrl.toggle();
+            } else {
+                let music_dir = glib::user_special_dir(glib::UserDirectory::Music);
+                if let (Some(player), Some(dir)) = (weak_player.upgrade(), music_dir) {
+                    if dir.is_dir() {
+                        player.play_folder(dir);
+                    }
+                }
+                if let Some(state) = weak_state_for_play.upgrade() {
+                    if let Some(handler) = state.open_music_handler.borrow().as_ref() {
+                        handler();
+                    }
+                }
+            }
         });
         shelf.append(&play_btn);
 
