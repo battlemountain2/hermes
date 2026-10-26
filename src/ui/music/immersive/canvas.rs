@@ -171,20 +171,30 @@ fn render_frame(snapshot: &gtk::Snapshot, width: f64, height: f64, frame: Frame)
 fn ribbons(snapshot: &gtk::Snapshot, width: f64, height: f64, frame: Frame) {
     let segments = ((width / 20.0).ceil() as usize).clamp(1, MAX_RIBBON_SEGMENTS);
     for ribbon in 0..4 {
-        let base_y = height * (0.35 + 0.1 * ribbon as f64);
-        let frequency = 0.0035 + 0.0006 * ribbon as f64;
-        let phase = phase(frame.time, 1.1 + 0.2 * ribbon as f64) + ribbon as f64 * 1.4;
-        let amplitude = 24.0 + 85.0 * f64::from(frame.bands[ribbon * 4]);
-        let color = frame.color(ribbon as f64 / 3.0, 0.65);
-        let mut previous = (
-            0.0,
-            base_y + amplitude * phase.sin() + amplitude * 0.3 * (-phase).cos(),
-        );
+        let base_y = height * (0.34 + 0.11 * ribbon as f64);
+        let frequency = 0.0032 + 0.0006 * ribbon as f64;
+        let speed = 1.05 + 0.22 * ribbon as f64;
+        let phase = phase(frame.time, speed) + ribbon as f64 * 1.35;
+        let band_idx = match ribbon {
+            0 => 0,
+            1 => 4,
+            2 => 10,
+            _ => 18,
+        };
+        let energy = f64::from(frame.bands[band_idx]);
+        let amplitude = 26.0 + 90.0 * energy;
+        let thickness = (2.2 + 1.2 * energy) as f32;
+        let color = frame.color(ribbon as f64 / 3.0, (0.62 + 0.32 * energy).min(0.96));
+        let wave = |horizontal: f64| {
+            let h1 = (horizontal * frequency + phase).sin();
+            let h2 = 0.35 * (horizontal * frequency * 2.1 - phase * 1.25).sin();
+            let h3 = 0.15 * (horizontal * frequency * 0.55 + phase * 0.7).cos();
+            base_y + amplitude * (h1 + h2 + h3)
+        };
+        let mut previous = (0.0, wave(0.0));
         for segment in 1..=segments {
             let horizontal = width * segment as f64 / segments as f64;
-            let vertical = base_y
-                + amplitude * (horizontal * frequency + phase).sin()
-                + amplitude * 0.3 * (horizontal * frequency * 1.8 - phase).cos();
+            let vertical = wave(horizontal);
             let delta_x = horizontal - previous.0;
             let delta_y = vertical - previous.1;
             snapshot.save();
@@ -192,7 +202,12 @@ fn ribbons(snapshot: &gtk::Snapshot, width: f64, height: f64, frame: Frame) {
             snapshot.rotate(delta_y.atan2(delta_x).to_degrees() as f32);
             snapshot.append_color(
                 &color,
-                &graphene::Rect::new(-0.25, -1.25, delta_x.hypot(delta_y) as f32 + 0.5, 2.5),
+                &graphene::Rect::new(
+                    -0.25,
+                    -thickness * 0.5,
+                    delta_x.hypot(delta_y) as f32 + 0.5,
+                    thickness,
+                ),
             );
             snapshot.restore();
             previous = (horizontal, vertical);

@@ -47,6 +47,9 @@ fn test_immersive_view_widget_construction_headless() {
     assert!(view.state.lyrics_active.get());
     assert!(!view.state.visualizer_active.get());
     assert!(view.widget().has_css_class("immersive-root"));
+    assert_eq!(view.state.floating_scrub.value(), 0.0);
+    view.state.floating_scrub.set_value(0.42);
+    assert!((view.state.floating_scrub.value() - 0.42).abs() < 0.001);
     assert!(view.state.asset_request.borrow().is_none());
     assert!(view.state.asset_task.borrow().is_none());
     assert!(view.state.tick.borrow().is_none());
@@ -150,6 +153,7 @@ fn cancelled_asset_work_returns_without_loading_media() {
     assert!(assets.artwork.is_none());
     assert!(assets.lyrics.is_none());
 }
+
 
 fn fixture_view() -> ImmersiveView {
     ImmersiveView::new(

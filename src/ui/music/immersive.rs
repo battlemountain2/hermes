@@ -255,6 +255,7 @@ struct ImmersiveState {
     floating_repeat: gtk::Button,
     floating_speaker: gtk::Button,
     floating_volume: gtk::Scale,
+    floating_scrub: gtk::Scale,
     floating_time: gtk::Label,
     vis_t: Cell<f64>,
     last_frame_us: Cell<Option<i64>>,
@@ -313,7 +314,7 @@ impl ImmersiveView {
 
         let lyrics_btn = gtk::ToggleButton::builder()
             .active(true)
-            .tooltip_text("Toggle lyrics panel")
+            .tooltip_text("Lyrics")
             .build();
         lyrics_btn.add_css_class("immersive-pill-btn");
         let lyrics_btn_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -324,7 +325,7 @@ impl ImmersiveView {
 
         let visualizer_btn = gtk::ToggleButton::builder()
             .active(false)
-            .tooltip_text("Full-screen aesthetic visualizer")
+            .tooltip_text("Visualizer")
             .build();
         visualizer_btn.add_css_class("immersive-pill-btn");
         visualizer_btn.add_css_class("immersive-visualizer-btn");
@@ -528,6 +529,12 @@ impl ImmersiveView {
         floating_meta.append(&floating_artist);
         floating_dock.append(&floating_meta);
 
+        let floating_scrub = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
+        floating_scrub.set_draw_value(false);
+        floating_scrub.set_size_request(160, -1);
+        floating_scrub.add_css_class("immersive-floating-scrub");
+        floating_dock.append(&floating_scrub);
+
         let floating_time = gtk::Label::new(Some("0:00 / 0:00"));
         floating_time.add_css_class("immersive-time");
         floating_dock.append(&floating_time);
@@ -635,6 +642,7 @@ impl ImmersiveView {
             floating_repeat,
             floating_speaker,
             floating_volume,
+            floating_scrub,
             floating_time,
             vis_t: Cell::new(0.0),
             last_frame_us: Cell::new(None),
@@ -792,6 +800,21 @@ impl ImmersiveView {
         let ctrl = controller.clone();
         let scrub_state = Rc::downgrade(&state);
         state.scrub_scale.connect_change_value(move |_, _, value| {
+            if let Some(state) = scrub_state.upgrade()
+                && !state.syncing.get()
+            {
+                let duration = state.controller.duration();
+                if duration > 0 {
+                    let target_pos = (value * duration as f64) as i64;
+                    ctrl.seek(target_pos);
+                }
+            }
+            glib::Propagation::Proceed
+        });
+
+        let ctrl = controller.clone();
+        let scrub_state = Rc::downgrade(&state);
+        state.floating_scrub.connect_change_value(move |_, _, value| {
             if let Some(state) = scrub_state.upgrade()
                 && !state.syncing.get()
             {
@@ -1466,6 +1489,7 @@ impl ImmersiveState {
 
         self.syncing.set(true);
         self.scrub_scale.set_value(fraction);
+        self.floating_scrub.set_value(fraction);
         self.syncing.set(false);
 
         let current_sec = position / 1_000_000;

@@ -4443,8 +4443,7 @@ button.music-cover-button:focus-visible {
   transition: opacity 160ms ease;
 }
 
-.immersive-scrub-region,
-.immersive-floating-dock {
+.immersive-scrub-region {
   opacity: 0;
   transition: opacity 160ms ease;
 }
@@ -4452,15 +4451,12 @@ button.music-cover-button:focus-visible {
 .immersive-deck:hover .immersive-controls,
 .immersive-deck.controls-focused .immersive-controls,
 .immersive-deck:hover .immersive-scrub-region,
-.immersive-deck.controls-focused .immersive-scrub-region,
-.immersive-floating-dock:hover,
-.immersive-floating-dock.controls-focused {
+.immersive-deck.controls-focused .immersive-scrub-region {
   opacity: 1;
 }
 
 .immersive-root.reduced-motion .immersive-controls,
-.immersive-root.reduced-motion .immersive-scrub-region,
-.immersive-root.reduced-motion .immersive-floating-dock {
+.immersive-root.reduced-motion .immersive-scrub-region {
   transition: none;
 }
 
@@ -4527,11 +4523,31 @@ button.music-cover-button:focus-visible {
 }
 
 .immersive-floating-dock {
-  background: alpha(@theme_surface, 0.78);
-  border: 1px solid alpha(@theme_border, 0.35);
+  background: alpha(@theme_surface, 0.84);
+  border: 1px solid alpha(@theme_border, 0.4);
   border-radius: 28px;
-  padding: 8px 20px;
-  box-shadow: 0 8px 30px alpha(@theme_bg, 0.5);
+  padding: 8px 22px;
+  box-shadow: 0 8px 32px alpha(@theme_bg, 0.5);
+  opacity: 0.82;
+  transition: opacity 180ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.immersive-floating-dock:hover,
+.immersive-floating-dock.controls-focused {
+  opacity: 1;
+  background: alpha(@theme_surface, 0.95);
+  border-color: alpha(@theme_accent, 0.65);
+}
+
+.immersive-floating-scrub trough {
+  background: alpha(@theme_border, 0.35);
+  min-height: 4px;
+  border-radius: 2px;
+}
+
+.immersive-floating-scrub highlight {
+  background: @theme_accent;
+  border-radius: 2px;
 }
 
 .immersive-floating-title {
