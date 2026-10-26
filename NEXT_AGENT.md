@@ -1,14 +1,15 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Immersive visualizer, floating dock scrubber, and polish — 2026-10-25 (current)
+## Immersive artwork focus, flicker-free controls, and immediate playback — 2026-10-25 (current)
 
-- Added multi-harmonic organic aurora waves to the visualizer canvas with frequency-reactive amplitude, variable stroke thickness, and glowing alpha derived from the album palette.
-- Integrated a live seek/scrub scale directly into the floating dock during full-screen visualizer mode, allowing effortless scrubbing and track seeking without leaving the visualizer.
-- Fixed floating dock layout positioning by attaching it directly as a root `GtkOverlay` layer anchored to the bottom center (`valign: Align::End`, `margin_bottom: 28px`), preventing it from getting pushed behind the header when the stage is hidden.
-- Polished the floating dock styling with continuous semi-opaque presence (`opacity: 0.92`, transitioning to `1.0` on hover/focus) so controls never feel missing or flicker.
-- Simplified top bar tooltips and button titles to minimal "Lyrics" and "Visualizer" labels.
-- Verified dual-layout configuration (Hero Deck vs. Bottom Dock) remains cleanly isolated in Settings.
-- 1,011 unit tests pass, clean `cargo check --all-targets`. Commits: `cf6c65f`, `43bcbe9`. Built and installed to `~/.local/bin/hermes`.
+- Elevated artwork presence in Immersive mode with increased stage sizing (480x480 with lyrics, 580x580 solo) and edge-to-edge `Cover` fitting to eliminate letterboxing and center the album artwork.
+- Re-architected Immersive deck layout to follow modern media standards: Title & Artist positioned directly beneath artwork, followed by a unified horizontal scrubber row (elapsed, seek bar, remaining), centered transport buttons, and centered volume slider.
+- Completely removed hover-only zero-opacity rules (`opacity: 0`) on Immersive controls and scrubber, setting continuous high visibility (`0.94`, scaling to `1.0` on hover/focus) to eliminate flickering and missing controls.
+- Refined lyrics typography: removed boxy background cards from the active lyric line, making it fluid and bold (`font-size: 2.05em`, `font-weight: 800`) with soft depth-of-field contrast on inactive lines.
+- Prevented double controls in Immersive view by safeguarding `music_toggle` state changes from reverting the workspace to `"files"` and reviving the bottom transport bar.
+- Fixed playback activation latency: immediate `transport_visible = true` on autoplay requests ensures clicking any album or track instantly surfaces the player interface without waiting for the decoder subprocess.
+- Integrated live floating dock seeking, multi-harmonic aurora waves, and overlay anchoring for visualizer mode.
+- 1,011 unit tests pass, clean `cargo check --all-targets`. Built and installed to `~/.local/bin/hermes`.
 
 ## Office, Portal and UI polish committed and rebased — 2026-10-25
 

@@ -697,7 +697,7 @@ impl Controller {
         self.listening.borrow_mut().reset(Some(track.path.clone()));
         self.resume_position.set(resume_position);
         self.play_intent.set(autoplay);
-        self.transport_visible.set(was_visible);
+        self.transport_visible.set(was_visible || autoplay);
         self.notice.replace(format!(
             "{} · {}",
             if autoplay { "Now playing" } else { "Paused" },

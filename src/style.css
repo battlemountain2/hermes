@@ -4395,31 +4395,41 @@ button.music-cover-button:focus-visible {
 
 
 .immersive-stage-solo .immersive-art-box {
-  border-radius: 18px;
+  border-radius: 24px;
+}
+
+.immersive-stage-solo .immersive-art-pic,
+.immersive-stage-solo .immersive-art-img {
+  border-radius: 22px;
 }
 
 .immersive-art-box {
-  border-radius: 16px;
-  border: 1px solid alpha(@theme_border, 0.35);
-  box-shadow: 0 20px 50px alpha(@theme_bg, 0.65);
+  border-radius: 20px;
+  border: 1px solid alpha(@theme_border, 0.3);
+  box-shadow: 0 24px 60px alpha(@theme_bg, 0.7);
   background: alpha(@theme_surface, 0.85);
 }
 
 .immersive-art-pic,
 .immersive-art-img {
-  border-radius: 14px;
+  border-radius: 18px;
+}
+
+.immersive-meta-box {
+  padding-top: 4px;
 }
 
 .immersive-title {
   color: @theme_text;
-  font-size: 1.5em;
+  font-size: 1.65em;
   font-weight: 800;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
 }
 
 .immersive-artist {
   color: @theme_dim_text;
-  font-size: 1.05em;
+  font-size: 1.15em;
+  font-weight: 500;
 }
 
 .immersive-time {
@@ -4431,46 +4441,59 @@ button.music-cover-button:focus-visible {
 .immersive-scrub-scale trough {
   background: alpha(@theme_border, 0.35);
   min-height: 4px;
+  border-radius: 2px;
 }
 
 .immersive-scrub-scale highlight {
   background: @theme_accent;
+  border-radius: 2px;
 }
 
 .immersive-controls {
-  padding-top: 10px;
-  opacity: 0;
+  padding-top: 6px;
+  opacity: 0.94;
   transition: opacity 160ms ease;
 }
 
 .immersive-scrub-region {
-  opacity: 0;
+  padding-top: 4px;
+  opacity: 0.94;
+  transition: opacity 160ms ease;
+}
+
+.immersive-vol-row {
+  opacity: 0.94;
   transition: opacity 160ms ease;
 }
 
 .immersive-deck:hover .immersive-controls,
 .immersive-deck.controls-focused .immersive-controls,
 .immersive-deck:hover .immersive-scrub-region,
-.immersive-deck.controls-focused .immersive-scrub-region {
+.immersive-deck.controls-focused .immersive-scrub-region,
+.immersive-deck:hover .immersive-vol-row,
+.immersive-deck.controls-focused .immersive-vol-row {
   opacity: 1;
 }
 
 .immersive-root.reduced-motion .immersive-controls,
-.immersive-root.reduced-motion .immersive-scrub-region {
+.immersive-root.reduced-motion .immersive-scrub-region,
+.immersive-root.reduced-motion .immersive-vol-row {
   transition: none;
 }
 
 .immersive-control-btn {
-  background: alpha(@theme_surface, 0.6);
-  border: 1px solid alpha(@theme_border, 0.3);
-  border-radius: 6px;
-  color: @theme_text;
-  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: alpha(@theme_text, 0.75);
+  padding: 8px 10px;
+  box-shadow: none;
+  transition: color 150ms ease, background 150ms ease;
 }
 
 .immersive-control-btn:hover {
-  background: @theme_highlight;
-  color: @theme_accent;
+  background: alpha(@theme_surface, 0.6);
+  color: @theme_text;
 }
 
 .immersive-play-btn {
@@ -4479,23 +4502,33 @@ button.music-cover-button:focus-visible {
   border: 1px solid @theme_accent;
   border-radius: 50%;
   padding: 10px;
-  min-width: 44px;
-  min-height: 44px;
+  min-width: 46px;
+  min-height: 46px;
+  box-shadow: 0 4px 14px alpha(@theme_accent, 0.35);
+  transition: transform 120ms ease, box-shadow 120ms ease;
 }
 
 .immersive-play-btn:hover {
   background: @theme_accent;
   color: @theme_on_accent;
   border-color: @theme_text;
+  transform: scale(1.05);
+  box-shadow: 0 6px 18px alpha(@theme_accent, 0.45);
+}
+
+.immersive-play-btn:active {
+  transform: scale(0.96);
 }
 
 .immersive-vol-scale trough {
   background: alpha(@theme_border, 0.35);
   min-height: 4px;
+  border-radius: 2px;
 }
 
 .immersive-vol-scale highlight {
   background: @theme_accent;
+  border-radius: 2px;
 }
 
 .immersive-lyrics-box {
@@ -4503,23 +4536,24 @@ button.music-cover-button:focus-visible {
 }
 
 .immersive-lyric-line {
-  color: alpha(@theme_text, 0.35);
-  font-size: 1.35em;
-  font-weight: 600;
-  line-height: 1.4;
-  padding: 6px 10px;
-  border-radius: 6px;
-  transition: color 120ms ease, background-color 120ms ease;
+  color: alpha(@theme_text, 0.38);
+  font-size: 1.65em;
+  font-weight: 700;
+  line-height: 1.35;
+  padding: 8px 12px;
+  border-radius: 8px;
+  transition: color 200ms ease, font-size 200ms ease, opacity 200ms ease;
 }
 
 .immersive-lyric-line:hover {
-  color: alpha(@theme_text, 0.7);
+  color: alpha(@theme_text, 0.75);
 }
 
 .immersive-lyric-line.active-lyric {
   color: @theme_text;
-  font-weight: 600;
-  background: alpha(@theme_highlight, 0.2);
+  font-size: 2.05em;
+  font-weight: 800;
+  background: transparent;
 }
 
 .immersive-floating-dock {

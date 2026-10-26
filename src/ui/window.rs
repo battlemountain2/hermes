@@ -610,7 +610,11 @@ fn present_target(
     let shown_workspace = workspace.clone();
     let music_for_toggle = music_player.clone();
     music_toggle.connect_toggled(move |button| {
-        if shown_workspace.visible_child_name().as_deref() == Some("immersive") && !button.is_active() {
+        if shown_workspace.visible_child_name().as_deref() == Some("immersive") {
+            if button.is_active() {
+                shown_workspace.set_visible_child_name("music");
+                music_for_toggle.set_workspace("music");
+            }
             return;
         }
         let target = if button.is_active() { "music" } else { "files" };

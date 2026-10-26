@@ -372,7 +372,8 @@ impl ImmersiveView {
         stage_box.set_valign(gtk::Align::Center);
 
         // Deck: Artwork + Scrub + Meta + Hover Controls
-        let deck_container = gtk::Box::new(gtk::Orientation::Vertical, 16);
+        // Deck: Artwork + Meta + Scrub + Transport Controls + Volume
+        let deck_container = gtk::Box::new(gtk::Orientation::Vertical, 14);
         deck_container.add_css_class("immersive-deck");
         deck_container.set_valign(gtk::Align::Center);
 
@@ -380,7 +381,7 @@ impl ImmersiveView {
         let art_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
         art_box.set_overflow(gtk::Overflow::Hidden);
         art_box.add_css_class("immersive-art-box");
-        art_box.set_size_request(420, 420);
+        art_box.set_size_request(480, 480);
 
         let art_stack = gtk::Stack::new();
         art_stack.set_transition_type(gtk::StackTransitionType::Crossfade);
@@ -388,9 +389,9 @@ impl ImmersiveView {
 
         let art_picture = gtk::Picture::new();
         art_picture.set_can_shrink(true);
-        art_picture.set_content_fit(gtk::ContentFit::Contain);
+        art_picture.set_content_fit(gtk::ContentFit::Cover);
         art_picture.add_css_class("immersive-art-pic");
-        art_picture.set_size_request(420, 420);
+        art_picture.set_size_request(480, 480);
         art_stack.add_named(&art_picture, Some("picture"));
 
         let art_fallback = assets::primary_icon(icons::MUSIC, 160);
@@ -401,30 +402,9 @@ impl ImmersiveView {
         art_box.append(&art_stack);
         deck_container.append(&art_box);
 
-        // Scrubber Scale & Times
-        let scrub_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
-        scrub_box.add_css_class("immersive-scrub-region");
-        let scrub_scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
-        scrub_scale.set_draw_value(false);
-        scrub_scale.set_hexpand(true);
-        scrub_scale.add_css_class("immersive-scrub-scale");
-        scrub_box.append(&scrub_scale);
-
-        let times_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        let elapsed_label = gtk::Label::new(Some("0:00"));
-        elapsed_label.add_css_class("immersive-time");
-        let time_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        time_spacer.set_hexpand(true);
-        let remaining_label = gtk::Label::new(Some("0:00"));
-        remaining_label.add_css_class("immersive-time");
-        times_box.append(&elapsed_label);
-        times_box.append(&time_spacer);
-        times_box.append(&remaining_label);
-        scrub_box.append(&times_box);
-        deck_container.append(&scrub_box);
-
-        // Resting Meta Info
-        let meta_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        // Track Title & Artist (Directly below Artwork)
+        let meta_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        meta_box.add_css_class("immersive-meta-box");
         let title_label = gtk::Label::new(Some("Nothing playing"));
         title_label.add_css_class("immersive-title");
         title_label.set_xalign(0.0);
@@ -439,8 +419,25 @@ impl ImmersiveView {
         meta_box.append(&artist_label);
         deck_container.append(&meta_box);
 
-        // Permanently Visible Playback & Volume Controls
-        let controls_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        // Scrubber Scale & Times (Horizontal row: elapsed + scale + remaining)
+        let scrub_box = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        scrub_box.add_css_class("immersive-scrub-region");
+        let elapsed_label = gtk::Label::new(Some("0:00"));
+        elapsed_label.add_css_class("immersive-time");
+        let scrub_scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
+        scrub_scale.set_draw_value(false);
+        scrub_scale.set_hexpand(true);
+        scrub_scale.add_css_class("immersive-scrub-scale");
+        let remaining_label = gtk::Label::new(Some("0:00"));
+        remaining_label.add_css_class("immersive-time");
+        scrub_box.append(&elapsed_label);
+        scrub_box.append(&scrub_scale);
+        scrub_box.append(&remaining_label);
+        deck_container.append(&scrub_box);
+
+        // Centered Transport Controls
+        let controls_row = gtk::Box::new(gtk::Orientation::Horizontal, 14);
+        controls_row.set_halign(gtk::Align::Center);
         controls_row.add_css_class("immersive-controls");
         controls_row.set_tooltip_text(Some("Playback controls · Tab to focus"));
 
@@ -450,15 +447,15 @@ impl ImmersiveView {
         shuffle_button.set_tooltip_text(Some("Shuffle"));
 
         let prev_button = gtk::Button::builder().tooltip_text("Previous").build();
-        prev_button.set_child(Some(&assets::primary_icon(icons::ARROW_LEFT, 16)));
+        prev_button.set_child(Some(&assets::primary_icon(icons::ARROW_LEFT, 18)));
         prev_button.add_css_class("immersive-control-btn");
 
         let play_button = gtk::Button::builder().tooltip_text("Play / Pause").build();
-        play_button.set_child(Some(&assets::on_accent_icon(icons::PLAY, 20)));
+        play_button.set_child(Some(&assets::on_accent_icon(icons::PLAY, 22)));
         play_button.add_css_class("immersive-play-btn");
 
         let next_button = gtk::Button::builder().tooltip_text("Next").build();
-        next_button.set_child(Some(&assets::primary_icon(icons::ARROW_RIGHT, 16)));
+        next_button.set_child(Some(&assets::primary_icon(icons::ARROW_RIGHT, 18)));
         next_button.add_css_class("immersive-control-btn");
 
         let repeat_button = gtk::Button::builder().tooltip_text("Repeat").build();
@@ -470,24 +467,25 @@ impl ImmersiveView {
         controls_row.append(&play_button);
         controls_row.append(&next_button);
         controls_row.append(&repeat_button);
+        deck_container.append(&controls_row);
 
-        let controls_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        controls_spacer.set_hexpand(true);
-        controls_row.append(&controls_spacer);
-
+        // Centered Volume Slider Row
+        let vol_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        vol_row.set_halign(gtk::Align::Center);
+        vol_row.add_css_class("immersive-vol-row");
         let speaker_button = gtk::Button::builder().tooltip_text("Mute / Unmute").build();
         speaker_button.set_child(Some(&assets::primary_icon(icons::VOLUME, 16)));
         speaker_button.add_css_class("immersive-control-btn");
-        controls_row.append(&speaker_button);
+        vol_row.append(&speaker_button);
 
         let volume_scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.05);
         volume_scale.set_draw_value(false);
         volume_scale.set_value(0.75);
-        volume_scale.set_size_request(80, -1);
+        volume_scale.set_size_request(160, -1);
         volume_scale.add_css_class("immersive-vol-scale");
-        controls_row.append(&volume_scale);
+        vol_row.append(&volume_scale);
+        deck_container.append(&vol_row);
 
-        deck_container.append(&controls_row);
         install_control_focus(&deck_container);
         stage_box.append(&deck_container);
 
@@ -502,7 +500,7 @@ impl ImmersiveView {
             .hexpand(true)
             .build();
         lyrics_scroll.add_css_class("immersive-lyrics-scroll");
-        lyrics_scroll.set_size_request(420, 480);
+        lyrics_scroll.set_size_request(460, 540);
         stage_box.append(&lyrics_scroll);
 
         content_box.append(&stage_box);
@@ -1549,12 +1547,12 @@ impl ImmersiveState {
         self.lyrics_scroll.set_visible(show_lyrics);
         if show_lyrics {
             self.stage_box.remove_css_class("immersive-stage-solo");
-            self.art_box.set_size_request(420, 420);
-            self.art_picture.set_size_request(420, 420);
+            self.art_box.set_size_request(480, 480);
+            self.art_picture.set_size_request(480, 480);
         } else {
             self.stage_box.add_css_class("immersive-stage-solo");
-            self.art_box.set_size_request(520, 520);
-            self.art_picture.set_size_request(520, 520);
+            self.art_box.set_size_request(580, 580);
+            self.art_picture.set_size_request(580, 580);
         }
     }
 }
