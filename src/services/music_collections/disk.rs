@@ -23,9 +23,21 @@ impl Storage {
             .mode(0o600)
             .open(lock_path)
             .map_err(|error| error.to_string())?;
-        ownership.try_lock().map_err(|error| {
-            format!("Collections are in use by another Hermes instance or cannot be locked: {error}. Close the other instance and restart to edit.")
-        })?;
+        let mut attempts = 0;
+        loop {
+            match ownership.try_lock() {
+                Ok(()) => break,
+                Err(error) => {
+                    attempts += 1;
+                    if attempts >= 10 {
+                        return Err(format!(
+                            "Collections are in use by another Hermes instance or cannot be locked: {error}. Close the other instance and restart to edit."
+                        ));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
+        }
         Ok(Self {
             path: path.to_owned(),
             expected: read_bytes(path)?,

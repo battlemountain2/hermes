@@ -19,7 +19,7 @@ use crate::services::{
     SearchResult, SearchResultKey, SearchScope, index_tree, search_filter_values, search_filter_terms,
 };
 
-const SEARCH_HELP: &str = "Find files, folders, songs, artists and albums across Home\nChoose This folder to search another drive or a specific location\nUse Filters for types, dates and optional document content\nHidden files and symlinks are excluded";
+const SEARCH_HELP: &str = "Search files, folders, and music across Home\n\n• Type > to open Command Palette\n• Type home: or folder: or music: to switch scope\n• Press Ctrl+F for advanced type & date filters\n• Use ↑↓ arrows to navigate and Enter to open";
 const SEARCH_NOTICE_HINT: &str = "Names and metadata · Contents optional";
 const SEARCH_TYPES: [&str; 9] = [
     "All",
@@ -100,6 +100,7 @@ struct SearchState {
     open_results: RefCell<Option<Rc<dyn Fn(String)>>>,
     filters: SearchFilterPanel,
     categories: Vec<gtk::ToggleButton>,
+    scope_bar: gtk::Box,
 }
 
 struct EntityScope {
@@ -329,6 +330,16 @@ impl SearchDialog {
         field.add_css_class("search-field");
         field.set_max_length(1024);
         search_bar.append(&field);
+        let cmd_button = gtk::Button::with_label(">");
+        cmd_button.add_css_class("omnibar-cmd-btn");
+        cmd_button.set_tooltip_text(Some("Command Palette (type > for actions and settings)"));
+        let field_for_cmd = field.clone();
+        cmd_button.connect_clicked(move |_| {
+            field_for_cmd.set_text(">");
+            field_for_cmd.set_position(1);
+            field_for_cmd.grab_focus();
+        });
+        search_bar.append(&cmd_button);
         let filters = SearchFilterPanel::new();
         search_bar.append(&filters.button);
         panel.append(&search_bar);
@@ -353,44 +364,17 @@ impl SearchDialog {
             viewport.set_scroll_to_focus(true);
         }
 
-        let scope_bar = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        let scope_bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         scope_bar.add_css_class("search-scope-bar");
+        scope_bar.set_valign(gtk::Align::Center);
         let scope = gtk::DropDown::from_strings(&["This folder", "Home", "Music library"]);
         scope.set_selected(1);
         scope.set_tooltip_text(Some(
             "Home searches across your files and Music. This folder searches the current location, including other drives.",
         ));
-        let scope_label = gtk::Label::new(None);
-        scope_label.add_css_class("search-result-path");
-        scope_label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-        scope_label.set_max_width_chars(1);
-        scope_label.set_hexpand(true);
-        scope_label.set_xalign(0.0);
         scope_bar.append(&scope);
-        scope_bar.append(&scope_label);
-        let back_button = gtk::Button::with_label("Back");
-        back_button.add_css_class("search-filter-clear");
-        back_button.set_size_request(64, 32);
-        back_button.set_valign(gtk::Align::Center);
-        back_button.set_sensitive(false);
-        back_button.set_tooltip_text(Some("Back to overall search results"));
-        scope_bar.append(&back_button);
-        let save_button = gtk::Button::with_label("Save search");
-        save_button.add_css_class("search-filter-clear");
-        save_button.set_size_request(100, 32);
-        save_button.set_valign(gtk::Align::Center);
-        save_button.set_sensitive(false);
-        save_button.set_visible(false);
-        scope_bar.append(&save_button);
-        let refresh = gtk::Button::with_label("Refresh");
-        refresh.add_css_class("search-filter-apply");
-        refresh.set_tooltip_text(Some(
-            "Rescan this scope for added or changed files (Ctrl+R)",
-        ));
-        scope_bar.append(&refresh);
-        panel.append(&scope_bar);
 
-        let category_bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let category_bar = gtk::Box::new(gtk::Orientation::Horizontal, 2);
         category_bar.add_css_class("search-categories");
         let categories: Vec<_> = SEARCH_GROUPS
             .iter()
@@ -402,7 +386,41 @@ impl SearchDialog {
                 button
             })
             .collect();
-        panel.append(&category_bar);
+        scope_bar.append(&category_bar);
+
+        let scope_label = gtk::Label::new(None);
+        scope_label.add_css_class("search-result-path");
+        scope_label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        scope_label.set_max_width_chars(1);
+        scope_label.set_hexpand(true);
+        scope_label.set_xalign(0.0);
+        scope_bar.append(&scope_label);
+
+        let back_button = gtk::Button::with_label("Back");
+        back_button.add_css_class("search-filter-clear");
+        back_button.set_size_request(60, 28);
+        back_button.set_valign(gtk::Align::Center);
+        back_button.set_sensitive(false);
+        back_button.set_tooltip_text(Some("Back to overall search results"));
+        scope_bar.append(&back_button);
+
+        let save_button = gtk::Button::with_label("Save search");
+        save_button.add_css_class("search-filter-clear");
+        save_button.set_size_request(96, 28);
+        save_button.set_valign(gtk::Align::Center);
+        save_button.set_sensitive(false);
+        save_button.set_visible(false);
+        scope_bar.append(&save_button);
+
+        let refresh = gtk::Button::with_label("Refresh");
+        refresh.add_css_class("search-filter-apply");
+        refresh.set_size_request(64, 28);
+        refresh.set_valign(gtk::Align::Center);
+        refresh.set_tooltip_text(Some(
+            "Rescan this scope for added or changed files (Ctrl+R)",
+        ));
+        scope_bar.append(&refresh);
+        panel.append(&scope_bar);
 
         let notice = gtk::Label::new(Some(SEARCH_NOTICE_HINT));
         notice.add_css_class("search-notice");
@@ -511,6 +529,7 @@ impl SearchDialog {
             open_results: RefCell::new(None),
             filters,
             categories,
+            scope_bar,
         });
 
         let headers = Rc::downgrade(&state);
@@ -1173,6 +1192,7 @@ fn start_query(state: &Rc<SearchState>, query: &str) {
     clear_page(state);
 
     if let Some(cmd_query) = query.strip_prefix('>') {
+        state.scope_bar.set_visible(false);
         let commands = matching_commands(cmd_query);
         state.visible_commands.replace(commands.clone());
         state.visible_results.borrow_mut().clear();
@@ -1204,7 +1224,7 @@ fn start_query(state: &Rc<SearchState>, query: &str) {
             );
             state.results.set_visible_child_name("status");
         } else {
-            state.results.set_visible_child_name("list");
+            state.results.set_visible_child_name("results");
             if let Some(first) = state.list.row_at_index(0) {
                 state.list.select_row(Some(&first));
             }
@@ -1212,6 +1232,7 @@ fn start_query(state: &Rc<SearchState>, query: &str) {
         return;
     }
 
+    state.scope_bar.set_visible(true);
     state.visible_commands.borrow_mut().clear();
 
     let query = if let Some(stripped) = query.strip_prefix("home:") {
@@ -1332,7 +1353,8 @@ fn render_search_results(
     let has_results = !results.is_empty();
     state.visible_results.replace(results);
     state.rendering.set(true);
-    let progress = if indexing {
+    let is_empty_query = state.field.text().trim().is_empty();
+    let progress = if indexing && (!is_empty_query || has_results) {
         "Indexing selected scope — results update as song tags arrive"
     } else {
         ""
@@ -1343,6 +1365,7 @@ fn render_search_results(
         .map(|page| format!("{} of {} matches", page.shown, page.total))
         .unwrap_or_default();
     let groups = counts
+        .filter(|counts| counts.files + counts.songs + counts.albums + counts.artists > 0)
         .map(|counts| {
             format!(
                 "{} files · {} songs · {} albums · {} artists",

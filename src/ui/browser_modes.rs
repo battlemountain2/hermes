@@ -77,7 +77,7 @@ impl BrowserMode {
 
     pub(super) fn from_action_name(name: &str) -> Option<Self> {
         match name {
-            "list" => Some(Self::Columns),
+            "list" | "columns" => Some(Self::Columns),
             "grid" => Some(Self::Grid),
             "explorer" => Some(Self::Explorer),
             _ => None,

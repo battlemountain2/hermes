@@ -260,6 +260,12 @@ fn present_target(
         browser.clone(),
         Some(music_player.clone()),
     ));
+    let dash_music_toggle = music_toggle.downgrade();
+    home_dashboard.connect_open_music(Rc::new(move || {
+        if let Some(toggle) = dash_music_toggle.upgrade() {
+            toggle.set_active(true);
+        }
+    }));
     let content_stack = gtk::Stack::new();
     content_stack.set_transition_type(gtk::StackTransitionType::Crossfade);
     content_stack.set_hexpand(true);
@@ -847,23 +853,23 @@ fn present_target(
             "settings" => {
                 show_settings(&cmd_settings_layer, &cmd_settings_btn, &cmd_blurred_root);
             }
-            "view_columns" => {
+            "view_columns" | "view_compact" => {
                 cmd_mode_action.activate(Some(&"columns".to_variant()));
             }
-            "view_explorer" => {
+            "view_explorer" | "view_gallery" => {
                 cmd_mode_action.activate(Some(&"explorer".to_variant()));
             }
-            "view_grid" => {
+            "view_grid" | "view_large" => {
                 cmd_mode_action.activate(Some(&"grid".to_variant()));
             }
-            "view_list" => {
+            "view_list" | "view_details" => {
                 cmd_mode_action.activate(Some(&"list".to_variant()));
             }
             "density_compact" => {
                 cmd_theme.set_browser_density(BrowserDensity::Compact);
                 cmd_browser.set_density(BrowserDensity::Compact);
             }
-            "density_comfortable" => {
+            "density_comfortable" | "density_spacious" => {
                 cmd_theme.set_browser_density(BrowserDensity::Airy);
                 cmd_browser.set_density(BrowserDensity::Airy);
             }
