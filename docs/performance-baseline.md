@@ -1,5 +1,138 @@
 # Performance Baseline
 
+## Uncached Office font-index reuse — 2026-10-24
+
+The pooled preview sandbox already exposed the system Fontconfig cache, but the one-shot sandbox
+used for Office export and PDF pages did not. Those fresh helpers rebuilt system font indexes.
+One-shot helpers now use the same optional, read-only `/var/cache/fontconfig` mount. Missing caches
+retain normal font discovery; no cache refresh, personal profile, new writable host directory or
+network access is introduced. Full Layout, saved posters and conversion/resource limits stay intact.
+The existing converted-PDF environment fingerprint already includes this system cache directory.
+
+Paired measurements used the same optimized Hermes helper and installed LibreOffice, alternated
+without/with/with/without the mount. Every export used a fresh sandbox/profile/output, bypassing
+Hermes's converted-document caches. No compilation ran during these measurements. Inputs were a
+generated two-page DOCX, generated two-page XLSX and the reported49-slide Food and Agriculture deck.
+Original-file hashes were unchanged; all exports retained the same page counts and PDF byte sizes.
+
+| Input | Without system font cache, seconds | With read-only cache, seconds |
+| --- | --- | --- |
+| Generated DOCX | 0.800,0.701 | 0.404,0.400 |
+| Generated XLSX | 0.726,0.638 | 0.368,0.342 |
+| Reported49-slide PPTX | 6.427,6.387 | 6.056,6.024 |
+
+These small paired samples show about0.3–0.4seconds less export overhead on this host. They are
+uncached conversions on a warm filesystem, not cold-disk, complete UI-paint or universal speed
+claims. Large-deck import/export still dominates at about6seconds in this optimized helper probe;
+do not compare directly with earlier debug-build end-to-end measurements. The separate `fc-match`
+probe measured0.301–0.341seconds without the mount versus0.008–0.009seconds with it.
+
+The ignored adjacent regression
+`sandbox::office::tests::uncached_office_font_cache_comparison_retains_layout_and_original` repeats
+the paired export using `HERMES_OFFICE_TEST_FILE`, without writing to Hermes's converted-PDF cache.
+It checks page counts, first-page selectable text/glyph geometry and original-file preservation,
+without asserting machine-dependent timing thresholds. Generate synthetic inputs using
+`tests/fixtures/office/generate.py`; a built helper and system LibreOffice are required.
+Measurement and validation artifacts are recorded by `/tmp/hermes-office-fonts-path`.
+
+## Spreadsheet scrolling and Office scheduling — 2026-10-22
+
+Workbook Layout/Data now retain non-overlay horizontal and vertical scrollbars, with larger square
+handles. The Data stack builds only the first sheet table initially, then builds and retains each
+visited sheet. Private GTK checks verify one initial table out of16, three after visiting two new
+sheets, narrow/live-font layout, numeric sorting, fullscreen disposal and a generated200x40 grid
+whose adjustments reach the end of both axes and retain position on a sheet round-trip. Layout
+tests verify visible scrollbar geometry and hit testing so pan/selection leave scrollbar input alone.
+
+The shared Office admission gate gives selected-document conversions priority over waiting icon
+exports, without overlapping LibreOffice processes or interrupting a conversion already running.
+Cancellation releases foreground priority. Full PDF export now bounds embedded rasters at150dpi
+for screen previews, leaving vector/text content and originals unchanged; the disk-cache config
+revision changes to prevent reuse of old export settings. Macro/active-content/network protections
+and resource limits are unchanged.
+
+The49-slide Food and Agriculture deck measured8.927seconds on first conversion and1.077seconds
+on a fresh-process cached reopen. Its cache record was9,684,260bytes versus10,017,807bytes before
+the raster cap. The preceding uncapped run took14.895seconds but overlapped compilation, so this
+is not a controlled latency comparison or a universal speedup claim. First conversion is still
+noticeably slow; queue priority only reduces contention, not LibreOffice import time. Generated
+styled/multi-sheet and extended-row layouts pass under the capped export, with text and colors
+checked and the first formatted sheet visually inspected. Chart safety limitations remain.
+
+Build, test compilation and all-target check pass with five existing test-only lint warnings.
+969 regular cases pass with the two known cases filtered; the GLib thumbnail case passes separately
+(970 passing regular cases). The pre-existing baseline-flaky audio pause/resume case is still
+excluded, not silently fixed. Four exact private GTK checks pass. No real user window or audio
+was manipulated; physical pointer/scroll feel remains a user-controlled reopen check.
+
+## Progressive Office previews and persistent layouts — 2026-10-22
+
+Supersedes the memory-only and table-only snapshots below. Office loading can show a saved/cached
+poster before layout conversion finishes; embedded-poster decoding never starts LibreOffice. A
+generated saved-poster GUI check displayed its provisional image in81ms. Late posters are guarded
+by source identity/request generation and canceled on selection/mode changes or completion.
+
+Converted PDFs persist across application processes in the private bounded cache described in
+office-cache.md. On the reported49-slide Food and Agriculture deck, isolated debug runs measured
+12.494seconds for initial conversion and1.122seconds for a fresh-process cached reopen. This is
+one host/document measurement, not a promise for uncached first opens or cold storage. Conversion
+remains serialized, sandboxed and bounded; caches do not eliminate per-page PDF rendering costs.
+
+XLSX/ODS provide printed Layout and bounded interactive Data modes. Generated adapter observations
+were70ms Data,3.57seconds Layout and12ms back to Data. Layout checks preserve colors, merged cells,
+multiple sheets and printable rows beyond the Data200-row limit. The protected LibreOffice profile
+can omit charts/embedded objects; source print settings also determine pagination. No protection
+was loosened to improve fidelity. Originals were checked unchanged.
+
+Build/all-target check and test compilation pass with five pre-existing test-only lint warnings.
+967 regular tests pass with two known cases excluded; the isolated GLib thumbnail case also passes.
+The unchanged baseline-flaky GStreamer pause/resume case is not a full-suite sign-off. Four exact
+private-display regressions, two generated layout checks and fresh-process cache validation pass.
+Real physical-display feel and live listening remain user checks; the user's window was untouched.
+
+## Installed Office renderer and preview-worker follow-up — 2026-10-22
+
+System LibreOffice 26.8.1 is installed by the user and passes strict adapter/layout checks without
+the private runtime override. The reported 49-slide PPTX hit the old 10-second CPU limit; it renders
+all slides in approximately 12 seconds after an Office-only 30 CPU-second/35 wall-second budget.
+This is a single observed document/debug run, not a general cold-load speed guarantee. Other
+decoders keep their limits. Office icon exports share the cancellable conversion admission gate.
+
+Generated DOCX/PPTX/XLSX file icons render at the requested bounded size, persist in the existing
+disk cache and reload after memory eviction. Embedded previews are preferred; conversion exports
+only page one. Workbook thumbnails crop unused print margins. The selected workbook remains
+an interactive table with no sheet fade, square controls and inherited live fonts/theme.
+
+Missing audio previews reproduced when development replaced the running application's binary:
+the deleted executable path could not be mounted into new workers. The shared helper binding
+now pins the old running inode only in that case rather than substituting the rebuilt binary.
+Normal starts retain path bindings; the deleted-debug-binary fallback has a temporary copy cost.
+See audio-preview-reliability.md for evidence, safety and regression details. No live user window
+or audio playback was manipulated.
+
+## Optional Office layout conversion — 2026-10-20
+
+The new selected-document path exports once in an isolated LibreOffice process, caches bounded
+PDF bytes in memory and renders visible pages through the existing PDF worker. Page switches
+reuse conversion while canonical source identity and TTL remain valid. Conversion is serialized,
+off GTK, cancellable while queued or running, and bounded by separate resource/deadline stages.
+There is no permanent Office process, startup conversion, cloud service or user-profile reuse.
+Large converted PDFs are copied to a private temporary file for each page; this increment does
+not claim zero-copy navigation or an overall cold Office latency guarantee.
+
+Generated DOCX/ODT/PPTX examples preserve images, text glyphs, two-page/slide counts and aspect
+ratios. The real sandbox conversion/cache/page checks completed in about4.4seconds together under
+concurrent debug-test load on a warm filesystem, using an explicitly mounted LibreOfficeDev26.8
+test runtime. This is not representative performance for arbitrary files or the absent system
+renderer. The generic1.25GiB address limit failed that runtime; only conversion uses4GiB virtual
+address space with a512MiB data-segment cap. Other decoder budgets are unchanged.
+
+935 regular cases pass with the thumbnail-context and pause/resume cases excluded; the thumbnail
+case passes separately. The unchanged pause/resume test is intermittently Flushing even on the
+pushed baseline (2/5 exact repeats passed), so full-suite stability remains open. Seven isolated
+Office/PDF checks pass; build/all-target check pass with old test-only lint expectations. No live
+audio or actual user window/documents were exercised. See NEXT_AGENT.md and office-previews.md.
+
 ## Folder transitions and selected music artwork — 2026-10-20
 
 Columns, Grid and Explorer share a150ms loading-feedback grace period. Quick loads no longer

@@ -1,5 +1,7 @@
 # Hermes
 
+<img src="data/icons/scalable/apps/io.github.battlemountain2.Hermes.svg" alt="Hermes winged H" width="80" />
+
 **An ultra-fast, keyboard-first file manager, media workspace, and music player for Linux.**
 
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
@@ -75,7 +77,7 @@ Image/document renderers use a **[Bubblewrap (`bwrap`) sandbox](docs/preview-san
 - **Animated GIF Previews**: Sandboxed loopable playback with VP8 alpha-transparency retention.
 - **Photo Preview Menus**: Right-click an image in the drawer or fullscreen for file actions and Fullscreen/Fit/100% controls.
 - **Rich Text & Syntax Highlighting**: View source code and formatted text via GtkSourceView 5 with selectable mono fonts.
-- **Office Previews**: Read bounded DOCX/ODT paragraph and table text, ordered PPTX slide text, and multi-sheet XLSX/ODS tables. Parsers identify package structure rather than relying on filenames, preserve hyperlink labels without fetching targets, and bound ZIP expansion and worksheet allocation. These are read-only content previews, not faithful Office page/slide rendering or editing.
+- **Office Previews**: Optional LibreOffice rendering shows DOCX/ODT pages and PPTX slides with images/layout, selectable text, zoom and fullscreen. Saved/cached posters appear while layouts prepare, and converted documents are cached across restarts. XLSX/ODS offer formatted **Layout** and sortable **Data** views; data remains available if layout fails. Office icons use cached thumbnails too. Originals are never edited; print settings, missing fonts and disabled active objects can affect fidelity. See [Office previews](docs/office-previews.md).
 - **Format & Speed Audit**: See the [preview audit](docs/preview-format-audit.md) for verified coverage, Dolphin/Strata comparisons, measurements and remaining cold-loading work.
 - **Separate Streaming and Generation Limits**: The configured preview file-size ceiling limits thumbnail generation and image/document previews, not incremental audio/video playback. Format switches and sandbox decoder/resource limits still apply; raising the ceiling is not required to preview a large FLAC, MP4 or MOV.
 
@@ -113,7 +115,7 @@ Image/document renderers use a **[Bubblewrap (`bwrap`) sandbox](docs/preview-san
 | <kbd>Ctrl</kbd> + <kbd>M</kbd> | Open Music view |
 | <kbd>Ctrl</kbd> + <kbd>K</kbd> | Search current scope |
 | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>K</kbd> | Search whole Music library |
-| <kbd>F</kbd> | Fullscreen active video, image, or PDF preview |
+| <kbd>F</kbd> | Fullscreen active video, image, or PDF/Office document preview |
 | <kbd>Shift</kbd> + <kbd>F10</kbd> / <kbd>Menu</kbd> | Open context menu for selected item |
 | <kbd>Alt</kbd> + <kbd>Up</kbd> / <kbd>Down</kbd> | Reorder selected track in playback queue |
 | <kbd>Ctrl</kbd> + <kbd>H</kbd> | Toggle hidden files |
@@ -150,6 +152,10 @@ sudo pacman -S --needed \
 Optional large-photo acceleration uses `libvips` (`sudo pacman -S --needed libvips`).
 It is already available on the tested host; Hermes still works without it and no installer runs automatically.
 
+Optional Office page/slide rendering uses LibreOffice (`sudo pacman -S --needed libreoffice-fresh`).
+Without it, Office text previews and spreadsheet tables still work. Conversion is isolated and local;
+documents are not uploaded and the user's LibreOffice profile is not reused.
+
 ### Build from Source
 
 Ensure you have a modern Rust toolchain installed (edition 2024 / Rust 1.85+):
@@ -163,10 +169,19 @@ cd hermes
 cargo build --release
 
 # Install to ~/.local/bin
-install -Dm755 target/release/strata ~/.local/bin/hermes
+python3 scripts/install-local.py
 ```
 
-*(Note: The internal binary identifier remains `strata` during active migration; copying it as `hermes` provides standard execution.)*
+This installs `hermes`, its launcher and the approved winged-H icon without starting the app,
+changing your default file manager, or replacing your Open/Save picker. An existing installation
+requires `--replace` to update. The binary is now named `hermes`; upstream attribution and internal
+compatibility namespaces remain. Existing saved data stays in its original locations until a
+separate, backed-up storage migration is implemented. See [app identity](docs/app-identity.md).
+
+Optional folder/default and “Show in folder” integration has its own reversible, preview-first
+setup, off by default. It does not take over an existing reveal-service owner. The system Open/Save
+picker now has a separate experimental, off-by-default backend and reversible setup. See [desktop integration](docs/desktop-integration.md) before
+changing defaults; ordinary builds and installation never activate either integration.
 
 ### Development Mode
 

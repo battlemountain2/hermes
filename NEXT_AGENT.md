@@ -1,5 +1,567 @@
 # Next agent: Hermes performance, file features and media polish
 
+## Office, Portal and UI polish committed — 2026-10-25 (current)
+
+Reviewed, verified, and committed accumulated work in three focused conventional commits:
+- `adcb498` feat(portal): add native file chooser portal and app identity integration
+- `470cf04` feat(previews): add sandboxed Office document and workbook layout rendering
+- `511d728` feat(ui): add rich file hover previews, picker styling, and navigation polish
+1001 tests passing, 31 python tests passing, clean `cargo check --all-targets`.
+
+Next user priorities:
+1. Immersive visualizer mode: option to hide artwork and lyrics for a full-stage aesthetic/trippy visualizer experience.
+2. Music player layout settings: ensure dual-layout toggle (top vs bottom player) is configured via Settings, keeping the player interface clean and uncluttered.
+3. General Hermes aesthetic, polish, and minimalism.
+
+## Picker first-open failure, native icons and gallery removal — 2026-10-24
+
+The user specifically disliked the "In this folder" gallery, Breeze's large blue folders and
+the dark file-type chip, and reported needing to open the picker twice. These are resolved in
+the installed trial below; this section supersedes earlier gallery/empty-preview descriptions.
+
+- Confirmed live frontend UnknownMethod logs: the backend bus name became available before
+  its chooser object was exported. Reproduced with the previous installed binary using a
+  private first-call activation check: /tmp/hermes-picker-runtime-hwls69e3/runtime.log. The
+  first request failed with "Object does not exist". The backend now exports before acquiring
+  its well-known bus name. Eight cold activation/property calls without retries pass; optimized
+  fixture readiness was67–71ms, measuring export readiness, NOT total visible-dialog latency.
+- Removed the gallery, heading, related-folder enumeration and its thumbnail work completely.
+  The selected-file drawer is hidden for folders/new save destinations, so Save browsing has
+  the full available file area. Selecting an existing file opens the normal preview; switching
+  files clears old images and cancels stale results. Empty selection starts no preview query.
+- Added ui/picker/icons.rs: the actual list/grid cells use Hermes entry icons and its existing
+  cached/sandboxed thumbnails, including folder covers. This is not a fake gallery beside a
+  Breeze grid anymore. Sidebar symbols use bundled Lucide assets. Native GTK cells and their
+  selection, activation and inline folder-edit controls are preserved, not replaced.
+- Guarded GtkFileThumbnail adaptation handles installed GTK4.24.1's file-info property and
+  upstream's info variant plus standard::file. Native GtkImage icon updates/recycling restore
+  Hermes rendering; a private test forces a Breeze folder reset and verifies it is replaced.
+  Signal factories, grid child observation and lazy view/model changes are watched once with
+  weak handlers/coalesced idles; no frame polling loop. Close cancels cell thumbnail requests.
+  Future GTK versions still require the private fixture, since these are guarded internal
+  widget details. Missing properties leave the native fallback intact.
+- Fixed the file-type dropdown's nested stack background and removed the extra parent plate.
+  Grid cards reuse main-app classes; focus outlines target controls rather than entire panes.
+  Reviewed generated-image Open and Save grids plus Paper/dark filter controls. Visual tests
+  now run with fatal GTK criticals; the old overwrite-fixture g_markup_escape_text warning
+  remains separate and pre-existing, not claimed fixed.
+- Debug/release builds, all-target checking, 994 regular tests plus the isolated thumbnail
+  case, 24 Python setup tests, five private GTK cases, eight cold starts and real private
+  frontend forwarding passed. The known audio pause/resume case remains excluded.
+- Installed SHA256 fedcf834d50ae5803103a9841ba66a5bf6414dfee53fd1a4ddc08d65910ffb88.
+  Previous binary/launcher/icon rollback snapshot:
+  /home/bry/.local/state/hermes/backups/picker-native-cells-2026-10-24-4r_wsirn/manifest.json.
+  Provider config, scoped startup flags and opt-out journal are byte-for-byte unchanged.
+  Main Hermes PID756266 and portal PID902956 were not restarted. No old chooser helper was
+  running at installation, so the next real picker request loads this release directly.
+- Final optimized fixture: /tmp/hermes-picker-runtime-4a3z2hqd. Logs live under
+  /tmp/hermes-picker-checks/picker-reliability-*.log. Physical browser/Wayland feedback remains
+  the acceptance gate. No commit/push, version bump, audio playback or default changes.
+
+## Picker cohesion follow-up — 2026-10-24 (current)
+
+The user wanted the trial picker to look like the actual Hermes app, not merely a lightly
+restyled GTK dialog. This section supersedes the picker-only sans-serif override below.
+
+- Removed the separate font override: the chooser inherits the saved Hermes interface font
+  and scale. Private GTK tests verify both mono/sans live changes and font size inheritance.
+- Reused the real preview-header/title styles and the preview metadata-value component for
+  SIZE/TYPE. The larger image stage has a compact three-column folder gallery below it.
+  Sidebar rows, icon spacing, pathbar, table headings, entry selection, separators and primary
+  actions now follow Hermes's semantic surfaces and component spacing. The main app's
+  font preference and unrelated styling were not changed.
+- Folder thumbnails no longer clear/rescan whenever a different file is selected. Separate
+  cancellable tasks/generations keep the gallery stable until folder/filter changes, while
+  selected-file images still clear immediately to prevent ghosting. Private tests verify
+  stable image widgets across selection changes, new gallery widgets on folder changes,
+  filter updates and close cleanup. The native GTK chooser still owns save/selection semantics;
+  this does not claim a complete replacement of its file-list/grid implementation.
+- Generated-image Open and Save screenshots were reviewed in dark and Paper themes. The
+  headless snapshot helper explicitly invalidates cached child render nodes after theme
+  changes, preventing stale dark nodes from contaminating light-theme QA screenshots.
+- Debug/release builds, all-target checking, 24 Python setup tests and all five private GTK
+  cases plus the real isolated portal frontend passed. Regular tests passed994 cases plus
+  the separately run thumbnail case; the known audio pause/resume test remains excluded.
+- Installed the tested release, SHA256
+  6358422cd565a9f7251b53ff78c072640afb33f2848d18ce78dbd77abfdf372e.
+  Previous installed binary/launchers/icons are backed up at
+  /home/bry/.local/state/hermes/backups/picker-cohesion-2026-10-24-p2ak75z8/manifest.json.
+  Portal configs and the opt-out journal are byte-for-byte unchanged; main Hermes PID756266
+  and portal PID902956 were not restarted. No live chooser was open during installation.
+  The next picker request loads the new installed helper; main Hermes need not be restarted.
+- Final release fixture: /tmp/hermes-picker-runtime-_x82lu2d. Installed-executable frontend
+  check: /tmp/hermes-picker-runtime-xjmnli69. Logs: /tmp/hermes-picker-checks/cohesion-*.log.
+  Physical Wayland/browser interaction remains the user's acceptance check. No commit/push,
+  version bump, audio playback or new desktop-default changes were performed.
+
+## Live picker activation fix and visual polish — 2026-10-24
+
+The user confirmed the old KDE picker persisted, authorized restarting only the portal after
+closing their dialog, then supplied feedback on the now-visible Hermes picker: weak visual
+previews, blocky button backgrounds, cramped sidebar labels and poor typography. This supersedes
+the older "log out/login still needed" snapshot below. Do not ask them to test an uninstalled fix.
+
+- The existing frontend had not restarted since before installation. The authorized restart then
+  exposed a real GTK startup cycle: the frontend waited for Hermes, while Hermes's GTK startup
+  synchronously requested Registry/Settings/Inhibit from that frontend. It timed out. Restored the
+  previous picker immediately and restarted the frontend to keep dialogs working during repair.
+- Picker activation now uses /usr/bin/env GDK_DEBUG=no-portals GTK_USE_PORTAL=0 for ONLY the
+  dedicated chooser process, never the browser/main Hermes/global environment. This is separate
+  from avoiding recursive FileChooserNative calls. Setup tests assert the precise isolated Exec;
+  the private frontend harness forces inherited GDK_DEBUG=portals and verifies the activated
+  backend overrides it. After re-enabling/restarting with permission, the real Wayland frontend
+  started successfully (PID902956), Hermes exported FileChooser v4, and its scoped environment
+  was verified. Main Hermes PID756266 and the browser were not restarted. An idle backend can
+  exit after30seconds; a missing owner alone is not a failure once the frontend has selected it.
+- The new visual increment adds ui/picker/visuals.rs: selected-file thumbnails plus a bounded
+  six-item folder preview gallery, using the existing persistent-cache/sandbox thumbnail engine.
+  Folder scans examine at most128 entries with a3second deadline, skip hidden entries/symlinks,
+  respect the active chooser filter and preview policies, and do not batch-convert Office files.
+  Metadata is asynchronous and selected results are generation-guarded. Selection/folder/filter
+  updates cancel old queries/thumbnails and clear old images. Nothing autoplays; gallery clicks
+  select a file, never accept a request or bypass overwrite confirmation.
+- The native chooser remains in charge of selection/filters/save/overwrite. A side pane is attached
+  around its actual FileChooserWidget; public column/grid selection models and input events queue
+  coalesced updates, with weak callbacks and explicit cleanup. This is a preview sidebar, not a
+  claim that GTK's native file list has become Hermes's complete thumbnail grid or browser UI.
+- Scoped CSS removes opaque backgrounds on arbitrary nested boxes/button labels, uses clear
+  sans-serif14px picker typography, widens the places sidebar and makes secondary captions more
+  legible. The main Hermes font preference and other app styling remain unchanged. Square geometry,
+  semantic theme colors and primary-action contrast are preserved. A generated-image private GTK
+  check exercises real sandbox thumbnails, native selection tracking, rapid stale-selection
+  cancellation, filter changes and close cleanup; the existing chooser/auth/overwrite tests remain.
+
+The user is in an installed picker trial. Test then update that installed build with an additional
+rollback copy; never close a live picker/main window or restart the portal just to apply styling.
+The visual-polish release is now installed at /home/bry/.local/bin/hermes, SHA256
+78f96f45ec563663081c005a82ea7a649844a5a35df95cfdaaf096276d8f62f8. The preceding
+installed binary/launcher/icon snapshot is
+/home/bry/.local/state/hermes/backups/picker-visual-polish-2026-10-24-3dwzpjo_/manifest.json.
+The original picker transaction and provider configuration are byte-for-byte unchanged;
+main Hermes PID756266 and portal PID902956 remain running without restart. Final debug,
+optimized and all-target builds passed. The final optimized private fixture is
+/tmp/hermes-picker-runtime-vv4o8xap (all five GTK cases and real frontend forwarding passed).
+The regular suite passed993 cases, plus the isolated thumbnail case; the known audio
+pause/resume case remains excluded, not newly verified by this picker-only update.
+If an old chooser instance is still open, let the user close it; its30second idle expiry lets the
+next request load the new binary. Keep the original picker transaction backup for opt-out.
+Logs/screenshots for this pass use /tmp/hermes-picker-checks/visual-*.log and the private harness
+directories. No commit/push/version bump is authorized. Real-photo/Wayland pointer review remains
+user feedback, not replaced by generated-image screenshots.
+
+## Authorized installed picker trial — 2026-10-24
+
+The user explicitly said yes to installing the new build and enabling the reversible picker
+trial, correctly noting that asking for feedback on a disabled feature was unhelpful. This section
+supersedes older statements that the installed binary/actual picker configuration are untouched.
+
+- Installed the tested target/release/hermes using install-local.py --replace. Installed SHA256
+  matches the candidate. Launchers validate; the installed executable passes the private real-
+  frontend OpenFile/SaveFile/SaveFiles/Close/discovery/restore check. No real GUI was launched.
+- Ran desktop-integration.py enable --component picker --apply. The actual Hyprland FileChooser
+  provider is now configured as hermes, with the backend service, user manifest and opt-in marker.
+  Status verifies an enabled transaction. Other preferred portal values, generic portals.conf,
+  MIME defaults and the absent folder-integration marker are preserved. Folder integration was
+  NOT enabled by this permission. No Git commit/push or version bump was requested/performed.
+- Prior installation/config files are copied to the private rollback snapshot:
+  /home/bry/.local/state/hermes/backups/picker-trial-2026-10-24-tp5l7u_q/manifest.json
+  The setup tool also retains its exact-byte picker-integration-transaction.json journal.
+  Use restore --component picker --apply for a requested opt-out; do not blindly overwrite later
+  edits from the snapshot. README.md in that backup explains the two separate recovery paths.
+- Current Hermes PID756266 and existing portal PIDs2221/2222/2299/2491 retained their start times.
+  No apps, windows, audio or portals were restarted/closed/moved. The existing frontend uses the
+  expected Hyprland/XDG roots and no custom discovery override. The Hermes backend currently has
+  NO live bus owner: setup is enabled on disk, but the existing frontend still has its old cached
+  provider. Do not tell the user the new picker is already live in this session.
+
+User-controlled logout/login is the remaining activation step, then repeat the Save Image dialog
+from their screenshot. Do not log out/restart portals for them without fresh permission. Reopening
+Hermes after the session change also loads the installed Open With suggestion fix. Physical
+Wayland parent/focus and real browser/Flatpak permissions remain trial feedback, not completed
+sign-off. If the old dialog persists after login, inspect effective frontend/provider and browser
+portal usage before making unrelated desktop changes.
+
+Fresh artifacts: /tmp/hermes-picker-checks/install-build.log,
+/tmp/hermes-picker-runtime-a35fnd1c (release preflight),
+/tmp/hermes-picker-runtime-zmde33wb (installed-binary private smoke),
+/tmp/hermes-picker-trial-backup-path (rollback snapshot location).
+
+## Suggested Open With applications — 2026-10-24
+
+The user requested suggested apps first in the screenshot's Open With dialog and asked what
+Firefox Open/Save meant. These are separate: Open With selects a handler for an existing file;
+Firefox Open/Save refers to upload/download-location dialogs, potentially using the XDG picker.
+No portal/default activation or installed-app update is authorized by this UI request.
+
+- Both file-item and preview-image context menus now use ui/browser/app_chooser.rs. The old
+  show_all(true) flattened MIME handler groups into an alphabetical list. The shared helper uses
+  recommended/related sections before other apps, retains search/full-list access and keeps the
+  existing launch/error paths. A separate default section stays disabled because the default is
+  already among the recommendations; no deduplication of native GTK/GIO registrations is claimed.
+- A one-shot mapped-dialog scroll reset starts at suggestions rather than retaining an unrelated
+  list offset during native model refresh. Scoped appchooser CSS follows Hermes semantic colors,
+  including section headers/list background/selection/buttons rather than native white/blue.
+- The new ignored private GTK case creates fake MIME handlers in isolated HOME/XDG roots and
+  verifies associated apps precede an alphabetically earlier unrelated app, the initial choice is
+  recommended, scroll starts at the top and cancel leaves the fixture default unchanged. It never
+  launches handlers. The existing private picker harness runs this case alongside its other three
+  GTK/backend cases. The legacy unused ui/app_picker.rs module is deliberately left untouched.
+
+All changes remain local. Preserve the user's actual window/audio/installed build and defaults;
+do not install/restart/activate/push without authorization. Validation logs use
+/tmp/hermes-picker-checks/app-chooser-*.log and the private harness's printed temporary directory.
+
+## Experimental independent Open/Save picker — 2026-10-24
+
+The user said ready to continue after folder integration. This increment implements the separate
+local chooser backend and safe opt-in tooling; it DOES NOT install/enable it on the real desktop.
+The previous folder section below is historical: picker:false/unimplemented is superseded here.
+All previous uncommitted Office/identity/folder work remains on the existing feature branch.
+
+- src/portal.rs exports org.freedesktop.impl.portal.FileChooser v4 on the dedicated
+  org.freedesktop.impl.portal.desktop.hermes bus name, gated by the separate versioned
+  ~/.config/hermes/picker-integration.json marker. --portal-file-chooser uses a dedicated
+  GtkApplication, no browser/tab/music startup and a30second no-window inactivity timeout.
+  Name ownership never replaces/queues behind an existing owner; opt-out quits this process only.
+- Only the current org.freedesktop.portal.Desktop owner can show dialogs. Bounded pending requests
+  register Request.Close before asynchronous authentication; Close is sender-protected. Completion,
+  caller disconnect, shutdown and marker removal clean up registrations/windows. Selection returns
+  native file:// URIs, including mounted-path normalization. Request parsing and UI modules have
+  adjacent tests, strict known-option typing, native-byte preservation and fanout/resource bounds.
+- src/ui/picker.rs uses a direct in-process GTK FileChooserDialog to avoid recursive FileChooser
+  portal calls. It supports Open/folder/multiple, SaveFile, SaveFiles, filters/current filter,
+  choices, suggested folder/file/name and activation tokens. SaveFile relies on GTK's actual
+  overwrite confirmation; tests caught and fixed orphan child prompts when a request is canceled.
+  SaveFiles chooses non-conflicting names without writing/reserving files, including broken-link
+  and within-request collisions. Slow validation has a3second deadline. Unmounted remote URIs are
+  rejected with an inline explanation; native/mounted paths remain supported.
+- Scoped square-edged CSS uses existing semantic tokens and shared fonts. The private screenshot
+  check caught/fixed an undefined color and native white/black fallback areas. Accept foreground
+  updates correctly across paper, graphite and azure-glow. Native chooser controls are not a full
+  reuse of Hermes's browser/preview/pinned-sidebar UI; accessibility/physical pointer review remains.
+- Linux gdk4-wayland0.10.3 (+sys) provides safe exported-parent attachment. Failed/unsupported
+  parents stay non-modal. X11 foreign parenting is NOT implemented; physical Wayland focus and
+  parent behavior are not verified. This is an experimental candidate, not a1.0/platform sign-off.
+- scripts/desktop-integration.py --component picker has its own journal/marker/backend service/
+  user-local .portal manifest. It copies the first effective existing portals.conf if needed,
+  overrides only FileChooser, preserves other providers, switches config last and restores it first.
+  Existing bytes/modes are journaled; conflicts/drift/symlinks/unsafe files/custom discovery are
+  refused. Base folder transaction behavior is preserved and separately tested. It never restarts
+  portals/apps; user-controlled logout/login generally reloads discovery. No Settings checkbox yet.
+- scripts/check-picker-integration.py creates isolated HOME/XDG, restricted private D-Bus and
+  loopback Broadway. It runs three exact private-GTK/backend cases and the actual installed
+  xdg-desktop-portal1.22.1 frontend: user-local manifest discovery, activation, OpenFile/SaveFile/
+  SaveFiles forwarding, Request.Close, live marker removal and prior-provider restoration pass.
+  Flatpak document permission handoff/real Firefox acceptance and older-frontend compatibility
+  remain gates. Do not enable blindly where user-local manifest discovery is unsupported.
+
+Validation: debug/release builds, test compilation and all-target check pass; the five existing
+test-only lint expectations remain.992regular cases pass with two known filters, plus the isolated
+thumbnail case (993passing regular cases). The baseline-flaky audio pause/resume case is still
+excluded.13folder +11picker setup regressions and5identity tests pass. Three private GTK/backend
+cases pass, including successful URI/filter/choice roundtrip, ownership checks/disconnect cleanup
+and real overwrite blocking/child cleanup. Private real-frontend and folder activation smokes pass.
+Clippy could not run because cargo-clippy is absent from the current toolchain; do not claim it
+passed or install toolchain components without considering the user's environment. New module
+formatting and diff whitespace are checked; unrelated existing whole-repo formatter diffs remain.
+
+Logs: /tmp/hermes-picker-checks; latest debug private fixture: /tmp/hermes-picker-runtime-9vtqhm6q.
+The installed ~/.local/bin/hermes and actual MIME/portal config hashes still match the pre-work
+snapshot; both real opt-in markers remain absent. No real window/audio/default/portal was touched,
+no install/commit/push/version bump occurred. The release candidate is target/release/hermes.
+Next: authorized physical Wayland/Firefox/Flatpak trial, then a separately authorized installation
+and opt-in if accepted. Address X11 parenting before advertising equivalent X11 support. Preserve
+the prior default providers and do not restart portals during screen sharing or active dialogs.
+
+## Optional folder/default/reveal integration — 2026-10-24
+
+The user authorized continuing desktop integration and later resumed after an interruption. This
+increment completes the first, folder/reveal half locally. The system Open/Save picker remains the
+next separate increment, NOT an implemented backend or an activated setting. No Settings checkbox
+is claimed. All earlier uncommitted Office/identity work is preserved on the existing feature branch.
+
+- src/file_manager.rs owns org.freedesktop.FileManager1 only with the explicit versioned
+  ~/.config/hermes/folder-integration.json opt-in and only for the stable Hermes app, never Dev.
+  Bounded ShowFolders/ShowItems/ShowItemProperties routing validates all locations before opening
+  anything. It groups reveals by parent, preserves selection order/byte-safe native names, handles
+  explicit GIO filesystem URIs and opens actual per-item Properties rather than ignoring later items.
+- Name ownership uses DO_NOT_QUEUE without replacement. A current Dolphin/other owner is kept;
+  if it exits, the user must reopen Hermes to retry, not expect a silent later takeover. The opt-in
+  marker is monitored so restoring/removing it releases ownership without closing windows/music.
+  Windowless --gapplication-service activation has a30second inactivity timeout. Normal Open now
+  retains multiple requested locations/remote URIs instead of only the first native path.
+- ui/window/reveal.rs waits for enumeration before applying the complete selection, ignores a
+  departed folder, and exposes hidden requested files only in the new window. Browser selection
+  notifies the actual view without opening files/starting previews/audio. Multiple-item Properties
+  uses a separate existing Properties view/window per item; no combined summary was added.
+- scripts/desktop-integration.py is status/preview-only unless enable/restore gets --apply. It
+  preflights a compatible installed binary and matching launcher, journals prior bytes/permissions
+  before changing exactly the desktop-specific folder MIME key, user activation file and opt-in
+  marker. It restores originals/removes previously absent files, rejects drift/symlinks/shared or
+  special files/unsafe paths and retains an interrupted transaction for restore. A private lock
+  serializes cooperating writers. It never executes the candidate app or changes portal config.
+- The private runtime check caught activation directories created after bus startup not being
+  discovered immediately: apply/restore now requests org.freedesktop.DBus.ReloadConfig, without
+  restarting the bus/apps. Failure warns about user-controlled logout/login. A running foreign
+  owner is still never displaced. Capability inspection reports folders:true,picker:false.
+- New script regressions run in CI. The setup script/docs are included in future release archives.
+  See docs/desktop-integration.md for actual prerequisites, preview/apply/restore and limitations.
+
+Validation: debug/optimized builds, test compilation and all-target check pass; five pre-existing
+test-only lint expectations remain.981regular unit cases pass with the two known cases filtered;
+the isolated GLib thumbnail case also passes (982passing regular cases). The baseline-flaky audio
+pause/resume case remains excluded.13safe setup-script tests and5existing identity-script tests
+pass. The private-bus ownership/dispatch/cleanup test passes. Two exact private-GTK cases verify
+delayed multi-selection/stale navigation and actual hidden-file Properties labels. The real-binary
+private activation smoke passes, including no startup window, grouped reveal, invalid-URI rejection,
+Properties routing, live opt-out and previous-default restoration. Its earlier standard-session
+fixture also verified restoration to Dolphin. This is not physical Wayland/other-app sign-off.
+
+scripts/check-desktop-integration.py provides the reproducible smoke with generated HOME/XDG,
+private Broadway and a restricted private bus whose only activatable provider is the fixture
+Hermes service. Temporary logs are retained under its printed directory. Local aggregate logs:
+/tmp/hermes-desktop-checks; GTK/standard-session log marker: /tmp/hermes-desktop-runtime-path.
+
+The installed ~/.local/bin/hermes and existing user MIME/portal/service files were fingerprinted
+and remain unchanged. No live opt-in marker/journal was created; no actual GUI window, audio,
+desktop default or portal was manipulated. No commit/push/version bump/installation was performed.
+The optimized candidate is target/release/hermes. Installation and real activation still need
+explicit authorization. Next: implement and privately validate the separate FileChooser backend
+and independent reversible provider opt-in, without recursively invoking FileChooserNative or
+overriding unrelated portals. Do not enable a nonexistent chooser via portals.conf.
+
+## First-open Office font overhead — 2026-10-24
+
+The user said ready after the proposed Office-speed pass, followed by separate desktop opt-ins.
+This increment changes only one-shot preview sandbox font-cache exposure and adjacent regressions;
+all previous uncommitted Office/identity work is preserved. No desktop integration is activated.
+
+- Pooled workers already mounted /var/cache/fontconfig, but Office/PDF one-shot helpers did not.
+  They now reuse that optional system cache read-only. Personal caches/profiles, network isolation,
+  writable mounts, macro/active-content protections and resource budgets are unchanged. Missing
+  system caches retain ordinary font discovery. The existing PDF cache key already covers it.
+- Paired exports used the same optimized helper, fresh sandboxes/profiles and no converted-PDF
+  cache. Generated DOCX:0.701–0.800seconds without vs0.400–0.404with the cache; generated XLSX:
+  0.638–0.726vs0.342–0.368. Reported49-slide PPTX:6.387–6.427vs6.024–6.056. No compilation ran
+  during these measurements. About0.3–0.4seconds saved is a targeted overhead reduction, not a
+  cold-disk/UI-paint claim or closure of big-deck latency. Full Layout and provisional posters stay.
+- Added a regular mount-policy regression and an ignored opt-in paired export regression. The
+  latter bypasses converted-document caches and verifies page counts, first-page text/glyph
+  geometry and original bytes across with/without-cache runs; generated DOCX/XLSX/PPTX cases pass.
+  Generated styled/two-sheet and225-row workbook full-layout regressions also pass.
+- Build, optimized build and all-target check pass with the five existing test-only lint warnings.
+  972regular cases pass with two known cases filtered; the isolated GLib thumbnail case also passes
+  (973passing regular cases). The known baseline-flaky audio pause/resume case remains excluded.
+  New test formatting passes; unrelated existing formatter diffs are left alone. Diff whitespace
+  checks pass. Artifacts/measurements/logs: /tmp/hermes-office-fonts-path.
+
+The installed ~/.local/bin/hermes was NOT replaced; no actual GUI window/audio/default/portal
+settings were touched, and no commit/push/version bump occurred. A new optimized binary is ready
+in target/release/hermes for a separately authorized install. Next desktop work remains independent,
+reversible opt-ins for folder/default/reveal handling and system Open/Save picker, with explicit
+prior-default restoration and private-session tests before user activation.
+
+## Approved icon B and Hermes identity — 2026-10-24
+
+The user approved the flat winged-H concept B and authorized proceeding. This increment builds
+the real app icon assets and public application identity; it does not implement portals or macOS.
+
+- Package/executable/release names are now hermes, still version0.2.0. Updated the dev/profiling
+  scripts, test helper discovery and integration-test binary variables so they do not use an old
+  target/debug/strata executable. Historical/internal Strata resource names and credits remain.
+- Stable application/icon/desktop ID: io.github.battlemountain2.Hermes; development adds .Dev.
+  HERMES_DEV is canonical; STRATA_DEV remains an input alias. Main title/application name and
+  disconnect messages say Hermes. MPRIS DesktopEntry points to the Hermes launcher. Default GTK
+  icon setup runs at application startup, after GTK initialization, not before application.run.
+- The single-color winged-H SVG and matching symbolic mark are in data/icons. Generated Linux
+  PNGs16–1024px and macOS iconset/ICNS are included. Existing Lucide action icons are unchanged.
+  Mac assets are not a port or a working .app. See docs/app-identity.md and its validation commands.
+- scripts/install-local.py installs a binary, regular/hidden-Dev launcher and icons to a user-local
+  prefix. It requires --replace for different existing regular files, rejects symlinks and ambiguous
+  installation paths, and does not start the GUI, use sudo, change defaults or configure portals.
+  Validate only against isolated prefixes unless the user authorizes an actual installation.
+- Saved data is deliberately not moved: several storage roots remain named strata. Existing
+  preferences/playlists/queues/ratings must not disappear during the rename. Distinct app IDs are
+  not data isolation; a backed-up, tested namespace migration remains required before claiming
+  safe side-by-side use with upstream Strata. Do not delete old folders or running binaries.
+
+Validation: build/all-target check/test compilation pass with the five pre-existing test-only lint
+warnings.971 regular unit cases pass with the two known cases filtered, plus the isolated GLib
+thumbnail case (972 passing regular cases). The unchanged baseline-flaky audio pause/resume case
+remains excluded. Seven Python script tests pass, including isolated install/refusal cases. Both
+desktop templates validate, PNG transparency and ICNS decoding are checked, and the private-GTK
+icon lookup test passes. A real new-binary startup on a private Broadway display/session/XDG
+fixture renders its first directory successfully and logs hermes:: metrics. No real desktop
+window was manipulated. An optimized build was then installed as ~/.local/bin/hermes with its
+normal/hidden-Dev launchers and app icons; no existing installation files were overwritten.
+Desktop metadata was refreshed. The user's existing hicolor tree fails GTK icon-cache generation;
+the isolated Hermes-only tree builds a valid cache. The failed temporary cache was backed up and
+removed without altering other icon files. Fresh private-GTK lookups resolve the actual installed
+normal/symbolic files without relying on embedded resources, so icon lookup works without that
+cache. Installed binary hashes match the optimized build, both launchers validate, and MIME/portal
+configuration hashes plus the Dolphin folder default remain unchanged. The optimized installed
+binary also passes the private fixture startup. No actual user window was launched/restarted;
+physical launcher/Dock appearance remains unverified. The old Dev terminal shortcut is untouched.
+
+Confirmed upcoming scope: full Office Layout first, saved preview while waiting (no automatic
+text/Data switch merely for speed); separate opt-ins for default file-manager/reveal integration
+and system Open/Save picker; test Asahi Arch ARM64 Linux and later macOS27 on a2021 M1 Pro14-inch,
+16GB. macOS needs platform adapters/helper isolation/bundling, not just a renamed executable.
+No GUI restart/focus/move, live audio, commit/push or1.0 bump is authorized. Existing prior local
+Office changes remain intact. Logs/validation artifacts: /tmp/hermes-branding-path.
+
+## Spreadsheet controls and Office contention follow-up — 2026-10-22
+
+Supersedes older control/latency snapshots below. All newer work remains local/uncommitted.
+
+- XLSX/ODS Layout and Data have persistent non-overlay horizontal/vertical bars with larger square
+  handles. PDF pan/text-selection excludes scrollbar geometry; horizontal Layout overflow follows
+  Ctrl+scroll zoom. Data tables are built only when their sheet is first visited, retained afterward,
+  and share source data across callbacks. No parsing-budget increase or editing support.
+- Office admission now prioritizes selected conversion over queued thumbnail exports, preserving
+  serialization/cancellation. It does not preempt a running export. Full-PDF embedded rasters are
+  capped at150dpi for screen previews; vectors/text and originals are unchanged. CONFIG changes
+  to office-full-pdf-v2 so earlier uncapped export records are not silently reused.
+- The real49-slide deck measured8.927seconds initial conversion and1.077seconds fresh-process
+  cached reopen; cache bytes fell from10,017,807 to9,684,260. The14.895second preceding run overlapped
+  compilation, so do not advertise a controlled percentage speedup. Cold conversion remains slow.
+- Four private GTK cases pass: both-axis end scrolling/position retention, live fonts/narrow geometry
+  with lazy table counts, repeated fullscreen cleanup, and workbook mode/stale/fallback/scrollbar
+  geometry. Generated styled/multi-sheet/extended-row layout checks pass with the new PDF filter.
+  Priority and canceled-priority regressions pass. Artifacts: /tmp/hermes-office-controls-path.
+- Build/test compilation/all-target check pass with the same five test-only lint warnings.969
+  regular cases pass with two known cases filtered, plus the isolated GLib thumbnail case (970
+  passing regular cases). The pre-existing baseline-flaky audio pause/resume case remains excluded;
+  this is not a full-suite audio sign-off. No user window/audio was manipulated.
+
+Do not restart/focus/move the user's app or play audio. User-controlled reopening and real-world
+pointer review are pending; no commit/push/version bump is authorized for this increment.
+
+## Progressive Office loading and workbook Layout/Data — 2026-10-22
+
+This section supersedes older Office snapshots below. Changes after backup0631983 remain
+local/uncommitted; do not restart/focus/move the user's window, bump the version or claim a push.
+
+- Office previews show a saved or cached poster while the full layout prepares. Poster decoding
+  never launches LibreOffice. Generation/source/policy checks and cancellation keep provisional
+  images from replacing a newer selection. The generated saved-poster GUI check took about81ms.
+- Converted PDFs now persist in a private, bounded cache: eight entries/128MiB, at most32MiB per
+  PDF. Source identity plus renderer/helper/fonts fingerprints invalidate stale output. Corrupt,
+  unsafe or unavailable cache records are misses, not conversion failures. See office-cache.md.
+- The real49-slide Food and Agriculture deck took12.49seconds for conversion and1.12seconds to
+  reopen in a fresh process using the persisted PDF. These are debug-build observations on this
+  machine, not general first-open or cold-disk guarantees. The first conversion still takes time.
+- XLSX/ODS default to Layout when LibreOffice is installed; Data remains available even during
+  conversion. Switching cancels stale work; failed layouts explain the fallback to Data. Lazy
+  pages retain the layout path. Legacy XLS stays Data. Layout follows workbook print settings,
+  not an infinite Excel canvas; Data retains its bounded sortable grid and sheet navigation.
+- Generated layout checks verify source colors, merged cells, selectable text, multiple sheets
+  and printed rows beyond the Data200-row cap. Protected rendering can omit charts/embedded
+  objects. Do not disable active-content protections to make native-chart fixtures appear.
+- Build, test compilation and all-target check pass with five existing test-only lint warnings.
+  967 regular tests pass with two known cases filtered; the GLib thumbnail case passes separately
+  (968 passing regular cases). The unchanged audio pause/resume test remains baseline-flaky.
+  Four exact private-display mode/poster/photo/adapter checks, two generated full-layout checks
+  and fresh-process persistent-cache validation pass. Source documents remain unchanged.
+
+Artifacts/logs: read /tmp/hermes-office-next-path. No actual user window or audio was manipulated.
+Next: user-controlled reopen and real document review, then richer optional hover previews,
+search/index finish and transfer/view-preference polish. Commit/push only when authorized.
+
+## Current Office/music-preview follow-up — 2026-10-22
+
+This section supersedes the older host/dependency and pending-validation snapshots below.
+All work since backup0631983 remains local/uncommitted on feat/6-spreadsheet-and-settings-polish;
+do not imply it is pushed, merge main, bump the version, or restart/move/focus the user's window.
+
+- The user installed system LibreOffice26.8.1 and approved it as an optional dependency.
+  DOCX/ODT/PPTX strict adapter/layout checks now use the system renderer, not the test override.
+  The reported Food and Agriculture PPTX has49slides and exhausted the old10CPU-second limit.
+  With Office-only30CPU/35wall seconds it renders all49slides in about12seconds; originals remain
+  unchanged. Other decoders retain10CPU/12wall seconds and existing size/memory limits.
+- Office icon thumbnails now cover DOCX/ODT/PPTX/PPSX/POTX/XLSX/ODS. The helper prefers a bounded
+  saved PNG/JPEG; otherwise it exports page1 only. Workbook icons crop unused print margins.
+  Existing visible-first scheduling, stale-result guards and persistent cache are reused. Full
+  conversion and Office thumbnail exports share a cancellable admission gate. Legacy DOC/PPT/XLS
+  icon conversion is not added. Selected XLSX/ODS remain the interactive bounded table.
+- Spreadsheet controls/grid inherit the live interface font and semantic theme, use square
+  geometry and stable tab states, avoid fades, and contain long filenames/sheet tabs in narrow
+  panes. The GTK test waits for style/frame updates before checking all mapped labels' fonts.
+  Sorting and repeated fullscreen/reparent/disposal tests pass on a private display.
+- Missing FLAC metadata/artwork workers reproduced because rebuilding unlinks the running
+  executable. Its deleted path cannot be mounted into new workers. helper_binary::bind pins
+  /proc/self/exe only for that exact deleted-current-executable case, retaining the old inode
+  instead of swapping to the new binary. Both browser workers and one-shot parsers use it;
+  ordinary launches keep the original path binding without a binary-copy cost. The fallback
+  copies a deleted binary for that worker launch, which can cost memory/time for debug builds.
+  No audio decoder budgets or user's audio files/tags were changed.
+- The deletion/replacement regression uses isolated copied test executables, verifies the
+  pinned inode and permissions, then receives complete metadata/cover-art wire responses for
+  a generated silent FLAC. It never plays sound or unlinks an actual application executable.
+
+Validation: build/all-target check pass with five existing test-only lint expectations.944 regular
+tests pass with two known cases excluded; the GLib thumbnail case passes separately (945 passing
+regular cases). The unchanged pause/resume test remains a known baseline-flaky GStreamer case,
+not a clean full-suite sign-off. Five exact private-display Office/table/icon tests pass, including
+live fonts/themes, strict layout-only adapter output and persistent Office icon reload. Separate
+generated page/cache/cancellation checks and the helper deletion/replacement wire regression pass.
+Artifacts/logs: /tmp/hermes-system-office-path and /tmp/hermes-helper-wire-verified.log. No actual
+user window/audio was manipulated. Physical appearance/keyboard feel still need user review.
+
+Read docs/office-previews.md, docs/spreadsheet-preview-style.md and
+docs/audio-preview-reliability.md for architecture, limits and reproduction instructions.
+Next: user-controlled reopen to load the new code, check the reported documents/albums, then
+continue richer optional hover previews, search/index finish and transfer/view-preference polish.
+
+## Office page/slide renderer implemented locally — 2026-10-20
+
+Backup is complete: efe5a86 and0631983 are pushed to the existing feature branch, verified against
+the remote ref, and draftPR5 has a backup/validation comment. No main merge or1.0 release. The
+NEW Office renderer below is local/uncommitted, separate from that authorized backup.
+
+- Optional fixed-path system LibreOffice exports DOCX/ODT and PPTX/PPSX/POTX to PDF inside the
+  existing bubblewrap helper. Fresh macro/active-content-disabled profile, disabled link updates,
+  no Home/network/desktop bus, original mounted read-only; package XML preflight runs first.
+  This host has no system LibreOffice: normal UI uses a clear extracted-text fallback until one
+  is installed. Do not silently use Codex's bundled runtime in production or run sudo/installers.
+- LocalPreviewProvider returns the existing Pdf content for successful layouts and the new
+  OfficeText content with a readable reason on missing/failed conversion. The reader identifies
+  LibreOffice pages/slides and keeps original entry identities through lazy page requests. Existing
+  selection/copy/zoom/fullscreen behavior is reused; XLSX/ODS remain bounded interactive tables.
+  A later page fallback stops its spinner and provides an explanation instead of hanging.
+- src/sandbox/office.rs serializes conversion admission and caches converted PDF bytes only in
+  memory: four entries/64MiB, five-minute TTL, canonical identity/device/inode/size/mtime/ctime.
+  Canonical input is passed to conversion to avoid symlink-retarget cache poisoning; changed or
+  canceled results are rejected. Each page uses a private temporary PDF copy cleaned afterwards.
+- New ConvertOfficePdf is one-shot, not a browser wire operation. Only this stage gets4GiB
+  virtual address space plus512MiB data segment; the previous1.25GiB address cap caused LibreOffice
+  bad_alloc on the generated fixture. CPU10s/file32MiB/wall12s remain per stage; other decoders
+  keep their old limits. Queue waiting is separately bounded/cancellable. /bin is mapped to the
+  system shell only for this converter; optional /opt/libreoffice is read-only. No dependencies
+  added to Cargo, no live user Office session/profile, originals, audio or Hermes window changed.
+
+See docs/office-previews.md for dependencies, limits and generated test instructions. The test-only
+HERMES_OFFICE_TEST_RUNTIME mount exercises the actual helper with bundled LibreOfficeDev26.8
+because no system renderer is installed. It is never read by production discovery. Three generated
+DOCX/ODT/PPTX fixtures each render two pages/slides with images, tables/shapes, selectable glyphs,
+correct orientation, unchanged originals and cached conversion across pages. PNGs inspected.
+
+Validation:935 regular cases pass serially with two known cases excluded; the GLib thumbnail case
+passes separately (936 passing regular cases). One unchanged pause/resume test returns GStreamer
+Flushing intermittently: reproduced on backed-up0631983 in a temporary source snapshot (2/5
+passes,3/5 failures), so this is NOT a clean full-suite/CI claim and audio code was not changed.
+191 optional cases are outside the regular run; seven exact isolated Office/PDF/policy cases pass,
+including admitted-process-tree cancellation and fullscreen close/restore. Production build and
+all-target check pass with the five old test-only lint expectations. No strict-Clippy/full-format
+or physical compositor/font-corpus sign-off. Logs/fixtures/shots: /tmp/hermes-office-pages-path.
+The baseline comparison reused the build directory; its test executable was explicitly removed
+and rebuilt from current sources afterwards, with Office-only test names checked before reruns.
+
+Next: user installs the optional maintained renderer if wanted, reopens on their own schedule,
+then checks real Word/PowerPoint files and fonts. No automatic restart/focus/move was performed.
+Polish real Office layout edge cases; keep hover cards, search/index coverage, transfers/conflicts
+and per-folder settings on the roadmap. Treat the flaky audio test as a separate pre-1.0 test task.
+
 ## Backup authorized; next implementation is Office page/slide previews — 2026-10-20
 
 The user approved backing up the current polish batch to the existing feature branch/draftPR5,

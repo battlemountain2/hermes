@@ -5,6 +5,22 @@ do not change Hermes's version, license, design choices or music-player behavior
 
 ## What changes in this pass
 
+### Office page/slide layouts — October20 follow-up
+
+Optional system LibreOffice now supplies DOCX/ODT pages and PPTX/PPSX/POTX slide layouts through
+the existing PDF reader, including images and selectable/copyable text. Conversion is isolated,
+bounded, cancellable and cached per original identity. The source file and user Office profile are
+not modified; no document uploads or external resource fetches are enabled. Missing/failed local
+conversion has an explicit text fallback; XLSX/ODS stay interactive tables. See office-previews.md
+for dependencies, Office-specific limits, tests and remaining complex-layout/font limitations.
+This supersedes the text-only limitation described in the earlier October20 increment below.
+
+October22 follow-up: DOCX/ODT, PPTX/PPSX/POTX and XLSX/ODS also have icon-thumbnail routes,
+using bounded embedded images or a first-page-only local export and the existing persistent
+cache. Workbook icons crop empty print margins; selected workbooks keep the interactive table
+with live Hermes fonts/theme and square controls. System LibreOffice is now installed and
+verified; the reported 49-slide presentation renders after the Office CPU-budget correction.
+
 ### Office content-preview increment — October20
 
 DOCX and ODF extraction now preserves paragraphs, tabs, line breaks and table boundaries. PPTX,

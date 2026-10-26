@@ -12,7 +12,8 @@ The following providers run in a short-lived helper process:
 - ImageMagick and `dcraw`/`dcraw_emu` RAW fallbacks;
 - optional `vips` scaled JPEG/standard HEIF rendering inside the same sandbox;
 - `ffmpegthumbnailer` media thumbnails;
-- `bsdtar` archive listings and DOCX/ODT XML extraction; and
+- `bsdtar` archive listings and bounded Office ZIP/XML extraction;
+- optional LibreOffice page/slide conversion through a private macro-disabled profile; and
 - Poppler PDF text extraction for opt-in content search.
 
 Image previews are normalized to PNG by the helper. Full-length local video uses a separate persistent
@@ -21,6 +22,16 @@ Only strictly validated raw RGBA frames and finite/clipped F32 stereo PCM reach 
 Plain-text previews remain in-process and are limited to 1 MB; they do not invoke a native format parser.
 
 ## Isolation and limits
+
+Office page/slide conversion is an explicit exception to the generic address-space ceiling:
+4GiB virtual address space and512MiB data segment, serialized/cancellable, with the unchanged
+32MiB file limit per stage. Office conversion and first-page icon export share one cancellable
+admission gate and have 30 CPU seconds/35 wall seconds; the old 10-second CPU cap killed a normal
+49-slide presentation. Other parsers keep their 10 CPU seconds/12 wall seconds. It has no Home, desktop bus or network,
+does not reuse the user's Office session/profile, and mounts originals read-only. Converted PDF
+bytes use a bounded process-local cache; page images/text are parsed in the existing PDF sandbox.
+Other decoders retain their existing budgets. See [Office previews](office-previews.md) for the
+limits, optional dependency, private temporary-file lifecycle and explicit text fallback.
 
 HEIF thumbnails and full previews use distinct browser operations **20** and **21**, including
 the existing identity-checked, byte-budgeted cache and changed-during-render/cancellation checks.
@@ -68,6 +79,8 @@ Strata starts its own executable in a bubblewrap sandbox. The sandbox has:
 
 - a new user, mount, PID, IPC, UTS, cgroup, and network namespace;
 - read-only access to `/usr`, required runtime libraries and font/ImageMagick configuration, the Strata executable, and exactly one canonicalized input file;
+- optional read-only access to the system `/var/cache/fontconfig` directory, for both pooled and
+  one-shot helpers; the rest of `/var/cache` and personal font/cache directories remain hidden;
 - writable access only to private mode-0700 output and temporary directories;
 - an empty environment with a nonexistent home directory;
 - 1.25 GB address-space, 10-second CPU, 32 MB file-size, and 12-second wall-clock limits.
