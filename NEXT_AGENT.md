@@ -1,6 +1,15 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Office, Portal and UI polish committed and rebased — 2026-10-25 (current)
+## Immersive visualizer, floating dock scrubber, and polish — 2026-10-25 (current)
+
+- Added multi-harmonic organic aurora waves to the visualizer canvas with frequency-reactive amplitude, variable stroke thickness, and glowing alpha derived from the album palette.
+- Integrated a live seek/scrub scale directly into the floating dock during full-screen visualizer mode, allowing effortless scrubbing and track seeking without leaving the visualizer.
+- Polished the floating dock styling with subtle translucent presence (`opacity: 0.82`, transitioning to `1.0` on hover/focus) so controls never feel missing or flicker.
+- Simplified top bar tooltips and button titles to minimal "Lyrics" and "Visualizer" labels.
+- Verified dual-layout configuration (Hero Deck vs. Bottom Dock) remains cleanly isolated in Settings.
+- 1,011 unit tests pass, clean `cargo check --all-targets`. Commit: `cf6c65f`.
+
+## Office, Portal and UI polish committed and rebased — 2026-10-25
 
 Reviewed, verified, and committed accumulated work in focused conventional commits on top of origin:
 - `c6ff409` feat(portal): add native file chooser portal and app identity integration
