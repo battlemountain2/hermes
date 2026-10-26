@@ -20,7 +20,7 @@ const MAX_ENTRY_BYTES: u64 = 32 * 1024;
 const MAX_CACHE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_CACHE_ENTRIES: usize = 256;
 const MAX_DIRECTORY_ENTRIES: usize = 4096;
-const NO_FOLLOW: i32 = 0o100000;
+const NO_FOLLOW: i32 = 0o400000;
 const NONBLOCK: i32 = 0o4000;
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(1);
 

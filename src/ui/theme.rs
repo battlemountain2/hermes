@@ -294,7 +294,7 @@ impl ThemeManager {
         })
     }
 
-    fn load() -> Rc<Self> {
+    pub(crate) fn load() -> Rc<Self> {
         let mut themes = builtins();
         themes.extend(load_custom_themes());
         let omarchy_available = load_omarchy_theme().is_some();

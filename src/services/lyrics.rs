@@ -195,7 +195,7 @@ fn read_sidecar(path: &Path, synced: bool) -> Option<Lyrics> {
     }
     let file = fs::OpenOptions::new()
         .read(true)
-        .custom_flags(0o100000 | 0o4000)
+        .custom_flags(0o400000 | 0o4000)
         .open(path)
         .ok()?;
     let metadata = file.metadata().ok()?;
