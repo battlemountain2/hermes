@@ -1,12 +1,14 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Office, Portal and UI polish committed — 2026-10-25 (current)
+## Office, Portal and UI polish committed and rebased — 2026-10-25 (current)
 
-Reviewed, verified, and committed accumulated work in three focused conventional commits:
-- `adcb498` feat(portal): add native file chooser portal and app identity integration
-- `470cf04` feat(previews): add sandboxed Office document and workbook layout rendering
-- `511d728` feat(ui): add rich file hover previews, picker styling, and navigation polish
-1001 tests passing, 31 python tests passing, clean `cargo check --all-targets`.
+Reviewed, verified, and committed accumulated work in focused conventional commits on top of origin:
+- `c6ff409` feat(portal): add native file chooser portal and app identity integration
+- `c8409a2` feat(previews): add sandboxed Office document and workbook layout rendering
+- `0f7076b` feat(ui): add rich file hover previews, picker styling, and navigation polish
+- `b867660` docs: record office rendering, desktop integration, and roadmap update
+- `3a1433b` fix(linux): restore standard Linux open flags for no-follow and directory operations
+1,011 unit tests passing, 31 python integration tests passing, clean `cargo check --all-targets`.
 
 Next user priorities:
 1. Immersive visualizer mode: option to hide artwork and lyrics for a full-stage aesthetic/trippy visualizer experience.
