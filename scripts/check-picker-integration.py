@@ -26,13 +26,14 @@ def check_private(root, binary, test_binary):
         raise RuntimeError("Use the parent command to create an isolated display and session")
     if test_binary:
         for test in ["ui::picker::tests::private_chooser_returns_file_filters_choices_and_cancels_exactly_once",
+                     "ui::hover::tests::private_hover_cards_load_only_when_visible_cancel_and_keep_their_size",
                      "ui::picker::visuals::tests::private_picker_renders_folder_and_selected_previews_without_stale_images",
                      "ui::browser::app_chooser::tests::suggested_apps_precede_unrelated_apps_without_launching_or_changing_defaults",
                      "ui::picker::tests::private_save_requires_overwrite_confirmation_and_closes_child_dialogs",
                      "portal::tests::private_bus_authenticates_frontend_closes_requests_and_returns_selected_files"]:
             unit_environment = dict(os.environ)
             unit_environment.pop("GDK_DEBUG", None)
-            if test.startswith("ui::picker::visuals::"):
+            if test.startswith(("ui::picker::visuals::", "ui::hover::")):
                 unit_environment["G_DEBUG"] = "fatal-criticals"
             subprocess.run([str(test_binary), test, "--ignored", "--exact", "--test-threads=1", "--nocapture"], env=unit_environment, check=True, timeout=50)
     spec = importlib.util.spec_from_file_location("picker_setup", ROOT / "scripts/desktop-integration.py")

@@ -686,6 +686,34 @@ impl Browser {
         }
     }
 
+    pub(crate) fn select_locations(&self, depth: usize, locations: &[Location]) -> bool {
+        let mut state = self.state.borrow_mut();
+        let Some(column) = state.columns.get(depth) else {
+            return false;
+        };
+        let mut positions = Vec::new();
+        for location in locations {
+            if let Some(position) = column.entries.iter().position(|entry| &entry.location == location)
+                && !positions.contains(&position)
+            {
+                positions.push(position);
+            }
+        }
+        let Some(focused) = positions.first().copied() else {
+            return false;
+        };
+        if !state.set_selection(depth, &positions, Some(focused)) {
+            return false;
+        }
+        drop(state);
+        self.emit(BrowserEvent::SelectionSetChanged {
+            depth,
+            positions,
+            focused,
+        });
+        true
+    }
+
     pub fn select_all(&self, depth: usize) {
         let count = self
             .state

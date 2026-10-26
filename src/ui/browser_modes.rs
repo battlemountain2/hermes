@@ -1235,6 +1235,7 @@ fn build_grid_pane(
         item_content.append(&field);
         centered.set_center_widget(Some(&item_content));
         card.append(&centered);
+        install_file_hover(&card, item, browser_for_setup.clone(), source_for_setup.clone(), filtered_for_setup.clone(), depth);
         install_preview_click(
             &card,
             item,
@@ -1313,7 +1314,7 @@ fn build_grid_pane(
             field.set_visible(false);
             set_mode_cut_style(&card, cuts_for_bind.borrow().contains(&entry.location));
             label.set_label(&entry.display_name);
-            label.set_tooltip_text(Some(&entry.display_name));
+            label.set_tooltip_text(None);
             super::thumbnail::set_thumbnail_or_icon(
                 &icon,
                 entry,
@@ -1828,6 +1829,7 @@ fn build_explorer_pane(
         row.append(&size);
         row.append(&kind);
         row.append(&modified);
+        install_file_hover(&row, item, browser_for_setup.clone(), source_for_setup.clone(), view_model_for_setup.clone(), depth);
         install_preview_click(
             &row,
             item,
@@ -1905,7 +1907,7 @@ fn build_explorer_pane(
                 18,
             );
             name.set_label(&entry.display_name);
-            name.set_tooltip_text(Some(&entry.display_name));
+            name.set_tooltip_text(None);
             super::browser::bind_entry_size(&size, Some(&entry), "");
             kind.set_label(entry_type(&entry));
             super::browser::bind_entry_modified(&modified, Some(&entry), "");
@@ -2272,6 +2274,25 @@ fn widget_or_ancestor_has_class(widget: &gtk::Widget, class: &str) -> bool {
         current = widget.parent();
     }
     false
+}
+
+fn install_file_hover(
+    anchor: &impl IsA<gtk::Widget>,
+    item: &gtk::ListItem,
+    browser: Weak<Browser>,
+    source: gtk::StringList,
+    filtered: gio::ListModel,
+    depth: usize,
+) {
+    let hovered_item = item.downgrade();
+    super::hover::install(anchor, item, Rc::new({
+        move || {
+            let item = hovered_item.upgrade()?;
+            item.item()?;
+            let position = source_position_for_view(&source, Some(&filtered), item.position())?;
+            browser.upgrade()?.entry_at(depth, position)
+        }
+    }));
 }
 
 fn install_grid_peek(

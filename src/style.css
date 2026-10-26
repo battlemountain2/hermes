@@ -1,3 +1,30 @@
+.hermes-hover-card {
+  background: @theme_surface;
+  color: @theme_text;
+  border: 1px solid @theme_border;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.hermes-hover-card .hover-filename {
+  color: @theme_accent;
+  font-weight: 600;
+}
+
+.hermes-hover-card .hover-title {
+  color: @theme_text;
+  font-weight: 600;
+}
+
+.hermes-hover-card .hover-secondary {
+  color: @theme_dim_text;
+}
+
+.hermes-hover-card image {
+  color: @theme_accent;
+  background: @theme_bg;
+}
+
 .search-coverage-notice {
   color: @theme_dim_text;
   background: @theme_surface;
@@ -2447,6 +2474,52 @@ menubutton.column-header-action > button:focus-visible image {
 
 .hermes-app-chooser button {
   border-radius: 6px;
+  background: @theme_surface;
+  background-image: none;
+  color: @theme_text;
+  border-color: @theme_border;
+  box-shadow: none;
+}
+
+.hermes-app-chooser appchooser,
+.hermes-app-chooser appchooser listview,
+.hermes-app-chooser appchooser row {
+  background: @theme_bg;
+  color: @theme_text;
+}
+
+.hermes-app-chooser appchooser label {
+  color: inherit;
+}
+
+.hermes-app-chooser appchooser listview header {
+  background: @theme_surface;
+  color: @theme_text;
+  padding: 8px 12px;
+}
+
+.hermes-app-chooser appchooser listview header label {
+  color: @theme_text;
+  opacity: 1;
+}
+
+.hermes-app-chooser appchooser row:selected,
+.hermes-app-chooser appchooser row:hover,
+.hermes-app-chooser button:hover {
+  background: @theme_highlight;
+  color: @theme_text;
+}
+
+.hermes-app-chooser button.suggested-action,
+.hermes-app-chooser button.suggested-action:hover,
+.hermes-app-chooser button.suggested-action:active {
+  background: @theme_accent;
+  color: @theme_on_accent;
+  border-color: @theme_accent;
+}
+
+.hermes-app-chooser button:disabled {
+  color: @theme_dim_text;
 }
 
 .drive-confirm-content {
@@ -3911,55 +3984,293 @@ button.music-cover-button:focus-visible {
   padding: 4px;
 }
 
+.document-view-switch {
+  background: @theme_surface;
+  border-bottom: 1px solid @theme_border;
+}
+
+.document-view-button {
+  background: @theme_surface;
+  background-image: none;
+  color: @theme_dim_text;
+  border: 0;
+  border-right: 1px solid @theme_border;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
+  font-family: inherit;
+  padding: 6px 14px;
+  transition: none;
+}
+
+.document-view-button:hover,
+.document-view-button:active {
+  background: @theme_highlight;
+  color: @theme_text;
+}
+
+.document-view-button:checked {
+  background: @theme_surface;
+  color: @theme_accent;
+  border-bottom-color: @theme_accent;
+}
+
+.document-view-button:checked:hover,
+.document-view-button:checked:active {
+  background: @theme_highlight;
+  color: @theme_accent;
+}
+
+.document-view-button:focus-visible {
+  outline: 2px solid @theme_accent;
+  outline-offset: -2px;
+}
+
+.document-view-button:disabled {
+  background: @theme_surface;
+  color: @theme_dim_text;
+  opacity: 0.5;
+}
+
 /* Spreadsheet viewer & multi-sheet tabs */
 .spreadsheet-container {
   background: @theme_surface;
-  border: 1px solid alpha(@theme_border, 0.4);
+  color: @theme_text;
+  border: 1px solid @theme_border;
+  border-radius: 0;
+  box-shadow: none;
+  font-family: inherit;
+}
+
+.spreadsheet-container label,
+.spreadsheet-container button {
+  font-family: inherit;
+}
+
+.spreadsheet-container button,
+.spreadsheet-container row,
+.spreadsheet-container cell {
+  border-radius: 0;
+  box-shadow: none;
+  transition: none;
 }
 
 .spreadsheet-header {
+  background: @theme_surface;
+  color: @theme_text;
+  border-bottom: 1px solid @theme_border;
+  padding: 6px 8px;
+}
+
+.spreadsheet-title {
+  color: @theme_text;
+  font-size: 1em;
+  font-weight: 600;
+}
+
+.spreadsheet-dimensions {
+  color: @theme_dim_text;
+  font-size: 0.85em;
+}
+
+.spreadsheet-action {
+  background: @theme_surface;
+  background-image: none;
+  color: @theme_accent;
+  border: 1px solid @theme_border;
+  border-radius: 0;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+}
+
+.spreadsheet-action:hover {
+  background: @theme_highlight;
+  border-color: @theme_accent;
+}
+
+.spreadsheet-action:active {
+  background: @theme_muted;
+  border-color: @theme_accent;
+}
+
+.spreadsheet-sheet-scroll {
   background: @theme_bg;
-  border-bottom: 1px solid alpha(@theme_border, 0.3);
-  padding: 6px 12px;
-  min-height: 38px;
+  border-bottom: 1px solid @theme_border;
 }
 
 .spreadsheet-sheet-bar {
   background: @theme_bg;
-  border-bottom: 1px solid alpha(@theme_border, 0.3);
-  padding: 4px 8px;
+  padding: 0;
 }
 
 .spreadsheet-sheet-button {
-  background: transparent;
+  background: @theme_bg;
+  background-image: none;
   color: @theme_dim_text;
-  border: 1px solid transparent;
+  border: 0;
+  border-right: 1px solid @theme_border;
+  border-bottom: 2px solid @theme_border;
   border-radius: 0;
-  padding: 4px 12px;
-  font-size: 0.88em;
+  min-height: 26px;
+  padding: 2px 10px;
+  font-size: 0.9em;
   font-weight: 500;
 }
 
 .spreadsheet-sheet-button:hover {
-  background: alpha(@theme_muted, 0.5);
+  background: @theme_highlight;
+  color: @theme_text;
+}
+
+.spreadsheet-sheet-button:active {
+  background: @theme_muted;
   color: @theme_text;
 }
 
 .spreadsheet-sheet-button.active-sheet-tab {
   background: @theme_surface;
   color: @theme_accent;
-  border: 1px solid alpha(@theme_border, 0.4);
-  border-bottom: 2px solid @theme_accent;
-  font-weight: 700;
+  border-bottom-color: @theme_accent;
 }
 
-.spreadsheet-dimension-pill {
+.spreadsheet-sheet-button.active-sheet-tab:hover,
+.spreadsheet-sheet-button.active-sheet-tab:active {
+  background: @theme_highlight;
+  color: @theme_accent;
+}
+
+.spreadsheet-action:focus-visible,
+.spreadsheet-sheet-button:focus-visible,
+.spreadsheet-grid:focus-visible,
+.spreadsheet-grid header button:focus-visible,
+.spreadsheet-grid row:focus-visible,
+.spreadsheet-grid cell:focus-visible {
+  outline: 2px solid @theme_accent;
+  outline-offset: -2px;
+}
+
+.spreadsheet-grid-scroll,
+.spreadsheet-grid,
+.spreadsheet-grid > listview {
+  background: @theme_surface;
+  color: @theme_text;
+  border-radius: 0;
+}
+
+.spreadsheet-grid header button {
+  background: @theme_bg;
+  background-image: none;
+  color: @theme_text;
+  border: 0;
+  border-right: 1px solid @theme_border;
+  border-bottom: 1px solid @theme_border;
+  min-height: 26px;
+  padding: 2px 8px;
+  font-size: 0.9em;
+  font-weight: 600;
+}
+
+.spreadsheet-grid header button:hover {
+  background: @theme_highlight;
+  color: @theme_accent;
+}
+
+.spreadsheet-grid header button:active {
+  background: @theme_muted;
+  color: @theme_accent;
+}
+
+.spreadsheet-grid header button:checked {
+  background: @theme_highlight;
+  color: @theme_accent;
+}
+
+.spreadsheet-grid row {
+  background: @theme_surface;
+  color: @theme_text;
+}
+
+.spreadsheet-grid row:hover {
+  background: @theme_highlight;
+  color: @theme_text;
+}
+
+.spreadsheet-grid row:selected,
+.spreadsheet-grid row:selected:hover {
+  background: @theme_accent;
+  color: @theme_on_accent;
+}
+
+.spreadsheet-grid row:selected:focus-visible,
+.spreadsheet-grid row:selected cell:focus-visible {
+  outline-color: @theme_on_accent;
+}
+
+.spreadsheet-grid > listview.separators > row {
+  border-bottom: 1px solid @theme_border;
+}
+
+.spreadsheet-grid.column-separators > listview > row > cell:not(:first-child) {
+  border-left: 1px solid @theme_border;
+}
+
+.spreadsheet-grid cell {
+  padding: 0;
+}
+
+.spreadsheet-cell {
+  padding: 4px 8px;
+  font-size: 1em;
+}
+
+.spreadsheet-container scrollbar,
+.spreadsheet-container scrollbar trough,
+.spreadsheet-layout-scroll scrollbar,
+.spreadsheet-layout-scroll scrollbar trough {
+  background: @theme_bg;
+  border-radius: 0;
+  transition: none;
+}
+
+.spreadsheet-container scrollbar slider,
+.spreadsheet-layout-scroll scrollbar slider {
+  background: @theme_border;
+  border: 0;
+  border-radius: 0;
+  min-width: 6px;
+  min-height: 6px;
+  transition: none;
+}
+
+.spreadsheet-container scrollbar slider:hover,
+.spreadsheet-layout-scroll scrollbar slider:hover {
+  background: @theme_dim_text;
+}
+
+.spreadsheet-container scrollbar slider:active,
+.spreadsheet-layout-scroll scrollbar slider:active {
+  background: @theme_accent;
+}
+
+.spreadsheet-grid-scroll scrollbar.horizontal slider,
+.spreadsheet-layout-scroll scrollbar.horizontal slider {
+  min-height: 10px;
+  min-width: 32px;
+}
+
+.spreadsheet-grid-scroll scrollbar.vertical slider,
+.spreadsheet-layout-scroll scrollbar.vertical slider {
+  min-width: 10px;
+  min-height: 32px;
+}
+
+.spreadsheet-note {
   color: @theme_dim_text;
-  font-size: 0.82em;
-  font-family: monospace;
-  padding: 2px 6px;
-  background: alpha(@theme_bg, 0.6);
-  border: 1px solid alpha(@theme_border, 0.2);
+  background: @theme_surface;
+  border-top: 1px solid @theme_border;
+  padding: 6px 8px;
+  font-size: 0.85em;
 }
 
 /* -------------------------------------------------------------
@@ -4569,4 +4880,314 @@ button.music-cover-button:focus-visible {
   color: @theme_accent;
   padding: 2px 6px;
   border-radius: 4px;
+.hermes-picker,
+.hermes-picker stack,
+.hermes-picker filechooser,
+.hermes-picker .view,
+.hermes-picker listview,
+.hermes-picker columnview,
+.hermes-picker treeview,
+.hermes-picker viewport,
+.hermes-picker scrolledwindow {
+  background: @theme_bg;
+  color: @theme_text;
+}
+
+.hermes-picker label,
+.hermes-picker entry,
+.hermes-picker text,
+.hermes-picker button,
+.hermes-picker dropdown {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.hermes-picker label,
+.hermes-picker image {
+  color: inherit;
+  background: transparent;
+}
+
+.hermes-picker button box,
+.hermes-picker row box,
+.hermes-picker headerbar box,
+.hermes-picker dropdown box {
+  background: transparent;
+  background-image: none;
+}
+
+.hermes-picker headerbar,
+.hermes-picker .sidebar {
+  background: @theme_surface;
+  color: @theme_text;
+}
+
+.hermes-picker .sidebar {
+  min-width: 196px;
+  padding: 8px 7px;
+}
+
+.hermes-picker .sidebar scrolledwindow,
+.hermes-picker .sidebar viewport,
+.hermes-picker .sidebar list {
+  background: @theme_surface;
+}
+
+.hermes-picker .sidebar row {
+  min-height: 30px;
+  padding: 3px 8px;
+  margin: 1px 0;
+  border: none;
+  border-radius: 6px;
+}
+
+.hermes-picker .sidebar row image {
+  color: @theme_accent;
+}
+
+.hermes-picker .sidebar .sidebar-icon {
+  margin: 0 8px 0 0;
+  padding: 0;
+  -gtk-icon-size: 18px;
+}
+
+.hermes-picker .sidebar .sidebar-label {
+  margin: 0;
+  padding: 0;
+}
+
+.hermes-picker separator {
+  background: alpha(@theme_border, 0.6);
+  color: @theme_border;
+  min-width: 1px;
+  min-height: 1px;
+}
+
+.hermes-picker button,
+.hermes-picker entry,
+.hermes-picker dropdown,
+.hermes-picker row {
+  border-radius: 0;
+}
+
+.hermes-picker entry {
+  background: @theme_surface;
+  background-image: none;
+  color: @theme_text;
+  border-color: @theme_border;
+}
+
+.hermes-picker button {
+  background: transparent;
+  background-image: none;
+  color: @theme_text;
+  border-color: transparent;
+  box-shadow: none;
+  padding: 5px 10px;
+  min-height: 28px;
+}
+
+.hermes-picker columnview > header {
+  background: @theme_surface;
+  border-bottom: 1px solid alpha(@theme_border, 0.6);
+}
+
+.hermes-picker columnview > header button,
+.hermes-picker treeview header button {
+  background: @theme_surface;
+  border: none;
+  color: @theme_dim_text;
+  font-size: 0.82em;
+  min-height: 24px;
+  padding: 2px 8px;
+}
+
+.hermes-picker columnview row {
+  min-height: 36px;
+}
+
+.hermes-picker headerbar {
+  min-height: 48px;
+  padding: 0 10px;
+}
+
+.hermes-picker pathbar button {
+  background: transparent;
+  color: @theme_dim_text;
+  border: none;
+  box-shadow: none;
+  padding: 3px 6px;
+  min-height: 30px;
+}
+
+.hermes-picker pathbar button:checked {
+  color: @theme_accent;
+  font-weight: 700;
+}
+
+.hermes-picker entry {
+  min-height: 30px;
+  padding: 3px 8px;
+  border: 1px solid alpha(@theme_border, 0.6);
+}
+
+.hermes-picker entry selection,
+.hermes-picker text selection {
+  background: @theme_highlight;
+  color: @theme_text;
+}
+
+.hermes-picker .picker-file-type {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 6px 8px;
+}
+
+.hermes-picker dropdown > button {
+  background: @theme_surface;
+  background-image: none;
+  color: @theme_text;
+  border: 1px solid alpha(@theme_border, 0.6);
+  box-shadow: none;
+  min-height: 28px;
+  padding: 4px 10px;
+}
+
+.hermes-picker dropdown stack,
+.hermes-picker dropdown arrow,
+.hermes-picker dropdown button box,
+.hermes-picker dropdown row {
+  background: transparent;
+  color: @theme_text;
+}
+
+.hermes-picker dropdown > button:hover,
+.hermes-picker dropdown row:hover,
+.hermes-picker dropdown row:selected {
+  background: @theme_highlight;
+  color: @theme_text;
+}
+
+.hermes-picker dropdown popover contents {
+  background: @theme_surface;
+  color: @theme_text;
+  border: 1px solid @theme_border;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.hermes-picker .sidebar row:hover {
+  background: alpha(@theme_muted, 0.38);
+}
+
+.hermes-picker .sidebar row:selected {
+  background: alpha(@theme_highlight, 0.82);
+}
+
+.hermes-picker button:hover,
+.hermes-picker row:hover {
+  background: @theme_highlight;
+  color: @theme_text;
+}
+
+.hermes-picker row:selected,
+.hermes-picker .view:selected,
+.hermes-picker treeview:selected,
+.hermes-picker columnview row:selected {
+  background: @theme_highlight;
+  color: @theme_text;
+}
+
+.hermes-picker check {
+  border-radius: 0;
+  background: @theme_surface;
+  border-color: @theme_border;
+  color: @theme_text;
+}
+
+.hermes-picker check:checked,
+.hermes-picker .picker-accept {
+  background: @theme_accent;
+  color: @theme_on_accent;
+}
+
+.hermes-picker .picker-accept {
+  min-width: 64px;
+  border: 1px solid @theme_accent;
+}
+
+.hermes-picker .picker-accept:hover {
+  background: @theme_accent;
+  color: @theme_on_accent;
+  border-color: @theme_text;
+}
+
+.hermes-picker button:focus-visible,
+.hermes-picker entry:focus-visible,
+.hermes-picker row:focus-visible,
+.hermes-picker .file-grid > child:focus-visible .grid-card {
+  outline: 2px solid @theme_accent;
+  outline-offset: -2px;
+}
+
+.hermes-picker .file-grid > child,
+.hermes-picker .file-grid > child:hover,
+.hermes-picker .file-grid > child:selected {
+  background: transparent;
+  border-radius: 5px;
+  outline: none;
+}
+
+.hermes-picker .file-grid > child:hover .grid-card {
+  background: alpha(@theme_muted, 0.62);
+}
+
+.hermes-picker .file-grid > child:selected .grid-card {
+  background: @theme_highlight;
+  outline: 1px solid alpha(@theme_accent, 0.9);
+  outline-offset: -1px;
+}
+
+.hermes-picker :disabled {
+  color: @theme_dim_text;
+}
+
+.hermes-picker .picker-error {
+  color: @theme_danger;
+  background: @theme_surface;
+  padding: 8px 12px;
+}
+
+.hermes-picker .picker-preview-scroll {
+  border-left: 1px solid alpha(@theme_accent, 0.34);
+  background: @theme_surface;
+}
+
+.hermes-picker .picker-preview {
+  padding: 0;
+  background: @theme_surface;
+  color: @theme_text;
+}
+
+.hermes-picker .preview-title {
+  color: @theme_accent;
+  font-weight: 700;
+}
+
+.hermes-picker .preview-metadata-label {
+  color: @theme_dim_text;
+  font-size: 0.72em;
+  font-weight: 700;
+}
+
+.hermes-picker .preview-metadata-value {
+  color: @theme_text;
+  font-size: 0.86em;
+}
+
+.hermes-picker .picker-preview-stage {
+  background: @theme_bg;
+  padding: 16px 12px;
 }

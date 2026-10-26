@@ -235,14 +235,7 @@ fn open_with(anchor: &gtk::Widget, entry: &FileEntry) {
         return;
     };
     let file = gio_file_for_location(&entry.location);
-    let dialog = gtk::AppChooserDialog::new(Some(&window), gtk::DialogFlags::MODAL, &file);
-    dialog.set_title(Some("Open With"));
-    dialog.add_css_class("hermes-app-chooser");
-    if let Some(chooser) = dialog.widget().downcast_ref::<gtk::AppChooserWidget>() {
-        chooser.set_show_all(true);
-        chooser.set_show_other(true);
-        chooser.set_show_fallback(true);
-    }
+    let dialog = app_chooser::dialog(&window, &file);
     dialog.connect_response(move |dialog, response| {
         if response == gtk::ResponseType::Accept
             && let Some(app) = dialog.app_info()

@@ -36,12 +36,25 @@ const SIDEBAR_TRANSITION: Duration = Duration::from_millis(300);
 
 mod saved_searches;
 mod startup;
+mod reveal;
 
 pub fn present(application: &gtk::Application) {
     present_location(application, None);
 }
 
 pub fn present_location(application: &gtk::Application, location: Option<PathBuf>) {
+    present_target(application, location.map(Location::local), None);
+}
+
+pub(crate) fn present_reveal(application: &gtk::Application, request: crate::file_manager::Request) {
+    present_target(application, Some(request.directory.clone()), Some(request));
+}
+
+fn present_target(
+    application: &gtk::Application,
+    location: Option<Location>,
+    reveal: Option<crate::file_manager::Request>,
+) {
     crate::assets::register_icon_theme();
     let theme_manager = super::theme::ThemeManager::shared();
     let trail_store = Rc::new(LocalTrailStore::xdg());
@@ -55,20 +68,24 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
         trail_browser_density(theme_manager.browser_density()),
         theme_manager.show_hidden_default(),
     );
-    let startup = startup::select(
+    let mut startup = startup::select(
         &trails,
-        location.map(Location::local),
+        location,
         &theme_manager.startup_location(),
         &home,
         &fresh_view,
     );
+    if reveal.as_ref().is_some_and(reveal::includes_hidden) {
+        startup.trail.view.preferences.show_hidden = true;
+    }
     let startup_restore = Rc::new(RefCell::new(startup::Restore::new(&startup.trail)));
     let applying_startup = Rc::new(Cell::new(false));
     load_styles();
 
     let window = gtk::ApplicationWindow::builder()
         .application(application)
-        .title("Strata")
+        .title(crate::identity::NAME)
+        .icon_name(crate::identity::ICON_NAME)
         .default_width(1200)
         .default_height(760)
         .build();
@@ -931,6 +948,13 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     );
     restore_startup(startup.trail);
     music_toggle.set_active(startup.workspace == startup::Workspace::Music);
+
+    if let Some(request) = reveal {
+        if !request.startup_id.is_empty() {
+            window.set_startup_id(&request.startup_id);
+        }
+        reveal::install(&controller, &browser, request);
+    }
 
     let browser_controller = browser.browser();
     window.connect_destroy(move |_| {
@@ -2136,7 +2160,7 @@ impl SidebarState {
                 let content = dialog.content_area();
                 content.add_css_class("drive-confirm-content");
                 let message = gtk::Label::new(Some(&format!(
-                    "{} will be disconnected from Strata.",
+                    "{} will be disconnected from Hermes.",
                     volume_action.name()
                 )));
                 message.set_wrap(true);
@@ -2898,7 +2922,7 @@ pub(crate) fn home_directory() -> PathBuf {
 #[cfg(test)]
 mod tests;
 
-fn load_styles() {
+pub(super) fn load_styles() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(include_str!("../style.css"));
 

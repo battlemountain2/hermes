@@ -1198,6 +1198,33 @@ fn reveal_selects_an_item_when_its_parent_is_already_open() {
 }
 
 #[test]
+fn external_selection_notifies_the_view_without_activating_or_previewing_files() {
+    let browser = Browser::new(Rc::new(FakeFileSource));
+    browser.state.borrow_mut().navigate(Location::local("/fixture"), RequestId(900));
+    let entry = |name: &str| crate::model::FileEntry(Rc::new(crate::model::FileEntryInner {
+        location: Location::local(format!("/fixture/{name}")), native_name: OsString::from(name),
+        display_name: name.into(), kind: EntryKind::File, size: MetadataValue::Unknown,
+        modified_unix_seconds: MetadataValue::Unknown, music_tags: None,
+    }));
+    browser.handle_directory_event(DirectoryEvent::Batch {
+        request_id: RequestId(900), entries: vec![entry("a.txt"), entry("b.txt"), entry("c.txt")],
+    });
+    browser.handle_directory_event(DirectoryEvent::Finished { request_id: RequestId(900) });
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let captured = events.clone();
+    browser.observe(move |event| captured.borrow_mut().push(event));
+    assert!(browser.select_locations(0, &[
+        Location::local("/fixture/c.txt"), Location::local("/fixture/a.txt"), Location::local("/fixture/c.txt"),
+        Location::local("/fixture/missing.txt"),
+    ]));
+    assert_eq!(browser.selected_entries().len(), 2);
+    assert_eq!(browser.focused_entry().unwrap().location, Location::local("/fixture/c.txt"));
+    assert!(matches!(&events.borrow()[..], [BrowserEvent::SelectionSetChanged { positions, focused: 2, .. }] if positions == &[2, 0]));
+    assert!(!browser.select_locations(0, &[Location::local("/missing")]));
+    assert!(!browser.select_locations(99, &[Location::local("/fixture/a.txt")]));
+}
+
+#[test]
 fn keyboard_selection_and_activation_descend_without_the_ui() {
     let browser = Browser::new(Rc::new(FakeFileSource));
     let events = Rc::new(RefCell::new(Vec::new()));

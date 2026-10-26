@@ -5,6 +5,19 @@ use super::{
 };
 
 #[test]
+fn hover_previews_default_on_and_round_trip_without_changing_older_preferences() {
+    let defaults = Preferences::default();
+    assert!(defaults.hover_previews);
+    let mut serialized = serde_json::to_value(defaults).unwrap();
+    serialized.as_object_mut().unwrap().remove("hover_previews");
+    let legacy: Preferences = serde_json::from_value(serialized.clone()).unwrap();
+    assert!(legacy.hover_previews);
+    serialized["hover_previews"] = false.into();
+    let disabled: Preferences = serde_json::from_value(serialized).unwrap();
+    assert!(!disabled.hover_previews);
+}
+
+#[test]
 #[ignore = "Requires isolated GTK display and private temporary preferences; no media"]
 fn desktop_audio_preferences_reload_and_normalize_legacy_values() {
     gtk::init().unwrap();

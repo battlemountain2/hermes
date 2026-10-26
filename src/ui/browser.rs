@@ -33,6 +33,7 @@ const COLUMN_WIDTH: i32 = 300;
 const COLUMN_OFFSET: i32 = 24;
 const COLUMN_TRANSITION: Duration = Duration::from_millis(220);
 
+mod app_chooser;
 mod retained;
 mod preview_menu;
 pub(super) mod loading;
@@ -3083,6 +3084,17 @@ impl ViewState {
             row.append(&spacer);
             row.append(&size);
             row.append(&chevron);
+            let hovered_item = item.downgrade();
+            let hover_state = weak_state.clone();
+            let hover_source = source_for_hover.clone();
+            let hover_filtered = filtered_for_hover.clone();
+            super::hover::install(&row, item, Rc::new(move || {
+                let item = hovered_item.upgrade()?;
+                item.item()?;
+                let state = hover_state.upgrade()?;
+                let position = source_position_for_filtered(&hover_source, &hover_filtered, item.position())?;
+                state.browser.entry_at(depth, position)
+            }));
             let motion = gtk::EventControllerMotion::new();
             let list_item = item.downgrade();
             let weak_state_for_enter = weak_state.clone();
@@ -4623,19 +4635,11 @@ pub(super) fn install_item_context_menu(
             return;
         };
         let file = gio::File::for_path(path);
-        let content_type = gio::content_type_guess(Some(path), None::<&[u8]>).0;
         let Some(window) = chooser_parent_widget.upgrade()
             .and_then(|parent| parent.root()).and_downcast::<gtk::Window>() else {
             return;
         };
-        let dialog = gtk::AppChooserDialog::new(Some(&window), gtk::DialogFlags::MODAL, &file);
-        dialog.set_title(Some("Open With"));
-        dialog.add_css_class("hermes-app-chooser");
-        if let Some(chooser) = dialog.widget().downcast_ref::<gtk::AppChooserWidget>() {
-            chooser.set_show_all(true);
-            chooser.set_show_other(true);
-            chooser.set_show_fallback(true);
-        }
+        let dialog = app_chooser::dialog(&window, &file);
         let dialog_file = file.clone();
         dialog.connect_response(move |dialog, response| {
             if response == gtk::ResponseType::Accept
@@ -4649,9 +4653,6 @@ pub(super) fn install_item_context_menu(
             }
             dialog.close();
         });
-        if gio::AppInfo::all_for_type(&content_type).is_empty() {
-            dialog.set_heading("No applications can open this file");
-        }
         dialog.present();
     });
     let weak = Rc::downgrade(state);

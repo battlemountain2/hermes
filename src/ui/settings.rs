@@ -142,7 +142,7 @@ pub fn build_layer(
             "Previews & files",
             icons::EYE,
             "previews",
-            &["preview", "previews", "files", "thumbnail", "audio", "image", "video", "pdf", "spreadsheet", "xlsx", "code", "size limit", "mb", "peek"],
+            &["preview", "previews", "files", "thumbnail", "audio", "image", "video", "pdf", "spreadsheet", "xlsx", "code", "size limit", "mb", "peek", "hover"],
         ),
         (
             "Audio & DSP",
@@ -742,6 +742,15 @@ fn previews_page(browser: &BrowserView, manager: Rc<ThemeManager>) -> gtk::Widge
         browser_for_peeking.set_peek_enabled(toggle.is_active())
     });
     card1.append(&peeking_row);
+
+    let (hover_row, hover) = settings_option(
+        "Rich file hover previews",
+        "Show cached artwork and quick file details on hover. Never plays media or converts Office documents.",
+        manager.hover_previews(),
+    );
+    let hover_manager = manager.clone();
+    hover.connect_active_notify(move |toggle| hover_manager.set_hover_previews(toggle.is_active()));
+    card1.append(&hover_row);
 
     let single_click_enabled = manager.single_click_previews();
     let (preview_row, single_click_previews) = settings_option(

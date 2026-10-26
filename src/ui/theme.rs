@@ -74,6 +74,8 @@ struct Preferences {
     theme: String,
     #[serde(default = "default_enabled")]
     single_click_previews: bool,
+    #[serde(default = "default_enabled")]
+    hover_previews: bool,
     #[serde(default)]
     search_open_files_directly: bool,
     #[serde(default)]
@@ -150,6 +152,7 @@ impl Default for Preferences {
             mode: "theme".to_owned(),
             theme: "azure-glow".to_owned(),
             single_click_previews: true,
+            hover_previews: true,
             search_open_files_directly: false,
             show_recent_files: false,
             show_recent_folders: true,
@@ -367,6 +370,15 @@ impl ThemeManager {
 
     pub fn single_click_previews(&self) -> bool {
         self.preferences.borrow().single_click_previews
+    }
+
+    pub fn hover_previews(&self) -> bool {
+        self.preferences.borrow().hover_previews
+    }
+
+    pub fn set_hover_previews(&self, enabled: bool) {
+        self.preferences.borrow_mut().hover_previews = enabled;
+        self.save_preferences();
     }
 
     pub fn set_single_click_previews(&self, enabled: bool) {
@@ -1269,7 +1281,7 @@ fn source_style_scheme_xml(tokens: &ThemeTokens) -> String {
     let type_color = blend(&tokens.accent, &tokens.text, 0.24);
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
-<style-scheme id="strata-current" _name="Strata Current Theme" version="1.0">
+<style-scheme id="strata-current" _name="Hermes Current Theme" version="1.0">
   <color name="background" value="{}"/>
   <color name="surface" value="{}"/>
   <color name="text" value="{}"/>
