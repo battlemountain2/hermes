@@ -577,8 +577,8 @@ impl ImmersiveView {
         floating_volume.add_css_class("immersive-vol-scale");
         floating_dock.append(&floating_volume);
 
-        content_box.append(&floating_dock);
         overlay.add_overlay(&content_box);
+        overlay.add_overlay(&floating_dock);
 
         let state = Rc::new(ImmersiveState {
             overlay: overlay.downgrade(),
@@ -1104,8 +1104,8 @@ impl ImmersiveState {
                 self.rebuild_lyrics_ui();
                 self.title_label.set_text("Nothing playing");
                 self.artist_label.set_text("Choose a track in Music");
-                self.floating_title.set_text("");
-                self.floating_artist.set_text("");
+                self.floating_title.set_text("Nothing playing");
+                self.floating_artist.set_text("Choose a track in Music");
             }
         } else if previous_track != track
             && let (Some(previous), Some(track)) = (previous_track.as_ref(), track.as_ref())

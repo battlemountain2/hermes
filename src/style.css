@@ -4523,20 +4523,20 @@ button.music-cover-button:focus-visible {
 }
 
 .immersive-floating-dock {
-  background: alpha(@theme_surface, 0.84);
-  border: 1px solid alpha(@theme_border, 0.4);
+  background: alpha(@theme_surface, 0.90);
+  border: 1px solid alpha(@theme_border, 0.45);
   border-radius: 28px;
   padding: 8px 22px;
-  box-shadow: 0 8px 32px alpha(@theme_bg, 0.5);
-  opacity: 0.82;
+  box-shadow: 0 10px 36px alpha(@theme_bg, 0.6);
+  opacity: 0.92;
   transition: opacity 180ms ease, background 160ms ease, border-color 160ms ease;
 }
 
 .immersive-floating-dock:hover,
 .immersive-floating-dock.controls-focused {
   opacity: 1;
-  background: alpha(@theme_surface, 0.95);
-  border-color: alpha(@theme_accent, 0.65);
+  background: @theme_surface;
+  border-color: alpha(@theme_accent, 0.7);
 }
 
 .immersive-floating-scrub trough {
