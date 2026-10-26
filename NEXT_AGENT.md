@@ -4,10 +4,11 @@
 
 - Added multi-harmonic organic aurora waves to the visualizer canvas with frequency-reactive amplitude, variable stroke thickness, and glowing alpha derived from the album palette.
 - Integrated a live seek/scrub scale directly into the floating dock during full-screen visualizer mode, allowing effortless scrubbing and track seeking without leaving the visualizer.
-- Polished the floating dock styling with subtle translucent presence (`opacity: 0.82`, transitioning to `1.0` on hover/focus) so controls never feel missing or flicker.
+- Fixed floating dock layout positioning by attaching it directly as a root `GtkOverlay` layer anchored to the bottom center (`valign: Align::End`, `margin_bottom: 28px`), preventing it from getting pushed behind the header when the stage is hidden.
+- Polished the floating dock styling with continuous semi-opaque presence (`opacity: 0.92`, transitioning to `1.0` on hover/focus) so controls never feel missing or flicker.
 - Simplified top bar tooltips and button titles to minimal "Lyrics" and "Visualizer" labels.
 - Verified dual-layout configuration (Hero Deck vs. Bottom Dock) remains cleanly isolated in Settings.
-- 1,011 unit tests pass, clean `cargo check --all-targets`. Commit: `cf6c65f`.
+- 1,011 unit tests pass, clean `cargo check --all-targets`. Commits: `cf6c65f`, `43bcbe9`. Built and installed to `~/.local/bin/hermes`.
 
 ## Office, Portal and UI polish committed and rebased — 2026-10-25
 
