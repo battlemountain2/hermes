@@ -795,7 +795,7 @@ fn desktop_queue_drag_buttons_removal_and_restart_resume() {
 }
 
 #[test]
-#[ignore = "Requires desktop, FFmpeg and a built target/debug/strata sandbox worker"]
+#[ignore = "Requires desktop, FFmpeg and a built target/debug/hermes sandbox worker"]
 fn desktop_full_track_queue_navigation_seek_and_stop() {
     use std::time::Instant;
     gtk::init().unwrap();

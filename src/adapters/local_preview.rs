@@ -37,8 +37,8 @@ fn preview_family(content_type: &str, name: &std::ffi::OsStr) -> FormatFamily {
     }
 }
 
-impl PreviewProvider for LocalPreviewProvider {
-    fn load(&self, request: PreviewRequest, emit: Rc<dyn Fn(PreviewEvent)>) -> LoadHandle {
+impl LocalPreviewProvider {
+    fn load_with_layout(&self, request: PreviewRequest, emit: Rc<dyn Fn(PreviewEvent)>, layout: bool) -> LoadHandle {
         let request_id = request.id;
         let entry = request.entry.clone();
         if let Err(message) = Self::check_policy(&entry, None) {
@@ -128,7 +128,10 @@ impl PreviewProvider for LocalPreviewProvider {
                 _ => PreviewContent::Unsupported,
             };
 
-            let operation = if !entry.is_directory() && crate::services::is_gif_image(&entry.native_name, &content_type) {
+            let workbook_layout = layout && family == FormatFamily::Spreadsheet;
+            let operation = if workbook_layout {
+                Some(ParseOperation::PreviewOffice)
+            } else if !entry.is_directory() && crate::services::is_gif_image(&entry.native_name, &content_type) {
                 Some(ParseOperation::PreviewAnimation)
             } else {
                 handler.and_then(preview_operation)
@@ -144,17 +147,35 @@ impl PreviewProvider for LocalPreviewProvider {
                 };
                 let value =
                     preview_operation_value(operation, request.pdf_page, request.text_byte_limit);
+                let page = request.pdf_page;
                 let cancellation = cancellation_for_task.clone();
                 let result = gio::spawn_blocking(move || {
-                    if operation == ParseOperation::PreviewAudioMetadata {
+                    let output = if operation == ParseOperation::PreviewOffice {
+                        match crate::sandbox::office::render(&path, page, &cancellation) {
+                            Ok(output) => return Ok((output, None)),
+                            Err(_) if cancellation.is_cancelled() => return Err("Preview cancelled".into()),
+                            Err(error) if workbook_layout => return Err(format!("Workbook layout unavailable: {error}")),
+                            Err(error) => {
+                                tracing::debug!(%error, "Office layout unavailable; using extracted text");
+                                let reason = if crate::sandbox::office::available() {
+                                    "Page layout could not be rendered. Showing extracted text instead."
+                                } else {
+                                    "Install LibreOffice for page and slide layouts. Showing extracted text instead."
+                                };
+                                return crate::sandbox::parse(&path, operation, value, &cancellation)
+                                    .map(|output| (output, Some(reason.to_owned())));
+                            }
+                        }
+                    } else if operation == ParseOperation::PreviewAudioMetadata {
                         super::music_metadata::read_audio_metadata(&path, &cancellation)
                     } else {
                         crate::sandbox::parse(&path, operation, value, &cancellation)
-                    }
+                    }?;
+                    Ok((output, None))
                 })
                 .await;
                 content = match result {
-                    Ok(Ok(output)) if operation == ParseOperation::PreviewPdf => {
+                    Ok(Ok((output, None))) if matches!(operation, ParseOperation::PreviewPdf | ParseOperation::PreviewOffice) => {
                         PreviewContent::Pdf {
                             png: output.data,
                             page: output.page,
@@ -162,7 +183,7 @@ impl PreviewProvider for LocalPreviewProvider {
                             text_layer: output.text_layer.map(std::sync::Arc::new),
                         }
                     }
-                    Ok(Ok(output)) if operation == ParseOperation::PreviewGeoTiff => {
+                    Ok(Ok((output, _))) if operation == ParseOperation::PreviewGeoTiff => {
                         let metadata: Option<crate::sandbox_helper::geotiff::GeoTiffMetadata> =
                             output
                                 .metadata
@@ -176,7 +197,7 @@ impl PreviewProvider for LocalPreviewProvider {
                             None => PreviewContent::Rasterized { png: output.data },
                         }
                     }
-                    Ok(Ok(output)) if operation == ParseOperation::PreviewAudioMetadata => {
+                    Ok(Ok((output, _))) if operation == ParseOperation::PreviewAudioMetadata => {
                         let metadata: Option<crate::services::preview::AudioMetadata> =
                             serde_json::from_slice(&output.data).ok();
                         match metadata {
@@ -191,7 +212,7 @@ impl PreviewProvider for LocalPreviewProvider {
                             }
                         }
                     }
-                    Ok(Ok(output)) if operation == ParseOperation::PreviewSpreadsheet => {
+                    Ok(Ok((output, _))) if operation == ParseOperation::PreviewSpreadsheet => {
                         let table: Option<crate::services::table::SpreadsheetData> = output
                             .metadata
                             .as_ref()
@@ -201,24 +222,27 @@ impl PreviewProvider for LocalPreviewProvider {
                             None => PreviewContent::Unsupported,
                         }
                     }
-                    Ok(Ok(output)) if operation == ParseOperation::PreviewAnimation => {
+                    Ok(Ok((output, _))) if operation == ParseOperation::PreviewAnimation => {
                         PreviewContent::SandboxedAnimation { data: output.data }
                     }
-                    Ok(Ok(output)) if operation == ParseOperation::PreviewAudio => {
+                    Ok(Ok((output, _))) if operation == ParseOperation::PreviewAudio => {
                         PreviewContent::SandboxedMedia { data: output.data }
                     }
-                    Ok(Ok(output))
+                    Ok(Ok((output, reason)))
                         if matches!(
                             operation,
                             ParseOperation::PreviewArchive | ParseOperation::PreviewOffice
                         ) =>
                     {
-                        PreviewContent::Text {
-                            content: String::from_utf8_lossy(&output.data).into_owned(),
-                            truncated: output.data.len() >= request.text_byte_limit,
+                        let content = String::from_utf8_lossy(&output.data).into_owned();
+                        let truncated = output.data.len() >= request.text_byte_limit;
+                        if let Some(reason) = reason {
+                            PreviewContent::OfficeText { content, truncated, reason }
+                        } else {
+                            PreviewContent::Text { content, truncated }
                         }
                     }
-                    Ok(Ok(output)) => PreviewContent::Rasterized { png: output.data },
+                    Ok(Ok((output, _))) => PreviewContent::Rasterized { png: output.data },
                     Ok(Err(message)) => {
                         emit(PreviewEvent::Failed {
                             request_id,
@@ -285,6 +309,16 @@ impl PreviewProvider for LocalPreviewProvider {
             cancellation.cancel();
             task.abort();
         })
+    }
+}
+
+impl PreviewProvider for LocalPreviewProvider {
+    fn load(&self, request: PreviewRequest, emit: Rc<dyn Fn(PreviewEvent)>) -> LoadHandle {
+        self.load_with_layout(request, emit, false)
+    }
+
+    fn load_layout(&self, request: PreviewRequest, emit: Rc<dyn Fn(PreviewEvent)>) -> LoadHandle {
+        self.load_with_layout(request, emit, true)
     }
 }
 

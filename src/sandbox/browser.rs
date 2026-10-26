@@ -315,7 +315,9 @@ impl Lease {
                     self.discard();
                     match spawn_worker() {
                         Ok(fresh) => self.worker = Some(fresh),
-                        Err(_) => return Err(err),
+                        Err(error) => {
+                            return Err(format!("Unable to spawn sandbox worker: {error}"));
+                        }
                     }
                 }
                 Err(err) => {
@@ -464,9 +466,8 @@ fn spawn_worker() -> io::Result<Worker> {
         "--ro-bind-try",
         "/etc/ImageMagick-6",
         "/etc/ImageMagick-6",
-        "--ro-bind",
     ]);
-    command.arg(&executable).arg("/app/strata");
+    super::helper_binary::bind(&mut command, &executable)?;
     command.args([
         "--",
         "/usr/bin/prlimit",
@@ -494,6 +495,8 @@ fn map_preview_op(op: &ParseOperation) -> Option<Operation> {
     match op {
         ParseOperation::MusicTags => Some(Operation::MusicTags),
         ParseOperation::PreviewAudioMetadata => Some(Operation::PreviewAudioMetadata),
+        ParseOperation::ImageMetadata => Some(Operation::ImageMetadata),
+        ParseOperation::MediaMetadata => Some(Operation::MediaMetadata),
         ParseOperation::PreviewAudioArtwork => Some(Operation::PreviewAudioArtwork),
         ParseOperation::PreviewImage => Some(Operation::PreviewImage),
         ParseOperation::PreviewGeoTiff => Some(Operation::PreviewGeoTiff),

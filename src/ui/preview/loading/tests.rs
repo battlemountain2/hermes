@@ -200,3 +200,49 @@ fn desktop_cached_photos_upgrade_and_ignore_stale_changed_closed_or_failed_reque
     window.close();
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+#[ignore = "Private GTK display; synthetic saved slide poster, canceled/stale requests, no full converter"]
+fn desktop_saved_office_poster_stays_provisional_and_cannot_replace_a_newer_document() {
+    use std::io::Write;
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let root = std::env::temp_dir().join(format!("hermes-office-poster-{}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    let bytes = write_image(&root.join("cover.png"), 320, 180, 1.0, 0.0);
+    for (name, saved) in [("saved.pptx", true), ("next.pptx", false)] {
+        let mut archive = zip::ZipWriter::new(fs::File::create(root.join(name)).unwrap());
+        archive.start_file("ppt/presentation.xml", zip::write::SimpleFileOptions::default()).unwrap();
+        archive.write_all(b"<presentation/>").unwrap();
+        if saved {
+            archive.start_file("docProps/thumbnail.png", zip::write::SimpleFileOptions::default()).unwrap();
+            archive.write_all(&bytes).unwrap();
+        }
+        archive.finish().unwrap();
+    }
+    let provider = Rc::new(Pending(RefCell::new(Vec::new())));
+    let drawer = PreviewDrawer::new(provider.clone());
+    let window = gtk::Window::builder().child(&drawer.widget()).default_width(500).default_height(500).build();
+    window.present();
+    let started = Instant::now();
+    drawer.show(entry(&root.join("saved.pptx")));
+    pump_until(|| drawer.state.loading_image.borrow().is_some());
+    eprintln!("Saved slide poster before full conversion: {:?}", started.elapsed());
+    assert!(drawer.state.current_request.get().is_some());
+    assert!(drawer.state.pdf.borrow().is_none());
+    let (request, emit) = provider.0.borrow()[0].clone();
+    drawer.show(entry(&root.join("next.pptx")));
+    emit(PreviewEvent::Ready(Preview {
+        request_id: request.id, entry: request.entry, content_type: "application/vnd.openxmlformats-officedocument.presentationml.presentation".into(), content: PreviewContent::Pdf { png: bytes, page: 0, pages: 1, text_layer: None },
+    }));
+    pump();
+    assert!(drawer.state.loading_image.borrow().is_none());
+    assert!(drawer.state.pdf.borrow().is_none());
+    assert!(drawer.state.current_request.get().is_some());
+    drawer.close();
+    assert!(drawer.state.loading_task.borrow().is_none());
+    pump();
+    assert!(drawer.state.loading_image.borrow().is_none());
+    window.close();
+    fs::remove_dir_all(root).unwrap();
+}

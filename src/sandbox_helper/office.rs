@@ -11,6 +11,8 @@ use quick_xml::{
     events::{BytesStart, Event},
 };
 
+pub(crate) mod render;
+
 const INPUT_LIMIT: u64 = 50 * 1024 * 1024;
 const MEMBER_LIMIT: u64 = 16 * 1024 * 1024;
 const EXPANDED_LIMIT: u64 = 64 * 1024 * 1024;

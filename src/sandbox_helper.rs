@@ -19,6 +19,7 @@ pub(crate) mod model;
 pub(crate) mod office;
 mod scaled;
 pub(crate) mod sniff;
+pub(crate) mod metadata;
 pub(crate) mod table;
 pub(crate) mod waveform;
 
@@ -37,6 +38,12 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
     let value = value
         .parse::<i32>()
         .map_err(|_| "Invalid preview helper size or page".to_owned())?;
+
+    if operation == "image-metadata" || operation == "media-metadata" {
+        let data = if operation == "image-metadata" { metadata::image(input)? } else { metadata::media(input)? };
+        fs::write(output, data).map_err(|error| error.to_string())?;
+        return Ok(());
+    }
 
     if operation == "extract-pdf-text" {
         let text = extract_pdf_text(input, value.max(1) as usize)?;
@@ -74,12 +81,18 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         fs::write(output, text).map_err(|error| error.to_string())?;
         return Ok(());
     }
+    if operation == "convert-office-pdf" {
+        fs::write(output, office::render::convert(input)?).map_err(|error| error.to_string())?;
+        return Ok(());
+    }
 
     let (png, metadata) = match operation.as_str() {
         "thumbnail-image" => (render_image(input, value.clamp(16, 256))?, None),
         "thumbnail-heif" => (render_heif_thumbnail(input, value.clamp(16, 256))?, None),
         "thumbnail-raw" => (render_raw(input, value.clamp(16, 256))?, None),
         "thumbnail-pdf" => (render_pdf_thumbnail(input, value.clamp(16, 256))?, None),
+        "thumbnail-office" => (office::render::thumbnail(input, value.clamp(16, 256))?, None),
+        "office-poster" => (office::render::poster(input, value.clamp(16, 1400))?, None),
         "thumbnail-video" => (render_media(input, value.clamp(16, 256))?, None),
         "preview-audio-artwork" => (render_media(input, 1024)?, None),
         "preview-image" => (render_image(input, 1400)?, None),

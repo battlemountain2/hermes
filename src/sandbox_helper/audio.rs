@@ -214,7 +214,7 @@ fn parse_audio_details(data: &[u8]) -> Result<AudioDetails, String> {
     })
 }
 
-fn parse_music_tags(data: &[u8]) -> Result<crate::model::MusicTags, String> {
+pub(super) fn parse_music_tags(data: &[u8]) -> Result<crate::model::MusicTags, String> {
     let parsed: serde_json::Value =
         serde_json::from_slice(data).map_err(|error| error.to_string())?;
     let format = parsed.get("format").and_then(|format| format.get("tags"));

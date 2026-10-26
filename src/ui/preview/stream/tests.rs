@@ -184,7 +184,7 @@ fn desktop_mov_starts_with_a_real_frame_and_seeks_without_normalization() {
 }
 
 #[test]
-#[ignore = "Requires desktop, FFmpeg and a built target/debug/strata sandbox worker"]
+#[ignore = "Requires desktop, FFmpeg and a built target/debug/hermes sandbox worker"]
 fn desktop_full_length_seek_fullscreen_and_cleanup() {
     use std::time::Instant;
     gtk::init().expect("Display available");

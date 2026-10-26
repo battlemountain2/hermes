@@ -32,6 +32,7 @@ mod pdf_fullscreen;
 #[cfg(test)]
 mod pdf_ranges_tests;
 mod pdf_text;
+mod workbook;
 pub(crate) mod stream;
 
 const DEFAULT_WIDTH: i32 = 520;
@@ -82,6 +83,9 @@ struct PreviewState {
     pdf_loads: Rc<RefCell<HashMap<i32, LoadHandle>>>,
     current_request: Cell<Option<PreviewRequestId>>,
     loading_image: RefCell<Option<image::ImagePreview>>,
+    loading_task: RefCell<Option<LoadHandle>>,
+    workbook_layout: Cell<bool>,
+    layout_failure: RefCell<Option<String>>,
     next_request: Cell<u64>,
     opened: Cell<bool>,
     last_split_width: Cell<i32>,
@@ -188,6 +192,9 @@ impl PreviewDrawer {
             pdf_loads: Rc::new(RefCell::new(HashMap::new())),
             current_request: Cell::new(None),
             loading_image: RefCell::new(None),
+            loading_task: RefCell::new(None),
+            workbook_layout: Cell::new(false),
+            layout_failure: RefCell::new(None),
             next_request: Cell::new(1),
             opened: Cell::new(false),
             last_split_width: Cell::new(0),
@@ -457,6 +464,15 @@ impl PreviewState {
     }
 
     fn load(self: &Rc<Self>, entry: FileEntry, pdf_page: i32) {
+        let layout = workbook::supports_layout(&entry) && crate::sandbox::office::available();
+        self.load_document(entry, pdf_page, layout);
+    }
+
+    fn load_document(self: &Rc<Self>, entry: FileEntry, pdf_page: i32, layout: bool) {
+        if self.current.borrow().as_ref() != Some(&entry) {
+            self.layout_failure.borrow_mut().take();
+        }
+        self.workbook_layout.set(layout);
         self.current.replace(Some(entry.clone()));
         self.title.set_text(&entry.display_name);
         self.title
@@ -471,6 +487,12 @@ impl PreviewState {
         }
         self.content_type.set_text(file_extension(&entry));
         self.show_loading();
+        if classify_by_name(&entry.native_name) == FormatFamily::Spreadsheet {
+            let spinner = self.content.first_child();
+            if let Some(spinner) = spinner.as_ref() { self.content.remove(spinner); }
+            self.render_workbook_controls(&entry, layout);
+            if let Some(spinner) = spinner { self.content.append(&spinner); }
+        }
         self.load.borrow_mut().take();
         self.pdf_loads.borrow_mut().clear();
 
@@ -488,16 +510,20 @@ impl PreviewState {
             };
             state.handle_event(request_id, event);
         });
-        let load = self.provider.load(
-            PreviewRequest {
+        let request = PreviewRequest {
                 id: request_id,
                 entry,
                 text_byte_limit: TEXT_BYTE_LIMIT,
                 pdf_page,
-            },
-            emit,
-        );
-        self.load.replace(Some(load));
+            };
+        let load = if layout {
+            self.provider.load_layout(request, emit)
+        } else {
+            self.provider.load(request, emit)
+        };
+        if self.current_request.get() == Some(request_id) {
+            self.load.replace(Some(load));
+        }
     }
 
     fn handle_event(self: &Rc<Self>, expected: PreviewRequestId, event: PreviewEvent) {
@@ -517,6 +543,13 @@ impl PreviewState {
             } if request_id == expected => {
                 self.current_request.set(None);
                 self.load.borrow_mut().take();
+                if self.workbook_layout.get()
+                    && classify_by_name(&entry.native_name) == FormatFamily::Spreadsheet
+                {
+                    self.layout_failure.replace(Some(message));
+                    self.load_document(entry, 0, false);
+                    return;
+                }
                 self.title.set_text(&entry.display_name);
                 self.show_message("Preview unavailable", &message);
             }
@@ -554,8 +587,20 @@ impl PreviewState {
             self.update_rating_display(None);
         }
         let is_audio = preview.content_type.starts_with("audio/");
+        if family == FormatFamily::Spreadsheet {
+            let layout = matches!(&preview.content, PreviewContent::Pdf { .. });
+            self.workbook_layout.set(layout);
+            self.render_workbook_controls(&preview.entry, layout);
+        }
+        if let PreviewContent::OfficeText { reason, .. } = &preview.content {
+            let notice = gtk::Label::new(Some(reason));
+            notice.add_css_class("preview-note");
+            notice.set_wrap(true);
+            notice.set_xalign(0.0);
+            self.content.append(&notice);
+        }
         match preview.content {
-            PreviewContent::Text { content, truncated } => {
+            PreviewContent::Text { content, truncated } | PreviewContent::OfficeText { content, truncated, .. } => {
                 let buffer = sourceview5::Buffer::new(None);
                 let languages = sourceview5::LanguageManager::default();
                 let language = languages.guess_language(
@@ -649,6 +694,15 @@ impl PreviewState {
                 pages,
                 text_layer,
             } => {
+                if family == FormatFamily::OfficeDocument {
+                    let name = preview.entry.native_name.to_string_lossy().to_ascii_lowercase();
+                    let slides = [".pptx", ".ppsx", ".potx"].iter().any(|extension| name.ends_with(extension));
+                    let unit = if slides { "slides" } else { "pages" };
+                    let notice = gtk::Label::new(Some(&format!("LibreOffice layout · {pages} {unit}")));
+                    notice.add_css_class("preview-note");
+                    notice.set_xalign(0.0);
+                    self.content.append(&notice);
+                }
                 self.render_pdf_viewer(preview.entry, png, page, pages, text_layer);
             }
             PreviewContent::Spreadsheet { table } => {
@@ -747,6 +801,7 @@ impl PreviewState {
         let initial_page = Rc::new(RefCell::new(Some((initial_page, initial_png))));
         let next_request = Rc::new(Cell::new(self.next_request.get().saturating_add(10_000)));
         let entry_for_bind = entry.clone();
+        let workbook_layout = classify_by_name(&entry.native_name) == FormatFamily::Spreadsheet;
         let page_width_for_bind = page_width.clone();
         let visible_pages_for_bind = visible_pages.clone();
         let layers_for_bind = text_layers.clone();
@@ -883,8 +938,13 @@ impl PreviewState {
                         request_id: response_id,
                         ..
                     } if response_id == request_id => {
-                        overlay.set_tooltip_text(Some("Unable to render this PDF page"));
+                        overlay.set_tooltip_text(Some("Unable to render this document page"));
                     }
+                    PreviewEvent::Ready(Preview {
+                        request_id: response_id,
+                        content: PreviewContent::OfficeText { reason, .. },
+                        ..
+                    }) if response_id == request_id => overlay.set_tooltip_text(Some(&reason)),
                     PreviewEvent::Ready(_) | PreviewEvent::Failed { .. } => return,
                 }
                 if let Some(spinner) = weak_spinner.upgrade() {
@@ -892,15 +952,17 @@ impl PreviewState {
                     spinner.set_visible(false);
                 }
             });
-            let load = provider.load(
-                PreviewRequest {
+            let request = PreviewRequest {
                     id: request_id,
                     entry: entry_for_bind.clone(),
                     text_byte_limit: TEXT_BYTE_LIMIT,
                     pdf_page: page_index,
-                },
-                emit,
-            );
+                };
+            let load = if workbook_layout {
+                provider.load_layout(request, emit)
+            } else {
+                provider.load(request, emit)
+            };
             loads.borrow_mut().insert(page_index, load);
         });
 
@@ -930,6 +992,11 @@ impl PreviewState {
             .build();
 
         scroll.add_css_class("preview-pdf-scroll");
+        if workbook_layout {
+            scroll.set_policy(gtk::PolicyType::Always, gtk::PolicyType::Always);
+            scroll.set_overlay_scrolling(false);
+            scroll.add_css_class("spreadsheet-layout-scroll");
+        }
 
         let zoom_scroll =
             gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
@@ -1005,6 +1072,10 @@ impl PreviewState {
             let Some(scroll) = weak_scroll.upgrade() else {
                 return;
             };
+            if pdf_scrollbar_at(&scroll, x, y) {
+                gesture.set_state(gtk::EventSequenceState::Denied);
+                return;
+            }
             let hit = pdf_page_at(
                 &scroll,
                 &pages_for_begin.borrow(),
@@ -1140,6 +1211,10 @@ impl PreviewState {
             let Some(scroll) = weak_scroll.upgrade() else {
                 return;
             };
+            if pdf_scrollbar_at(&scroll, x, y) {
+                scroll.set_cursor_from_name(None);
+                return;
+            }
             let over_text = pdf_page_at(
                 &scroll,
                 &pages_for_motion.borrow(),
@@ -1254,6 +1329,7 @@ impl PreviewState {
     }
 
     fn clear_content(&self) {
+        self.loading_task.borrow_mut().take();
         if let Some(image) = self.loading_image.borrow_mut().take() {
             image.stop();
         }
@@ -1669,7 +1745,7 @@ fn normalize_to_lon_lat(bounds: [f64; 4], epsg: Option<u32>) -> (f64, f64, f64, 
     (min_lon, min_lat, max_lon, max_lat)
 }
 
-fn metadata_value(label: &str) -> (gtk::Box, gtk::Label) {
+pub(super) fn metadata_value(label: &str) -> (gtk::Box, gtk::Label) {
     let group = gtk::Box::new(gtk::Orientation::Vertical, 2);
     group.set_hexpand(true);
     group.set_valign(gtk::Align::Center);
@@ -1734,6 +1810,17 @@ fn preview_width_for_empty_space(available: i32, occupied: i32) -> i32 {
 
 fn pdf_zoom_after_scroll(current: f64, dy: f64) -> f64 {
     (current * (-dy * 0.14).exp()).clamp(PDF_MIN_ZOOM, PDF_MAX_ZOOM)
+}
+
+fn pdf_scrollbar_at(scroll: &gtk::ScrolledWindow, horizontal: f64, vertical: f64) -> bool {
+    let point = gtk::graphene::Point::new(horizontal as f32, vertical as f32);
+    [scroll.hscrollbar(), scroll.vscrollbar()]
+        .iter()
+        .any(|bar| {
+            bar.is_mapped()
+                && bar.compute_bounds(scroll)
+                    .is_some_and(|bounds| bounds.contains_point(&point))
+        })
 }
 
 fn pdf_page_width(scroll: &gtk::ScrolledWindow, zoom: f64) -> i32 {
@@ -2026,3 +2113,6 @@ fn rounded_rect(cr: &gtk::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod office_tests;

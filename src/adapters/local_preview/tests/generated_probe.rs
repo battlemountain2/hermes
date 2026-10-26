@@ -78,7 +78,10 @@ fn describe(event: &PreviewEvent) -> serde_json::Value {
                 PreviewContent::Rasterized { png } => {
                     json!({"kind": "raster", "bytes": png.len(), "dimensions": dimensions(png)})
                 }
-                PreviewContent::Text { content, truncated } => {
+                PreviewContent::Text { content, truncated }
+                | PreviewContent::OfficeText {
+                    content, truncated, ..
+                } => {
                     json!({"kind": "text", "bytes": content.len(), "text": content.chars().take(100).collect::<String>(), "truncated": truncated})
                 }
                 PreviewContent::Pdf {
@@ -125,6 +128,7 @@ fn thumbnail_operation(handler: ThumbnailHandler) -> ParseOperation {
         ThumbnailHandler::Media => ParseOperation::ThumbnailVideo,
         ThumbnailHandler::Model => ParseOperation::PreviewModel,
         ThumbnailHandler::Cover => ParseOperation::PreviewArchiveCover,
+        ThumbnailHandler::Office => ParseOperation::ThumbnailOffice,
     }
 }
 
@@ -170,7 +174,8 @@ fn generated_previewprobe_matrix() {
             if matches!(name.as_str(), "sample.docx" | "sample.odt" | "sample.zip") {
                 assert!(
                     matches!(&event, PreviewEvent::Ready(preview)
-                    if matches!(&preview.content, PreviewContent::Text { content, .. } if !content.is_empty())),
+                    if matches!(&preview.content, PreviewContent::Text { content, .. } | PreviewContent::OfficeText { content, .. } if !content.is_empty())
+                        || matches!(&preview.content, PreviewContent::Pdf { png, pages, .. } if !png.is_empty() && *pages > 0)),
                     "Generated document/archive must show content, not a blank successful preview"
                 );
             }

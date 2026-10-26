@@ -7,6 +7,130 @@ use crate::services::{FormatFamily, classify_by_name};
 #[path = "tests/generated_probe.rs"]
 mod generated_probe;
 
+#[test]
+#[ignore = "Private GTK preferences and generated Office fixtures; no document mutation"]
+fn desktop_office_adapter_returns_pages_or_a_readable_dependency_fallback() {
+    use crate::services::{
+        PreviewContent, PreviewEvent, PreviewProvider, PreviewRequest, PreviewRequestId,
+    };
+    use gtk::glib;
+    use std::{
+        cell::RefCell,
+        rc::Rc,
+        time::{Duration, Instant},
+    };
+    gtk::init().unwrap();
+    let root = std::path::PathBuf::from(
+        std::env::var_os("HERMES_OFFICE_FIXTURE_DIR").expect("Generated Office fixtures"),
+    );
+    for name in ["layout.docx", "layout.odt", "layout.pptx"] {
+        let path = root.join(name);
+        let entry = crate::model::FileEntry(Rc::new(crate::model::FileEntryInner {
+            music_tags: None,
+            location: crate::model::Location::local(&path),
+            native_name: name.into(),
+            display_name: name.into(),
+            kind: crate::model::EntryKind::File,
+            size: crate::model::MetadataValue::Known(fs::metadata(&path).unwrap().len()),
+            modified_unix_seconds: crate::model::MetadataValue::Unknown,
+        }));
+        let captured = Rc::new(RefCell::new(None));
+        let delivered = captured.clone();
+        let handle = super::LocalPreviewProvider.load(
+            PreviewRequest {
+                id: PreviewRequestId(1),
+                entry,
+                text_byte_limit: 4096,
+                pdf_page: 0,
+            },
+            Rc::new(move |event| {
+                delivered.replace(Some(event));
+            }),
+        );
+        let until = Instant::now() + Duration::from_secs(30);
+        while captured.borrow().is_none() && Instant::now() < until {
+            for _ in 0..64 {
+                if !glib::MainContext::default().iteration(false) {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        match captured
+            .borrow_mut()
+            .take()
+            .expect("Office adapter completed")
+        {
+            PreviewEvent::Ready(preview) => match preview.content {
+                PreviewContent::Pdf {
+                    png,
+                    pages,
+                    text_layer,
+                    ..
+                } => {
+                    assert_eq!(pages, 2);
+                    assert!(!png.is_empty() && text_layer.is_some());
+                }
+                PreviewContent::OfficeText {
+                    content, reason, ..
+                } => {
+                    assert!(
+                        std::env::var_os("HERMES_OFFICE_REQUIRE_LAYOUT").is_none(),
+                        "Expected a page layout, received text fallback: {reason}"
+                    );
+                    assert!(!content.is_empty());
+                    assert!(reason.contains("LibreOffice") || reason.contains("Page layout"));
+                    if !crate::sandbox::office::available() {
+                        assert!(reason.contains("Install LibreOffice"));
+                    }
+                }
+                _ => panic!("Office must be a visual document or explicit text fallback"),
+            },
+            PreviewEvent::Failed { message, .. } => panic!("Office preview failed: {message}"),
+        }
+        drop(handle);
+    }
+}
+
+#[test]
+#[ignore = "Private GTK preferences, generated workbook and system renderer; no edits or user documents"]
+fn desktop_workbook_adapter_switches_between_layout_and_data_without_changing_the_file() {
+    use crate::services::{PreviewProvider, PreviewRequest, PreviewRequestId, PreviewEvent, PreviewContent};
+    use gtk::glib;
+    use std::{cell::RefCell, rc::Rc, time::{Duration, Instant}};
+    gtk::init().unwrap();
+    let path = std::path::PathBuf::from(std::env::var_os("HERMES_OFFICE_FIXTURE_DIR").unwrap()).join("layout.xlsx");
+    let original = fs::read(&path).unwrap();
+    let entry = crate::model::FileEntry(Rc::new(crate::model::FileEntryInner {
+        location: crate::model::Location::local(&path), native_name: "layout.xlsx".into(), display_name: "layout.xlsx".into(), kind: crate::model::EntryKind::File, size: crate::model::MetadataValue::Known(original.len() as u64), modified_unix_seconds: crate::model::MetadataValue::Unknown, music_tags: None,
+    }));
+    for layout in [false, true, false] {
+        let captured = Rc::new(RefCell::new(None));
+        let result = captured.clone();
+        let emit = Rc::new(move |event| { result.replace(Some(event)); });
+        let request = PreviewRequest { id: PreviewRequestId(1), entry: entry.clone(), pdf_page: 0, text_byte_limit: 4096 };
+        let started = Instant::now();
+        let handle = if layout { super::LocalPreviewProvider.load_layout(request, emit) } else { super::LocalPreviewProvider.load(request, emit) };
+        while captured.borrow().is_none() && started.elapsed() < Duration::from_secs(40) {
+            for _ in 0..64 { if !glib::MainContext::default().iteration(false) { break; } }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        match captured.borrow_mut().take().expect("Workbook preview completed") {
+            PreviewEvent::Ready(preview) => match preview.content {
+                PreviewContent::Pdf { png, pages, text_layer, .. } if layout => {
+                    assert!(!png.is_empty() && pages >= 2 && text_layer.is_some());
+                }
+                PreviewContent::Spreadsheet { table } if !layout => assert!(table.sheets.len() >= 2),
+                _ => panic!("Wrong workbook view"),
+            },
+            PreviewEvent::Failed { message, .. } => panic!("Workbook failed: {message}"),
+        }
+        eprintln!("Workbook layout={layout}: {:?}", started.elapsed());
+        drop(handle);
+    }
+    assert_eq!(original, fs::read(path).unwrap());
+}
+
 fn policy() -> super::PreviewPolicy {
     super::PreviewPolicy {
         max_bytes: 1_000_000,

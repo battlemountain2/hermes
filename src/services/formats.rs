@@ -33,6 +33,7 @@ pub enum ThumbnailHandler {
     Media,
     Model,
     Cover,
+    Office,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -374,6 +375,9 @@ pub fn thumbnail_handler_for_name(name: &OsStr) -> Option<ThumbnailHandler> {
         | "nef" | "nrw" | "orf" | "pef" | "raf" | "raw" | "rw2" | "rwl" | "sr2" | "srf" | "srw"
         | "x3f" => Some(ThumbnailHandler::RawImage),
         "pdf" => Some(ThumbnailHandler::Pdf),
+        "docx" | "odt" | "pptx" | "ppsx" | "potx" | "xlsx" | "ods" => {
+            Some(ThumbnailHandler::Office)
+        }
         "stl" | "3mf" => Some(ThumbnailHandler::Model),
         "epub" | "cbz" | "cbr" => Some(ThumbnailHandler::Cover),
         "flac" | "mp3" | "ogg" | "opus" | "m4a" | "aac" | "wav" | "wma" | "mp4" | "mkv"

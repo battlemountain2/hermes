@@ -25,6 +25,14 @@ fn gif_animation_detection_keeps_image_thumbnail_classification() {
     );
 }
 
+#[test]
+fn office_thumbnails_are_available_for_layout_supported_packages() {
+    for name in ["document.DOCX", "document.odt", "slides.PPTX", "show.ppsx", "template.potx", "budget.xlsx", "budget.ODS"] {
+        assert_eq!(capabilities_by_name(OsStr::new(name)).thumbnail, Some(ThumbnailHandler::Office));
+    }
+    assert_eq!(thumbnail_handler_for_name(OsStr::new("legacy.xls")), None);
+}
+
 // ---------------------------------------------------------------------------
 // classify_by_name — extension table
 // ---------------------------------------------------------------------------
@@ -189,7 +197,7 @@ fn presentation_packages_have_office_preview_and_search_capabilities() {
         assert_eq!(capabilities.family, FormatFamily::OfficeDocument);
         assert_eq!(capabilities.preview, Some(PreviewHandler::Office));
         assert_eq!(capabilities.text_extractor, Some(TextExtractor::Office));
-        assert_eq!(capabilities.thumbnail, None);
+        assert_eq!(capabilities.thumbnail, Some(ThumbnailHandler::Office));
     }
     for suffix in ["presentation", "slideshow", "template"] {
         assert_eq!(
@@ -507,7 +515,7 @@ fn registry_reports_independent_capabilities() {
 fn no_thumbnail_for_unsupported_formats() {
     assert_eq!(thumbnail_handler_for_name(OsStr::new("README.md")), None);
     assert_eq!(thumbnail_handler_for_name(OsStr::new("no-extension")), None);
-    assert_eq!(thumbnail_handler_for_name(OsStr::new("slides.pptx")), None);
+    assert_eq!(thumbnail_handler_for_name(OsStr::new("legacy.ppt")), None);
 }
 
 #[test]

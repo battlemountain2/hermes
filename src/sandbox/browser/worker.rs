@@ -85,6 +85,8 @@ fn render_job(operation: Operation, input_fd: &OwnedFd) -> Result<Response, Stri
     let input_path = Path::new(&input_path_str);
 
     let (png, metadata) = match operation {
+        Operation::ImageMetadata => (crate::sandbox_helper::metadata::image(input_path)?, None),
+        Operation::MediaMetadata => (crate::sandbox_helper::metadata::media(input_path)?, None),
         Operation::MusicTags => (
             crate::sandbox_helper::audio::read_music_tags(input_path)?.into_bytes(),
             None,

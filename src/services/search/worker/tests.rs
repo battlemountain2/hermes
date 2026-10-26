@@ -349,7 +349,7 @@ fn real_library_search_cold_and_warm_refresh() {
     let index_cache = Arc::new(Mutex::new(VecDeque::new()));
     let calls = Arc::new(AtomicUsize::new(0));
     let counted = calls.clone();
-    let executable = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/strata");
+    let executable = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/hermes");
     assert!(
         executable.is_file(),
         "Build the production binary before this fixture"

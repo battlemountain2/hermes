@@ -454,6 +454,7 @@ fn thumbnail_operation(handler: ThumbnailHandler) -> ParseOperation {
         ThumbnailHandler::Media => ParseOperation::ThumbnailVideo,
         ThumbnailHandler::Model => ParseOperation::PreviewModel,
         ThumbnailHandler::Cover => ParseOperation::PreviewArchiveCover,
+        ThumbnailHandler::Office => ParseOperation::ThumbnailOffice,
     }
 }
 

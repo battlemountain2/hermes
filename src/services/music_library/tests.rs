@@ -535,7 +535,7 @@ fn real_shared_library_cold_search_music_and_persistent_warm_restart() {
     for (_, path) in samples {
         assert!(root.join(path).is_file());
     }
-    let executable = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/strata");
+    let executable = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/hermes");
     assert!(executable.is_file());
     let calls = fixture.calls.clone();
     let tags: Arc<TagReader> = Arc::new(move |path, cancellation| {

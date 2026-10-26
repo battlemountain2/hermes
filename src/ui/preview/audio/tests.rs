@@ -187,7 +187,7 @@ fn desktop_audio_preview_stop_disconnects_refresh_and_releases_widgets() {
 }
 
 #[test]
-#[ignore = "Requires a private desktop display, FFmpeg and a built target/debug/strata worker"]
+#[ignore = "Requires a private desktop display, FFmpeg and a built target/debug/hermes worker"]
 fn desktop_audio_preview_playback_metadata_artwork_and_cancellation() {
     use crate::ui::music::controller::PlaybackStatus;
     use crate::ui::preview::PreviewDrawer;

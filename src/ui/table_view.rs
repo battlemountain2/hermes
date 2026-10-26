@@ -84,39 +84,50 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
     viewer.set_vexpand(true);
     viewer.set_hexpand(true);
 
-    // Header bar with title, dimensions pill, and fullscreen toggle
     let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     controls.add_css_class("spreadsheet-header");
 
+    let metadata = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    metadata.set_hexpand(true);
+    metadata.set_valign(gtk::Align::Center);
+
     let name_label = gtk::Label::new(Some(title));
-    name_label.add_css_class("music-title");
+    name_label.add_css_class("spreadsheet-title");
     name_label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    name_label.set_width_chars(1);
+    name_label.set_tooltip_text(Some(title));
     name_label.set_xalign(0.0);
     name_label.set_hexpand(true);
-    controls.append(&name_label);
+    metadata.append(&name_label);
 
     let dim_label = gtk::Label::new(None);
-    dim_label.add_css_class("spreadsheet-dimension-pill");
-    controls.append(&dim_label);
+    dim_label.add_css_class("spreadsheet-dimensions");
+    dim_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    dim_label.set_width_chars(1);
+    dim_label.set_xalign(0.0);
+    metadata.append(&dim_label);
+    controls.append(&metadata);
 
     let expand = gtk::Button::builder()
         .tooltip_text("Fullscreen spreadsheet (F)")
         .build();
-    expand.add_css_class("hermes-media-action");
+    expand.add_css_class("spreadsheet-action");
+    expand.set_valign(gtk::Align::Center);
     expand.set_child(Some(&assets::primary_icon(icons::MAXIMIZE, 16)));
     controls.append(&expand);
 
     viewer.append(&controls);
 
-    // Sheets stack
     let stack = gtk::Stack::builder()
-        .transition_type(gtk::StackTransitionType::Crossfade)
-        .transition_duration(100)
+        .hhomogeneous(false)
+        .vhomogeneous(false)
+        .transition_type(gtk::StackTransitionType::None)
+        .transition_duration(0)
         .vexpand(true)
         .hexpand(true)
         .build();
 
-    let sheets: Vec<SheetData> = if !data.sheets.is_empty() {
+    let sheets: Rc<Vec<SheetData>> = Rc::new(if !data.sheets.is_empty() {
         data.sheets.clone()
     } else {
         vec![SheetData {
@@ -127,17 +138,22 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
             total_cols: data.total_cols,
             truncated: data.truncated,
         }]
-    };
+    });
 
     let dim_label_for_tabs = dim_label.clone();
     let sheet_buttons: Rc<RefCell<Vec<glib::WeakRef<gtk::Button>>>> = Rc::new(RefCell::new(Vec::new()));
 
     if sheets.len() > 1 {
-        let sheet_bar = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let sheet_bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         sheet_bar.add_css_class("spreadsheet-sheet-bar");
 
         for (idx, sheet) in sheets.iter().enumerate() {
-            let btn = gtk::Button::with_label(&sheet.name);
+            let tab_label = gtk::Label::new(Some(&sheet.name));
+            tab_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            tab_label.set_max_width_chars(20);
+            let btn = gtk::Button::new();
+            btn.set_child(Some(&tab_label));
+            btn.set_tooltip_text(Some(&sheet.name));
             btn.add_css_class("spreadsheet-sheet-button");
             if idx == 0 {
                 btn.add_css_class("active-sheet-tab");
@@ -145,6 +161,7 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
 
             let stack = stack.clone();
             let sheet_name = format!("sheet_{idx}");
+            let sheets_for_tab = sheets.clone();
             let buttons = sheet_buttons.clone();
             let dim_lbl = dim_label_for_tabs.clone();
             let s_rows = sheet.total_rows.max(sheet.rows.len() + if sheet.headers.is_empty() { 0 } else { 1 });
@@ -156,17 +173,34 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
                     candidate.remove_css_class("active-sheet-tab");
                 }
                 clicked.add_css_class("active-sheet-tab");
+                if stack.child_by_name(&sheet_name).is_none() {
+                    stack.add_named(
+                        &build_sheet_table_page(&sheets_for_tab[idx]),
+                        Some(&sheet_name),
+                    );
+                }
                 stack.set_visible_child_name(&sheet_name);
-                dim_lbl.set_text(&format!(
+                let dimensions = format!(
                     "{} rows · {} cols · Sheet {} of {}",
                     s_rows, s_cols, idx + 1, sheets_count
-                ));
+                );
+                dim_lbl.set_text(&dimensions);
+                dim_lbl.set_tooltip_text(Some(&dimensions));
             });
 
             sheet_buttons.borrow_mut().push(btn.downgrade());
             sheet_bar.append(&btn);
         }
-        viewer.append(&sheet_bar);
+        let sheet_scroll = gtk::ScrolledWindow::builder()
+            .child(&sheet_bar)
+            .hscrollbar_policy(gtk::PolicyType::Automatic)
+            .vscrollbar_policy(gtk::PolicyType::Never)
+            .kinetic_scrolling(false)
+            .propagate_natural_height(true)
+            .hexpand(true)
+            .build();
+        sheet_scroll.add_css_class("spreadsheet-sheet-scroll");
+        viewer.append(&sheet_scroll);
     }
 
     // Set initial dimension label
@@ -181,12 +215,11 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
         } else {
             dim_label.set_text(&format!("{} rows · {} cols", s_rows, s_cols));
         }
+        dim_label.set_tooltip_text(Some(dim_label.text().as_str()));
     }
 
-    // Build each sheet's table page
-    for (idx, sheet) in sheets.iter().enumerate() {
-        let sheet_page = build_sheet_table_page(sheet);
-        stack.add_named(&sheet_page, Some(&format!("sheet_{idx}")));
+    if let Some(sheet) = sheets.first() {
+        stack.add_named(&build_sheet_table_page(sheet), Some("sheet_0"));
     }
 
     viewer.append(&stack);
@@ -195,9 +228,10 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
         let warning = gtk::Label::new(Some(
             "Table preview capped at 200 rows and 256 columns; open file for complete data."
         ));
-        warning.add_css_class("dim-label");
-        warning.set_margin_top(4);
-        warning.set_margin_bottom(4);
+        warning.add_css_class("spreadsheet-note");
+        warning.set_wrap(true);
+        warning.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        warning.set_xalign(0.0);
         viewer.append(&warning);
     }
 
@@ -289,6 +323,7 @@ fn build_sheet_table_page(sheet: &SheetData) -> gtk::Widget {
     let sort_model = gtk::SortListModel::new(Some(store), None::<gtk::Sorter>);
     let no_selection = gtk::NoSelection::new(Some(sort_model.clone()));
     let column_view = gtk::ColumnView::new(Some(no_selection));
+    column_view.add_css_class("spreadsheet-grid");
     column_view.set_show_row_separators(true);
     column_view.set_show_column_separators(true);
 
@@ -303,11 +338,8 @@ fn build_sheet_table_page(sheet: &SheetData) -> gtk::Widget {
         let rows_for_factory = rows_rc.clone();
         factory.connect_setup(move |_, item| {
             let label = gtk::Label::new(None);
+            label.add_css_class("spreadsheet-cell");
             label.set_xalign(0.0);
-            label.set_margin_start(8);
-            label.set_margin_end(8);
-            label.set_margin_top(4);
-            label.set_margin_bottom(4);
             label.set_ellipsize(gtk::pango::EllipsizeMode::End);
             if let Some(list_item) = item.downcast_ref::<gtk::ColumnViewCell>() {
                 list_item.set_child(Some(&label));
@@ -358,11 +390,14 @@ fn build_sheet_table_page(sheet: &SheetData) -> gtk::Widget {
 
     let scroll = gtk::ScrolledWindow::builder()
         .child(&column_view)
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .hscrollbar_policy(gtk::PolicyType::Always)
+        .vscrollbar_policy(gtk::PolicyType::Always)
+        .overlay_scrolling(false)
+        .kinetic_scrolling(false)
         .vexpand(true)
         .hexpand(true)
         .build();
+    scroll.add_css_class("spreadsheet-grid-scroll");
 
     scroll.upcast()
 }

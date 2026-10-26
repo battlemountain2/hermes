@@ -2,6 +2,15 @@ use super::*;
 
 impl PreviewState {
     pub(super) fn show_cached_image(self: &Rc<Self>, entry: &FileEntry, request: PreviewRequestId) {
+        let office = matches!(
+            classify_by_name(&entry.native_name),
+            FormatFamily::OfficeDocument | FormatFamily::Spreadsheet
+        );
+        if classify_by_name(&entry.native_name) == FormatFamily::Spreadsheet
+            && !self.workbook_layout.get()
+        {
+            return;
+        }
         if !matches!(
             classify_by_name(&entry.native_name),
             FormatFamily::Image
@@ -9,6 +18,8 @@ impl PreviewState {
                 | FormatFamily::RawImage
                 | FormatFamily::Svg
                 | FormatFamily::GeoTiff
+                | FormatFamily::OfficeDocument
+                | FormatFamily::Spreadsheet
         ) || crate::services::is_gif_image(&entry.native_name, "")
         {
             return;
@@ -17,8 +28,26 @@ impl PreviewState {
             return;
         };
         let state = Rc::downgrade(self);
-        glib::MainContext::default().spawn_local(async move {
-            let Some(bytes) = super::super::thumbnail::cached_preview_bytes(&path).await else {
+        let cancellation = crate::sandbox::Cancellation::default();
+        let worker_cancellation = cancellation.clone();
+        let task = glib::MainContext::default().spawn_local(async move {
+            let cached = super::super::thumbnail::cached_preview_bytes(&path).await;
+            let saved = cached.is_none() && office;
+            let bytes = if let Some(cached) = cached {
+                Some(cached)
+            } else if office {
+                let source = path.clone();
+                gio::spawn_blocking(move || {
+                    crate::sandbox::office::poster(&source, &worker_cancellation)
+                })
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .map(glib::Bytes::from_owned)
+            } else {
+                None
+            };
+            let Some(bytes) = bytes else {
                 return;
             };
             let Some(state) = state
@@ -27,6 +56,12 @@ impl PreviewState {
             else {
                 return;
             };
+            let Some(entry) = state.current.borrow().clone() else {
+                return;
+            };
+            if crate::adapters::LocalPreviewProvider::check_policy(&entry, None).is_err() {
+                return;
+            }
             let Ok(texture) = gtk::gdk::Texture::from_bytes(&bytes) else {
                 return;
             };
@@ -42,14 +77,29 @@ impl PreviewState {
             let spinner = gtk::Spinner::new();
             spinner.start();
             progress.append(&spinner);
-            progress.append(&gtk::Label::new(Some("Loading full preview…")));
+            progress.append(&gtk::Label::new(Some(if office {
+                if saved {
+                    "Saved preview · preparing document…"
+                } else {
+                    "Cached preview · preparing document…"
+                }
+            } else {
+                "Loading full preview…"
+            })));
             if let Some(viewport) = loading.widget.first_child().and_downcast::<gtk::Overlay>() {
                 viewport.add_overlay(&progress);
             }
             clear_box(&state.content);
+            if classify_by_name(&entry.native_name) == FormatFamily::Spreadsheet {
+                state.render_workbook_controls(&entry, state.workbook_layout.get());
+            }
             state.content.append(&loading.widget);
             state.loading_image.replace(Some(loading));
         });
+        self.loading_task.replace(Some(LoadHandle::new(move || {
+            cancellation.cancel();
+            task.abort();
+        })));
     }
 }
 

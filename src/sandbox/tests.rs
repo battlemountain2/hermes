@@ -13,7 +13,7 @@ fn audio_preview_metadata_is_json_with_unchanged_sandbox_limits() {
         Path::new("/tmp/output"),
         operation,
         0,
-    );
+    ).unwrap();
     let arguments = command
         .get_args()
         .map(|value| value.to_string_lossy())
@@ -56,7 +56,7 @@ fn sandbox_exposes_only_runtime_input_and_private_output() {
         Path::new("/tmp/private-output"),
         ParseOperation::PreviewPdf,
         2,
-    );
+    ).unwrap();
     let arguments: Vec<_> = command
         .get_args()
         .map(|argument| argument.to_string_lossy().into_owned())
@@ -95,6 +95,54 @@ fn sandbox_keeps_only_a_bounded_safe_format_suffix() {
         super::sandbox_input_path(Path::new(OsStr::from_bytes(b"private.\xff"))),
         "/input"
     );
+}
+
+#[test]
+fn one_shot_renderers_reuse_only_optional_read_only_system_font_caches() {
+    for operation in [
+        ParseOperation::ConvertOfficePdf,
+        ParseOperation::ThumbnailOffice,
+        ParseOperation::PreviewPdf,
+        ParseOperation::ThumbnailPdf,
+    ] {
+        let command = sandbox_command(
+            Path::new("/generated/hermes"),
+            Path::new("/generated/input.pdf"),
+            Path::new("/generated/output"),
+            operation,
+            0,
+        )
+        .unwrap();
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(arguments.windows(3).any(|values| values
+            == [
+                "--ro-bind-try",
+                "/var/cache/fontconfig",
+                "/var/cache/fontconfig",
+            ]));
+        assert_eq!(
+            arguments
+                .iter()
+                .filter(|argument| argument.starts_with("/var/"))
+                .count(),
+            2
+        );
+        assert!(
+            arguments
+                .windows(3)
+                .any(|values| values == ["--setenv", "HOME", "/nonexistent"])
+        );
+        assert!(
+            arguments
+                .windows(3)
+                .any(|values| values == ["--setenv", "XDG_CACHE_HOME", "/tmp/cache"])
+        );
+        assert!(arguments.contains(&"--unshare-all"));
+        assert!(!arguments.contains(&"--share-net"));
+    }
 }
 
 #[test]
@@ -187,7 +235,7 @@ fn pdf_text_extraction_uses_a_text_output_inside_the_sandbox() {
         Path::new("/tmp/private-output"),
         operation,
         1_048_576,
-    );
+    ).unwrap();
     let arguments: Vec<_> = command
         .get_args()
         .map(|argument| argument.to_string_lossy().into_owned())
@@ -219,7 +267,7 @@ fn archive_and_office_operations_use_bounded_text_outputs() {
             Path::new("/tmp/private-output"),
             operation,
             1_048_576,
-        );
+        ).unwrap();
         let arguments = command
             .get_args()
             .map(|value| value.to_string_lossy())

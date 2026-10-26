@@ -415,6 +415,17 @@ fn recognizes_mainstream_image_and_video_formats() {
 }
 
 #[test]
+fn office_documents_slides_and_workbooks_have_thumbnail_routes() {
+    for extension in ["docx", "ODT", "PPTX", "ppsx", "potx", "xlsx", "ODS"] {
+        assert_eq!(
+            thumbnail_handler_for_name(std::ffi::OsStr::new(&format!("fixture.{extension}")))
+                .map(thumbnail_operation),
+            Some(ParseOperation::ThumbnailOffice)
+        );
+    }
+}
+
+#[test]
 fn thumbnail_cache_evicts_the_least_recent_entry() {
     let mut cache = ThumbnailCache::default();
     for index in 0..=MAX_CACHE_ENTRIES {
@@ -859,5 +870,51 @@ fn desktop_thumbnails_persist_and_reload_after_the_memory_cache_is_cleared() {
         reader.download_bytes().0
     };
     assert_eq!(download(&original), download(&reloaded));
+    window.close();
+}
+
+#[test]
+#[ignore = "Private GTK display/cache, generated Office fixtures and a system LibreOffice renderer"]
+fn desktop_office_icons_render_and_reload_from_the_persistent_cache() {
+    use gtk::prelude::*;
+    let root = PathBuf::from(std::env::var_os("HERMES_PREVIEW_PROBE").unwrap());
+    assert!(PathBuf::from(std::env::var_os("XDG_CACHE_HOME").unwrap()).starts_with(&root));
+    let fixtures = PathBuf::from(std::env::var_os("HERMES_OFFICE_FIXTURE_DIR").unwrap());
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let image = gtk::Image::new();
+    let window = gtk::Window::builder().child(&image).build();
+    window.present();
+    for name in ["layout.docx", "layout.pptx", "layout.xlsx"] {
+        let path = fixtures.join(name);
+        let entry = crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner {
+            location: crate::model::Location::local(&path),
+            native_name: name.into(),
+            display_name: name.into(),
+            kind: crate::model::EntryKind::File,
+            size: crate::model::MetadataValue::Known(fs::metadata(&path).unwrap().len()),
+            modified_unix_seconds: crate::model::MetadataValue::Unknown,
+            music_tags: None,
+        }));
+        super::set_thumbnail_or_icon(&image, &entry, crate::assets::icons::DOCUMENTS, 32, 96);
+        let cache_file = super::disk::root().join(super::disk::filename(&path).unwrap());
+        let deadline = std::time::Instant::now() + Duration::from_secs(40);
+        while !cache_file.is_file() || image.paintable().is_none() {
+            assert!(std::time::Instant::now() < deadline, "Office icon not rendered: {name}");
+            for _ in 0..64 {
+                if !glib::MainContext::default().iteration(false) {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        THUMBNAIL_CACHE.with(|cache| *cache.borrow_mut() = ThumbnailCache::default());
+        let bytes = glib::MainContext::default()
+            .block_on(super::cached_preview_bytes(&path))
+            .expect("Persisted Office icon");
+        let texture = gtk::gdk::Texture::from_bytes(&bytes).unwrap();
+        assert!(texture.width().max(texture.height()) <= 96);
+    }
+    super::cancel_thumbnail(&image);
     window.close();
 }
