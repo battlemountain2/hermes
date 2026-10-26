@@ -397,7 +397,7 @@ fn sandbox_command(path: &Path) -> Result<std::process::Command, String> {
         .parent()
         .and_then(Path::parent)
         .ok_or("Test executable location missing")?
-        .join("strata");
+        .join("hermes");
     let mut command = std::process::Command::new("bwrap");
     command.args([
         "--unshare-all",

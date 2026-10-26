@@ -266,7 +266,7 @@ fn test_f6_frame_budget_boundary_edge() {
 
 #[test]
 fn test_f7_cli_helper_missing_all_arguments() {
-    let binary = env!("CARGO_BIN_EXE_strata");
+    let binary = env!("CARGO_BIN_EXE_hermes");
     let cmd = std::process::Command::new(binary)
         .arg("--preview-helper")
         .output()

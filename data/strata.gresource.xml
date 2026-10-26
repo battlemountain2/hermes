@@ -61,4 +61,8 @@
     <file>icons/scalable/actions/strata-star.svg</file>
     <file>icons/scalable/actions/strata-star-filled.svg</file>
   </gresource>
+  <gresource prefix="/io/github/battlemountain2/Hermes">
+    <file>icons/scalable/apps/io.github.battlemountain2.Hermes.svg</file>
+    <file>icons/symbolic/apps/io.github.battlemountain2.Hermes-symbolic.svg</file>
+  </gresource>
 </gresources>

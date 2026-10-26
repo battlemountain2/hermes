@@ -122,6 +122,7 @@ pub fn prepare() -> Result<(), Box<dyn std::error::Error>> {
 pub fn register_icon_theme() {
     if let Some(display) = gdk::Display::default() {
         gtk::IconTheme::for_display(&display).add_resource_path("/io/github/lgse/Strata/icons");
+        gtk::IconTheme::for_display(&display).add_resource_path("/io/github/battlemountain2/Hermes/icons");
     }
 }
 

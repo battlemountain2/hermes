@@ -331,7 +331,7 @@ fn isolated_audio_survives_startup_thread_exit() {
 }
 
 #[test]
-#[ignore = "Requires HERMES_AUDIO_TEST_FILE and a built target/debug/strata sandbox worker"]
+#[ignore = "Requires HERMES_AUDIO_TEST_FILE and a built target/debug/hermes sandbox worker"]
 fn isolated_audio_start_middle_seek_and_end() {
     let path = std::env::var_os("HERMES_AUDIO_TEST_FILE").expect("Audio fixture path");
     let session = Session::start(Path::new(&path)).expect("Session starts");
@@ -509,7 +509,7 @@ fn paused_session_does_not_use_the_active_playback_deadline() {
 }
 
 #[test]
-#[ignore = "Requires codecs and a built target/debug/strata sandbox worker"]
+#[ignore = "Requires codecs and a built target/debug/hermes sandbox worker"]
 fn malformed_media_fails_closed_with_decoder_reason() {
     let path = std::env::temp_dir().join(format!("hermes-bad-media-{}.mp4", std::process::id()));
     std::fs::write(&path, b"not a media container").unwrap();
@@ -530,7 +530,7 @@ fn malformed_media_fails_closed_with_decoder_reason() {
 }
 
 #[test]
-#[ignore = "Requires HERMES_STREAM_TEST_FILE, codecs and a built target/debug/strata"]
+#[ignore = "Requires HERMES_STREAM_TEST_FILE, codecs and a built target/debug/hermes"]
 fn isolated_local_file_start_seek_and_stop() {
     let path = std::env::var_os("HERMES_STREAM_TEST_FILE").expect("Test video path provided");
     let started = Instant::now();

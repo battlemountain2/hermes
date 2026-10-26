@@ -3,16 +3,18 @@ use std::{env, path::PathBuf, process::Command};
 fn main() {
     glib_build_tools::compile_resources(&["data"], "data/strata.gresource.xml", "strata.gresource");
 
+    println!("cargo::rerun-if-env-changed=HERMES_BUILD_COMMIT");
     println!("cargo::rerun-if-env-changed=STRATA_BUILD_COMMIT");
     track_git_metadata();
 
-    let commit = env::var("STRATA_BUILD_COMMIT")
+    let commit = env::var("HERMES_BUILD_COMMIT")
+        .or_else(|_| env::var("STRATA_BUILD_COMMIT"))
         .ok()
         .and_then(|value| value.lines().next().map(str::trim).map(str::to_owned))
         .filter(|value| !value.is_empty())
         .or_else(git_commit)
         .unwrap_or_else(|| "unknown".to_owned());
-    println!("cargo::rustc-env=STRATA_BUILD_COMMIT={commit}");
+    println!("cargo::rustc-env=HERMES_BUILD_COMMIT={commit}");
 }
 
 fn git_commit() -> Option<String> {

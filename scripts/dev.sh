@@ -5,7 +5,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 if [[ -x "$HOME/.cargo/bin/cargo" ]]; then
   export PATH="$HOME/.cargo/bin:$PATH"
 fi
-export STRATA_DEV=1
+export HERMES_DEV=1
 export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 
 native_dependencies_available() {
@@ -74,11 +74,11 @@ if command -v ionice >/dev/null 2>&1; then
   build_runner+=(ionice -c 3)
 fi
 run_command="run"
-binary="target/debug/strata"
+binary="target/debug/hermes"
 if [[ "${HERMES_DEV_RELEASE:-0}" == "1" ]]; then
   build_command="build --release --jobs 2"
   run_command="run --release"
-  binary="target/release/strata"
+  binary="target/release/hermes"
 fi
 if [[ "${HERMES_DEV_AUTO_RESTART:-0}" == "1" ]]; then
   exec cargo watch \

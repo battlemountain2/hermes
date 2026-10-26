@@ -311,7 +311,7 @@ fn test_scm_rights_live_worker_pipeline_under_rapid_requests() {
     let img_path = env.write_file("test_rapid.jpg", &img_bytes);
 
     let (host_sock, worker_sock) = UnixStream::pair().expect("socket pair");
-    let binary = env!("CARGO_BIN_EXE_strata");
+    let binary = env!("CARGO_BIN_EXE_hermes");
 
     let mut child = Command::new(binary)
         .arg("--preview-helper")
@@ -567,7 +567,7 @@ fn test_cancellation_multi_threaded_never_hangs() {
 #[test]
 fn test_worker_disposal_on_unexpected_sigkill() {
     let (host_sock, worker_sock) = UnixStream::pair().expect("socket pair");
-    let binary = env!("CARGO_BIN_EXE_strata");
+    let binary = env!("CARGO_BIN_EXE_hermes");
 
     let child = Command::new(binary)
         .arg("--preview-helper")
@@ -626,7 +626,7 @@ fn test_worker_disposal_and_respawn_after_crash() {
     let env = TestEnv::new();
     let img_bytes = generate_valid_jpeg(32, 32);
     let img_path = env.write_file("respawn_test.jpg", &img_bytes);
-    let binary = env!("CARGO_BIN_EXE_strata");
+    let binary = env!("CARGO_BIN_EXE_hermes");
 
     let (host_sock1, worker_sock1) = UnixStream::pair().expect("socket pair");
     let child1 = Command::new(binary)

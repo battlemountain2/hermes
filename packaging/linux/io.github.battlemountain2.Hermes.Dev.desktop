@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Hermes Dev
+Comment=Hermes development build
+Exec=env HERMES_DEV=1 hermes %U
+TryExec=hermes
+Icon=io.github.battlemountain2.Hermes
+Terminal=false
+NoDisplay=true
+Categories=Development;
+StartupNotify=true
+StartupWMClass=io.github.battlemountain2.Hermes.Dev

@@ -313,6 +313,7 @@ fn root_properties() -> BTreeMap<String, glib::Variant> {
         ("CanRaise".into(), true.to_variant()),
         ("HasTrackList".into(), false.to_variant()),
         ("Identity".into(), "Hermes".to_variant()),
+        ("DesktopEntry".into(), crate::identity::APPLICATION_ID.to_variant()),
         ("SupportedUriSchemes".into(), vec!["file"].to_variant()),
         (
             "SupportedMimeTypes".into(),
