@@ -15,11 +15,11 @@ pub(crate) mod audio;
 pub(crate) mod geotiff;
 mod heif;
 mod jpeg;
+pub(crate) mod metadata;
 pub(crate) mod model;
 pub(crate) mod office;
 mod scaled;
 pub(crate) mod sniff;
-pub(crate) mod metadata;
 pub(crate) mod table;
 pub(crate) mod waveform;
 
@@ -40,7 +40,11 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         .map_err(|_| "Invalid preview helper size or page".to_owned())?;
 
     if operation == "image-metadata" || operation == "media-metadata" {
-        let data = if operation == "image-metadata" { metadata::image(input)? } else { metadata::media(input)? };
+        let data = if operation == "image-metadata" {
+            metadata::image(input)?
+        } else {
+            metadata::media(input)?
+        };
         fs::write(output, data).map_err(|error| error.to_string())?;
         return Ok(());
     }
@@ -91,7 +95,10 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         "thumbnail-heif" => (render_heif_thumbnail(input, value.clamp(16, 256))?, None),
         "thumbnail-raw" => (render_raw(input, value.clamp(16, 256))?, None),
         "thumbnail-pdf" => (render_pdf_thumbnail(input, value.clamp(16, 256))?, None),
-        "thumbnail-office" => (office::render::thumbnail(input, value.clamp(16, 256))?, None),
+        "thumbnail-office" => (
+            office::render::thumbnail(input, value.clamp(16, 256))?,
+            None,
+        ),
         "office-poster" => (office::render::poster(input, value.clamp(16, 1400))?, None),
         "thumbnail-video" => (render_media(input, value.clamp(16, 256))?, None),
         "preview-audio-artwork" => (render_media(input, 1024)?, None),
@@ -161,21 +168,19 @@ pub(crate) fn render_image(path: &Path, size: i32) -> Result<Vec<u8>, String> {
     }
     if let Some((width, height)) = sniff::image_dimensions(path) {
         if sniff::exceeds_decoded_frame_budget(width, height) {
-            if u64::from(width) * u64::from(height) <= sniff::MAX_PIXELS_CEILING
+            if let Some(png) = sniff::read_exif_thumbnail(path, size) {
+                return Ok(png);
+            }
+            if size > 256
+                && u64::from(width) * u64::from(height) <= sniff::MAX_PIXELS_CEILING
                 && sniff::is_jpeg(path)
             {
-                if size > 256
-                    && jpeg::external_preview_safe(path)
+                if jpeg::external_preview_safe(path)
                     && let Ok(png) = scaled::render(path, size)
                 {
                     return Ok(png);
                 }
                 return render_imagemagick(path, size);
-            }
-            if !sniff::is_jpeg(path)
-                && let Some(png) = sniff::read_exif_thumbnail(path, size)
-            {
-                return Ok(png);
             }
             return Err("Image dimensions exceed the decoded frame budget".to_owned());
         }

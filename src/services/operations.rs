@@ -52,6 +52,7 @@ pub struct PasteRequest {
     pub id: OperationRequestId,
     pub destination: Location,
     pub sources: Vec<Location>,
+    pub target_names: Vec<Option<String>>,
     pub move_sources: bool,
     pub overwrite_existing: bool,
 }
@@ -98,6 +99,8 @@ pub enum OperationEvent {
         request_id: OperationRequestId,
         completed: usize,
         total: usize,
+        bytes_transferred: u64,
+        total_bytes: Option<u64>,
     },
     TransferItemCompleted {
         request_id: OperationRequestId,

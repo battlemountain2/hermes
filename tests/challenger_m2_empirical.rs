@@ -306,6 +306,7 @@ fn test_scm_rights_rapid_burst_and_fd_leak_check() {
 
 #[test]
 fn test_scm_rights_live_worker_pipeline_under_rapid_requests() {
+    let _lock = FD_TEST_MUTEX.lock().unwrap();
     let env = TestEnv::new();
     let img_bytes = generate_valid_jpeg(64, 64);
     let img_path = env.write_file("test_rapid.jpg", &img_bytes);
@@ -566,6 +567,7 @@ fn test_cancellation_multi_threaded_never_hangs() {
 
 #[test]
 fn test_worker_disposal_on_unexpected_sigkill() {
+    let _lock = FD_TEST_MUTEX.lock().unwrap();
     let (host_sock, worker_sock) = UnixStream::pair().expect("socket pair");
     let binary = env!("CARGO_BIN_EXE_hermes");
 
@@ -623,6 +625,7 @@ fn test_deadline_reader_timeout_expiry() {
 
 #[test]
 fn test_worker_disposal_and_respawn_after_crash() {
+    let _lock = FD_TEST_MUTEX.lock().unwrap();
     let env = TestEnv::new();
     let img_bytes = generate_valid_jpeg(32, 32);
     let img_path = env.write_file("respawn_test.jpg", &img_bytes);

@@ -3,8 +3,10 @@ mod tests;
 
 use std::{
     fs::{self, DirBuilder, Metadata},
+    future::Future,
     os::unix::fs::{DirBuilderExt, MetadataExt},
     path::{Path, PathBuf},
+    pin::Pin,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -38,7 +40,7 @@ fn replacement_supported(
 ) -> Result<(), glib::Error> {
     if source_type == gio::FileType::Directory || target_type == gio::FileType::Directory {
         return Err(failure(
-            "Safe full-folder replacement is unavailable. The existing item was kept unchanged; paste under a different name or into another folder. Folders are not merged.",
+            "Cannot replace a file with a folder or a folder with a file; the existing destination was kept unchanged.",
         ));
     }
     if !native {
@@ -58,6 +60,57 @@ fn replacement_supported(
         ));
     }
     Ok(())
+}
+
+fn merge_directory(
+    source: gio::File,
+    target: gio::File,
+    move_source: bool,
+    overwrite: bool,
+    cancellable: gio::Cancellable,
+) -> Pin<Box<dyn Future<Output = Result<(), glib::Error>>>> {
+    Box::pin(async move {
+        check_cancelled(&cancellable)?;
+        if !target.query_exists(Some(&cancellable)) {
+            target
+                .make_directory_future(glib::Priority::DEFAULT)
+                .await?;
+        }
+        let enumerator = source
+            .enumerate_children_future(
+                "standard::name,standard::type",
+                gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS,
+                glib::Priority::DEFAULT,
+            )
+            .await?;
+        loop {
+            check_cancelled(&cancellable)?;
+            let children = enumerator
+                .next_files_future(64, glib::Priority::DEFAULT)
+                .await?;
+            if children.is_empty() {
+                break;
+            }
+            for child in children {
+                check_cancelled(&cancellable)?;
+                let child_source = source.child(child.name());
+                let child_target = target.child(child.name());
+                Box::pin(transfer_item(
+                    child_source,
+                    child_target,
+                    move_source,
+                    overwrite,
+                    cancellable.clone(),
+                ))
+                .await?;
+            }
+        }
+        if move_source {
+            check_cancelled(&cancellable)?;
+            source.delete_future(glib::Priority::DEFAULT).await?;
+        }
+        Ok(())
+    })
 }
 
 pub(super) async fn transfer_item(
@@ -95,6 +148,9 @@ pub(super) async fn transfer_item(
                 gio::IOErrorEnum::Exists,
                 "The destination already exists",
             ));
+        }
+        if source_type == gio::FileType::Directory && target_type == gio::FileType::Directory {
+            return merge_directory(source, target, move_source, overwrite, cancellable).await;
         }
         replacement_supported(native_paths.is_some(), source_type, target_type)?;
     }

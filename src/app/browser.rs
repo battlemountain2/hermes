@@ -32,9 +32,15 @@ pub struct BrowserColumnSnapshot {
 #[derive(Clone, Debug)]
 pub enum BrowserEvent {
     Reset,
-    TabStored { id: TrailId },
-    TabRestored { id: TrailId },
-    TabDiscarded { id: TrailId },
+    TabStored {
+        id: TrailId,
+    },
+    TabRestored {
+        id: TrailId,
+    },
+    TabDiscarded {
+        id: TrailId,
+    },
     ColumnsTruncated {
         len: usize,
     },
@@ -127,6 +133,8 @@ pub enum BrowserEvent {
     TransferProgress {
         completed: usize,
         total: usize,
+        bytes_transferred: u64,
+        total_bytes: Option<u64>,
     },
     TransferItemCompleted {
         source: Location,
@@ -547,7 +555,8 @@ impl Browser {
                 return;
             };
             if browser.monitor_epoch.get() != epoch
-                || browser.pending_sort.get() != Some((generation, depth)) {
+                || browser.pending_sort.get() != Some((generation, depth))
+            {
                 return;
             }
             let result = {
@@ -628,7 +637,11 @@ impl Browser {
     }
 
     pub fn column_location(&self, depth: usize) -> Option<Location> {
-        self.state.borrow().columns.get(depth).map(|c| c.location.clone())
+        self.state
+            .borrow()
+            .columns
+            .get(depth)
+            .map(|c| c.location.clone())
     }
 
     pub fn set_preferences(&self, preferences: ViewPreferences) {
@@ -672,7 +685,11 @@ impl Browser {
     }
 
     pub fn column_entries(&self, depth: usize) -> Option<Vec<FileEntry>> {
-        self.state.borrow().columns.get(depth).map(|col| col.entries.clone())
+        self.state
+            .borrow()
+            .columns
+            .get(depth)
+            .map(|col| col.entries.clone())
     }
 
     pub fn set_selection(&self, depth: usize, positions: &[usize], focused: Option<usize>) {
@@ -693,7 +710,10 @@ impl Browser {
         };
         let mut positions = Vec::new();
         for location in locations {
-            if let Some(position) = column.entries.iter().position(|entry| &entry.location == location)
+            if let Some(position) = column
+                .entries
+                .iter()
+                .position(|entry| &entry.location == location)
                 && !positions.contains(&position)
             {
                 positions.push(position);
@@ -829,6 +849,7 @@ impl Browser {
         self: &Rc<Self>,
         destination: Location,
         sources: Vec<Location>,
+        target_names: Vec<Option<String>>,
         move_sources: bool,
         overwrite_existing: bool,
     ) {
@@ -858,6 +879,7 @@ impl Browser {
                 id: request_id,
                 destination,
                 sources,
+                target_names,
                 move_sources,
                 overwrite_existing,
             },
@@ -1068,7 +1090,12 @@ impl Browser {
             if event_id != request_id || browser.current_operation.get() != Some(event_id) {
                 return;
             }
-            if let OperationEvent::TransferItemCompleted { source, move_source, .. } = &event {
+            if let OperationEvent::TransferItemCompleted {
+                source,
+                move_source,
+                ..
+            } = &event
+            {
                 if !browser.transfer_operation.get()
                     || *move_source != browser.transfer_move_sources.get()
                 {
@@ -1123,12 +1150,18 @@ impl Browser {
                 return;
             }
             if let OperationEvent::TransferProgress {
-                completed, total, ..
+                completed,
+                total,
+                bytes_transferred,
+                total_bytes,
+                ..
             } = &event
             {
                 browser.emit(BrowserEvent::TransferProgress {
                     completed: *completed,
                     total: *total,
+                    bytes_transferred: *bytes_transferred,
+                    total_bytes: *total_bytes,
                 });
                 return;
             }
@@ -1488,7 +1521,9 @@ impl Browser {
                     self.emit(BrowserEvent::ColumnReloaded { depth });
                 } else if state.restart_peek(request_id) {
                     drop(state);
-                    self.emit(BrowserEvent::PeekEntriesReplaced { entries: Vec::new() });
+                    self.emit(BrowserEvent::PeekEntriesReplaced {
+                        entries: Vec::new(),
+                    });
                 }
             }
             DirectoryEvent::Snapshot {
@@ -1546,10 +1581,16 @@ impl Browser {
                     self.emit(BrowserEvent::PeekEntriesReplaced { entries });
                 }
             }
-            DirectoryEvent::MusicMetadata { request_id, entries } => {
+            DirectoryEvent::MusicMetadata {
+                request_id,
+                entries,
+            } => {
                 self.refresh_music_order(request_id, &entries);
             }
-            DirectoryEvent::Notice { request_id, message } => {
+            DirectoryEvent::Notice {
+                request_id,
+                message,
+            } => {
                 let mut state = self.state.borrow_mut();
                 if let Some(depth) = state.set_notice(request_id, message.clone()) {
                     drop(state);

@@ -1,6 +1,30 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Foundation milestone: Data separation and transactional migration — 2026-10-27 (current)
+## Safe folder-content merging, conflict resolution, and byte progress — 2026-10-27 (current)
+
+- Safe folder-content merging without deleting unrelated destination contents (`src/adapters/local_operations/transfer.rs`):
+  - When copying or moving a folder into a destination where a folder of the same name already exists, Hermes recursively merges contents into the existing directory instead of failing or destroying existing destination files.
+  - Safe replacement semantics: replacing an existing file stages the source or new file to an atomic temporary sibling (`.hermes-transfer-*` -> `fs::rename`), ensuring destination files are never corrupted or truncated mid-transfer.
+  - Type-conflict fail-closed guarantee: attempts to replace a folder with a file, or a file with a folder, fail closed with a clear error without deleting or touching either side.
+  - Safe move-merging: after successfully moving all child items from source subdirectories into destination subdirectories, empty source directories are cleaned up cleanly.
+- Granular collision resolution dialog (`src/ui/browser.rs`, `src/services/operations.rs`, `src/services/naming.rs`):
+  - When collisions occur during copy or move, users are presented with clear options:
+    - **Merge** (for folders): combines folder contents without deleting unrelated files.
+    - **Replace** (for files): atomically overwrites the destination file with the source file.
+    - **Keep both**: automatically calculates collision-safe incremented names (`name (1).ext`, `name (2).ext`) using `services::naming::collision_safe_name`, ensuring both the existing destination file and the incoming file are preserved.
+    - **Skip**: bypasses the conflicting item.
+    - **Cancel**: halts remaining transfer operations.
+  - Single-operation scope: "Apply this choice to all remaining conflicts" applies only to the current transfer batch without persisting across subsequent independent user operations.
+- Accurate byte-level progress reporting (`src/services/operations.rs`, `src/app/browser.rs`, `src/adapters/local_operations.rs`, `src/ui/browser.rs`):
+  - Operation events now track `bytes_transferred: u64` and `total_bytes: Option<u64>` alongside item counts.
+  - Transfer progress bar and status labels render formatted human-readable byte progress (`14.2 MB of 85.0 MB (4 of 12 items)`) when totals are known.
+- Comprehensive test coverage:
+  - Added dedicated recursive tree merge tests (`folder_merging_recursive_tree_with_conflicts_preserves_unrelated_and_updates_collisions` and `type_conflicts_fail_closed_without_destroying_either_side`) verifying multi-level nested folders, preserving untouched destination files, updating conflicting files via atomic staging, and cleaning up sources on move.
+  - Fixed test runner descriptor race in `challenger_m2_empirical` by ensuring socket and child worker tests acquire `FD_TEST_MUTEX`.
+  - Harmonized EXIF thumbnail fallback in `sandbox_helper` for frame-budget-exceeding images.
+  - 1,030 unit tests pass (0 failed, 216 ignored), all 165 `e2e_tests` pass, zero warnings on `cargo check --all-targets`.
+
+## Foundation milestone: Data separation and transactional migration — 2026-10-27
 
 - Centralized, platform-aware paths module (`src/paths.rs` and `src/paths/tests.rs`):
   - Clean separation of stable (`hermes`) and dev (`hermes-dev`) namespaces via `is_development()`.

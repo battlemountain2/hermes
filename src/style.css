@@ -1103,6 +1103,30 @@ headerbar menubutton.header-action > button:focus-visible image {
   outline-color: @theme_accent;
 }
 
+.delete-confirmation-merge {
+  background: alpha(@theme_accent, 0.14);
+  border: 1px solid @theme_accent;
+  color: @theme_accent;
+}
+
+.delete-confirmation-merge:hover {
+  background: alpha(@theme_accent, 0.24);
+  border-color: @theme_accent;
+  color: @theme_accent;
+}
+
+.delete-confirmation-merge:active {
+  background: alpha(@theme_accent, 0.36);
+  border-color: @theme_accent;
+  color: @theme_accent;
+}
+
+.delete-confirmation-merge:focus-visible {
+  border-color: @theme_accent;
+  outline: 2px solid alpha(@theme_accent, 0.5);
+  outline-offset: 1px;
+}
+
 .settings-dialog {
   background: @theme_surface;
   border: 1px solid alpha(@theme_accent, 0.22);

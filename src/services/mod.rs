@@ -8,6 +8,7 @@ pub(crate) mod music_collections;
 pub(crate) mod music_library;
 pub(crate) mod lyrics;
 pub(crate) mod model_preview;
+pub(crate) mod naming;
 mod operations;
 pub(crate) mod preview;
 pub(crate) mod ratings;

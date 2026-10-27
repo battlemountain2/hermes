@@ -959,7 +959,7 @@ impl ViewState {
             if transfer_has_collision(&source, &destination) {
                 collisions.push(source);
             } else {
-                accepted.push(source);
+                accepted.push((source, None));
             }
         }
         self.resolve_transfer_collisions(
@@ -976,15 +976,16 @@ impl ViewState {
         self: &Rc<Self>,
         destination: Location,
         mut collisions: Vec<Location>,
-        accepted: Vec<Location>,
+        accepted: Vec<(Location, Option<String>)>,
         move_sources: bool,
         overwrite_existing: bool,
         cut_generation: Option<u64>,
     ) {
         if collisions.is_empty() {
             let previous = self.pending_cut_generation.replace(cut_generation);
+            let (sources, target_names): (Vec<_>, Vec<_>) = accepted.into_iter().unzip();
             self.browser
-                .transfer(destination, accepted, move_sources, overwrite_existing);
+                .transfer(destination, sources, target_names, move_sources, overwrite_existing);
             self.pending_cut_generation.set(previous);
             return;
         }
@@ -1003,7 +1004,22 @@ impl ViewState {
             root.set_blurred(true);
         }
 
+        let source_file = gio_file_for_location(&source);
+        let dest_file = gio_file_for_location(&destination);
         let name = source.display_name();
+        let target_file = source_file.basename().map(|b| dest_file.child(b));
+        let is_source_dir = source_file.query_file_type(
+            gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS,
+            None::<&gio::Cancellable>,
+        ) == gio::FileType::Directory;
+        let is_target_dir = target_file.as_ref().is_some_and(|f| {
+            f.query_file_type(
+                gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS,
+                None::<&gio::Cancellable>,
+            ) == gio::FileType::Directory
+        });
+        let is_folder_merge = is_source_dir && is_target_dir;
+
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
         content.add_css_class("delete-confirmation");
         content.add_css_class("delete-confirmation-content");
@@ -1020,7 +1036,12 @@ impl ViewState {
         )));
         let heading = gtk::Box::new(gtk::Orientation::Vertical, 1);
         heading.set_hexpand(true);
-        let title = gtk::Label::new(Some("File already exists"));
+        let title_text = if is_folder_merge {
+            "Folder already exists"
+        } else {
+            "File already exists"
+        };
+        let title = gtk::Label::new(Some(title_text));
         title.add_css_class("delete-confirmation-title");
         title.set_xalign(0.0);
         let subtitle = gtk::Label::new(Some(&name));
@@ -1035,10 +1056,18 @@ impl ViewState {
 
         let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
         body.add_css_class("delete-confirmation-body");
-        let explanation = gtk::Label::new(Some(&format!(
-            "An item named “{name}” already exists in {}. Replacing it will overwrite its contents.",
-            compact_display_path(&destination)
-        )));
+        let explanation_text = if is_folder_merge {
+            format!(
+                "A folder named “{name}” already exists in {}. Merging will combine its contents without deleting unrelated files.",
+                compact_display_path(&destination)
+            )
+        } else {
+            format!(
+                "An item named “{name}” already exists in {}. Replacing it will overwrite its contents.",
+                compact_display_path(&destination)
+            )
+        };
+        let explanation = gtk::Label::new(Some(&explanation_text));
         explanation.add_css_class("delete-confirmation-explanation");
         explanation.set_max_width_chars(64);
         explanation.set_wrap(true);
@@ -1059,11 +1088,18 @@ impl ViewState {
         cancel.add_css_class("delete-confirmation-cancel");
         let skip = gtk::Button::with_label("Skip");
         skip.add_css_class("delete-confirmation-cancel");
-        let replace = gtk::Button::with_label("Replace");
-        replace.add_css_class("delete-confirmation-delete");
+        let keep_both = gtk::Button::with_label("Keep both");
+        keep_both.add_css_class("delete-confirmation-cancel");
+        let replace = gtk::Button::with_label(if is_folder_merge { "Merge" } else { "Replace" });
+        if is_folder_merge {
+            replace.add_css_class("delete-confirmation-merge");
+        } else {
+            replace.add_css_class("delete-confirmation-delete");
+        }
         actions.append(&spacer);
         actions.append(&cancel);
         actions.append(&skip);
+        actions.append(&keep_both);
         actions.append(&replace);
         content.append(&actions);
 
@@ -1100,20 +1136,66 @@ impl ViewState {
             );
         });
 
+        let keep_both_layer = layer.clone();
+        let keep_both_overlay = window_overlay.clone();
+        let keep_both_root = blurred_root.clone();
+        let keep_both_state = self.clone();
+        let keep_both_destination = destination.clone();
+        let keep_both_source = source.clone();
+        let keep_both_collisions = collisions.clone();
+        let keep_both_accepted = accepted.clone();
+        let keep_both_all = apply_all.clone();
+        keep_both.connect_clicked(move |_| {
+            dismiss_modal_layer(&keep_both_layer, &keep_both_overlay, keep_both_root.as_ref());
+            let dest_file = gio_file_for_location(&keep_both_destination);
+            let name = keep_both_source.display_name();
+            let mut accepted = keep_both_accepted.clone();
+            let safe_name = crate::services::naming::collision_safe_name(&name, &|candidate| {
+                dest_file.child(candidate).query_exists(None::<&gio::Cancellable>)
+            });
+            accepted.push((keep_both_source.clone(), Some(safe_name)));
+            let remaining = if keep_both_all.is_active() {
+                for col in &keep_both_collisions {
+                    let col_name = col.display_name();
+                    let col_safe_name = crate::services::naming::collision_safe_name(&col_name, &|candidate| {
+                        dest_file.child(candidate).query_exists(None::<&gio::Cancellable>)
+                            || accepted.iter().any(|(_, opt)| opt.as_deref() == Some(candidate))
+                    });
+                    accepted.push((col.clone(), Some(col_safe_name)));
+                }
+                Vec::new()
+            } else {
+                keep_both_collisions.clone()
+            };
+            keep_both_state.resolve_transfer_collisions(
+                keep_both_destination.clone(),
+                remaining,
+                accepted,
+                move_sources,
+                overwrite_existing,
+                cut_generation,
+            );
+        });
+
         let replaced_layer = layer.clone();
         let replaced_overlay = window_overlay.clone();
         let replaced_root = blurred_root.clone();
         let replaced_state = self.clone();
         let replace_all = apply_all;
+        let replace_source = source.clone();
+        let replace_collisions = collisions.clone();
+        let replace_accepted = accepted.clone();
         replace.connect_clicked(move |_| {
             dismiss_modal_layer(&replaced_layer, &replaced_overlay, replaced_root.as_ref());
-            let mut accepted = accepted.clone();
-            accepted.push(source.clone());
+            let mut accepted = replace_accepted.clone();
+            accepted.push((replace_source.clone(), None));
             let remaining = if replace_all.is_active() {
-                accepted.extend(collisions.clone());
+                for col in &replace_collisions {
+                    accepted.push((col.clone(), None));
+                }
                 Vec::new()
             } else {
-                collisions.clone()
+                replace_collisions.clone()
             };
             replaced_state.resolve_transfer_collisions(
                 destination.clone(),
@@ -1721,6 +1803,42 @@ impl ViewState {
             .set_text(&format!("{completed} of {total} items"));
         view.progress
             .set_fraction(completed as f64 / total.max(1) as f64);
+    }
+
+    fn update_transfer_progress(
+        &self,
+        completed: usize,
+        total: usize,
+        bytes_transferred: u64,
+        total_bytes: Option<u64>,
+    ) {
+        let progress_view = self.delete_progress.borrow();
+        let Some(view) = progress_view.as_ref() else {
+            return;
+        };
+        if let Some(total_b) = total_bytes.filter(|&b| b > 0) {
+            view.status.set_text(&format!(
+                "{} of {} ({} of {} items)",
+                crate::ui::formatting::format_size(bytes_transferred),
+                crate::ui::formatting::format_size(total_b),
+                completed,
+                total
+            ));
+            view.progress
+                .set_fraction((bytes_transferred as f64 / total_b as f64).clamp(0.0, 1.0));
+        } else if bytes_transferred > 0 {
+            view.status.set_text(&format!(
+                "{completed} of {total} items ({})",
+                crate::ui::formatting::format_size(bytes_transferred)
+            ));
+            view.progress
+                .set_fraction(completed as f64 / total.max(1) as f64);
+        } else {
+            view.status
+                .set_text(&format!("{completed} of {total} items"));
+            view.progress
+                .set_fraction(completed as f64 / total.max(1) as f64);
+        }
     }
 
     fn dismiss_delete_progress(&self) {
@@ -2795,8 +2913,13 @@ impl ViewState {
                     "Copying or moving files",
                 );
             }
-            BrowserEvent::TransferProgress { completed, total } => {
-                self.update_delete_progress(completed, total);
+            BrowserEvent::TransferProgress {
+                completed,
+                total,
+                bytes_transferred,
+                total_bytes,
+            } => {
+                self.update_transfer_progress(completed, total, bytes_transferred, total_bytes);
             }
             BrowserEvent::TransferItemCompleted { source, move_source } => {
                 if move_source {

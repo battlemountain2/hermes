@@ -46,6 +46,25 @@ fn transfer_is_noop(source: &gio::File, destination: &gio::File, target: &gio::F
     source.equal(target) || source.equal(destination) || destination.has_prefix(source)
 }
 
+fn recursive_item_size(path: &Path) -> u64 {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return 0;
+    };
+    if meta.is_file() {
+        return meta.len();
+    }
+    if meta.is_dir() {
+        let mut total = 0u64;
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.flatten() {
+                total = total.saturating_add(recursive_item_size(&entry.path()));
+            }
+        }
+        return total;
+    }
+    0
+}
+
 fn copy_recursively(
     source: gio::File,
     target: gio::File,
@@ -59,9 +78,11 @@ fn copy_recursively(
             )
             .await?;
         if info.file_type() == gio::FileType::Directory {
-            target
-                .make_directory_future(glib::Priority::DEFAULT)
-                .await?;
+            if !target.query_exists(None::<&gio::Cancellable>) {
+                target
+                    .make_directory_future(glib::Priority::DEFAULT)
+                    .await?;
+            }
             let enumerator = source
                 .enumerate_children_future(
                     "standard::name",
@@ -172,10 +193,15 @@ impl OperationProvider for LocalOperationProvider {
                 .await
             {
                 Ok(new_file) => {
-                    if let (Some(from), Some(to)) = (request.entry.location.native_path(), new_file.path()) {
-                        let _ = crate::services::music_collections::Store::shared().relocate(from.to_path_buf(), to.clone());
-                        let _ = crate::services::ratings::Store::shared().relocate(from.to_path_buf(), to.clone());
-                        crate::services::FolderViewStore::shared().relocate(&from.to_string_lossy(), &to.to_string_lossy());
+                    if let (Some(from), Some(to)) =
+                        (request.entry.location.native_path(), new_file.path())
+                    {
+                        let _ = crate::services::music_collections::Store::shared()
+                            .relocate(from.to_path_buf(), to.clone());
+                        let _ = crate::services::ratings::Store::shared()
+                            .relocate(from.to_path_buf(), to.clone());
+                        crate::services::FolderViewStore::shared()
+                            .relocate(&from.to_string_lossy(), &to.to_string_lossy());
                     }
                     emit(OperationEvent::Renamed {
                         request_id: request.id,
@@ -261,15 +287,39 @@ impl OperationProvider for LocalOperationProvider {
         let task = glib::MainContext::default().spawn_local(async move {
             let destination = gio_file(&request.destination);
             let total = request.sources.len();
+            let mut total_bytes = 0u64;
+            let mut all_sizes_known = true;
+            for loc in &request.sources {
+                if let Some(path) = loc.native_path() {
+                    total_bytes = total_bytes.saturating_add(recursive_item_size(&path));
+                } else {
+                    all_sizes_known = false;
+                }
+            }
+            let total_bytes_opt = if all_sizes_known && total_bytes > 0 {
+                Some(total_bytes)
+            } else {
+                None
+            };
+            let mut bytes_transferred = 0u64;
             let mut errors = Vec::new();
             for (completed, location) in request.sources.iter().enumerate() {
                 let source = gio_file(location);
-                let Some(name) = source.basename() else {
+                let custom_name = request
+                    .target_names
+                    .get(completed)
+                    .and_then(|n| n.as_ref())
+                    .cloned();
+                let name = custom_name
+                    .or_else(|| source.basename().map(|b| b.to_string_lossy().to_string()));
+                let Some(name) = name else {
                     errors.push("A clipboard item has no file name".to_owned());
                     emit(OperationEvent::TransferProgress {
                         request_id: request.id,
                         completed: completed + 1,
                         total,
+                        bytes_transferred,
+                        total_bytes: total_bytes_opt,
                     });
                     continue;
                 };
@@ -279,9 +329,15 @@ impl OperationProvider for LocalOperationProvider {
                         request_id: request.id,
                         completed: completed + 1,
                         total,
+                        bytes_transferred,
+                        total_bytes: total_bytes_opt,
                     });
                     continue;
                 }
+                let item_bytes = location
+                    .native_path()
+                    .map(|p| recursive_item_size(&p))
+                    .unwrap_or(0);
                 match transfer::transfer_item(
                     source,
                     target.clone(),
@@ -292,11 +348,16 @@ impl OperationProvider for LocalOperationProvider {
                 .await
                 {
                     Ok(()) => {
+                        bytes_transferred = bytes_transferred.saturating_add(item_bytes);
                         if request.move_sources {
-                            if let (Some(from), Some(to)) = (location.native_path(), target.path()) {
-                                let _ = crate::services::music_collections::Store::shared().relocate(from.to_path_buf(), to.clone());
-                                let _ = crate::services::ratings::Store::shared().relocate(from.to_path_buf(), to.clone());
-                                crate::services::FolderViewStore::shared().relocate(&from.to_string_lossy(), &to.to_string_lossy());
+                            if let (Some(from), Some(to)) = (location.native_path(), target.path())
+                            {
+                                let _ = crate::services::music_collections::Store::shared()
+                                    .relocate(from.to_path_buf(), to.clone());
+                                let _ = crate::services::ratings::Store::shared()
+                                    .relocate(from.to_path_buf(), to.clone());
+                                crate::services::FolderViewStore::shared()
+                                    .relocate(&from.to_string_lossy(), &to.to_string_lossy());
                             }
                         }
                         emit(OperationEvent::TransferItemCompleted {
@@ -305,12 +366,14 @@ impl OperationProvider for LocalOperationProvider {
                             move_source: request.move_sources,
                         });
                     }
-                    Err(error) => errors.push(format!("{}: {error}", name.to_string_lossy())),
+                    Err(error) => errors.push(format!("{name}: {error}")),
                 }
                 emit(OperationEvent::TransferProgress {
                     request_id: request.id,
                     completed: completed + 1,
                     total,
+                    bytes_transferred,
+                    total_bytes: total_bytes_opt,
                 });
             }
             if errors.is_empty() {

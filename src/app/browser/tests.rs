@@ -257,12 +257,12 @@ fn overlapping_operations_never_replace_or_cancel_the_active_handle() {
     let source = Location::local("/fixture/source");
     let destination = Location::local("/fixture/destination");
     let entry = crate::app::music_order::tests::entry("source", None, None);
-    browser.transfer(destination.clone(), vec![source.clone()], true, false);
+    browser.transfer(destination.clone(), vec![source.clone()], Vec::new(), true, false);
     let request_id = browser.current_operation.get();
     browser.rename(entry.clone(), "renamed".into());
     browser.create_directory(destination.clone(), "folder".into());
     browser.create_file(destination.clone(), "file".into());
-    browser.transfer(destination.clone(), vec![source.clone()], false, false);
+    browser.transfer(destination.clone(), vec![source.clone()], Vec::new(), false, false);
     browser.delete(vec![entry.clone()], false);
     browser.restore(vec![entry]);
     browser.extract_archive(source.clone(), destination.clone());
@@ -286,7 +286,7 @@ fn transfer_item_success_is_nonterminal_and_partial_errors_finish_once() {
     let (browser, provider, events) = controlled_browser();
     let first = Location::local("/fixture/first");
     let second = Location::local("/fixture/second");
-    browser.transfer(Location::local("/fixture/destination"), vec![first.clone(), second.clone()], true, false);
+    browser.transfer(Location::local("/fixture/destination"), vec![first.clone(), second.clone()], Vec::new(), true, false);
     let (request_id, emit) = provider.callback(0);
     for (event_id, source, move_source) in [
         (OperationRequestId(999), first.clone(), true),
@@ -315,7 +315,7 @@ fn transfer_item_success_is_nonterminal_and_partial_errors_finish_once() {
 fn cancellation_rejects_late_outcomes_and_handles_rename_and_create() {
     let (browser, provider, events) = controlled_browser();
     let source = Location::local("/fixture/source");
-    browser.transfer(Location::local("/fixture/destination"), vec![source.clone()], true, false);
+    browser.transfer(Location::local("/fixture/destination"), vec![source.clone()], Vec::new(), true, false);
     let (request_id, emit) = provider.callback(0);
     browser.cancel_file_operation();
     let count = events.borrow().len();
@@ -349,7 +349,7 @@ fn finishing_observer_can_start_an_operation_without_losing_its_handle() {
             weak.upgrade().unwrap().create_file(Location::local("/fixture"), "next".into());
         }
     });
-    browser.transfer(Location::local("/fixture/destination"), vec![Location::local("/fixture/source")], false, false);
+    browser.transfer(Location::local("/fixture/destination"), vec![Location::local("/fixture/source")], Vec::new(), false, false);
     let (request_id, emit) = provider.callback(0);
     emit(OperationEvent::Pasted { request_id });
     assert_eq!(provider.callbacks.borrow().len(), 2);
@@ -367,7 +367,7 @@ fn cancellation_from_started_observer_does_not_launch_the_provider() {
             weak.upgrade().unwrap().cancel_file_operation();
         }
     });
-    browser.transfer(Location::local("/fixture/destination"), vec![Location::local("/fixture/source")], true, false);
+    browser.transfer(Location::local("/fixture/destination"), vec![Location::local("/fixture/source")], Vec::new(), true, false);
     assert_eq!(browser.current_operation.get(), None);
     assert!(provider.callbacks.borrow().is_empty());
 }
