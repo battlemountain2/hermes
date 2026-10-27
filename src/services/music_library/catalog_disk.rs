@@ -37,8 +37,7 @@ pub(super) fn path(root: &Path) -> PathBuf {
         root.as_os_str().as_bytes(),
     )
     .expect("SHA-256 is available in GLib");
-    gio::glib::user_cache_dir()
-        .join("strata/search-catalog")
+    crate::paths::search_catalog_cache_dir()
         .join(format!("general-{digest}.sqlite"))
 }
 

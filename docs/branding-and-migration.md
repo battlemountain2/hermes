@@ -5,9 +5,10 @@
 As Hermes reaches feature maturity and establishes its own design identity—combining rich previews, high-performance search, an integrated music library, and native Wayland/Linux desktop integration—this document specifies the architectural and operational blueprint for transitioning the project identity from **Strata** to **Hermes 1.0**.
 
 The transition guarantees:
-- **Zero user disruption**: Automatic, transparent migration of user configuration, sessions, playlists, and caches on first launch.
-- **Backwards compatibility**: Symlinks and fallback paths so existing terminal scripts, shell aliases, desktop environments, and window manager rules (such as Hyprland/Omarchy configs) continue functioning uninterrupted.
-- **Clean upstream separation**: Distinct application ID, D-Bus service name, and package naming for distribution packaging (AUR, Flatpak, Nix).
+- **Zero user disruption**: Automatic, transparent migration of user configuration, sessions, playlists, and ratings on first launch.
+- **Data safety & isolation**: Transactional atomic file copies with a recorded migration journal (`migration-v1.json`). Legacy Strata files are preserved untouched and never overwritten or deleted.
+- **Zero symlink traps**: No symlinks are created between legacy Strata and modern Hermes data directories to prevent recursive loops, stale references, and permission anomalies.
+- **Clean upstream identity**: Distinct application ID (`io.github.battlemountain2.Hermes`), D-Bus service names, and clean package naming for distribution packaging (PKGBUILD, AUR, Homebrew).
 
 ---
 
@@ -15,15 +16,17 @@ The transition guarantees:
 
 | Component | Legacy (v0.2.x) | 1.0 Target (Hermes) | Compatibility Strategy |
 | :--- | :--- | :--- | :--- |
-| **Cargo Crate Name** | `strata` | `hermes` | Binary alias `strata` installed alongside `hermes` |
-| **Primary Binary** | `strata` | `hermes` | `strata` -> symlink to `hermes` in `/usr/bin` |
-| **Application ID** | `org.strata.Strata` | `io.github.lgse.Hermes` | Desktop entry alias & WM_CLASS compatibility |
+| **Cargo Crate Name** | `hermes` | `hermes` | Primary crate and binary |
+| **Primary Binary** | `strata` | `hermes` | `strata` symlink to `hermes` in distribution packages |
+| **Application ID** | `org.strata.Strata` | `io.github.battlemountain2.Hermes` | Desktop entry & D-Bus service identifier |
 | **Window Class** | `strata` | `hermes` | WM rule matching `^(hermes\|strata)$` |
-| **D-Bus Bus Name** | `org.strata.Strata` | `io.github.lgse.Hermes` | Single-instance bus acquisition with legacy fallback |
-| **Config Directory** | `~/.config/strata` | `~/.config/hermes` | Auto-migration on first start with fallback detection |
-| **Cache Directory** | `~/.cache/strata` | `~/.cache/hermes` | Transparent directory migration or fresh cache root |
-| **Data Directory** | `~/.local/share/strata` | `~/.local/share/hermes` | Database & playlist migration on startup |
+| **D-Bus Bus Name** | `org.strata.Strata` | `io.github.battlemountain2.Hermes` | Single-instance bus acquisition |
+| **Config Directory** | `~/.config/strata` | `~/.config/hermes` | Centralized in `crate::paths::config_dir()`; dev mode uses `hermes-dev` |
+| **Data Directory** | `~/.local/share/strata` | `~/.local/share/hermes` | Centralized in `crate::paths::data_dir()` |
+| **State Directory** | `~/.local/state/strata` | `~/.local/state/hermes` | Centralized in `crate::paths::state_dir()` |
+| **Cache Directory** | `~/.cache/strata` | `~/.cache/hermes` | Isolated per-app cache root in `crate::paths::cache_dir()` |
 | **Log Env Var** | `STRATA_LOG` | `HERMES_LOG` | `HERMES_LOG` inspected first; falls back to `STRATA_LOG` |
+| **Dev Mode Env Var** | `STRATA_DEV` | `HERMES_DEV` | `HERMES_DEV=1` isolates configuration to `hermes-dev` |
 
 ---
 
@@ -31,49 +34,64 @@ The transition guarantees:
 
 ### 3.1 Migration Life-Cycle on Startup
 
-When Hermes initializes, the filesystem adapter executes a safe, non-destructive migration hook before reading settings or initializing SQLite databases:
+When Hermes initializes, `paths::migrate_legacy_data_if_needed()` runs immediately before any service or UI component reads state:
 
 ```
                   ┌────────────────────────┐
                   │ Hermes Startup Process │
                   └───────────┬────────────┘
                               │
-               Does ~/.config/hermes exist?
-                     ├── Yes ──> Continue normal startup
+               Does migration-v1.json exist in state?
+                     ├── Yes ──> Already migrated / initialized; skip
                      │
-                     └── No ───> Does legacy ~/.config/strata exist?
-                                       ├── No ───> Initialize fresh ~/.config/hermes
-                                       │
-                                       └── Yes ──> Execute Migration Procedure:
-                                                    1. Copy ~/.config/strata -> ~/.config/hermes
-                                                    2. Create compatibility symlink if safe
-                                                    3. Migrate ~/.local/share/strata -> ~/.local/share/hermes
-                                                    4. Log: "Migrated legacy configuration to ~/.config/hermes"
+                     └── No ───> Check legacy Strata roots:
+                                   ├── No legacy files ──> Skip migration
+                                   │
+                                   └── Found legacy files ──> Transactional Copy:
+                                        1. Atomic copy legacy config -> ~/.config/hermes/
+                                        2. Atomic copy legacy data -> ~/.local/share/hermes/
+                                        3. Atomic copy legacy state -> ~/.local/state/hermes/
+                                        4. Atomic copy custom themes -> ~/.config/hermes/themes/
+                                        5. Write migration journal: migration-v1.json
+                                        6. Leave legacy Strata files completely untouched
 ```
 
 ### 3.2 Migrated State Artifacts
 
 1. **User Settings (`settings.toml`):**
    - Startup directory preferences, hidden file defaults, layout density, and view modes.
-2. **Tab Sessions (`sessions.json`):**
+2. **Folder Trails & Tabs (`trails.toml`):**
    - Active and background tabs, navigation history, and split-pane configurations.
-3. **Favorites & Pinned Places (`pinned.json` / GTK Bookmarks):**
-   - User-defined sidebar bookmarks and quick-access locations.
-4. **Saved Searches (`saved_searches.json`):**
+3. **Folder Views (`folder_views.json`):**
+   - Per-directory custom sort columns, directions, and view preferences.
+4. **Sidebar Order (`sidebar-order`):**
+   - User-defined sidebar places and bookmark order.
+5. **Recent Folders (`recent-folders.toml`):**
+   - Recently accessed locations for jump lists and dialogs.
+6. **Custom Themes (`themes/*.toml`):**
+   - Custom user theme definition files.
+7. **Music Collections (`music-collections-v1.json`):**
+   - Playlists, favorite tracks, albums, and artists.
+8. **Track Ratings (`ratings-v1.json`):**
+   - 1-to-5 star user ratings for music files.
+9. **Saved Searches (`saved-searches/queries-v1.json`):**
    - User queries, filters, and smart folder definitions.
-5. **Music Library (`~/.local/share/strata/music/`):**
-   - SQLite database (`catalog.db`), custom playlists (`*.m3u`), and track metadata cache.
+10. **Music Playback Session (`music-queue-v1.json`):**
+    - Current track, playlist queue, repeat/shuffle status, and volume.
 
 ### 3.3 Idempotency & Failure Safety
 
-- All file copy operations are transactional: write to a temporary location (`.hermes-migrating.*`) and atomically rename (`renameat2` / `fs::rename`).
-- Legacy files are never deleted automatically during migration; they remain in `~/.config/strata` as a safety net unless explicitly cleaned up by the user.
+- **Atomic staging**: Files are copied to a temporary file (`<dst>.hermes-migrating-tmp`) before being renamed into place via `fs::rename`.
+- **No clobbering**: If a destination file already exists in Hermes, the migration engine skips it, preserving user modifications.
+- **Non-destructive**: Legacy Strata files are **never deleted or modified** during migration. They remain intact in `~/.config/strata`, `~/.local/share/strata`, and `~/.local/state/strata`.
+- **No symlinks**: No symlinks are created between Strata and Hermes roots.
+- **Migration Journal**: A structured record is written to `~/.local/state/hermes/migration-v1.json` documenting exact sources, destinations, byte counts, and migration status. Once the journal exists, future launches skip migration checks.
 
 ---
 
 ## 4. Desktop & Window Manager Integration
 
-### 4.1 Desktop Entry (`io.github.lgse.Hermes.desktop`)
+### 4.1 Desktop Entry (`io.github.battlemountain2.Hermes.desktop`)
 
 ```ini
 [Desktop Entry]
@@ -83,7 +101,7 @@ Comment=A fast, polished, personal file manager for Linux
 Exec=hermes %U
 Terminal=false
 Type=Application
-Icon=io.github.lgse.Hermes
+Icon=io.github.battlemountain2.Hermes
 Categories=System;FileTools;FileManager;Utility;
 MimeType=inode/directory;
 StartupNotify=true
@@ -120,12 +138,12 @@ windowrulev2 = "opacity 0.96 0.92, class:^(hermes|strata)$"
 
 ## 5. Build System & Packaging Blueprint
 
-### 5.1 Cargo.toml Reconfiguration
+### 5.1 Cargo Configuration
 
 ```toml
 [package]
 name = "hermes"
-version = "1.0.0"
+version = "0.2.0" # Bumping to 1.0.0 for release milestone
 edition = "2024"
 description = "A fast, polished, personal file manager for Linux"
 authors = ["battlemountain2"]
@@ -137,20 +155,16 @@ categories = ["filesystem", "gui"]
 [[bin]]
 name = "hermes"
 path = "src/main.rs"
-
-[[bin]]
-name = "strata"
-path = "src/compat_strata.rs" # Transparent alias calling hermes main
 ```
 
-### 5.2 Packaging (PKGBUILD for Arch Linux / AUR)
+### 5.2 Packaging (PKGBUILD for Arch Linux / Omarchy)
 
 ```bash
 pkgname=hermes-git
 pkgver=1.0.0.r0
 pkgrel=1
 pkgdesc="A fast, polished, personal file manager for Linux"
-arch=('x86_64')
+arch=('x86_64' 'aarch64')
 url="https://github.com/battlemountain2/hermes"
 license=('GPL-3.0-or-later')
 depends=('gtk4' 'cairo' 'glib2' 'gstreamer' 'gst-plugins-base' 'poppler-glib')
@@ -162,18 +176,17 @@ package() {
     cd "$srcdir/hermes"
     install -Dm755 "target/release/hermes" "$pkgdir/usr/bin/hermes"
     ln -s "hermes" "$pkgdir/usr/bin/strata"
-    install -Dm644 "data/io.github.lgse.Hermes.desktop" "$pkgdir/usr/share/applications/io.github.lgse.Hermes.desktop"
-    ln -s "io.github.lgse.Hermes.desktop" "$pkgdir/usr/share/applications/strata.desktop"
+    install -Dm644 "data/io.github.battlemountain2.Hermes.desktop" "$pkgdir/usr/share/applications/io.github.battlemountain2.Hermes.desktop"
+    ln -s "io.github.battlemountain2.Hermes.desktop" "$pkgdir/usr/share/applications/strata.desktop"
 }
 ```
 
 ---
 
-## 6. Implementation Checklist for 1.0 Release
+## 6. Implementation Status for 1.0 Release
 
-- [x] Phase 1: Sniffing decoders, compiler hygiene, SQLite lock resilience, non-modal navigation.
-- [ ] Phase 2: Per-folder view memory store (path -> ViewConfig).
-- [ ] Phase 3: Home Dashboard Hub (recent files, pinned locations, recent music).
-- [ ] Phase 4: Unified Omnibar & search consolidation (command palette & smart pills).
-- [ ] Phase 5: Executable rename (`hermes` bin + `strata` wrapper) and `Cargo.toml` package bump to 1.0.0.
-- [ ] Phase 6: Automatic configuration migration hook in `src/adapters/local_files.rs` and `src/storage.rs`.
+- [x] Foundation: Centralized, platform-aware paths module (`src/paths.rs`) with `hermes-dev` support.
+- [x] Foundation: Non-destructive, transactional migration engine with temporary file atomic rename and `migration-v1.json` journaling.
+- [x] Foundation: Clean component wiring across settings, trails, folder views, sidebar, recent folders, ratings, collections, saved searches, queue, waveforms, lyrics, and thumbnails.
+- [ ] Packaging: Native PKGBUILD recipes for x86_64 and Asahi aarch64.
+- [ ] Pipeline: Clean GitHub Actions release matrix for Arch and macOS Homebrew tap.

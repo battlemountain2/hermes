@@ -1,6 +1,41 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Git reconciliation and hover verification — 2026-10-26 (current)
+## Foundation milestone: Data separation and transactional migration — 2026-10-27 (current)
+
+- Centralized, platform-aware paths module (`src/paths.rs` and `src/paths/tests.rs`):
+  - Clean separation of stable (`hermes`) and dev (`hermes-dev`) namespaces via `is_development()`.
+  - Specific path helpers for config (`settings.toml`, `trails.toml`, `folder_views.json`, `sidebar-order`, `recent-folders.toml`, `actions.toml`, `folder-integration.json`, `picker-integration.json`, `themes/`), data (`music-collections-v1.json`, `ratings-v1.json`, `saved-searches/queries-v1.json`), state (`music-queue-v1.json`, `migration-v1.json`), and isolated caches (`music-library`, `search-catalog`, `lyrics-lrclib`, `music-waveforms`, `thumbnails-rgba-v1`, `office-pdf-v1`, `source-styles`, `fonts`).
+- Transactional, non-destructive migration engine (`paths::migrate_legacy_data_if_needed()`):
+  - Copies legacy `strata` files to `hermes` on first startup using atomic temporary files (`*.hermes-migrating-tmp` -> `fs::rename`).
+  - Records a structured migration journal in `~/.local/state/hermes/migration-v1.json`.
+  - Zero symlinks: ensures complete data separation without filesystem recursion risks or permission confusion.
+  - Non-destructive: legacy `strata` files are never deleted or modified, and existing modern `hermes` files are never overwritten.
+  - Migrates custom themes from `~/.config/strata/themes/*.toml` to `~/.config/hermes/themes/`.
+- Replaced hardcoded paths across the entire codebase:
+  - `src/main.rs`: runs `paths::migrate_legacy_data_if_needed()` on startup.
+  - `src/adapters/local_trails.rs` and `src/adapters/local_trails/tests.rs` -> `crate::paths::trails_file()`.
+  - `src/services/music_collections.rs` -> `crate::paths::music_collections_file()`.
+  - `src/services/saved_searches.rs` -> `crate::paths::saved_searches_file()`.
+  - `src/services/ratings.rs` -> `crate::paths::ratings_file()`.
+  - `src/services/folder_views.rs` -> `crate::paths::folder_views_file()`.
+  - `src/music/session.rs` -> `crate::paths::music_queue_file()`.
+  - `src/ui/window.rs` -> `crate::paths::sidebar_order_file()`.
+  - `src/ui/recent_folders.rs` -> `crate::paths::recent_folders_file()`.
+  - `src/services/music_library/cache.rs` -> `crate::paths::music_library_cache_dir()`.
+  - `src/services/music_library/catalog_disk.rs` -> `crate::paths::search_catalog_cache_dir()`.
+  - `src/services/lyrics/online.rs` -> `crate::paths::lyrics_cache_dir()`.
+  - `src/services/waveform.rs` -> `crate::paths::waveform_cache_dir()`.
+  - `src/ui/thumbnail/disk.rs` -> `crate::paths::thumbnails_cache_dir()`.
+  - `src/sandbox/office/disk.rs` -> `crate::paths::office_pdf_cache_dir()`.
+  - `src/assets.rs` -> `crate::paths::fonts_cache_dir()`.
+  - `src/services/custom_actions.rs`, `src/file_manager.rs`, `src/portal.rs` -> `crate::paths::actions_file()`, `folder_integration_file()`, `picker_integration_file()`.
+  - `src/ui/theme.rs` -> `crate::paths::settings_file()`, `crate::paths::themes_dir()`, `crate::paths::source_styles_cache_dir()`.
+  - `src/ui/settings.rs` telemetry row paths -> `crate::paths::config_dir()`, `crate::paths::cache_dir()`, `crate::paths::data_dir()`.
+  - `src/ui/settings/behavior_tests.rs`, `src/ui/settings/tests.rs`, `src/ui/hover/tests.rs` updated to use `crate::paths::settings_file()`.
+- Synchronized documentation in `docs/branding-and-migration.md` with true app ID (`io.github.battlemountain2.Hermes`), no-symlink guarantee, and transactional journal.
+- 1,015 unit tests passing, zero warnings on `cargo check --all-targets`.
+
+## Git reconciliation and hover verification — 2026-10-26
 
 The user finished the concurrent work and asked to keep GitHub current. Re-fetched origin and
 combined the desktop's twelve commits with Omarchy commit `cfccf34` using merge `39edd43`.

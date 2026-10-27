@@ -103,9 +103,7 @@ impl DirectoryHandle {
 }
 
 pub(super) fn root() -> PathBuf {
-    glib::user_cache_dir()
-        .join("strata")
-        .join("thumbnails-rgba-v1")
+    crate::paths::thumbnails_cache_dir()
 }
 
 fn owned_record(name: &str) -> bool {

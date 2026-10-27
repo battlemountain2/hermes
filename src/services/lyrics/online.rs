@@ -128,7 +128,7 @@ pub enum Lookup {
 }
 
 pub fn lookup(query: &Query, cancellation: &Cancellation) -> Result<Lookup, String> {
-    let directory = gtk::glib::user_cache_dir().join("strata/lyrics-lrclib");
+    let directory = crate::paths::lyrics_cache_dir();
     lookup_with(query, cancellation, &directory, fetch)
 }
 

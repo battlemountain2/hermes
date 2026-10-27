@@ -104,10 +104,7 @@ thread_local! {
 pub fn prepare() -> Result<(), Box<dyn std::error::Error>> {
     gio::resources_register_include!("strata.gresource")?;
 
-    let font_directory = glib::user_cache_dir()
-        .join("strata")
-        .join("fonts")
-        .join(FONT_VERSION);
+    let font_directory = crate::paths::fonts_cache_dir().join(FONT_VERSION);
     fs::create_dir_all(&font_directory)?;
 
     let jetbrains = font_directory.join("JetBrainsMono.ttf");

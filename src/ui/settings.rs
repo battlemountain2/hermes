@@ -1150,9 +1150,9 @@ fn diagnostics_page() -> gtk::Widget {
 
     append_heading(&content, "STORAGE & PATHS");
     let card2 = settings_card();
-    let config_dir = gtk::glib::user_config_dir().join("strata");
-    let cache_dir = gtk::glib::user_cache_dir().join("strata");
-    let data_dir = gtk::glib::user_data_dir().join("strata");
+    let config_dir = crate::paths::config_dir();
+    let cache_dir = crate::paths::cache_dir();
+    let data_dir = crate::paths::data_dir();
     append_telemetry_row(&card2, "Configuration directory", &config_dir.display().to_string());
     append_telemetry_row(&card2, "Cache directory", &cache_dir.display().to_string());
     append_telemetry_row(&card2, "Data directory", &data_dir.display().to_string());

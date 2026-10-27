@@ -257,7 +257,7 @@ fn private_hover_cards_load_only_when_visible_cancel_and_keep_their_size() {
     theme.set_hover_previews(false);
     assert!(!card.current(card.generation.get()));
     let saved: toml::Value =
-        toml::from_str(&fs::read_to_string(root.join("config/strata/settings.toml")).unwrap())
+        toml::from_str(&fs::read_to_string(crate::paths::settings_file()).unwrap())
             .unwrap();
     assert_eq!(saved["hover_previews"].as_bool(), Some(false));
     theme.set_hover_previews(true);

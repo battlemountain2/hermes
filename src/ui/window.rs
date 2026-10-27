@@ -2810,7 +2810,7 @@ fn pinned_places_path() -> PathBuf {
 }
 
 fn place_order_path() -> PathBuf {
-    glib::user_config_dir().join("strata/sidebar-order")
+    crate::paths::sidebar_order_file()
 }
 
 fn load_place_order() -> Vec<&'static str> {

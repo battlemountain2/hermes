@@ -301,7 +301,7 @@ fn private_file(metadata: &fs::Metadata) -> bool {
 }
 
 fn root() -> PathBuf {
-    glib::user_cache_dir().join("strata").join("office-pdf-v1")
+    crate::paths::office_pdf_cache_dir()
 }
 
 fn filename(key: &Key) -> Result<String, String> {

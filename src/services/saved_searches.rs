@@ -89,11 +89,9 @@ impl Store {
         let snapshot = Arc::new(Mutex::new(Snapshot::default()));
         let output = snapshot.clone();
         let worker = std::thread::Builder::new()
-            .name("strata-saved-searches".into())
+            .name("hermes-saved-searches".into())
             .spawn(move || {
-                let path = path.unwrap_or_else(|| {
-                    gio::glib::user_data_dir().join("strata/saved-searches/queries-v1.json")
-                });
+                let path = path.unwrap_or_else(crate::paths::saved_searches_file);
                 run(path, receiver, output);
             });
         if let Err(error) = worker {

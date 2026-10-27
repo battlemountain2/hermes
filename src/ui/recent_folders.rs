@@ -66,9 +66,7 @@ impl RecentFolders {
     }
 
     fn storage_path() -> PathBuf {
-        gtk::glib::user_config_dir()
-            .join("strata")
-            .join("recent-folders.toml")
+        crate::paths::recent_folders_file()
     }
 }
 

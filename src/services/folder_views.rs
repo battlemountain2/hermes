@@ -320,7 +320,7 @@ impl FolderViewStore {
 }
 
 fn default_storage_path() -> PathBuf {
-    gtk::glib::user_config_dir().join("strata/folder_views.json")
+    crate::paths::folder_views_file()
 }
 
 fn read_views(path: &Path) -> (FolderViewsData, bool) {

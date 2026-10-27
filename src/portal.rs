@@ -273,7 +273,7 @@ impl Drop for Export {
 }
 
 pub(crate) fn run() -> glib::ExitCode {
-    let marker = glib::user_config_dir().join("hermes/picker-integration.json");
+    let marker = crate::paths::picker_integration_file();
     if !crate::file_manager::enabled_at(&marker) {
         eprintln!("Hermes Open/Save picker is not enabled");
         return glib::ExitCode::FAILURE;

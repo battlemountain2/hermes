@@ -1230,7 +1230,7 @@ fn validate_tokens(tokens: &ThemeTokens) -> Result<(), &'static str> {
 }
 
 fn source_style_scheme() -> Option<sourceview5::StyleScheme> {
-    sourceview5::StyleSchemeManager::default().scheme("strata-current")
+    sourceview5::StyleSchemeManager::default().scheme("hermes-current")
 }
 
 pub(super) fn register_source_buffer(buffer: &sourceview5::Buffer) {
@@ -1245,10 +1245,10 @@ pub(super) fn register_source_buffer(buffer: &sourceview5::Buffer) {
 }
 
 fn install_source_style_scheme(tokens: &ThemeTokens) {
-    let directory = glib::user_cache_dir().join("strata").join("source-styles");
+    let directory = crate::paths::source_styles_cache_dir();
     if let Err(error) = fs::create_dir_all(&directory).and_then(|()| {
         fs::write(
-            directory.join("strata-current.xml"),
+            directory.join("hermes-current.xml"),
             source_style_scheme_xml(tokens),
         )
     }) {
@@ -1263,7 +1263,7 @@ fn install_source_style_scheme(tokens: &ThemeTokens) {
         }
     });
     manager.force_rescan();
-    let scheme = manager.scheme("strata-current");
+    let scheme = manager.scheme("hermes-current");
     SOURCE_BUFFERS.with(|buffers| {
         buffers.borrow_mut().retain(|buffer| {
             let Some(buffer) = buffer.upgrade() else {
@@ -1281,7 +1281,7 @@ fn source_style_scheme_xml(tokens: &ThemeTokens) -> String {
     let type_color = blend(&tokens.accent, &tokens.text, 0.24);
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
-<style-scheme id="strata-current" _name="Hermes Current Theme" version="1.0">
+<style-scheme id="hermes-current" _name="Hermes Current Theme" version="1.0">
   <color name="background" value="{}"/>
   <color name="surface" value="{}"/>
   <color name="text" value="{}"/>
@@ -1420,14 +1420,11 @@ fn title_case_slug(slug: &str) -> String {
         .join(" ")
 }
 
-fn config_directory() -> PathBuf {
-    gtk::glib::user_config_dir().join("strata")
-}
 fn settings_path() -> PathBuf {
-    config_directory().join("settings.toml")
+    crate::paths::settings_file()
 }
 fn themes_directory() -> PathBuf {
-    config_directory().join("themes")
+    crate::paths::themes_dir()
 }
 fn omarchy_state_dir() -> PathBuf {
     gtk::glib::home_dir().join(".local/state/omarchy/current")

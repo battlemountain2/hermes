@@ -10,6 +10,7 @@ mod metrics;
 mod model;
 mod mpris;
 mod music;
+mod paths;
 mod playback;
 mod portal;
 mod sandbox;
@@ -58,6 +59,8 @@ fn main() -> gtk::glib::ExitCode {
     if let Err(error) = assets::prepare() {
         eprintln!("Unable to prepare bundled assets: {error}");
     }
+
+    let _ = paths::migrate_legacy_data_if_needed();
 
     gtk::glib::set_application_name(identity::NAME);
     let application_id = identity::application_id(

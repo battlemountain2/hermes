@@ -244,7 +244,7 @@ pub(crate) fn initialize(application: &gtk::Application) {
     if application.application_id().as_deref() != Some(crate::identity::APPLICATION_ID) {
         return;
     }
-    let path = glib::user_config_dir().join("hermes/folder-integration.json");
+    let path = crate::paths::folder_integration_file();
     let Some(connection) = application.dbus_connection() else {
         return;
     };

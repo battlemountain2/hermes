@@ -25,7 +25,7 @@ fn desktop_online_lyrics_requires_explicit_opt_in_and_weakly_notifies() {
     manager.set_online_lyrics(true);
     assert_eq!(calls.get(), 1);
     let saved: toml::Value = toml::from_str(
-        &std::fs::read_to_string(gtk::glib::user_config_dir().join("strata/settings.toml"))
+        &std::fs::read_to_string(crate::paths::settings_file())
             .unwrap(),
     )
     .unwrap();
@@ -111,7 +111,7 @@ fn desktop_audio_choices_apply_live_persist_and_reopen_without_touching_playback
     assert_eq!(manager.audio_spectrum_decay(), "smooth");
     assert_eq!(calls.get(), 3);
     let saved: toml::Value = toml::from_str(
-        &std::fs::read_to_string(gtk::glib::user_config_dir().join("strata/settings.toml"))
+        &std::fs::read_to_string(crate::paths::settings_file())
             .unwrap(),
     )
     .unwrap();
@@ -192,7 +192,7 @@ fn desktop_date_and_size_choices_update_live_labels_and_save_validated_values() 
     assert_eq!(manager.date_format(), "iso");
     assert_eq!(manager.size_unit(), "binary");
     let saved: toml::Value = toml::from_str(
-        &std::fs::read_to_string(gtk::glib::user_config_dir().join("strata/settings.toml"))
+        &std::fs::read_to_string(crate::paths::settings_file())
             .unwrap(),
     )
     .unwrap();
@@ -326,7 +326,7 @@ fn desktop_general_preferences_are_live_and_saved_without_changing_tabs() {
     assert!(!fresh.browser().column_preferences(0).unwrap().show_hidden);
     assert!(manager.show_hidden_default());
     let saved: toml::Value = toml::from_str(
-        &std::fs::read_to_string(gtk::glib::user_config_dir().join("strata/settings.toml"))
+        &std::fs::read_to_string(crate::paths::settings_file())
             .unwrap(),
     )
     .unwrap();

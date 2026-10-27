@@ -43,7 +43,7 @@ fn desktop_context_menu_options_apply_persist_and_restore_defaults() {
     assert!(manager.context_menu_options().transfer_destinations);
     assert!(!manager.context_menu_options().music);
     let saved: toml::Value = toml::from_str(
-        &std::fs::read_to_string(gtk::glib::user_config_dir().join("strata/settings.toml"))
+        &std::fs::read_to_string(crate::paths::settings_file())
             .unwrap(),
     )
     .unwrap();

@@ -179,9 +179,7 @@ impl Store {
         if let Some(store) = shared.upgrade() {
             return Self(store);
         }
-        let store = Self::start(Some(
-            gtk::gio::glib::user_data_dir().join("strata/ratings-v1.json"),
-        ));
+        let store = Self::start(Some(crate::paths::ratings_file()));
         *shared = Arc::downgrade(&store.0);
         store
     }

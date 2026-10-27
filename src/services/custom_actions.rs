@@ -31,7 +31,7 @@ pub struct CustomCommand {
 }
 
 pub fn actions_path() -> PathBuf {
-    gtk::glib::user_config_dir().join("hermes/actions.toml")
+    crate::paths::actions_file()
 }
 
 pub fn load_custom_actions() -> Result<Vec<CustomAction>, String> {
