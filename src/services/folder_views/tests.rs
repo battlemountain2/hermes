@@ -126,3 +126,43 @@ fn test_folder_view_store_lifecycle_and_persistence() {
     reopened.clear();
     assert_eq!(reopened.get("/home/user/Documents"), None);
 }
+
+#[test]
+fn test_folder_heuristics_detects_image_and_music_directories() {
+    // Image directories suggest Grid mode
+    for path in [
+        "/home/user/Pictures",
+        "/home/user/Photos/2026",
+        "/home/user/Wallpapers",
+        "/media/card/DCIM/100CANON",
+        "/home/user/Camera",
+        "/home/user/Screenshots",
+    ] {
+        let heuristic = folder_heuristics(Path::new(path)).expect("image heuristic");
+        assert_eq!(heuristic.mode, Some(TrailBrowserMode::Grid), "failed for {path}");
+        assert_eq!(heuristic.sort_key, None);
+    }
+
+    // Music directories suggest Track sort key
+    for path in [
+        "/home/user/Music",
+        "/home/user/Music/Artist/Album",
+        "/mnt/nas/Audio/Flac",
+        "/home/user/Soundtracks",
+        "/data/Albums",
+    ] {
+        let heuristic = folder_heuristics(Path::new(path)).expect("music heuristic");
+        assert_eq!(heuristic.sort_key, Some(SortKey::Track), "failed for {path}");
+        assert_eq!(heuristic.mode, None);
+    }
+
+    // Generic directories return None
+    for path in [
+        "/home/user/Documents",
+        "/home/user/Projects/rust",
+        "/tmp",
+        "/var/log",
+    ] {
+        assert_eq!(folder_heuristics(Path::new(path)), None, "failed for generic {path}");
+    }
+}

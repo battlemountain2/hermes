@@ -1224,14 +1224,14 @@ impl ViewState {
     }
 
     fn copy_entries(&self, entries: &[FileEntry]) {
-        if set_files_clipboard(entries) {
+        if set_files_clipboard(entries, false) {
             self.clear_cut();
             self.show_clipboard_indicator(entries, false);
         }
     }
 
     fn cut_entries(&self, entries: &[FileEntry]) {
-        if set_files_clipboard(entries) {
+        if set_files_clipboard(entries, true) {
             self.cut_generation.set(self.cut_generation.get().wrapping_add(1));
             self.cut_clipboard.replace(gtk::gdk::Display::default()
                 .and_then(|display| display.clipboard().content()));
@@ -1305,7 +1305,7 @@ impl ViewState {
             self.clipboard_popover.popdown();
             self.cut_clipboard.borrow_mut().take();
         } else {
-            if set_location_files_clipboard(&remaining) {
+            if set_location_files_clipboard(&remaining, true) {
                 self.cut_clipboard.replace(gtk::gdk::Display::default()
                     .and_then(|display| display.clipboard().content()));
             }
@@ -1359,31 +1359,87 @@ impl ViewState {
         let cut_generation = self.cut_generation.get();
         let weak = Rc::downgrade(self);
         glib::MainContext::default().spawn_local(async move {
-            let result = clipboard
-                .read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT)
-                .await;
-            let files = match result {
-                Ok(value) => match value.get::<gtk::gdk::FileList>() {
-                    Ok(files) => files.files(),
-                    Err(_) => return,
-                },
-                Err(_) => return,
-            };
-            let sources = files
-                .into_iter()
-                .map(|file| {
-                    file.path()
-                        .map(Location::local)
-                        .unwrap_or_else(|| Location::uri(file.uri()))
-                })
-                .collect::<Vec<_>>();
+            let formats = clipboard.formats();
+            let mut sources = Vec::new();
+            let mut external_cut = false;
+
+            if formats.contains_type(gtk::gdk::FileList::static_type()) {
+                if let Ok(value) = clipboard
+                    .read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT)
+                    .await
+                {
+                    if let Ok(files) = value.get::<gtk::gdk::FileList>() {
+                        sources = files
+                            .files()
+                            .into_iter()
+                            .map(|file| {
+                                file.path()
+                                    .map(Location::local)
+                                    .unwrap_or_else(|| Location::uri(file.uri()))
+                            })
+                            .collect();
+                    }
+                }
+            }
+
+            if sources.is_empty() && formats.contain_mime_type("x-special/gnome-copied-files") {
+                if let Some(bytes) = read_clipboard_bytes(&clipboard, "x-special/gnome-copied-files").await {
+                    let (is_cut, locs) = parse_gnome_copied_files(&bytes);
+                    if !locs.is_empty() {
+                        sources = locs;
+                        if is_cut {
+                            external_cut = true;
+                        }
+                    }
+                }
+            }
+
+            if sources.is_empty()
+                && (formats.contain_mime_type("text/uri-list")
+                    || formats.contain_mime_type("application/x-kde4-urilist"))
+            {
+                let mime = if formats.contain_mime_type("text/uri-list") {
+                    "text/uri-list"
+                } else {
+                    "application/x-kde4-urilist"
+                };
+                if let Some(bytes) = read_clipboard_bytes(&clipboard, mime).await {
+                    if let Ok(text) = std::str::from_utf8(&bytes) {
+                        sources = parse_uri_list(text);
+                    }
+                }
+            }
+
+            if sources.is_empty() {
+                return;
+            }
+
+            if !external_cut && formats.contain_mime_type("application/x-kde-cutselection") {
+                if let Some(bytes) = read_clipboard_bytes(&clipboard, "application/x-kde-cutselection").await {
+                    if bytes.starts_with(b"1") {
+                        external_cut = true;
+                    }
+                }
+            }
+            if !external_cut && formats.contain_mime_type("x-special/gnome-copied-files") {
+                if let Some(bytes) = read_clipboard_bytes(&clipboard, "x-special/gnome-copied-files").await {
+                    let (is_cut, _) = parse_gnome_copied_files(&bytes);
+                    if is_cut {
+                        external_cut = true;
+                    }
+                }
+            }
+
             if let Some(state) = weak.upgrade() {
                 if clipboard.content() != content {
                     return;
                 }
-                let move_sources = cut_generation == state.cut_generation.get()
-                    && state.owns_cut_clipboard()
-                    && same_locations(&sources, &state.cut_locations.borrow());
+                let move_sources = if state.owns_cut_clipboard() {
+                    cut_generation == state.cut_generation.get()
+                        && same_locations(&sources, &state.cut_locations.borrow())
+                } else {
+                    external_cut
+                };
                 state.start_transfer(destination, sources, move_sources);
             }
         });
@@ -5884,12 +5940,13 @@ fn copy_locations(entries: &[FileEntry]) {
     }
 }
 
-fn set_files_clipboard(entries: &[FileEntry]) -> bool {
+fn set_files_clipboard(entries: &[FileEntry], is_cut: bool) -> bool {
     set_location_files_clipboard(
         &entries
             .iter()
             .map(|entry| entry.location.clone())
             .collect::<Vec<_>>(),
+        is_cut,
     )
 }
 
@@ -5898,11 +5955,13 @@ fn clipboard_has_files() -> bool {
         let formats = display.clipboard().formats();
         formats.contains_type(gtk::gdk::FileList::static_type())
             || formats.contain_mime_type("text/uri-list")
+            || formats.contain_mime_type("x-special/gnome-copied-files")
+            || formats.contain_mime_type("application/x-kde4-urilist")
     })
 }
 
-fn set_location_files_clipboard(locations: &[Location]) -> bool {
-    let Some(content) = native_file_clipboard_content(locations) else {
+fn set_location_files_clipboard(locations: &[Location], is_cut: bool) -> bool {
+    let Some(content) = native_file_clipboard_content(locations, is_cut) else {
         return false;
     };
     gtk::gdk::Display::default().is_some_and(|display| {
@@ -5910,12 +5969,83 @@ fn set_location_files_clipboard(locations: &[Location]) -> bool {
     })
 }
 
-fn native_file_clipboard_content(locations: &[Location]) -> Option<gtk::gdk::ContentProvider> {
-    let bytes = file_clipboard_uri_list(locations)?;
+fn native_file_clipboard_content(locations: &[Location], is_cut: bool) -> Option<gtk::gdk::ContentProvider> {
+    let uri_bytes = file_clipboard_uri_list(locations)?;
+    let gnome_bytes = gnome_copied_files_bytes(locations, is_cut)?;
+    let kde_bytes = kde_cut_selection_bytes(is_cut);
     Some(gtk::gdk::ContentProvider::new_union(&[
-        gtk::gdk::ContentProvider::for_bytes("text/uri-list", &bytes),
-        gtk::gdk::ContentProvider::for_bytes("application/x-kde4-urilist", &bytes),
+        gtk::gdk::ContentProvider::for_bytes("text/uri-list", &uri_bytes),
+        gtk::gdk::ContentProvider::for_bytes("application/x-kde4-urilist", &uri_bytes),
+        gtk::gdk::ContentProvider::for_bytes("x-special/gnome-copied-files", &gnome_bytes),
+        gtk::gdk::ContentProvider::for_bytes("application/x-kde-cutselection", &kde_bytes),
     ]))
+}
+
+fn gnome_copied_files_bytes(locations: &[Location], is_cut: bool) -> Option<glib::Bytes> {
+    if locations.is_empty() {
+        return None;
+    }
+    let mut data = String::new();
+    if is_cut {
+        data.push_str("cut\n");
+    } else {
+        data.push_str("copy\n");
+    }
+    for location in locations {
+        data.push_str(&gio_file_for_location(location).uri());
+        data.push('\n');
+    }
+    Some(glib::Bytes::from_owned(data.into_bytes()))
+}
+
+fn kde_cut_selection_bytes(is_cut: bool) -> glib::Bytes {
+    if is_cut {
+        glib::Bytes::from_static(b"1")
+    } else {
+        glib::Bytes::from_static(b"0")
+    }
+}
+
+async fn read_clipboard_bytes(clipboard: &gtk::gdk::Clipboard, mime_type: &str) -> Option<Vec<u8>> {
+    let (stream, _) = clipboard.read_future(&[mime_type], glib::Priority::DEFAULT).await.ok()?;
+    let bytes = stream.read_bytes_future(64 * 1024, glib::Priority::DEFAULT).await.ok()?;
+    Some(bytes.to_vec())
+}
+
+fn parse_uri_list(text: &str) -> Vec<Location> {
+    text.lines()
+        .map(|line| line.trim_matches(|c| c == '\r' || c == '\n' || c == '\0' || c == ' '))
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| {
+            let file = gio::File::for_uri(line);
+            file.path()
+                .map(Location::local)
+                .unwrap_or_else(|| Location::uri(file.uri()))
+        })
+        .collect()
+}
+
+fn parse_gnome_copied_files(bytes: &[u8]) -> (bool, Vec<Location>) {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return (false, Vec::new());
+    };
+    let mut lines = text.lines();
+    let first = lines.next().map(|s| s.trim_matches(|c| c == '\r' || c == '\n' || c == '\0' || c == ' ')).unwrap_or("");
+    let is_cut = first.eq_ignore_ascii_case("cut");
+    let mut locations = Vec::new();
+    for line in lines {
+        let uri = line.trim_matches(|c| c == '\r' || c == '\n' || c == '\0' || c == ' ');
+        if uri.is_empty() || uri.starts_with('#') {
+            continue;
+        }
+        let file = gio::File::for_uri(uri);
+        locations.push(
+            file.path()
+                .map(Location::local)
+                .unwrap_or_else(|| Location::uri(file.uri())),
+        );
+    }
+    (is_cut, locations)
 }
 
 fn file_clipboard_uri_list(locations: &[Location]) -> Option<glib::Bytes> {

@@ -23,6 +23,58 @@ fn native_clipboard_preserves_non_utf8_directory_names() {
     );
 }
 
+#[test]
+fn gnome_copied_files_encodes_cut_and_copy_actions() {
+    let locations = [
+        Location::local("/generated/Item 1"),
+        Location::local("/generated/Item 2"),
+    ];
+    let copy_bytes = gnome_copied_files_bytes(&locations, false).unwrap();
+    assert_eq!(
+        std::str::from_utf8(copy_bytes.as_ref()).unwrap(),
+        "copy\nfile:///generated/Item%201\nfile:///generated/Item%202\n"
+    );
+
+    let cut_bytes = gnome_copied_files_bytes(&locations, true).unwrap();
+    assert_eq!(
+        std::str::from_utf8(cut_bytes.as_ref()).unwrap(),
+        "cut\nfile:///generated/Item%201\nfile:///generated/Item%202\n"
+    );
+
+    assert!(gnome_copied_files_bytes(&[], false).is_none());
+}
+
+#[test]
+fn kde_cut_selection_encodes_cut_and_copy_flags() {
+    assert_eq!(kde_cut_selection_bytes(true).as_ref(), b"1");
+    assert_eq!(kde_cut_selection_bytes(false).as_ref(), b"0");
+}
+
+#[test]
+fn parse_gnome_copied_files_extracts_action_and_locations() {
+    let payload = b"cut\nfile:///home/user/document.txt\nfile:///home/user/photo.jpg\n";
+    let (is_cut, locs) = parse_gnome_copied_files(payload);
+    assert!(is_cut);
+    assert_eq!(locs.len(), 2);
+    assert_eq!(locs[0].display_path(), "/home/user/document.txt");
+    assert_eq!(locs[1].display_path(), "/home/user/photo.jpg");
+
+    let copy_payload = b"copy\r\nfile:///tmp/test\r\n";
+    let (is_cut, locs) = parse_gnome_copied_files(copy_payload);
+    assert!(!is_cut);
+    assert_eq!(locs.len(), 1);
+    assert_eq!(locs[0].display_path(), "/tmp/test");
+}
+
+#[test]
+fn parse_uri_list_parses_crlf_and_lf_uris() {
+    let text = "# comment\r\nfile:///home/user/doc.txt\r\n\r\nfile:///tmp/other\n";
+    let locs = parse_uri_list(text);
+    assert_eq!(locs.len(), 2);
+    assert_eq!(locs[0].display_path(), "/home/user/doc.txt");
+    assert_eq!(locs[1].display_path(), "/tmp/other");
+}
+
 #[track_caller]
 fn pump_until(mut condition: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -308,11 +360,13 @@ fn desktop_directory_copy_pastes_into_dolphin() {
         let formats = clipboard.formats();
         assert!(formats.contain_mime_type("text/uri-list"));
         assert!(formats.contain_mime_type("application/x-kde4-urilist"));
+        assert!(formats.contain_mime_type("x-special/gnome-copied-files"));
+        assert!(formats.contain_mime_type("application/x-kde-cutselection"));
         assert!(!formats.contain_mime_type("application/vnd.portal.filetransfer"));
         assert!(!formats.contain_mime_type("application/vnd.portal.files"));
         assert!(clipboard_has_files());
         let content = clipboard.content();
-        assert!(!set_location_files_clipboard(&[]));
+        assert!(!set_location_files_clipboard(&[], false));
         assert_eq!(clipboard.content(), content);
         let context = glib::MainContext::default();
         let files = context

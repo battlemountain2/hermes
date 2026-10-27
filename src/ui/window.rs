@@ -14,7 +14,7 @@ use crate::{
     adapters::{LocalOperationProvider, LocalPreviewProvider, LocalTrailStore, RoutedFileSource},
     app::{Browser, BrowserEvent, Trails},
     model::{
-        Location, SortDirection, Trail, TrailBrowserDensity,
+        Location, SortDirection, SortKey, Trail, TrailBrowserDensity,
         TrailBrowserMode, TrailViewState,
     },
 };
@@ -209,7 +209,9 @@ fn present_target(
             return;
         };
         mode_browser.set_view_mode(mode);
-        mode_preferences.set_browser_mode(mode);
+        if !mode_preferences.remember_folder_views() {
+            mode_preferences.set_browser_mode(mode);
+        }
         action.set_state(&mode.action_name().to_variant());
         if mode_preferences.remember_folder_views() {
             if let Some(loc) = mode_controller.active_location() {
@@ -255,6 +257,7 @@ fn present_target(
     let context_applying_startup = applying_startup.clone();
     let context_preferences = theme_manager.clone();
     let context_browser = browser.clone();
+    let context_mode_action = mode_action.clone();
     let context_folder_views_loc = Rc::new(RefCell::new(startup.trail.active_location().cloned()));
     let home_dashboard = Rc::new(super::home_dashboard::HomeDashboard::new(
         browser.clone(),
@@ -351,27 +354,42 @@ fn present_target(
                     if changed {
                         context_folder_views_loc.replace(Some(loc.clone()));
                         let path_str = loc.display_path();
-                        if let Some(saved) = crate::services::FolderViewStore::shared().get(&path_str) {
-                            if let Some(saved_mode) = saved.mode {
-                                let target = browser_mode(saved_mode);
-                                if context_browser.view_mode() != target {
-                                    context_browser.set_view_mode(target);
-                                }
-                            }
-                            if let Some(saved_density) = saved.density {
-                                let target = browser_density(saved_density);
-                                if context_browser.density() != target {
-                                    context_browser.set_density(target);
-                                }
-                            }
-                            if let Some(sort_key) = saved.sort_key {
-                                let sort_dir = saved.sort_direction.unwrap_or(SortDirection::Ascending);
-                                if let Some(current_depth) = context_controller.active_depth() {
-                                    if let Some(current_prefs) = context_controller.column_preferences(current_depth) {
-                                        if current_prefs.sort_key != sort_key || current_prefs.sort_direction != sort_dir {
-                                            context_controller.set_sort(current_depth, sort_key, sort_dir);
-                                        }
-                                    }
+                        let saved = crate::services::FolderViewStore::shared().get(&path_str);
+                        let heuristic = loc.native_path().and_then(crate::services::folder_views::folder_heuristics);
+
+                        let target_mode = saved
+                            .and_then(|s| s.mode.map(browser_mode))
+                            .or_else(|| heuristic.as_ref().and_then(|h| h.mode.map(browser_mode)))
+                            .unwrap_or_else(|| context_preferences.browser_mode());
+
+                        if context_browser.view_mode() != target_mode {
+                            context_browser.set_view_mode(target_mode);
+                        }
+                        context_mode_action.set_state(&target_mode.action_name().to_variant());
+
+                        let target_density = saved
+                            .and_then(|s| s.density.map(browser_density))
+                            .or_else(|| heuristic.as_ref().and_then(|h| h.density.map(browser_density)))
+                            .unwrap_or_else(|| context_preferences.browser_density());
+
+                        if context_browser.density() != target_density {
+                            context_browser.set_density(target_density);
+                        }
+
+                        let target_sort_key = saved
+                            .and_then(|s| s.sort_key)
+                            .or_else(|| heuristic.as_ref().and_then(|h| h.sort_key))
+                            .unwrap_or(SortKey::Name);
+
+                        let target_sort_dir = saved
+                            .and_then(|s| s.sort_direction)
+                            .or_else(|| heuristic.as_ref().and_then(|h| h.sort_direction))
+                            .unwrap_or(SortDirection::Ascending);
+
+                        if let Some(current_depth) = context_controller.active_depth() {
+                            if let Some(current_prefs) = context_controller.column_preferences(current_depth) {
+                                if current_prefs.sort_key != target_sort_key || current_prefs.sort_direction != target_sort_dir {
+                                    context_controller.set_sort(current_depth, target_sort_key, target_sort_dir);
                                 }
                             }
                         }
@@ -1419,7 +1437,9 @@ fn build_appearance_menu(
         let controller_for_mode = controller.clone();
         button.connect_clicked(move |_| {
             view.set_view_mode(mode);
-            preferences.set_browser_mode(mode);
+            if !preferences.remember_folder_views() {
+                preferences.set_browser_mode(mode);
+            }
             list_check.set_visible(mode == BrowserMode::Columns);
             grid_check.set_visible(mode == BrowserMode::Grid);
             explorer_check.set_visible(mode == BrowserMode::Explorer);
@@ -1462,7 +1482,9 @@ fn build_appearance_menu(
         let controller_for_compact = controller.clone();
         compact.connect_clicked(move |_| {
             view.set_density(BrowserDensity::Compact);
-            preferences.set_browser_density(BrowserDensity::Compact);
+            if !preferences.remember_folder_views() {
+                preferences.set_browser_density(BrowserDensity::Compact);
+            }
             compact_check.set_visible(true);
             airy_check.set_visible(false);
             if preferences.remember_folder_views() {
@@ -1483,7 +1505,9 @@ fn build_appearance_menu(
         let controller_for_airy = controller.clone();
         airy.connect_clicked(move |_| {
             view.set_density(BrowserDensity::Airy);
-            preferences.set_browser_density(BrowserDensity::Airy);
+            if !preferences.remember_folder_views() {
+                preferences.set_browser_density(BrowserDensity::Airy);
+            }
             compact_check.set_visible(false);
             airy_check.set_visible(true);
             if preferences.remember_folder_views() {

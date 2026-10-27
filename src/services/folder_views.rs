@@ -319,6 +319,63 @@ impl FolderViewStore {
     }
 }
 
+pub fn folder_heuristics(path: &Path) -> Option<FolderViewConfig> {
+    if let Some(pictures_dir) = gtk::glib::user_special_dir(gtk::glib::UserDirectory::Pictures) {
+        if path.starts_with(&pictures_dir) {
+            return Some(FolderViewConfig {
+                mode: Some(TrailBrowserMode::Grid),
+                density: None,
+                sort_key: None,
+                sort_direction: None,
+                show_hidden: None,
+            });
+        }
+    }
+    if let Some(music_dir) = gtk::glib::user_special_dir(gtk::glib::UserDirectory::Music) {
+        if path.starts_with(&music_dir) {
+            return Some(FolderViewConfig {
+                mode: None,
+                density: None,
+                sort_key: Some(SortKey::Track),
+                sort_direction: Some(SortDirection::Ascending),
+                show_hidden: None,
+            });
+        }
+    }
+    for component in path.components() {
+        let name = component.as_os_str().to_string_lossy();
+        if name.eq_ignore_ascii_case("Pictures")
+            || name.eq_ignore_ascii_case("Photos")
+            || name.eq_ignore_ascii_case("Wallpapers")
+            || name.eq_ignore_ascii_case("DCIM")
+            || name.eq_ignore_ascii_case("Camera")
+            || name.eq_ignore_ascii_case("Screenshots")
+        {
+            return Some(FolderViewConfig {
+                mode: Some(TrailBrowserMode::Grid),
+                density: None,
+                sort_key: None,
+                sort_direction: None,
+                show_hidden: None,
+            });
+        }
+        if name.eq_ignore_ascii_case("Music")
+            || name.eq_ignore_ascii_case("Audio")
+            || name.eq_ignore_ascii_case("Albums")
+            || name.eq_ignore_ascii_case("Soundtracks")
+        {
+            return Some(FolderViewConfig {
+                mode: None,
+                density: None,
+                sort_key: Some(SortKey::Track),
+                sort_direction: Some(SortDirection::Ascending),
+                show_hidden: None,
+            });
+        }
+    }
+    None
+}
+
 fn default_storage_path() -> PathBuf {
     crate::paths::folder_views_file()
 }
