@@ -1,6 +1,40 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Safe folder-content merging, conflict resolution, and byte progress — 2026-10-27 (current)
+## Per-folder views, cross-desktop clipboard, scalable search, and packaging — 2026-10-27 (current)
+
+- Branch: `feat/6-per-folder-views-and-clipboard-interop` (branched off `feat/6-folder-merging-and-transfer-reliability` commit `bcc1f1f`).
+- Standard CLI flags & Desktop integration (`src/main.rs`):
+  - `--version` / `-v` / `-V`: Clean output `Hermes 0.2.0 ({COMMIT})` with `ExitCode::SUCCESS`.
+  - `--diagnostics` / `--info`: Full privacy-conscious diagnostic report displaying version, commit, build profile, target OS/arch, session type (Wayland/X11), desktop environment, GTK runtime version, XDG paths (config/data/cache/state), and detection status for all 6 helper binaries (`bwrap`, `ffmpeg`, `ffmpegthumbnailer`, `magick`, `convert`, `soffice`).
+  - `--reveal` and `--select`: Sanitized argument handling so reveal requests don't cause GTK unknown-option errors; `connect_open` resolves file parents and navigates/selects targets cleanly.
+- Cross-Desktop Clipboard Interoperability (`src/ui/browser.rs`, `src/ui/browser/clipboard_tests.rs`):
+  - Multi-MIME export on cut/copy: `text/uri-list`, `application/x-kde4-urilist`, `x-special/gnome-copied-files` (`cut\n...` or `copy\n...`), and `application/x-kde-cutselection` (`1` or `0`).
+  - Cross-desktop cut detection: when pasting external clipboard content from Dolphin, Nautilus, Nemo, or Thunar, Hermes detects external cut markers (`x-special/gnome-copied-files` starting with `cut\n` or `application/x-kde-cutselection` equal to `1`), moving items instead of defaulting to copy.
+  - Fallback parser: robust parsing of CRLF/LF URI lists and Gnome copied files payloads when `GdkFileList` deserialization is unavailable.
+- Per-Folder Views & Folder Heuristics (`src/services/folder_views.rs`, `src/services/folder_views/tests.rs`, `src/ui/window.rs`):
+  - Fixed view state leakage: switching view mode or density while `remember_folder_views` is active no longer overwrites global default preferences.
+  - Folder heuristics (`services::folder_views::folder_heuristics`):
+    - Photo & image folders (`Pictures`, `Photos`, `Wallpapers`, `DCIM`, `Camera`, `Screenshots` or user Pictures dir) default to `BrowserMode::Grid`.
+    - Audio folders (`Music`, `Audio`, `Albums`, `Soundtracks` or user Music dir) default to `SortKey::Track`.
+    - Uncustomized folders cleanly restore user global defaults (`context_preferences.browser_mode()`, `context_preferences.browser_density()`, `SortKey::Name`, `SortDirection::Ascending`).
+  - Window action sync: window `"mode"` action state updates when navigating into custom folders, keeping toolbar view buttons in sync.
+- Scalable Unified Search Catalog (`src/services/search/worker.rs`, `src/services/music_library/catalog_disk.rs`, `src/services/music_library.rs`):
+  - Promoted search catalog budget to **512 MiB** (`MAX_DATABASE_BYTES = 512 * 1024 * 1024`, `PRAGMA max_page_count = 131072`).
+  - Lifted 40k entry cap: `MAX_INDEX_ENTRIES = 100_000`, `MAX_METADATA_READS = 100_000`, matching the 100k-item exit gate.
+  - Development noise exclusions: directory walking filter automatically skips `node_modules`, `target`, `__pycache__`, `.git`, and `.cache` subtrees, dramatically accelerating indexing scans and avoiding wasted memory.
+  - Accurate status messages: honest warning and indexing states ("Search index limited to 100,000 entries / 512 MiB", "Indexing selected scope — results update as song tags arrive").
+- Native Shortcuts Cheatsheet Overlay (`src/ui/shortcuts.rs`, `src/ui/shortcuts/tests.rs`, `src/ui/search.rs`, `src/ui/window.rs`):
+  - Native `gtk::ShortcutsWindow` displaying categorized shortcuts (Navigation, Views, Search, File Operations, General).
+  - Triggered via `F1`, `Ctrl+?` / `Ctrl+/`, or Omnibar command `"shortcuts"` / `"help"`.
+- Arch Linux Packaging (`packaging/arch/PKGBUILD`):
+  - Complete, standards-compliant PKGBUILD for `x86_64` and `aarch64` declaring dependencies, optdepends, build, check, and package stages.
+- Verification & Installation:
+  - `cargo check --all-targets`: 0 errors, 0 warnings.
+  - All unit and integration test suites passing.
+  - Release binary built and installed to `~/.local/bin/hermes`.
+  - Pushed to `origin/feat/6-per-folder-views-and-clipboard-interop`.
+
+## Safe folder-content merging, conflict resolution, and byte progress — 2026-10-27
 
 - Safe folder-content merging without deleting unrelated destination contents (`src/adapters/local_operations/transfer.rs`):
   - When copying or moving a folder into a destination where a folder of the same name already exists, Hermes recursively merges contents into the existing directory instead of failing or destroying existing destination files.
