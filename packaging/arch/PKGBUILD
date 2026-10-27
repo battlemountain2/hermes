@@ -1,0 +1,65 @@
+# Maintainer: battlemountain2 <https://github.com/battlemountain2/hermes>
+pkgname=hermes-file-manager
+pkgver=0.2.0
+pkgrel=1
+pkgdesc="A fast, polished, personal file manager for Linux"
+arch=('x86_64' 'aarch64')
+url="https://github.com/battlemountain2/hermes"
+license=('GPL-3.0-or-later')
+depends=(
+    'cairo'
+    'fontconfig'
+    'gdk-pixbuf2'
+    'glib2'
+    'gstreamer'
+    'gst-plugins-base'
+    'gtk4'
+    'gtksourceview5'
+    'libheif'
+    'pango'
+    'poppler-glib'
+)
+makedepends=(
+    'cargo'
+    'pkgconf'
+)
+optdepends=(
+    'bubblewrap: sandboxed preview helper isolation'
+    'ffmpeg: audio and video playback and metadata extraction'
+    'ffmpegthumbnailer: video thumbnail extraction'
+    'imagemagick: scaled preview rendering for large image formats'
+    'libreoffice: office document rendering'
+)
+provides=('hermes')
+conflicts=('hermes')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+prepare() {
+    cd "hermes-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+    cd "hermes-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR=target
+    cargo build --frozen --release --all-targets
+}
+
+check() {
+    cd "hermes-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo test --frozen --release --bin hermes
+}
+
+package() {
+    cd "hermes-$pkgver"
+    install -Dm755 target/release/hermes "$pkgdir/usr/bin/hermes"
+    install -Dm644 packaging/linux/io.github.battlemountain2.Hermes.desktop \
+        "$pkgdir/usr/share/applications/io.github.battlemountain2.Hermes.desktop"
+    install -Dm644 packaging/macos/Hermes.iconset/icon_512x512.png \
+        "$pkgdir/usr/share/icons/hicolor/512x512/apps/io.github.battlemountain2.Hermes.png"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

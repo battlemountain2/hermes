@@ -852,6 +852,22 @@ fn present_target(
     });
     window.add_controller(settings_shortcut);
 
+    let shortcuts_key = gtk::EventControllerKey::new();
+    let window_for_shortcuts = window.clone();
+    shortcuts_key.connect_key_pressed(move |_, key, _, modifiers| {
+        let is_f1 = key == gtk::gdk::Key::F1;
+        let is_ctrl_question = (key == gtk::gdk::Key::question || key == gtk::gdk::Key::slash)
+            && modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+        if is_f1 || is_ctrl_question {
+            super::shortcuts::show_shortcuts_window(&window_for_shortcuts);
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
+        }
+    });
+    window.add_controller(shortcuts_key);
+
+    let cmd_window = window.clone();
     let cmd_browser = browser.clone();
     let cmd_controller = controller.clone();
     let cmd_sidebar = sidebar.state.clone();
@@ -911,6 +927,9 @@ fn present_target(
             }
             "empty_trash" => {
                 cmd_sidebar.view.confirm_empty_trash();
+            }
+            "shortcuts" | "help" => {
+                super::shortcuts::show_shortcuts_window(&cmd_window);
             }
             _ => {}
         }

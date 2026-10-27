@@ -17,6 +17,7 @@ pub(crate) mod picker;
 pub mod recent_folders;
 pub mod search;
 mod saved_searches;
+pub mod shortcuts;
 mod settings;
 mod theme;
 pub mod thumbnail;

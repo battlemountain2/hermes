@@ -239,6 +239,13 @@ pub fn all_omnibar_commands() -> Vec<OmnibarCommand> {
             shortcut: None,
             icon: crate::assets::icons::TRASH,
         },
+        OmnibarCommand {
+            id: "shortcuts",
+            title: "Keyboard Shortcuts",
+            description: "Show keyboard shortcuts cheatsheet",
+            shortcut: Some("F1"),
+            icon: crate::assets::icons::KEYBOARD,
+        },
     ]
 }
 
