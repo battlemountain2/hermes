@@ -1,6 +1,32 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Per-folder views, cross-desktop clipboard, scalable search, and packaging — 2026-10-27 (current)
+## Desktop workflow parity: Terminal, duplicate, invert selection, properties & continuous preview — 2026-10-27 (current)
+
+- Branch: `feat/6-desktop-workflow-parity-and-properties` (branched off `feat/6-per-folder-views-and-clipboard-interop` commit `ae6ede6`).
+- Open in Terminal (`src/ui/browser.rs`, `src/ui/window.rs`, `src/ui/search.rs`, `src/ui/shortcuts.rs`):
+  - Dedicated launcher: launches terminal at current directory or file's parent directory (`preferred_terminal()` searches `$TERMINAL`, `xdg-terminal-exec`, then common installed terminals: `ghostty`, `kitty`, `alacritty`, `foot`, `wezterm`, `gnome-terminal`, `konsole`, `xfce4-terminal`, `tilix`, `xterm`).
+  - Available across all input paths: folder background context menu, single item context menu, keyboard shortcuts `F4` / `Ctrl+Alt+T`, and Omnibar search command `"open_terminal"` / `"terminal"`.
+- Collision-Safe Duplication (`src/app/browser.rs`, `src/ui/browser.rs`, `src/ui/window.rs`, `src/ui/shortcuts.rs`):
+  - In-place collision-safe file and folder duplication (`Ctrl+D` and right-click context menu "Duplicate").
+  - Automatically generates incremented collision-safe names (`name (copy).ext`, `name (copy 2).ext`) using `services::naming::collision_safe_name`.
+  - Multi-item batching: groups selections sharing a parent directory into batched transfers with single operation tracking.
+- Invert Selection (`src/app/browser.rs`, `src/ui/browser.rs`, `src/ui/window.rs`, `src/ui/shortcuts.rs`):
+  - Flips active item selection in current column or active view (`Ctrl+Shift+I` and context menu "Invert Selection" / "Invert selection").
+  - Synchronizes selection across Column, Grid, and List modes with live focus update.
+- Allow Executing File as Program (`src/ui/browser.rs`):
+  - Interactive "Allow executing file as program" toggle checkbox inside File Properties dialog for non-directory files.
+  - Toggling updates filesystem permissions (`chmod +x` / `mode | 0o111` or `mode & !0o111`) via `PermissionsExt::set_mode` and dynamically updates octal & symbolic permission displays (`Owner`, `Group`, `Others`, and mode header).
+- Wire Pin to Sidebar in Properties (`src/ui/browser.rs`):
+  - Enabled Pin button for folders in Properties dialog, connected to `pin_handler` (`sidebar.pin_location`), transitioning button to "Pinned" and pinned row to "Yes".
+- Continuous Preview Navigation (`src/ui/window.rs`):
+  - Removed drawer collapse on directory selection: navigating with arrow keys or selecting folders while Quick Look preview drawer is open keeps the drawer open and smoothly updates preview target.
+  - Subscribed to both `FocusChanged` and `SelectionSetChanged` for continuous, fluid navigation.
+- Verification & Test Coverage:
+  - Added unit tests in `src/app/browser/tests.rs` (`test_invert_selection_flips_selected_items`) and `src/ui/browser/tests.rs` (`test_preferred_terminal_and_path_resolution`, `test_executable_permission_toggling`, `test_duplicate_collision_safe_naming`).
+  - 1,043 unit tests pass, 165 `e2e_tests` pass, zero warnings on `cargo check --all-targets`.
+  - Built `--release` and installed to `~/.local/bin/hermes`.
+
+## Per-folder views, cross-desktop clipboard, scalable search, and packaging — 2026-10-27
 
 - Branch: `feat/6-per-folder-views-and-clipboard-interop` (branched off `feat/6-folder-merging-and-transfer-reliability` commit `bcc1f1f`).
 - Standard CLI flags & Desktop integration (`src/main.rs`):

@@ -784,6 +784,51 @@ impl BrowserView {
         }
     }
 
+    pub fn invert_selection(&self) {
+        if self.view_mode() == BrowserMode::Columns {
+            if let Some(depth) = self.state.focused_column_depth()
+                .or_else(|| self.state.columns.borrow().len().checked_sub(1))
+            {
+                self.state.invert_selection(depth);
+            }
+        } else if let Some(depth) = self.state.browser.active_depth() {
+            self.state.browser.invert_selection(depth);
+        }
+    }
+
+    pub fn duplicate_selection(&self) -> bool {
+        self.state.sync_mode_selection();
+        let entries = self.state.browser.selected_entries();
+        if entries.is_empty() {
+            return false;
+        }
+        self.state.duplicate_entries(&entries);
+        true
+    }
+
+    pub fn open_terminal(&self) {
+        self.state.sync_mode_selection();
+        let selected = self.state.browser.selected_entries();
+        let target_location = selected
+            .first()
+            .and_then(|entry| {
+                if entry.is_directory() {
+                    Some(entry.location.clone())
+                } else {
+                    entry.location.parent()
+                }
+            })
+            .or_else(|| {
+                self.state.browser.active_depth()
+                    .and_then(|depth| self.state.browser.location_at(depth))
+            })
+            .or_else(|| self.state.browser.active_location());
+
+        if let Some(path) = target_location.and_then(|loc| loc.native_path().map(Path::to_path_buf)) {
+            open_terminal_at(&path);
+        }
+    }
+
     pub fn show_location_properties(&self, location: &Location) {
         self.state.show_folder_properties(location);
     }
@@ -889,6 +934,74 @@ impl ViewState {
         if let Some(column) = self.columns.borrow().get(depth) {
             column.selection.select_all();
             column.list.grab_focus();
+        }
+    }
+
+    fn invert_selection(&self, depth: usize) {
+        if let Some(column) = self.columns.borrow().get(depth) {
+            let n_items = column.selection.n_items();
+            let mut positions = Vec::new();
+            for pos in 0..n_items {
+                if !column.selection.is_selected(pos) {
+                    positions.push(pos);
+                }
+            }
+            let focused = positions.last().copied();
+            set_column_selections(column, &positions);
+            let source_positions: Vec<_> = positions
+                .iter()
+                .filter_map(|pos| {
+                    source_position_for_filtered(
+                        &column.model,
+                        &column.filtered_model,
+                        *pos,
+                    )
+                })
+                .collect();
+            self.browser.set_selection(
+                depth,
+                &source_positions,
+                focused.and_then(|pos| {
+                    source_position_for_filtered(&column.model, &column.filtered_model, pos)
+                }),
+            );
+            column.list.grab_focus();
+        }
+    }
+
+    fn duplicate_entries(self: &Rc<Self>, entries: &[FileEntry]) {
+        if entries.is_empty() {
+            return;
+        }
+        let active_dest = self.browser.active_depth()
+            .and_then(|depth| self.browser.location_at(depth))
+            .or_else(|| self.browser.active_location());
+
+        let mut grouped: std::collections::HashMap<Location, (Vec<Location>, Vec<Option<String>>)> =
+            std::collections::HashMap::new();
+
+        for entry in entries {
+            let destination = entry.location.parent().or_else(|| active_dest.clone());
+            let Some(destination) = destination else { continue; };
+            let Some(dest_path) = destination.native_path() else { continue; };
+            let original_name = entry.display_name.clone();
+            let parent = dest_path.to_path_buf();
+            let safe_name = crate::services::naming::collision_safe_name(&original_name, &|candidate| {
+                parent.join(candidate).exists()
+            });
+            let group = grouped.entry(destination).or_default();
+            group.0.push(entry.location.clone());
+            group.1.push(Some(safe_name));
+        }
+
+        for (destination, (sources, target_names)) in grouped {
+            self.browser.transfer(
+                destination,
+                sources,
+                target_names,
+                false,
+                false,
+            );
         }
     }
 
@@ -2316,7 +2429,7 @@ impl ViewState {
             "HIDDEN",
             if name.starts_with('.') { "Yes" } else { "No" },
         );
-        let _pinned = properties_row(&details, "PINNED", "No");
+        let pinned_label = properties_row(&details, "PINNED", "No");
         content.append(&details);
 
         let permissions = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -2334,6 +2447,17 @@ impl ViewState {
         let owner = permission_row(&permissions, "Owner");
         let group = permission_row(&permissions, "Group");
         let others = permission_row(&permissions, "Others");
+
+        let exec_check = if !is_directory {
+            let check = gtk::CheckButton::builder()
+                .label("Allow executing file as program")
+                .build();
+            check.add_css_class("properties-exec-check");
+            permissions.append(&check);
+            Some(check)
+        } else {
+            None
+        };
         content.append(&permissions);
 
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -2342,8 +2466,27 @@ impl ViewState {
         let rename = properties_action(crate::assets::icons::PENCIL, "Rename");
         rename.set_sensitive(entry.is_some());
         let pin = properties_action(crate::assets::icons::PIN, "Pin");
-        pin.set_sensitive(false);
-        pin.set_tooltip_text(Some("Pinned locations are planned"));
+        if is_directory {
+            pin.set_sensitive(true);
+            pin.set_tooltip_text(Some("Pin this folder to sidebar"));
+            let weak = Rc::downgrade(self);
+            let pin_loc = location.clone();
+            let pin_name = name.clone();
+            let pinned_text = pinned_label.clone();
+            pin.connect_clicked(move |btn| {
+                if let Some(state) = weak.upgrade()
+                    && let Some(handler) = state.pin_handler.borrow().as_ref()
+                {
+                    handler(pin_loc.clone(), pin_name.clone());
+                    btn.set_label("Pinned");
+                    btn.set_sensitive(false);
+                    pinned_text.set_text("Yes");
+                }
+            });
+        } else {
+            pin.set_sensitive(false);
+            pin.set_tooltip_text(Some("Only folders can be pinned to sidebar"));
+        }
         let copy_path = properties_action(crate::assets::icons::COPY, "Copy path");
         actions.append(&open);
         actions.append(&rename);
@@ -2404,6 +2547,46 @@ impl ViewState {
         layer.add_controller(escape);
         layer.grab_focus();
 
+        let updating_exec = Rc::new(Cell::new(false));
+        if let Some(check) = exec_check.as_ref() {
+            let path_for_exec = location.native_path().map(Path::to_path_buf);
+            let owner_clone = owner.clone();
+            let group_clone = group.clone();
+            let others_clone = others.clone();
+            let mode_label = permissions_mode.clone();
+            let updating = updating_exec.clone();
+            check.connect_toggled(move |btn| {
+                if updating.get() {
+                    return;
+                }
+                let Some(path) = path_for_exec.as_ref() else {
+                    return;
+                };
+                let is_active = btn.is_active();
+                let Ok(metadata) = std::fs::metadata(path) else {
+                    return;
+                };
+                let current_mode = metadata.permissions().mode();
+                let new_mode = if is_active {
+                    current_mode | 0o111
+                } else {
+                    current_mode & !0o111
+                };
+                let mut perms = metadata.permissions();
+                perms.set_mode(new_mode);
+                if std::fs::set_permissions(path, perms).is_ok() {
+                    mode_label.set_text(&format_permissions(new_mode));
+                    set_permission_row(&owner_clone, new_mode, 6);
+                    set_permission_row(&group_clone, new_mode, 3);
+                    set_permission_row(&others_clone, new_mode, 0);
+                } else {
+                    updating.set(true);
+                    btn.set_active(!is_active);
+                    updating.set(false);
+                }
+            });
+        }
+
         if trash_root {
             let weak_size = size.downgrade();
             glib::MainContext::default().spawn_local(async move {
@@ -2447,6 +2630,11 @@ impl ViewState {
                 set_permission_row(&owner, mode, 6);
                 set_permission_row(&group, mode, 3);
                 set_permission_row(&others, mode, 0);
+                if let Some(check) = exec_check.as_ref() {
+                    updating_exec.set(true);
+                    check.set_active((mode & 0o111) != 0);
+                    updating_exec.set(false);
+                }
             }
             owner.0.set_text(info.attribute_string("owner::user").as_deref().unwrap_or("—"));
             group.0.set_text(info.attribute_string("owner::group").as_deref().unwrap_or("—"));
@@ -4371,12 +4559,16 @@ pub(super) fn install_folder_context_menu(
     let new_file = item_context_option(crate::assets::icons::DOCUMENTS, "New File…", "");
     let paste = item_context_option(crate::assets::icons::COPY, "Paste", "Ctrl+V");
     let select_all = item_context_option(crate::assets::icons::CHECK, "Select All", "Ctrl+A");
+    let invert_selection = item_context_option(crate::assets::icons::CHECK, "Invert Selection", "Ctrl+Shift+I");
+    let open_terminal = item_context_option(crate::assets::icons::TERMINAL, "Open in Terminal", "F4");
     let copy_location = item_context_option(crate::assets::icons::COPY, "Copy location", "");
     let properties = item_context_option(crate::assets::icons::INFO, "Properties", "Alt+Enter");
     content.append(&new_folder);
     content.append(&new_file);
     content.append(&paste);
     content.append(&select_all);
+    content.append(&invert_selection);
+    content.append(&open_terminal);
     content.append(&copy_location);
     content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     content.append(&properties);
@@ -4502,13 +4694,34 @@ pub(super) fn install_folder_context_menu(
         }
     });
     let weak = Rc::downgrade(state);
+    let invert_popover = popover.downgrade();
+    invert_selection.connect_clicked(move |_| {
+        if let Some(popover) = invert_popover.upgrade() {
+            popover.popdown();
+        }
+        if let Some(state) = weak.upgrade() {
+            state.invert_selection(depth);
+        }
+    });
+    let term_location = location.clone();
+    let term_popover = popover.downgrade();
+    open_terminal.connect_clicked(move |_| {
+        if let Some(popover) = term_popover.upgrade() {
+            popover.popdown();
+        }
+        if let Some(path) = term_location.native_path() {
+            open_terminal_at(path);
+        }
+    });
+    let weak = Rc::downgrade(state);
     let properties_popover = popover.downgrade();
+    let prop_location = location.clone();
     properties.connect_clicked(move |_| {
         if let Some(popover) = properties_popover.upgrade() {
             popover.popdown();
         }
         if let Some(state) = weak.upgrade() {
-            state.show_folder_properties(&location);
+            state.show_folder_properties(&prop_location);
         }
     });
 
@@ -4527,6 +4740,8 @@ pub(super) fn install_folder_context_menu(
         gesture.set_state(gtk::EventSequenceState::Claimed);
         paste.set_sensitive(clipboard_has_files());
         select_all.set_sensitive(selection.n_items() > 0);
+        invert_selection.set_sensitive(selection.n_items() > 0);
+        open_terminal.set_sensitive(location.native_path().is_some());
         if popover_for_click.parent().is_none()
             && let Some(parent) = gesture.widget()
         {
@@ -4645,6 +4860,8 @@ pub(super) fn install_item_context_menu(
     let rename = item_context_option(crate::assets::icons::PENCIL, "Rename", "F2");
     let cut = item_context_option(crate::assets::icons::SCISSORS, "Cut", "Ctrl+X");
     let copy = item_context_option(crate::assets::icons::COPY, "Copy", "Ctrl+C");
+    let duplicate = item_context_option(crate::assets::icons::COPY, "Duplicate", "Ctrl+D");
+    let open_terminal = item_context_option(crate::assets::icons::TERMINAL, "Open in Terminal", "F4");
     let paste_folder = item_context_option(crate::assets::icons::COPY, "Paste into folder", "");
     let delete_label = if in_trash {
         "Permanently delete"
@@ -4663,6 +4880,8 @@ pub(super) fn install_item_context_menu(
     single.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     single.append(&cut);
     single.append(&copy);
+    single.append(&duplicate);
+    single.append(&open_terminal);
     single.append(&paste_folder);
     single.append(&copy_path);
     single.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
@@ -4689,12 +4908,16 @@ pub(super) fn install_item_context_menu(
     let copy_multiple = item_context_option(crate::assets::icons::COPY, "Copy to…", "");
     let cut_multiple = item_context_option(crate::assets::icons::SCISSORS, "Cut", "Ctrl+X");
     let copy_clipboard_multiple = item_context_option(crate::assets::icons::COPY, "Copy", "Ctrl+C");
+    let duplicate_multiple = item_context_option(crate::assets::icons::COPY, "Duplicate", "Ctrl+D");
+    let invert_multiple = item_context_option(crate::assets::icons::CHECK, "Invert selection", "Ctrl+Shift+I");
     let trash_multiple =
         item_context_danger_option(crate::assets::icons::TRASH, delete_label, "Del");
     trash_multiple.add_css_class("danger");
     multiple.append(&restore_multiple);
     multiple.append(&cut_multiple);
     multiple.append(&copy_clipboard_multiple);
+    multiple.append(&duplicate_multiple);
+    multiple.append(&invert_multiple);
     multiple.append(&copy_paths);
     multiple.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     multiple.append(&move_multiple);
@@ -4926,6 +5149,60 @@ pub(super) fn install_item_context_menu(
     connect_compress(&compress, &popover, state, &target, widget);
     connect_compress(&compress_multiple, &popover, state, &target, widget);
     let weak = Rc::downgrade(state);
+    let dup_target = target.clone();
+    let dup_popover = popover.downgrade();
+    duplicate.connect_clicked(move |_| {
+        if let Some(popover) = dup_popover.upgrade() {
+            popover.popdown();
+        }
+        let Some((_, entry)) = dup_target.borrow().clone() else {
+            return;
+        };
+        if let Some(state) = weak.upgrade() {
+            state.duplicate_entries(&[entry]);
+        }
+    });
+    let term_target = target.clone();
+    let term_popover = popover.downgrade();
+    open_terminal.connect_clicked(move |_| {
+        if let Some(popover) = term_popover.upgrade() {
+            popover.popdown();
+        }
+        let Some((_, entry)) = term_target.borrow().clone() else {
+            return;
+        };
+        let target_path = if entry.is_directory() {
+            entry.location.native_path().map(Path::to_path_buf)
+        } else {
+            entry.location.parent().and_then(|p| p.native_path().map(Path::to_path_buf))
+        };
+        if let Some(path) = target_path {
+            open_terminal_at(&path);
+        }
+    });
+    let weak = Rc::downgrade(state);
+    let dup_multi_target = target.clone();
+    let dup_multi_popover = popover.downgrade();
+    duplicate_multiple.connect_clicked(move |_| {
+        if let Some(popover) = dup_multi_popover.upgrade() {
+            popover.popdown();
+        }
+        if let Some(state) = weak.upgrade() {
+            let entries = context_entries(&state, &dup_multi_target);
+            state.duplicate_entries(&entries);
+        }
+    });
+    let weak = Rc::downgrade(state);
+    let inv_multi_popover = popover.downgrade();
+    invert_multiple.connect_clicked(move |_| {
+        if let Some(popover) = inv_multi_popover.upgrade() {
+            popover.popdown();
+        }
+        if let Some(state) = weak.upgrade() {
+            state.invert_selection(depth);
+        }
+    });
+    let weak = Rc::downgrade(state);
     let properties_target = target.clone();
     let properties_popover = popover.downgrade();
     properties.connect_clicked(move |_| {
@@ -5073,6 +5350,10 @@ pub(super) fn install_item_context_menu(
         pin.set_visible(options.pin && entry.is_directory() && !is_trash_location(&entry.location));
         paste_folder.set_visible(entry.is_directory() && !in_trash);
         paste_folder.set_sensitive(clipboard_has_files());
+        duplicate.set_visible(!in_trash);
+        open_terminal.set_visible(!in_trash && (entry.is_directory() || entry.location.parent().is_some()));
+        duplicate_multiple.set_visible(!in_trash);
+        invert_multiple.set_visible(selection.n_items() > 0);
         if entries.len() > 1 {
             heading.set_text(&format!("{} items selected", entries.len()));
             summary.set_text(&selected_items_summary(&entries));
@@ -6772,6 +7053,82 @@ fn properties_action(icon: &str, label: &str) -> gtk::Button {
     let button = gtk::Button::builder().child(&content).build();
     button.add_css_class("properties-action");
     button
+}
+
+const TERMINAL_CANDIDATES: &[&str] = &[
+    "ghostty",
+    "kitty",
+    "alacritty",
+    "foot",
+    "wezterm",
+    "gnome-terminal",
+    "konsole",
+    "xfce4-terminal",
+    "tilix",
+    "xterm",
+];
+
+fn is_executable_in_path(name: &str) -> bool {
+    if name.contains('/') {
+        return Path::new(name).is_file();
+    }
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+pub(crate) fn preferred_terminal() -> Option<String> {
+    if let Ok(term) = std::env::var("TERMINAL") {
+        let trimmed = term.trim();
+        if !trimmed.is_empty() && is_executable_in_path(trimmed) {
+            return Some(trimmed.to_string());
+        }
+    }
+    if is_executable_in_path("xdg-terminal-exec") {
+        return Some("xdg-terminal-exec".to_string());
+    }
+    for candidate in TERMINAL_CANDIDATES {
+        if is_executable_in_path(candidate) {
+            return Some((*candidate).to_string());
+        }
+    }
+    None
+}
+
+pub(crate) fn open_terminal_at(path: &Path) -> bool {
+    let working_dir = if path.is_file() {
+        path.parent().unwrap_or(path)
+    } else {
+        path
+    };
+    if !working_dir.exists() {
+        return false;
+    }
+    let Some(term) = preferred_terminal() else {
+        tracing::warn!(path = %working_dir.display(), "no supported terminal emulator found");
+        return false;
+    };
+    let mut cmd = std::process::Command::new(&term);
+    cmd.current_dir(working_dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    match cmd.spawn() {
+        Ok(_) => {
+            tracing::info!(path = %working_dir.display(), terminal = %term, "launched terminal");
+            true
+        }
+        Err(err) => {
+            tracing::warn!(%err, terminal = %term, "failed to spawn terminal");
+            false
+        }
+    }
 }
 
 pub(super) fn open_location(location: &Location, parent: &impl IsA<gtk::Widget>) {

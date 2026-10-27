@@ -692,6 +692,11 @@ impl Browser {
             .map(|col| col.entries.clone())
     }
 
+    #[cfg(test)]
+    pub fn selected_positions(&self, depth: usize) -> Vec<usize> {
+        self.state.borrow().selected_positions(depth)
+    }
+
     pub fn set_selection(&self, depth: usize, positions: &[usize], focused: Option<usize>) {
         let mut state = self.state.borrow_mut();
         if state.set_selection(depth, positions, focused) {
@@ -751,6 +756,35 @@ impl Browser {
             .borrow_mut()
             .set_selection(depth, &positions, Some(focused))
         {
+            self.emit(BrowserEvent::SelectionSetChanged {
+                depth,
+                positions,
+                focused,
+            });
+        }
+    }
+
+    pub fn invert_selection(&self, depth: usize) {
+        let (count, current_selection) = {
+            let state = self.state.borrow();
+            let Some(column) = state.columns.get(depth) else {
+                return;
+            };
+            (column.entries.len(), state.selected_positions(depth))
+        };
+        if count == 0 {
+            return;
+        }
+        let positions: Vec<_> = (0..count)
+            .filter(|pos| !current_selection.contains(pos))
+            .collect();
+        let focused = positions.last().copied();
+        if self
+            .state
+            .borrow_mut()
+            .set_selection(depth, &positions, focused)
+        {
+            let focused = focused.unwrap_or(0);
             self.emit(BrowserEvent::SelectionSetChanged {
                 depth,
                 positions,

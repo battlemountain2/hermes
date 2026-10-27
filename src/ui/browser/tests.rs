@@ -1242,3 +1242,65 @@ fn desktop_hover_peek_lifecycle() {
     view.state.browser.clear_observer();
     window.close();
 }
+
+#[test]
+fn test_preferred_terminal_and_path_resolution() {
+    assert!(super::is_executable_in_path("sh"));
+    assert!(!super::is_executable_in_path("non_existent_binary_xyz_123"));
+    assert!(!super::open_terminal_at(Path::new("/non/existent/path/for/testing")));
+}
+
+#[test]
+fn test_executable_permission_toggling() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp_dir = std::env::temp_dir().join(format!("hermes-perm-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let file_path = temp_dir.join("script.sh");
+    std::fs::write(&file_path, "#!/bin/sh\necho hello\n").unwrap();
+
+    let initial_perms = std::fs::metadata(&file_path).unwrap().permissions();
+    let initial_mode = initial_perms.mode();
+    assert_eq!(initial_mode & 0o111, 0);
+
+    // Toggle on (chmod +x)
+    let new_mode = initial_mode | 0o111;
+    let mut perms = initial_perms.clone();
+    perms.set_mode(new_mode);
+    std::fs::set_permissions(&file_path, perms).unwrap();
+    let current_mode = std::fs::metadata(&file_path).unwrap().permissions().mode();
+    assert_ne!(current_mode & 0o111, 0);
+
+    // Toggle off (chmod -x)
+    let cleared_mode = current_mode & !0o111;
+    let mut perms = initial_perms;
+    perms.set_mode(cleared_mode);
+    std::fs::set_permissions(&file_path, perms).unwrap();
+    let final_mode = std::fs::metadata(&file_path).unwrap().permissions().mode();
+    assert_eq!(final_mode & 0o111, 0);
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_duplicate_collision_safe_naming() {
+    let temp_dir = std::env::temp_dir().join(format!("hermes-dup-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let parent = &temp_dir;
+    let original = parent.join("notes.txt");
+    std::fs::write(&original, "content").unwrap();
+
+    let copy1_name = crate::services::naming::collision_safe_name("notes.txt", &|name| {
+        parent.join(name).exists()
+    });
+    assert_eq!(copy1_name, "notes (copy).txt");
+    std::fs::write(parent.join(&copy1_name), "copy 1").unwrap();
+
+    let copy2_name = crate::services::naming::collision_safe_name("notes.txt", &|name| {
+        parent.join(name).exists()
+    });
+    assert_eq!(copy2_name, "notes (copy 2).txt");
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}

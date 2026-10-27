@@ -1285,3 +1285,54 @@ fn escape_closes_a_peek_before_the_deepest_column() {
             .any(|event| matches!(event, BrowserEvent::ColumnsTruncated { len: 1 }))
     );
 }
+
+struct StaticSource(Vec<FileEntry>);
+
+impl FileSource for StaticSource {
+    fn validate_location(&self, _: &Location) -> Result<(), LocationValidationError> {
+        Ok(())
+    }
+
+    fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
+        emit(DirectoryEvent::Batch {
+            request_id: request.id,
+            entries: self.0.clone(),
+        });
+        emit(DirectoryEvent::Finished {
+            request_id: request.id,
+        });
+        LoadHandle::new(|| {})
+    }
+}
+
+fn test_entry(name: &str) -> FileEntry {
+    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner {
+        location: Location::local(format!("/fixture/{name}")),
+        native_name: OsString::from(name),
+        display_name: name.to_string(),
+        kind: EntryKind::File,
+        size: MetadataValue::Known(100),
+        modified_unix_seconds: MetadataValue::Known(1_700_000_000),
+        music_tags: None,
+    }))
+}
+
+#[test]
+fn test_invert_selection_flips_selected_items() {
+    let entries = vec![
+        test_entry("a.txt"),
+        test_entry("b.txt"),
+        test_entry("c.txt"),
+        test_entry("d.txt"),
+    ];
+    let browser = Browser::new(Rc::new(StaticSource(entries)));
+    browser.navigate(Location::local("/fixture"));
+    browser.set_selection(0, &[1, 3], Some(3));
+    assert_eq!(browser.selected_positions(0), vec![1, 3]);
+
+    browser.invert_selection(0);
+    assert_eq!(browser.selected_positions(0), vec![0, 2]);
+
+    browser.invert_selection(0);
+    assert_eq!(browser.selected_positions(0), vec![1, 3]);
+}

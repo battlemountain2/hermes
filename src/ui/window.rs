@@ -147,11 +147,19 @@ fn present_target(
                 .upgrade()
                 .and_then(|browser| browser.entry_at(depth, position))
             {
-                if entry.is_directory() {
-                    preview_for_selection.close();
-                } else {
-                    preview_for_selection.show(entry);
-                }
+                preview_for_selection.show(entry);
+            }
+        }
+        BrowserEvent::SelectionSetChanged {
+            depth,
+            focused,
+            ..
+        } if preview_for_selection.is_open() => {
+            if let Some(entry) = weak_controller
+                .upgrade()
+                .and_then(|browser| browser.entry_at(depth, focused))
+            {
+                preview_for_selection.show(entry);
             }
         }
         _ => {}
@@ -928,6 +936,9 @@ fn present_target(
             "empty_trash" => {
                 cmd_sidebar.view.confirm_empty_trash();
             }
+            "open_terminal" | "terminal" => {
+                cmd_browser.open_terminal();
+            }
             "shortcuts" | "help" => {
                 super::shortcuts::show_shortcuts_window(&cmd_window);
             }
@@ -1292,6 +1303,27 @@ fn install_keyboard_navigation(
                 return glib::Propagation::Proceed;
             }
             view.select_all();
+            return glib::Propagation::Stop;
+        }
+        if control && !shift && !alt && matches!(key, gtk::gdk::Key::d | gtk::gdk::Key::D) {
+            if view.filter_has_focus() {
+                return glib::Propagation::Proceed;
+            }
+            if view.duplicate_selection() {
+                return glib::Propagation::Stop;
+            }
+        }
+        if control && shift && !alt && matches!(key, gtk::gdk::Key::i | gtk::gdk::Key::I) {
+            if view.filter_has_focus() {
+                return glib::Propagation::Proceed;
+            }
+            view.invert_selection();
+            return glib::Propagation::Stop;
+        }
+        let is_f4 = key == gtk::gdk::Key::F4 && !control && !alt && !shift;
+        let is_ctrl_alt_t = control && alt && !shift && matches!(key, gtk::gdk::Key::t | gtk::gdk::Key::T);
+        if (is_f4 || is_ctrl_alt_t) && !view.filter_has_focus() {
+            view.open_terminal();
             return glib::Propagation::Stop;
         }
         if control && key == gtk::gdk::Key::h {

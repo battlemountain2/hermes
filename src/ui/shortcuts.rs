@@ -46,6 +46,9 @@ pub fn show_shortcuts_window(parent: &impl IsA<gtk::Window>) {
     add_shortcut(&ops_group, "Copy files", "<Primary>c");
     add_shortcut(&ops_group, "Cut files", "<Primary>x");
     add_shortcut(&ops_group, "Paste files", "<Primary>v");
+    add_shortcut(&ops_group, "Duplicate selection", "<Primary>d");
+    add_shortcut(&ops_group, "Invert selection", "<Primary><Shift>i");
+    add_shortcut(&ops_group, "Open in Terminal", "F4");
     add_shortcut(&ops_group, "New folder", "<Primary><Shift>n");
     add_shortcut(&ops_group, "Rename file or folder", "F2");
     add_shortcut(&ops_group, "Move to Trash", "Delete");

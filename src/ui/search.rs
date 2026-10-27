@@ -240,6 +240,13 @@ pub fn all_omnibar_commands() -> Vec<OmnibarCommand> {
             icon: crate::assets::icons::TRASH,
         },
         OmnibarCommand {
+            id: "open_terminal",
+            title: "Open in Terminal",
+            description: "Open system terminal at current folder",
+            shortcut: Some("F4"),
+            icon: crate::assets::icons::TERMINAL,
+        },
+        OmnibarCommand {
             id: "shortcuts",
             title: "Keyboard Shortcuts",
             description: "Show keyboard shortcuts cheatsheet",
