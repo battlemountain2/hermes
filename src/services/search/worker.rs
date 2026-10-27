@@ -22,9 +22,9 @@ use crate::{
     services::{FormatFamily, classify_by_name},
 };
 
-const MAX_INDEX_ENTRIES: usize = 40_000;
-const MAX_INDEX_BYTES: usize = 32 * 1024 * 1024;
-const MAX_METADATA_READS: usize = 20_000;
+const MAX_INDEX_ENTRIES: usize = 100_000;
+const MAX_INDEX_BYTES: usize = 512 * 1024 * 1024;
+const MAX_METADATA_READS: usize = 100_000;
 const CACHE_AGE: Duration = Duration::from_secs(600);
 const TICK: Duration = Duration::from_millis(20);
 const PUBLISH_INTERVAL: Duration = Duration::from_millis(50);
@@ -484,7 +484,7 @@ impl Worker {
                         if items.len() >= self.limits.entries
                             || bytes + cost + allocation > self.limits.bytes
                         {
-                            self.warn("Search index limited to 40,000 entries / 32 MiB".into());
+                            self.warn("Search index limited to 100,000 entries / 512 MiB".into());
                             break;
                         }
                         if allocation > 0 {
@@ -834,10 +834,31 @@ impl Worker {
         let prioritize_music = music.is_dir();
         let mut builder = ignore::WalkBuilder::new(if prioritize_music { &music } else { &root });
         if prioritize_music {
-            builder
-                .add(&root)
-                .filter_entry(move |entry| entry.depth() == 0 || entry.path() != music);
+            builder.add(&root);
         }
+        let music_filter = music.clone();
+        builder.filter_entry(move |entry| {
+            if entry.depth() == 0 {
+                return true;
+            }
+            if prioritize_music && entry.path() == music_filter {
+                return false;
+            }
+            let name = entry.file_name().to_string_lossy();
+            if name.starts_with('.') {
+                return false;
+            }
+            if entry.file_type().is_some_and(|kind| kind.is_dir())
+                && (name == "node_modules"
+                    || name == "target"
+                    || name == "__pycache__"
+                    || name == ".git"
+                    || name == ".cache")
+            {
+                return false;
+            }
+            true
+        });
         let walker = builder
             .follow_links(false)
             .standard_filters(false)
@@ -857,7 +878,14 @@ impl Worker {
                     continue;
                 }
             };
-            if entry.file_name().to_string_lossy().starts_with('.') {
+            let file_name = entry.file_name().to_string_lossy();
+            if file_name.starts_with('.')
+                || file_name == "node_modules"
+                || file_name == "target"
+                || file_name == "__pycache__"
+                || file_name == ".git"
+                || file_name == ".cache"
+            {
                 continue;
             }
             let kind = entry.file_type();

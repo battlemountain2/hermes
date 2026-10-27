@@ -978,6 +978,34 @@ fn hidden_folders_and_symlink_cycles_are_not_traversed_but_ignores_do_not_hide_s
 }
 
 #[test]
+fn development_directories_are_excluded_from_search() {
+    let fixture = Fixture::new();
+    fixture.file("node_modules/pkg/package.json");
+    fixture.file("target/debug/build_artifact.txt");
+    fixture.file("__pycache__/module.cpython-312.pyc");
+    fixture.file(".cache/app/data.bin");
+    fixture.file("src/main.rs");
+    fixture.file("docs/readme.md");
+
+    let (handle, events) = start(
+        fixture.0.clone(),
+        Arc::new(UnavailableTextExtraction),
+        reader(),
+    );
+    handle.query("main");
+    assert_eq!(finish(&events, "main").0.len(), 1);
+
+    handle.query("package");
+    assert!(finish(&events, "package").0.is_empty());
+
+    handle.query("build_artifact");
+    assert!(finish(&events, "build_artifact").0.is_empty());
+
+    handle.query("cpython");
+    assert!(finish(&events, "cpython").0.is_empty());
+}
+
+#[test]
 fn cached_index_reopens_without_reading_song_tags_again_and_checks_missing_roots() {
     let fixture = Fixture::new();
     fixture.file("needle.flac");

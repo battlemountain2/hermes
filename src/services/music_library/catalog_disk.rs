@@ -21,7 +21,7 @@ use std::{
 };
 
 const VERSION: i64 = 1;
-const MAX_DATABASE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_DATABASE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_ROW_BYTES: usize = 16 * 1024;
 const MAX_PATH_BYTES: usize = 4096;
 const MAX_NOTICE_BYTES: usize = 4096;
@@ -244,7 +244,7 @@ fn configure(connection: &Connection, writable: bool) -> Result<(), String> {
         (Limit::SQLITE_LIMIT_COLUMN, 16),
         (Limit::SQLITE_LIMIT_EXPR_DEPTH, 32),
         (Limit::SQLITE_LIMIT_COMPOUND_SELECT, 2),
-        (Limit::SQLITE_LIMIT_VDBE_OP, 10_000),
+        (Limit::SQLITE_LIMIT_VDBE_OP, 2_000_000),
         (Limit::SQLITE_LIMIT_ATTACHED, 0),
         (Limit::SQLITE_LIMIT_VARIABLE_NUMBER, 16),
         (Limit::SQLITE_LIMIT_TRIGGER_DEPTH, 0),
@@ -267,7 +267,7 @@ fn configure(connection: &Connection, writable: bool) -> Result<(), String> {
         .map_err(error)?;
     connection.execute_batch("PRAGMA trusted_schema=OFF; PRAGMA cache_size=-2048; PRAGMA mmap_size=0; PRAGMA temp_store=MEMORY; PRAGMA cell_size_check=ON;").map_err(error)?;
     if writable {
-        connection.execute_batch("PRAGMA page_size=4096; PRAGMA max_page_count=16384; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;").map_err(error)?;
+        connection.execute_batch("PRAGMA page_size=4096; PRAGMA max_page_count=131072; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;").map_err(error)?;
     } else {
         connection
             .execute_batch("PRAGMA query_only=ON;")

@@ -17,10 +17,10 @@ mod cache;
 mod catalog_disk;
 mod monitoring;
 
-const MAX_ENTRIES: usize = 40_000;
-const MAX_TRACKS: usize = 20_000;
-const MAX_INDEX_BYTES: usize = 32 * 1024 * 1024;
-const MAX_WALK_ENTRIES: usize = 100_000;
+const MAX_ENTRIES: usize = 100_000;
+const MAX_TRACKS: usize = 50_000;
+const MAX_INDEX_BYTES: usize = 512 * 1024 * 1024;
+const MAX_WALK_ENTRIES: usize = 200_000;
 const PUBLISH_INTERVAL: Duration = Duration::from_millis(500);
 const TICK: Duration = Duration::from_millis(20);
 
@@ -694,7 +694,7 @@ impl Library {
             {
                 append_notice(
                     &mut notice,
-                    "Library index limited to 40,000 entries / 32 MiB",
+                    "Library index limited to 100,000 entries / 512 MiB",
                 );
                 break;
             }
