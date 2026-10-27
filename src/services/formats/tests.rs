@@ -9,11 +9,28 @@ use super::{
 
 #[test]
 fn gif_animation_detection_keeps_image_thumbnail_classification() {
-    assert!(super::is_gif_image(OsStr::new("at the zoo.GIF"), "application/octet-stream"));
+    assert!(super::is_gif_image(
+        OsStr::new("at the zoo.GIF"),
+        "application/octet-stream"
+    ));
     assert!(super::is_gif_image(OsStr::new("image"), "image/gif"));
     assert!(!super::is_gif_image(OsStr::new("photo.png"), "image/png"));
-    assert_eq!(classify_by_name(OsStr::new("image.gif")), FormatFamily::Image);
-    assert_eq!(thumbnail_handler_for_name(OsStr::new("image.gif")), Some(ThumbnailHandler::Image));
+    assert_eq!(
+        classify_by_name(OsStr::new("image.gif")),
+        FormatFamily::Image
+    );
+    assert_eq!(
+        thumbnail_handler_for_name(OsStr::new("image.gif")),
+        Some(ThumbnailHandler::Image)
+    );
+}
+
+#[test]
+fn office_thumbnails_are_available_for_layout_supported_packages() {
+    for name in ["document.DOCX", "document.odt", "slides.PPTX", "show.ppsx", "template.potx", "budget.xlsx", "budget.ODS"] {
+        assert_eq!(capabilities_by_name(OsStr::new(name)).thumbnail, Some(ThumbnailHandler::Office));
+    }
+    assert_eq!(thumbnail_handler_for_name(OsStr::new("legacy.xls")), None);
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +188,25 @@ fn classifies_office_documents() {
         classify_by_mime("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
         FormatFamily::OfficeDocument
     );
+}
+
+#[test]
+fn presentation_packages_have_office_preview_and_search_capabilities() {
+    for extension in ["PPTX", "ppsx", "potx"] {
+        let capabilities = capabilities_by_name(OsStr::new(&format!("deck.{extension}")));
+        assert_eq!(capabilities.family, FormatFamily::OfficeDocument);
+        assert_eq!(capabilities.preview, Some(PreviewHandler::Office));
+        assert_eq!(capabilities.text_extractor, Some(TextExtractor::Office));
+        assert_eq!(capabilities.thumbnail, Some(ThumbnailHandler::Office));
+    }
+    for suffix in ["presentation", "slideshow", "template"] {
+        assert_eq!(
+            classify_by_mime(&format!(
+                "application/vnd.openxmlformats-officedocument.presentationml.{suffix}"
+            )),
+            FormatFamily::OfficeDocument,
+        );
+    }
 }
 
 #[test]
@@ -417,10 +453,7 @@ fn classifies_geotiff_by_extension_and_mime() {
         classify_by_name(OsStr::new("imagery.TIFF")),
         FormatFamily::GeoTiff
     );
-    assert_eq!(
-        classify_by_mime("image/tiff"),
-        FormatFamily::GeoTiff
-    );
+    assert_eq!(classify_by_mime("image/tiff"), FormatFamily::GeoTiff);
 }
 
 // ---------------------------------------------------------------------------
@@ -468,7 +501,7 @@ fn registry_reports_independent_capabilities() {
     let svg = capabilities_by_name(OsStr::new("diagram.svg"));
     assert_eq!(svg.family, FormatFamily::Svg);
     assert_eq!(svg.preview, Some(PreviewHandler::Image));
-    assert_eq!(svg.thumbnail, None);
+    assert_eq!(svg.thumbnail, Some(ThumbnailHandler::Image));
     assert_eq!(svg.text_extractor, Some(TextExtractor::PlainText));
 
     let pdf = capabilities_by_name(OsStr::new("manual.pdf"));
@@ -482,6 +515,18 @@ fn registry_reports_independent_capabilities() {
 fn no_thumbnail_for_unsupported_formats() {
     assert_eq!(thumbnail_handler_for_name(OsStr::new("README.md")), None);
     assert_eq!(thumbnail_handler_for_name(OsStr::new("no-extension")), None);
-    // AVIF is Image but not in the curated thumbnail list.
-    assert_eq!(thumbnail_handler_for_name(OsStr::new("photo.avif")), None);
+    assert_eq!(thumbnail_handler_for_name(OsStr::new("legacy.ppt")), None);
+}
+
+#[test]
+fn proven_image_aliases_and_vector_thumbnails_use_the_image_renderer() {
+    for name in ["photo.AVIF", "photo.JPE", "photo.JFIF", "diagram.SVG"] {
+        let capabilities = capabilities_by_name(OsStr::new(name));
+        assert_eq!(capabilities.preview, Some(PreviewHandler::Image), "{name}");
+        assert_eq!(
+            capabilities.thumbnail,
+            Some(ThumbnailHandler::Image),
+            "{name}"
+        );
+    }
 }

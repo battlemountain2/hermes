@@ -34,6 +34,12 @@ pub(crate) enum Operation {
     PreviewAudioMetadata = 19,
     Heif = 20,
     PreviewHeif = 21,
+    PreviewThreeMf = 22,
+    PreviewEpubCover = 23,
+    PreviewCbzCover = 24,
+    PreviewCbrCover = 25,
+    PreviewAudioArtwork = 26,
+    PreviewPptxCover = 27,
 }
 
 impl Operation {
@@ -60,6 +66,12 @@ impl Operation {
             19 => Ok(Self::PreviewAudioMetadata),
             20 => Ok(Self::Heif),
             21 => Ok(Self::PreviewHeif),
+            22 => Ok(Self::PreviewThreeMf),
+            23 => Ok(Self::PreviewEpubCover),
+            24 => Ok(Self::PreviewCbzCover),
+            25 => Ok(Self::PreviewCbrCover),
+            26 => Ok(Self::PreviewAudioArtwork),
+            27 => Ok(Self::PreviewPptxCover),
             _ => Err(io::Error::other("Unknown browser operation")),
         }
     }
@@ -339,6 +351,9 @@ pub(crate) fn receive(socket: &impl AsRawFd) -> io::Result<Option<(Operation, Ow
 
     Ok(Some((operation, input_fd, output_fd)))
 }
+
+#[cfg(test)]
+mod format_tests;
 
 #[cfg(test)]
 mod tests {

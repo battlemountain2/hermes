@@ -470,18 +470,48 @@ pub(crate) fn shade(
     Ok(png_bytes)
 }
 
+pub(crate) fn detect_model_format(input: &Path) -> Option<ModelFormat> {
+    let mut header = [0u8; 4];
+    if let Ok(mut file) = fs::File::open(input) {
+        if file.read_exact(&mut header).is_ok() && header == [0x50, 0x4b, 0x03, 0x04] {
+            return Some(ModelFormat::ThreeMf);
+        }
+    }
+    if input
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("3mf"))
+    {
+        Some(ModelFormat::ThreeMf)
+    } else if input
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("stl"))
+    {
+        Some(ModelFormat::Stl)
+    } else {
+        None
+    }
+}
+
 pub(crate) fn render_model(input: &Path, target_size: u32) -> Result<Vec<u8>, String> {
+    let format = detect_model_format(input).unwrap_or(ModelFormat::Stl);
+    render_model_with_format(input, target_size, format)
+}
+
+pub(crate) fn render_model_with_format(
+    input: &Path,
+    target_size: u32,
+    format: ModelFormat,
+) -> Result<Vec<u8>, String> {
+    if format == ModelFormat::FreeCad {
+        return Err("Unsupported model format".into());
+    }
     let size = target_size.clamp(16, 800);
     let accent = [0x7a, 0xa2, 0xf7]; // TokyoNight blue
     let surface = [0x24, 0x28, 0x3b]; // Dark surface
 
-    let ext = input
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|s| s.to_ascii_lowercase())
-        .unwrap_or_default();
-
-    if ext == "3mf" {
+    if format == ModelFormat::ThreeMf {
         let file = fs::File::open(input).map_err(|e| format!("Unable to open 3MF file: {e}"))?;
         let mut archive = zip::ZipArchive::new(file).map_err(|_| "Invalid or corrupted 3MF archive".to_string())?;
         if archive.len() > MAX_3MF_ARCHIVE_ENTRIES {
@@ -528,6 +558,9 @@ pub(crate) fn render_model(input: &Path, target_size: u32) -> Result<Vec<u8>, St
         shade(&faces, size, size, accent, surface)
     }
 }
+
+#[cfg(test)]
+mod format_tests;
 
 #[cfg(test)]
 mod tests {

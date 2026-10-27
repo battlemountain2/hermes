@@ -380,6 +380,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
+name = "fallible-iterator"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
+
+[[package]]
+name = "fallible-streaming-iterator"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
+
+[[package]]
 name = "fast-float2"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -546,6 +558,30 @@ dependencies = [
  "libc",
  "pango-sys",
  "pkg-config",
+ "system-deps 7.0.8",
+]
+
+[[package]]
+name = "gdk4-wayland"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fcb81f3e1e7d9dac156e91a9dc81be33d8c99338975254ed93ca9f1de5cb3168"
+dependencies = [
+ "gdk4",
+ "gdk4-wayland-sys",
+ "gio",
+ "glib",
+ "libc",
+]
+
+[[package]]
+name = "gdk4-wayland-sys"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d739aa4ae9a1abb15f01ab2d8b8dd14a7792104ffb60bbc09bb94d76b905cfeb"
+dependencies = [
+ "glib-sys",
+ "libc",
  "system-deps 7.0.8",
 ]
 
@@ -928,6 +964,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hermes"
+version = "0.2.0"
+dependencies = [
+ "cairo-rs",
+ "calamine",
+ "csv",
+ "gdk-pixbuf",
+ "gdk4-wayland",
+ "geotiff-core",
+ "gio",
+ "glib-build-tools",
+ "gstreamer",
+ "gstreamer-app",
+ "gstreamer-video",
+ "gtk4",
+ "ignore",
+ "libheif-rs",
+ "poppler-rs",
+ "quick-xml",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sourceview5",
+ "tiff",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+ "tracing-subscriber",
+ "yeslogic-fontconfig-sys",
+ "zip",
+]
+
+[[package]]
 name = "hmac"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1077,6 +1145,17 @@ checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
 dependencies = [
  "cfg-if",
  "windows-link",
+]
+
+[[package]]
+name = "libsqlite3-sys"
+version = "0.38.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1d20bef17f513b9b3004532233187769cd072d790971f4e4da0e346eb6401e8"
+dependencies = [
+ "cc",
+ "pkg-config",
+ "vcpkg",
 ]
 
 [[package]]
@@ -1347,6 +1426,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "rusqlite"
+version = "0.40.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23f2a97da3e3873c73cb2a2e71b35c40ff95e0b1eefa8d72d8499a6928c3b5b3"
+dependencies = [
+ "bitflags",
+ "fallible-iterator",
+ "fallible-streaming-iterator",
+ "libsqlite3-sys",
+ "smallvec",
+]
+
+[[package]]
 name = "rustc_version"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1541,36 +1633,6 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
-
-[[package]]
-name = "strata"
-version = "0.2.0"
-dependencies = [
- "cairo-rs",
- "calamine",
- "csv",
- "gdk-pixbuf",
- "geotiff-core",
- "gio",
- "glib-build-tools",
- "gstreamer",
- "gstreamer-app",
- "gstreamer-video",
- "gtk4",
- "ignore",
- "libheif-rs",
- "poppler-rs",
- "quick-xml",
- "serde",
- "serde_json",
- "sourceview5",
- "tiff",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
- "tracing-subscriber",
- "yeslogic-fontconfig-sys",
- "zip",
-]
 
 [[package]]
 name = "syn"

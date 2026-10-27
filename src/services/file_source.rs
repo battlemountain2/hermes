@@ -74,6 +74,10 @@ pub enum DirectoryEvent {
     Finished {
         request_id: RequestId,
     },
+    Notice {
+        request_id: RequestId,
+        message: Option<String>,
+    },
     Failed {
         request_id: RequestId,
         message: String,

@@ -166,6 +166,7 @@ impl Cache {
             | DirectoryEvent::MusicMetadata { request_id, .. }
             | DirectoryEvent::Restarted { request_id }
             | DirectoryEvent::Finished { request_id }
+            | DirectoryEvent::Notice { request_id, .. }
             | DirectoryEvent::Failed { request_id, .. } => *request_id,
         };
         if id != request_id {

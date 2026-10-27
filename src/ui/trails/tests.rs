@@ -3,10 +3,87 @@ use super::visible_tab_scroll;
 #[test]
 fn file_tab_surfaces_keep_square_indicator_corners() {
     let css = include_str!("../../style.css");
-    for selector in [".file-tab {", ".file-tab-select {"] {
-        let rule = css.split_once(selector).unwrap().1.split_once('}').unwrap().0;
-        assert!(rule.contains("border-radius: 0;"), "Rounded tab surface: {selector}");
+    for selector in [
+        ".file-tab {",
+        ".file-tab-select {",
+        ".file-tab-close {",
+        ".file-tab-rename {",
+        ".tab-strip-new {",
+    ] {
+        let rule = css
+            .rsplit_once(&format!("\n{selector}"))
+            .unwrap()
+            .1
+            .split_once('}')
+            .unwrap()
+            .0;
+        assert!(
+            rule.contains("border-radius: 0;"),
+            "Rounded tab surface: {selector}"
+        );
     }
+}
+
+#[test]
+#[ignore = "Requires isolated GTK display; checks real tab close allocation and interaction states"]
+fn desktop_tab_close_is_compact_centered_and_keyboard_focusable() {
+    use crate::{
+        app::{Browser, Trails},
+        model::{Location, TrailViewState},
+        services::{StoredTrails, TrailStore},
+    };
+    use gtk::prelude::*;
+    use std::{rc::Rc, time::{Duration, Instant}};
+
+    struct MemoryStore;
+    impl TrailStore for MemoryStore {
+        fn load(&self) -> std::io::Result<StoredTrails> { Ok(StoredTrails::default()) }
+        fn save(&self, _: &StoredTrails) -> std::io::Result<()> { Ok(()) }
+    }
+
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let _manager = crate::ui::theme::ThemeManager::shared();
+    let css = gtk::CssProvider::new();
+    css.connect_parsing_error(|_, _, error| panic!("Tab stylesheet: {error}"));
+    css.load_from_string(include_str!("../../style.css"));
+    gtk::style_context_add_provider_for_display(
+        &gtk::gdk::Display::default().unwrap(), &css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let trails = Trails::empty(Rc::new(MemoryStore));
+    trails.create("First", Location::local("/"), TrailViewState::default()).unwrap();
+    trails.create("Second", Location::local("/"), TrailViewState::default()).unwrap();
+    let browser = Browser::new(Rc::new(crate::adapters::RoutedFileSource::new()));
+    let bar = super::TabBar::new(trails.clone(), browser, Rc::new(TrailViewState::default), Rc::new(|_| {}));
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.append(&bar.widget());
+    let window = gtk::Window::builder().default_width(640).default_height(100).child(&content).build();
+    window.present();
+    let tab = bar.rendered.borrow()[0].1.clone();
+    let close = tab.last_child().unwrap().downcast::<gtk::Button>().unwrap();
+    let pump = || {
+        let until = Instant::now() + Duration::from_millis(100);
+        while Instant::now() < until {
+            while gtk::glib::MainContext::default().iteration(false) {}
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    };
+    pump();
+    assert_eq!(close.valign(), gtk::Align::Center);
+    let original = (close.width(), close.height());
+    assert!(close.height() >= 24 && close.height() < tab.height());
+    assert!(close.grab_focus());
+    for state in [gtk::StateFlags::PRELIGHT, gtk::StateFlags::ACTIVE, gtk::StateFlags::FOCUS_VISIBLE] {
+        close.set_state_flags(state, false);
+        pump();
+        assert_eq!((close.width(), close.height()), original);
+        close.unset_state_flags(state);
+    }
+    close.emit_clicked();
+    assert_eq!(trails.all().len(), 1);
+    let remaining = bar.rendered.borrow()[0].1.last_child().unwrap().downcast::<gtk::Button>().unwrap();
+    assert!(!remaining.is_sensitive());
+    window.close();
 }
 
 #[test]
@@ -319,10 +396,15 @@ fn desktop_tabs_remain_compact_and_aligned() {
         Rc::new(TrailViewState::default),
         Rc::new(|_| {}),
     );
+    let layout = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    layout.append(&bar.widget());
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.set_vexpand(true);
+    layout.append(&content);
     let window = gtk::Window::builder()
         .default_width(1200)
         .default_height(100)
-        .child(&bar.widget())
+        .child(&layout)
         .build();
     window.present();
     let deadline = Instant::now() + Duration::from_millis(500);
@@ -332,7 +414,24 @@ fn desktop_tabs_remain_compact_and_aligned() {
     }
     let mut tab = bar.tabs.first_child().expect("First tab exists");
     let first_height = tab.height();
-    assert!(first_height > 0);
+    assert!(
+        (40..=42).contains(&first_height),
+        "Tab row unexpectedly grew to {first_height}px"
+    );
+    let first_bounds = tab.compute_bounds(&bar.root).unwrap();
+    assert!(
+        first_bounds.x().abs() <= 1.0,
+        "The first tab is inset from the strip"
+    );
+    assert!(
+        first_bounds.y().abs() <= 1.0,
+        "The indicator is inset from the top edge"
+    );
+    assert!(
+        (first_bounds.height() - bar.root.height() as f32).abs() <= 1.0,
+        "The tab does not fill the strip height"
+    );
+    let mut previous_right: Option<f32> = None;
     for _ in 0..3 {
         assert!(
             tab.width() >= 120 && tab.width() <= 300,
@@ -340,6 +439,14 @@ fn desktop_tabs_remain_compact_and_aligned() {
             tab.width()
         );
         assert_eq!(tab.height(), first_height);
+        let bounds = tab.compute_bounds(&bar.tabs).unwrap();
+        if let Some(previous_right) = previous_right {
+            assert!(
+                (bounds.x() - previous_right).abs() <= 1.0,
+                "Gap between adjacent tab surfaces"
+            );
+        }
+        previous_right = Some(bounds.x() + bounds.width());
         let mut child = tab.first_child();
         while let Some(widget) = child {
             if widget.is_visible() {
@@ -355,6 +462,47 @@ fn desktop_tabs_remain_compact_and_aligned() {
         bar.tabs.width() < bar.root.width(),
         "Compact tabs must leave trailing space"
     );
+    window.set_child(None::<&gtk::Widget>);
     window.close();
+    let narrow_window = gtk::Window::builder()
+        .default_width(260)
+        .default_height(180)
+        .child(&layout)
+        .build();
+    narrow_window.present();
+    let deadline = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < deadline {
+        while gtk::glib::MainContext::default().iteration(false) {}
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(bar.root.hadjustment().upper() > bar.root.hadjustment().page_size());
+    assert_eq!(bar.tabs.first_child().unwrap().height(), first_height);
+    for _ in 0..2 {
+        let last = bar.trails.all().last().unwrap().id.clone();
+        bar.close_tab(&last);
+    }
+    narrow_window.set_child(None::<&gtk::Widget>);
+    narrow_window.close();
+    let single_window = gtk::Window::builder()
+        .default_width(260)
+        .default_height(180)
+        .child(&layout)
+        .build();
+    single_window.present();
+    let deadline = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < deadline {
+        while gtk::glib::MainContext::default().iteration(false) {}
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let remaining = bar.tabs.first_child().unwrap();
+    let bounds = remaining.compute_bounds(&bar.root).unwrap();
+    assert!(bounds.x().abs() <= 1.0 && bounds.y().abs() <= 1.0);
+    assert_eq!(remaining.height(), first_height);
+    assert!(
+        remaining.width() < bar.root.width(),
+        "A lone tab must stay compact"
+    );
+    assert!(!remaining.last_child().unwrap().is_sensitive());
+    single_window.close();
     gtk::style_context_remove_provider_for_display(&display, &provider);
 }

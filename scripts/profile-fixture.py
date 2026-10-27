@@ -71,13 +71,13 @@ def isolated(args):
         directory = root / name
         directory.mkdir()
         env[key] = str(directory)
-    env.update(STRATA_DEV="1", RUST_LOG="strata=debug", GIO_USE_VFS="local", GIO_USE_VOLUME_MONITOR="unix", GTK_USE_PORTAL="0")
+    env.update(HERMES_DEV="1", RUST_LOG="hermes=debug", GIO_USE_VFS="local", GIO_USE_VOLUME_MONITOR="unix", GTK_USE_PORTAL="0")
     display = None
     app = None
     peak_rss = peak_pss = 0
     finished = False
     try:
-        if os.environ.get("STRATA_PROFILE_HEADLESS") == "1":
+        if os.environ.get("HERMES_PROFILE_HEADLESS", os.environ.get("STRATA_PROFILE_HEADLESS")) == "1":
             env.update(GDK_BACKEND="broadway", BROADWAY_DISPLAY=f":{1000 + os.getpid() % 1000}")
             display = subprocess.Popen(["gtk4-broadwayd", "-a", "127.0.0.1", env["BROADWAY_DISPLAY"]], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             time.sleep(0.2)
@@ -116,7 +116,7 @@ def main():
     parser = argparse.ArgumentParser(description="Isolated Hermes enumeration/process-tree memory probe; not a paint or Dolphin benchmark")
     parser.add_argument("fixture")
     parser.add_argument("timeout", nargs="?", type=float, default=15)
-    parser.add_argument("--binary", default=os.environ.get("STRATA_BINARY", "target/debug/strata"))
+    parser.add_argument("--binary", default=os.environ.get("HERMES_BINARY", os.environ.get("STRATA_BINARY", "target/debug/hermes")))
     parser.add_argument("--root", help=argparse.SUPPRESS)
     parser.add_argument("--log", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -126,9 +126,9 @@ def main():
         parser.error("Expected a directory, executable binary and positive timeout")
     if args.root:
         return isolated(args)
-    with tempfile.NamedTemporaryFile(prefix="strata-profile.", suffix=".log", delete=False) as log:
+    with tempfile.NamedTemporaryFile(prefix="hermes-profile.", suffix=".log", delete=False) as log:
         log_path = log.name
-    with tempfile.TemporaryDirectory(prefix="strata-profile-state.") as root:
+    with tempfile.TemporaryDirectory(prefix="hermes-profile-state.") as root:
         runner = subprocess.Popen(["dbus-run-session", "--", sys.executable, str(pathlib.Path(__file__).resolve()), args.fixture, str(args.timeout), "--binary", args.binary, "--root", root, "--log", log_path])
         try:
             result = runner.wait()

@@ -26,8 +26,12 @@ fn manager() -> (Rc<Trails>, Rc<MemoryStore>) {
     let store = Rc::new(MemoryStore::default());
     let trails = Trails::load(store.clone()).expect("load Trails");
     trails
-        .ensure_default(Location::local("/home/example"))
-        .expect("create default");
+        .create(
+            "example",
+            Location::local("/home/example"),
+            TrailViewState { sidebar_open: true, ..TrailViewState::default() },
+        )
+        .expect("create initial tab");
     (trails, store)
 }
 
@@ -125,13 +129,20 @@ fn the_last_trail_cannot_be_closed() {
 
 #[test]
 fn view_state_is_saved_for_only_the_active_trail() {
-    let (trails, _) = manager();
-    let mut view = trails.active_view().expect("active view");
+    let (trails, store) = manager();
+    let original = trails.all()[0].clone();
+    trails.create("Other", Location::local("/other"), TrailViewState::default()).expect("create other tab");
+    let other = trails.all()[1].clone();
+    trails.activate(&original.id).expect("activate original tab");
+    let mut view = original.view.clone();
     view.preview_open = true;
 
     trails.update_active_view(view.clone()).expect("save view");
 
-    assert_eq!(trails.active_view(), Some(view));
+    let saved = trails.all();
+    assert_eq!(saved[0].view, view);
+    assert_eq!(saved[1], other);
+    assert_eq!(store.value.borrow().collection.trails, saved);
 }
 
 #[test]

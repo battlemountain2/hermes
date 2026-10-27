@@ -1,25 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use super::office_xml_text;
-
 #[test]
 fn jpeg_decode_hints_fit_the_requested_box_without_upscaling() {
     assert_eq!(image_target_dimensions(2268, 4032, 1400), (788, 1400));
     assert_eq!(image_target_dimensions(3600, 3600, 256), (256, 256));
     assert_eq!(image_target_dimensions(320, 200, 1400), (320, 200));
-    assert_eq!(image_target_dimensions(u32::MAX, u32::MAX, 1400), (1400, 1400));
+    assert_eq!(
+        image_target_dimensions(u32::MAX, u32::MAX, 1400),
+        (1400, 1400)
+    );
     assert_eq!(image_target_dimensions(0, 0, 0), (1, 1));
-}
-
-#[test]
-fn office_xml_is_reduced_to_readable_bounded_text() {
-    let xml = r#"<w:document><w:p><w:r><w:t>Hello &amp; welcome</w:t></w:r></w:p><w:p><w:t>Hermes</w:t></w:p></w:document>"#;
-    let text = office_xml_text(xml, 1024);
-    assert!(text.contains("Hello & welcome"));
-    assert!(text.contains("Hermes"));
-    assert!(!text.contains("<w:"));
-
-    assert!(office_xml_text(xml, 12).len() <= 12);
 }
 
 use super::sniff::*;
@@ -50,8 +40,7 @@ fn test_sniff_png_dimensions() {
 #[test]
 fn test_sniff_gif_dimensions() {
     let mut gif = vec![
-        b'G', b'I', b'F', b'8', b'9', b'a',
-        0x40, 0x01, // width: 320
+        b'G', b'I', b'F', b'8', b'9', b'a', 0x40, 0x01, // width: 320
         0xF0, 0x00, // height: 240
     ];
     let dims = sniff_gif_dimensions(&gif).expect("valid gif dimensions");
@@ -70,14 +59,12 @@ fn test_sniff_jpeg_dimensions() {
         0xFF, 0xD8, // SOI
         0xFF, 0xE0, // APP0
         0x00, 0x04, // length: 4
-        0x00, 0x00,
-        0xFF, 0xC0, // SOF0
+        0x00, 0x00, 0xFF, 0xC0, // SOF0
         0x00, 0x0B, // length: 11
-        0x08,       // precision
+        0x08, // precision
         0x01, 0xE0, // height: 480
         0x02, 0x80, // width: 640
-        0x03, 0x01, 0x11, 0x00,
-        0xFF, 0xDA, // SOS
+        0x03, 0x01, 0x11, 0x00, 0xFF, 0xDA, // SOS
     ];
     let dims = sniff_jpeg_dimensions(&jpeg).expect("valid jpeg dimensions");
     assert_eq!(dims.width, 640);
@@ -94,7 +81,7 @@ fn test_sniff_tiff_dimensions() {
     let mut tiff = vec![
         b'I', b'I', 0x2A, 0x00, // magic 42
         0x08, 0x00, 0x00, 0x00, // IFD0 offset: 8
-        0x02, 0x00,             // 2 entries
+        0x02, 0x00, // 2 entries
         // Entry 1: tag 256 (ImageWidth), type 3 (SHORT), count 1, value 800
         0x00, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x20, 0x03, 0x00, 0x00,
         // Entry 2: tag 257 (ImageLength), type 3 (SHORT), count 1, value 600
@@ -132,11 +119,10 @@ fn test_oversized_embedded_thumbnail_rejected() {
         0xFF, 0xD8, // SOI
         0xFF, 0xC0, // SOF0
         0x00, 0x0B, // length: 11
-        0x08,       // precision
+        0x08, // precision
         0x4E, 0x20, // height: 20000
         0x4E, 0x20, // width: 20000
-        0x03, 0x01, 0x11, 0x00,
-        0xFF, 0xD9, // EOI
+        0x03, 0x01, 0x11, 0x00, 0xFF, 0xD9, // EOI
     ];
     let result = scale_embedded_thumbnail(&huge_thumb_jpeg, 256);
     assert!(result.is_err());
@@ -145,11 +131,21 @@ fn test_oversized_embedded_thumbnail_rejected() {
 #[test]
 fn media_preview_only_retries_resource_killed_conversions() {
     use std::os::unix::process::ExitStatusExt;
-    assert!(super::media_preview_should_retry(std::process::ExitStatus::from_raw(9)));
-    assert!(super::media_preview_should_retry(std::process::ExitStatus::from_raw(24)));
-    assert!(!super::media_preview_should_retry(std::process::ExitStatus::from_raw(0)));
-    assert!(!super::media_preview_should_retry(std::process::ExitStatus::from_raw(256)));
-    assert!(!super::media_preview_should_retry(std::process::ExitStatus::from_raw(11)));
+    assert!(super::media_preview_should_retry(
+        std::process::ExitStatus::from_raw(9)
+    ));
+    assert!(super::media_preview_should_retry(
+        std::process::ExitStatus::from_raw(24)
+    ));
+    assert!(!super::media_preview_should_retry(
+        std::process::ExitStatus::from_raw(0)
+    ));
+    assert!(!super::media_preview_should_retry(
+        std::process::ExitStatus::from_raw(256)
+    ));
+    assert!(!super::media_preview_should_retry(
+        std::process::ExitStatus::from_raw(11)
+    ));
 }
 
 #[test]

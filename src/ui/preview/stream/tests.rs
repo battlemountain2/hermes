@@ -1,6 +1,81 @@
 use super::*;
 
 #[test]
+#[ignore = "Requires private GTK display; generated cached posters, no personal videos"]
+fn desktop_cached_video_posters_validate_sources_and_yield_to_real_frames() {
+    gtk::init().unwrap();
+    let root = std::env::temp_dir().join(format!("hermes-cached-poster-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("generated.mov");
+    std::fs::write(&path, b"generated source identity").unwrap();
+    let pixels =
+        gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, false, 8, 64, 32).unwrap();
+    pixels.fill(0x2050d0ff);
+    let bytes = pixels.save_to_bufferv("png", &[]).unwrap();
+    crate::ui::thumbnail::tests::cache_fixture(&path, glib::Bytes::from_owned(bytes));
+    let pump = || {
+        let deadline = std::time::Instant::now() + Duration::from_millis(100);
+        while std::time::Instant::now() < deadline {
+            for _ in 0..64 {
+                if !glib::MainContext::default().iteration(false) {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    };
+    let stream: PlaybackStream = glib::Object::new();
+    stream.reuse_cached_poster(&path);
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while stream.imp().poster.borrow().is_none() {
+        assert!(std::time::Instant::now() < deadline);
+        pump();
+    }
+    assert_eq!(
+        (stream.intrinsic_width(), stream.intrinsic_height()),
+        (64, 32)
+    );
+    assert!(!stream.needs_poster());
+    let frame = gtk::gdk::MemoryTexture::new(
+        1,
+        1,
+        gtk::gdk::MemoryFormat::R8g8b8a8,
+        &glib::Bytes::from_static(&[0, 0, 0, 255]),
+        4,
+    );
+    stream.imp().texture.replace(Some(frame.clone()));
+    assert_eq!(stream.intrinsic_width(), 1);
+    let prepared: PlaybackStream = glib::Object::new();
+    prepared.reuse_cached_poster(&path);
+    prepared.imp().texture.replace(Some(frame));
+    let stopped: PlaybackStream = glib::Object::new();
+    stopped.reuse_cached_poster(&path);
+    stopped.stop();
+    let failed: PlaybackStream = glib::Object::new();
+    failed.reuse_cached_poster(&path);
+    failed.set_error(glib::Error::new(
+        gtk::gio::IOErrorEnum::Failed,
+        "Generated error",
+    ));
+    pump();
+    for guarded in [&prepared, &stopped, &failed] {
+        assert!(guarded.imp().poster.borrow().is_none());
+    }
+    std::fs::write(&path, b"changed generated source").unwrap();
+    let changed: PlaybackStream = glib::Object::new();
+    changed.reuse_cached_poster(&path);
+    pump();
+    assert!(changed.imp().poster.borrow().is_none());
+    crate::ui::thumbnail::tests::cache_fixture(&path, glib::Bytes::from_static(b"invalid PNG"));
+    let invalid: PlaybackStream = glib::Object::new();
+    invalid.reuse_cached_poster(&path);
+    pump();
+    assert!(invalid.imp().poster.borrow().is_none());
+    stream.stop();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 #[ignore = "Requires a GTK display; synthetic texture, no personal media"]
 fn desktop_poster_fallback_yields_to_frames_cancellation_and_errors() {
     gtk::init().unwrap();
@@ -13,6 +88,10 @@ fn desktop_poster_fallback_yields_to_frames_cancellation_and_errors() {
         &glib::Bytes::from_static(&[0, 0, 0, 255]),
         4,
     );
+    stream.imp().poster.replace(Some(texture.clone().upcast()));
+    assert!(!stream.needs_poster());
+    stream.imp().poster.borrow_mut().take();
+    assert!(stream.needs_poster());
     stream.imp().texture.replace(Some(texture));
     assert!(!stream.needs_poster());
     stream.imp().texture.borrow_mut().take();
@@ -105,7 +184,7 @@ fn desktop_mov_starts_with_a_real_frame_and_seeks_without_normalization() {
 }
 
 #[test]
-#[ignore = "Requires desktop, FFmpeg and a built target/debug/strata sandbox worker"]
+#[ignore = "Requires desktop, FFmpeg and a built target/debug/hermes sandbox worker"]
 fn desktop_full_length_seek_fullscreen_and_cleanup() {
     use std::time::Instant;
     gtk::init().expect("Display available");
@@ -267,7 +346,8 @@ fn desktop_full_length_seek_fullscreen_and_cleanup() {
         assert!(!stream.is_ended());
         assert!(stream.is_playing());
         assert_eq!(play.tooltip_text().as_deref(), Some("Pause"));
-        assert_eq!(status.text(), "Full-length playback");
+        assert!(status.text().is_empty());
+        assert!(!status.is_visible());
     }
     preview.stop();
     assert!(stream.imp().session.borrow().is_none());

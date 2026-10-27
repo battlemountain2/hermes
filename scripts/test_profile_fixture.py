@@ -29,6 +29,7 @@ class ProfileTests(unittest.TestCase):
             binary.chmod(0o700)
             env = os.environ.copy()
             env.pop("STRATA_PROFILE_HEADLESS", None)
+            env.pop("HERMES_PROFILE_HEADLESS", None)
             env["XDG_STATE_HOME"] = str(root / "personal")
             run = subprocess.run(["python3", str(SCRIPT), str(root), "2", "--binary", str(binary)], env=env, capture_output=True, text=True, timeout=15)
             self.assertEqual(run.returncode, 0, run.stderr)

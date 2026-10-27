@@ -64,7 +64,8 @@ impl ViewState {
         self.mode_views.borrow().cancel_rename();
         let columns_widget = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         columns_widget.add_css_class("columns");
-        columns_widget.set_halign(gtk::Align::Start);
+        columns_widget.set_halign(gtk::Align::Fill);
+        columns_widget.set_hexpand(true);
         columns_widget.set_vexpand(true);
         let scroller = gtk::ScrolledWindow::builder()
             .child(&columns_widget)

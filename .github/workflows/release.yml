@@ -128,13 +128,13 @@ jobs:
           lock_path = pathlib.Path("Cargo.lock")
           lock = lock_path.read_text()
           lock, count = re.subn(
-              r'(\[\[package\]\]\nname = "strata"\nversion = ")\d+\.\d+\.\d+("\n)',
+              r'(\[\[package\]\]\nname = "hermes"\nversion = ")\d+\.\d+\.\d+("\n)',
               rf'\g<1>{version}\2',
               lock,
               count=1,
           )
           if count != 1:
-              raise SystemExit("could not update the strata version in Cargo.lock")
+              raise SystemExit("could not update the Hermes version in Cargo.lock")
           lock_path.write_text(lock)
           PY
 
@@ -163,9 +163,15 @@ jobs:
           TARGET: ${{ matrix.target }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          package="strata-${VERSION}-${TARGET}"
+          package="hermes-${VERSION}-${TARGET}"
           mkdir -p "dist/$package"
-          install -m 755 "target/$TARGET/release/strata" "dist/$package/strata"
+          install -m 755 "target/$TARGET/release/hermes" "dist/$package/hermes"
+          cp packaging/linux/io.github.battlemountain2.Hermes.desktop "dist/$package/"
+          cp packaging/linux/io.github.battlemountain2.Hermes.Dev.desktop "dist/$package/"
+          cp data/icons/scalable/apps/io.github.battlemountain2.Hermes.svg "dist/$package/"
+          mkdir -p "dist/$package/scripts" "dist/$package/docs"
+          cp scripts/desktop-integration.py "dist/$package/scripts/"
+          cp docs/desktop-integration.md "dist/$package/docs/"
           printf '%s\n' "$SOURCE_SHA" > "dist/$package/SOURCE_COMMIT"
           cp README.md LICENSE THIRD_PARTY_LICENSES.md "dist/$package/"
           tar -C dist -czf "dist/$package.tar.gz" "$package"
@@ -174,7 +180,7 @@ jobs:
       - name: Upload release artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: strata-${{ matrix.target }}
+          name: hermes-${{ matrix.target }}
           path: |
             dist/*.tar.gz
             dist/*.sha256
@@ -232,7 +238,7 @@ jobs:
           version = os.environ["VERSION"]
           for filename, pattern in (
               ("Cargo.toml", r'(^version = ")\d+\.\d+\.\d+("$)'),
-              ("Cargo.lock", r'(\[\[package\]\]\nname = "strata"\nversion = ")\d+\.\d+\.\d+("\n)'),
+              ("Cargo.lock", r'(\[\[package\]\]\nname = "hermes"\nversion = ")\d+\.\d+\.\d+("\n)'),
           ):
               path = pathlib.Path(filename)
               text, count = re.subn(pattern, rf'\g<1>{version}\2', path.read_text(), count=1, flags=re.MULTILINE)
@@ -245,11 +251,11 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Cargo.toml Cargo.lock
           git commit -m "chore: release v$VERSION"
-          git tag -a "v$VERSION" -m "Strata v$VERSION"
+          git tag -a "v$VERSION" -m "Hermes v$VERSION"
           git push --atomic origin "HEAD:$BRANCH" "v$VERSION"
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
-        run: gh release create "v$VERSION" dist/* --verify-tag --generate-notes --title "Strata v$VERSION"
+        run: gh release create "v$VERSION" dist/* --verify-tag --generate-notes --title "Hermes v$VERSION"

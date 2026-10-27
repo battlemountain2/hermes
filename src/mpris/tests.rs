@@ -111,6 +111,7 @@ fn methods_validate_argument_signatures_and_only_allow_local_audio_uris() {
 fn advertised_property_signatures_match_implementation() {
     let node = gio::DBusNodeInfo::for_xml(include_str!("interfaces.xml")).unwrap();
     assert_eq!(node.interfaces().len(), 2);
+    assert_eq!(root_properties()["DesktopEntry"].get::<String>().unwrap(), crate::identity::APPLICATION_ID);
     assert_eq!(
         root_properties()["SupportedUriSchemes"].type_().as_str(),
         "as"

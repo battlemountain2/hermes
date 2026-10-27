@@ -28,7 +28,7 @@ mod worker;
 pub(crate) use worker::run;
 
 const CACHE_ENTRIES: usize = 64;
-const CACHE_TTL: Duration = Duration::from_secs(30);
+const CACHE_TTL: Duration = Duration::from_secs(300);
 const WAIT_QUANTUM: Duration = Duration::from_millis(20);
 pub(crate) const MAX_WORKERS: usize = 16;
 const DEFAULT_WORKER_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -124,12 +124,12 @@ pub(crate) fn default_worker_limit() -> usize {
         .min(MAX_WORKERS)
 }
 
-#[expect(dead_code, reason = "Pool worker limit query helper")]
+#[cfg_attr(not(test), expect(dead_code, reason = "Pool worker limit query helper"))]
 pub(crate) fn worker_limit() -> usize {
     pool().limit.load(Ordering::Relaxed)
 }
 
-#[expect(dead_code, reason = "Pool worker limit setter helper")]
+#[cfg_attr(not(test), expect(dead_code, reason = "Pool worker limit setter helper"))]
 pub(crate) fn set_worker_limit(limit: usize) {
     let limit = limit.clamp(1, MAX_WORKERS);
     pool().limit.store(limit, Ordering::Relaxed);
@@ -315,7 +315,9 @@ impl Lease {
                     self.discard();
                     match spawn_worker() {
                         Ok(fresh) => self.worker = Some(fresh),
-                        Err(_) => return Err(err),
+                        Err(error) => {
+                            return Err(format!("Unable to spawn sandbox worker: {error}"));
+                        }
                     }
                 }
                 Err(err) => {
@@ -464,9 +466,8 @@ fn spawn_worker() -> io::Result<Worker> {
         "--ro-bind-try",
         "/etc/ImageMagick-6",
         "/etc/ImageMagick-6",
-        "--ro-bind",
     ]);
-    command.arg(&executable).arg("/app/strata");
+    super::helper_binary::bind(&mut command, &executable)?;
     command.args([
         "--",
         "/usr/bin/prlimit",
@@ -494,16 +495,47 @@ fn map_preview_op(op: &ParseOperation) -> Option<Operation> {
     match op {
         ParseOperation::MusicTags => Some(Operation::MusicTags),
         ParseOperation::PreviewAudioMetadata => Some(Operation::PreviewAudioMetadata),
+        ParseOperation::ImageMetadata => Some(Operation::ImageMetadata),
+        ParseOperation::MediaMetadata => Some(Operation::MediaMetadata),
+        ParseOperation::PreviewAudioArtwork => Some(Operation::PreviewAudioArtwork),
         ParseOperation::PreviewImage => Some(Operation::PreviewImage),
         ParseOperation::PreviewGeoTiff => Some(Operation::PreviewGeoTiff),
+        ParseOperation::PreviewHeif => Some(Operation::PreviewHeif),
+        ParseOperation::PreviewSpreadsheet => Some(Operation::PreviewSpreadsheet),
+        _ => None,
+    }
+}
+
+fn map_format_preview_op(input: &Path, op: &ParseOperation) -> Result<Option<Operation>, String> {
+    use crate::sandbox_helper::archive_cover::CoverFormat;
+    use crate::services::model_preview::ModelFormat;
+
+    match op {
+        ParseOperation::PreviewModel => match ModelFormat::for_name(input.as_os_str())
+            .or_else(|| crate::sandbox_helper::model::detect_model_format(input))
+        {
+            Some(ModelFormat::Stl) => Ok(Some(Operation::PreviewModel)),
+            Some(ModelFormat::ThreeMf) => Ok(Some(Operation::PreviewThreeMf)),
+            _ => Err("Unsupported pooled model format".into()),
+        },
+        ParseOperation::PreviewArchiveCover => match CoverFormat::for_path(input) {
+            Some(CoverFormat::Epub) => Ok(Some(Operation::PreviewEpubCover)),
+            Some(CoverFormat::Cbz) => Ok(Some(Operation::PreviewCbzCover)),
+            Some(CoverFormat::Cbr) => Ok(Some(Operation::PreviewCbrCover)),
+            Some(CoverFormat::Pptx) => Ok(Some(Operation::PreviewPptxCover)),
+            None => Err("Unsupported archive cover format".into()),
+        },
+        _ => Ok(map_preview_op(op)),
+    }
+}
+
+fn map_thumbnail_op(op: &ParseOperation) -> Option<Operation> {
+    match op {
         ParseOperation::ThumbnailImage => Some(Operation::Image),
         ParseOperation::ThumbnailHeif => Some(Operation::Heif),
-        ParseOperation::PreviewHeif => Some(Operation::PreviewHeif),
         ParseOperation::ThumbnailRaw => Some(Operation::Raw),
         ParseOperation::ThumbnailPdf => Some(Operation::Pdf),
-        ParseOperation::PreviewModel => Some(Operation::PreviewModel),
-        ParseOperation::PreviewArchiveCover => Some(Operation::PreviewArchiveCover),
-        ParseOperation::PreviewSpreadsheet => Some(Operation::PreviewSpreadsheet),
+        ParseOperation::ThumbnailVideo => Some(Operation::Video),
         _ => None,
     }
 }
@@ -516,7 +548,10 @@ pub(crate) fn preview(
     if !workers_supported() {
         return None;
     }
-    let wire_op = map_preview_op(operation)?;
+    let wire_op = match map_format_preview_op(input, operation) {
+        Ok(operation) => operation?,
+        Err(error) => return Some(Err(error)),
+    };
     let identity = Identity::read(input)?;
     if cancellation.is_cancelled() {
         return Some(Err("Preview cancelled".into()));
@@ -528,7 +563,11 @@ pub(crate) fn preview(
         return Some(Ok(cached));
     }
 
-    let mut lease = preview_pool().acquire(cancellation).ok()?;
+    let mut lease = match preview_pool().acquire(cancellation) {
+        Ok(lease) => lease,
+        Err(error) if cancellation.is_cancelled() => return Some(Err(error)),
+        Err(_) => return None,
+    };
     let result = lease.execute(input, wire_op, cancellation);
     match result {
         Ok(response) => {
@@ -566,7 +605,7 @@ pub(crate) fn thumbnail_parse(
     if !workers_supported() {
         return None;
     }
-    let wire_op = map_preview_op(&operation)?;
+    let wire_op = map_thumbnail_op(&operation)?;
     let identity = Identity::read(input)?;
     if cancellation.is_cancelled() {
         return Some(Err("Preview cancelled".into()));
@@ -576,7 +615,11 @@ pub(crate) fn thumbnail_parse(
         return Some(Ok(cached_data));
     }
 
-    let mut lease = pool().acquire(cancellation).ok()?;
+    let mut lease = match pool().acquire(cancellation) {
+        Ok(lease) => lease,
+        Err(error) if cancellation.is_cancelled() => return Some(Err(error)),
+        Err(_) => return None,
+    };
     let result = lease.execute(input, wire_op, cancellation);
     match result {
         Ok(response) => {
@@ -592,3 +635,6 @@ pub(crate) fn thumbnail_parse(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) mod format_tests;

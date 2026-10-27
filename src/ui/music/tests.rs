@@ -1,6 +1,62 @@
 use super::*;
 
 #[test]
+#[ignore = "Requires an isolated GTK display; verifies idle transport ticks do not rebuild icons"]
+fn desktop_music_controller_ticks_reuse_hero_transport_icons() {
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let player = MusicPlayer::with_session(None);
+    let repeat = player.state.hero_repeat.child().unwrap();
+    let speaker = player.state.hero_speaker.child().unwrap();
+    for _ in 0..50 {
+        player.state.sync_controller();
+        assert_eq!(player.state.hero_repeat.child().as_ref(), Some(&repeat));
+        assert_eq!(player.state.hero_speaker.child().as_ref(), Some(&speaker));
+    }
+    player.controller().set_repeat(Repeat::One);
+    let changed = player.state.hero_repeat.child().unwrap();
+    assert_ne!(changed, repeat);
+    for _ in 0..50 {
+        player.state.sync_controller();
+        assert_eq!(player.state.hero_repeat.child().as_ref(), Some(&changed));
+    }
+    player.dispose_view();
+}
+
+#[test]
+#[ignore = "Requires an isolated GTK display and private settings; validates player disposal"]
+fn desktop_player_disposal_releases_immersive_callback_and_owned_views() {
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let player = MusicPlayer::with_session(None);
+    let weak_player = player.downgrade();
+    let weak_mini = player
+        .state
+        .mini_player
+        .borrow()
+        .as_ref()
+        .unwrap()
+        .window()
+        .downgrade();
+    let retained = Rc::new(());
+    let marker = retained.clone();
+    let callback_player = player.downgrade();
+    player.connect_open_immersive(Rc::new(move || {
+        let _retained = &marker;
+        if let Some(player) = callback_player.upgrade() {
+            player.set_workspace("immersive");
+        }
+    }));
+    assert_eq!(Rc::strong_count(&retained), 2);
+    player.dispose_view();
+    player.dispose_view();
+    assert_eq!(Rc::strong_count(&retained), 1);
+    drop(player);
+    assert!(weak_player.upgrade().is_none());
+    assert!(weak_mini.upgrade().is_none());
+}
+
+#[test]
 fn elapsed_time_is_readable_and_never_negative() {
     assert_eq!(time_label(-1), "0:00");
     assert_eq!(time_label(61_000_000), "1:01");
@@ -69,6 +125,21 @@ fn album_playback_falls_back_to_filename_numbers_and_excludes_other_folders() {
         ),
         vec![first, second, unknown]
     );
+}
+
+#[test]
+fn album_tracks_empty_and_matching_keys() {
+    let album = PathBuf::from("/music/Album");
+    let track1 = tagged_track(album.join("01.flac"), None, Some(1), "Song 1");
+    let track2 = tagged_track(album.join("02.flac"), None, Some(2), "Song 2");
+    let other = tagged_track(
+        PathBuf::from("/music/Other/01.flac"),
+        None,
+        Some(1),
+        "Other Song",
+    );
+    let library = vec![track2.clone(), other, track1.clone()];
+    assert_eq!(album_tracks(&library, &album), vec![track1, track2]);
 }
 
 #[test]
@@ -172,6 +243,7 @@ fn desktop_album_browse_activation_filtered_results_and_queue_visibility() {
     let album_view = &lists[0];
     let track_view = &lists[1];
     assert!(!album_view.is_single_click_activate());
+    assert!(track_view.is_single_click_activate());
     player.state.album_selection.set_selected(1);
     assert_eq!(player.state.tracks.borrow().as_slice(), &tracks[4..]);
     assert!(player.state.stream.borrow().is_none());
@@ -723,7 +795,7 @@ fn desktop_queue_drag_buttons_removal_and_restart_resume() {
 }
 
 #[test]
-#[ignore = "Requires desktop, FFmpeg and a built target/debug/strata sandbox worker"]
+#[ignore = "Requires desktop, FFmpeg and a built target/debug/hermes sandbox worker"]
 fn desktop_full_track_queue_navigation_seek_and_stop() {
     use std::time::Instant;
     gtk::init().unwrap();
@@ -952,4 +1024,88 @@ fn desktop_real_folder_full_song_and_auto_next() {
     assert_eq!(player.state.queue.borrow().current, Some(1));
     player.shutdown();
     window.close();
+}
+
+#[test]
+#[ignore = "Requires isolated GTK display"]
+fn desktop_workspace_switching_and_layout_changes_update_bar_visibility() {
+    gtk::init().unwrap();
+    let player = MusicPlayer::with_session(None);
+    player.controller().transport_visible.set(true);
+
+    // Initial state in files workspace with top layout
+    player.set_workspace("files");
+    assert!(
+        player.bar().is_visible(),
+        "bottom dock visible in files view"
+    );
+
+    // Switching to music with top layout hides bottom dock and shows hero deck
+    super::super::theme::ThemeManager::shared().set_music_player_layout("top");
+    player.set_workspace("music");
+    assert!(
+        !player.bar().is_visible(),
+        "bottom dock hidden in music view with top layout"
+    );
+    assert!(
+        player.state.hero_deck.is_visible(),
+        "hero deck visible in music view with top layout"
+    );
+
+    // Switching to bottom layout shows bottom dock and hides hero deck
+    super::super::theme::ThemeManager::shared().set_music_player_layout("bottom");
+    assert!(
+        player.bar().is_visible(),
+        "bottom dock visible with bottom layout"
+    );
+    assert!(
+        !player.state.hero_deck.is_visible(),
+        "hero deck hidden with bottom layout"
+    );
+
+    // Entering immersive mode hides bottom dock regardless of layout
+    player.set_workspace("immersive");
+    assert!(
+        !player.bar().is_visible(),
+        "bottom dock hidden in immersive mode"
+    );
+
+    // Restore top layout
+    super::super::theme::ThemeManager::shared().set_music_player_layout("top");
+    player.shutdown();
+}
+
+#[test]
+#[ignore = "Private GTK display/preferences; synthetic pending stream without decoding or audio"]
+fn desktop_browsing_preserves_playback_intent_and_transport_after_preview_pause() {
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let manager = super::super::theme::ThemeManager::shared();
+    let player = MusicPlayer::with_session(None);
+    let controller = player.controller();
+    let stream: PlaybackStream = gtk::glib::Object::new();
+    controller.stream.replace(Some(stream));
+    controller.transport_visible.set(true);
+    controller.play();
+    assert_eq!(controller.status(), controller::PlaybackStatus::Playing);
+    for layout in ["top", "bottom"] {
+        manager.set_music_player_layout(layout);
+        for workspace in ["music", "files", "music", "files"] {
+            player.set_workspace(workspace);
+            assert_eq!(controller.status(), controller::PlaybackStatus::Playing);
+            if workspace == "files" {
+                assert!(player.bar().is_visible());
+                assert!(!player.state.hero_deck.is_visible());
+            }
+        }
+    }
+    controller.pause();
+    for workspace in ["music", "files"] {
+        player.set_workspace(workspace);
+        assert_eq!(controller.status(), controller::PlaybackStatus::Paused);
+    }
+    assert!(player.bar().is_visible());
+    assert!(player.state.play.is_sensitive());
+    player.dispose_view();
+    player.shutdown();
 }

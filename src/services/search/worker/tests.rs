@@ -37,6 +37,7 @@ fn finish(receiver: &SearchReceiver, expected: &str) -> (Vec<SearchItem>, Option
             items,
             indexing: false,
             notice,
+            ..
         }) = receiver.recv_timeout(TICK)
         {
             if query == expected {
@@ -45,6 +46,31 @@ fn finish(receiver: &SearchReceiver, expected: &str) -> (Vec<SearchItem>, Option
         }
     }
     panic!("Search did not finish: {expected}");
+}
+
+#[test]
+fn streamed_search_keeps_literal_titles_and_explicit_filters() {
+    let fixture = Fixture::new();
+    for name in ["Video Games.flac", "Games.mp4", "Lost in the Dream.flac"] {
+        fixture.file(name);
+    }
+    let (handle, events) = start(
+        fixture.0.clone(),
+        Arc::new(UnavailableTextExtraction),
+        Arc::new(|_, _| Some(MusicTags::default())),
+    );
+    for (query, expected) in [
+        ("Video Games", vec!["Video Games.flac", "Games.mp4"]),
+        ("Video Games ext:flac", vec!["Video Games.flac"]),
+        ("Video Games type:video", vec!["Games.mp4"]),
+        ("Lost in the Dream", vec!["Lost in the Dream.flac"]),
+    ] {
+        handle.query(query);
+        let (items, notice) = finish(&events, query);
+        assert!(notice.is_none(), "{notice:?}");
+        let names: Vec<_> = items.iter().map(|item| item.name.as_str()).collect();
+        assert_eq!(names, expected, "{query}");
+    }
 }
 
 fn reader() -> Arc<TagReader> {
@@ -80,6 +106,38 @@ fn shared_scope_routes_only_visible_music_subtrees() {
     ));
     assert!(!shared_scope(Path::new("/home/me/Music/.private"), music));
     assert!(!shared_scope(Path::new("/home/me/MusicBackup"), music));
+}
+
+#[test]
+fn repeated_query_generations_reach_worker_results_without_reusing_old_tokens() {
+    let fixture = Fixture::new();
+    fixture.file("needle.txt");
+    let (handle, receiver) = start(
+        fixture.0.clone(),
+        Arc::new(UnavailableTextExtraction),
+        reader(),
+    );
+    let initial = handle.query("needle");
+    finish(&receiver, "needle");
+    let interim = handle.query("missing");
+    let current = handle.query("needle");
+    assert!(initial < interim && interim < current);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        if let Ok(SearchEvent::Results {
+            generation,
+            items,
+            indexing: false,
+            ..
+        }) = receiver.recv_timeout(TICK)
+            && generation == current
+        {
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].name, "needle.txt");
+            return;
+        }
+    }
+    panic!("Current repeated query did not finish");
 }
 
 #[test]
@@ -291,7 +349,7 @@ fn real_library_search_cold_and_warm_refresh() {
     let index_cache = Arc::new(Mutex::new(VecDeque::new()));
     let calls = Arc::new(AtomicUsize::new(0));
     let counted = calls.clone();
-    let executable = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/strata");
+    let executable = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/hermes");
     assert!(
         executable.is_file(),
         "Build the production binary before this fixture"
@@ -728,6 +786,7 @@ fn mailboxes_keep_only_latest_and_cancel_superseded_query_tokens() {
         ready: Condvar::new(),
     });
     let handle = SearchHandle {
+        next_generation: AtomicU64::new(1),
         commands: commands.clone(),
         events: events.clone(),
         startup_error: None,
@@ -736,18 +795,26 @@ fn mailboxes_keep_only_latest_and_cancel_superseded_query_tokens() {
         query_cancelled: Mutex::new(Arc::new(AtomicBool::new(false))),
     };
     handle.query("obsolete");
-    let old = commands.take().unwrap();
+    let Command::Query(old) = commands.take().unwrap() else {
+        panic!("Expected query")
+    };
     for position in 0..10_000 {
         handle.query(&format!("query-{position}"));
         events.put(SearchEvent::Results {
+            generation: position + 2,
             query: position.to_string(),
             items: Vec::new(),
             indexing: true,
             notice: None,
+            page: None,
+            groups: None,
         });
     }
     assert!(old.cancelled.load(Ordering::Acquire));
-    assert_eq!(commands.take().unwrap().text, "query-9999");
+    let Command::Query(latest) = commands.take().unwrap() else {
+        panic!("Expected query")
+    };
+    assert_eq!(latest.text, "query-9999");
     assert!(commands.take().is_none());
     let SearchEvent::Results { query, .. } = events.take().unwrap();
     assert_eq!(query, "9999");

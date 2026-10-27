@@ -44,12 +44,13 @@ impl FileSource for SearchFileSource {
         };
         let query = search.query;
         let (handle, receiver) = index_tree(search.root, Arc::new(LocalTextExtractionProvider));
-        handle.query(&query);
+        let generation = handle.query_all_scoped(&query, search.group, search.entity);
         let live = handle.is_live();
 
         let active = Rc::new(Cell::new(true));
         let poll_active = active.clone();
         let mut previous = None;
+        let mut previous_notice = None;
 
         glib::timeout_add_local(Duration::from_millis(16), move || {
             if !poll_active.get() {
@@ -62,8 +63,10 @@ impl FileSource for SearchFileSource {
             let flow = deliver_results(
                 event,
                 &query,
+                generation,
                 request.id,
                 &mut previous,
+                &mut previous_notice,
                 &poll_active,
                 emit.as_ref(),
             );
@@ -84,8 +87,10 @@ impl FileSource for SearchFileSource {
 fn deliver_results(
     event: SearchEvent,
     query: &str,
+    expected_generation: u64,
     request_id: crate::services::RequestId,
     previous: &mut Option<Vec<FileEntry>>,
+    previous_notice: &mut Option<String>,
     active: &Cell<bool>,
     emit: &dyn Fn(DirectoryEvent),
 ) -> glib::ControlFlow {
@@ -93,12 +98,15 @@ fn deliver_results(
         return glib::ControlFlow::Break;
     }
     let SearchEvent::Results {
+        generation,
         query: event_query,
         items,
         indexing,
         notice,
+        page: _,
+        groups,
     } = event;
-    if event_query != query {
+    if generation != expected_generation || event_query != query || groups.is_some() {
         return glib::ControlFlow::Continue;
     }
     let entries: Vec<_> = items.iter().map(search_entry).collect();
@@ -107,6 +115,16 @@ fn deliver_results(
         emit(DirectoryEvent::Snapshot {
             request_id,
             entries,
+        });
+    }
+    if !active.get() {
+        return glib::ControlFlow::Break;
+    }
+    if *previous_notice != notice {
+        previous_notice.clone_from(&notice);
+        emit(DirectoryEvent::Notice {
+            request_id,
+            message: notice.clone(),
         });
     }
     if !active.get() {
@@ -132,3 +150,6 @@ fn search_entry(item: &crate::services::SearchItem) -> FileEntry {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod saved_tests;

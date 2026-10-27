@@ -15,16 +15,31 @@ use crate::{
     sandbox::Cancellation,
 };
 
+mod collections;
 mod context_menu;
 pub(crate) mod controller;
+pub(crate) mod immersive;
+pub(crate) mod mini;
 mod queue;
 mod session;
 
+use crate::services::music_collections::{Command as CollectionCommand, Store as CollectionStore};
+use collections::{Group, Section};
 use controller::Controller;
 
 #[derive(Clone)]
 pub(crate) struct MusicPlayer {
     state: Rc<State>,
+}
+
+pub(super) struct WeakMusicPlayer {
+    state: std::rc::Weak<State>,
+}
+
+impl WeakMusicPlayer {
+    pub(super) fn upgrade(&self) -> Option<MusicPlayer> {
+        self.state.upgrade().map(|state| MusicPlayer { state })
+    }
 }
 
 struct State {
@@ -55,6 +70,7 @@ struct State {
     disposed: Cell<bool>,
     scan: RefCell<Option<crate::music::library::Scan>>,
     library: RefCell<Vec<Track>>,
+    library_revision: Cell<u64>,
     albums: RefCell<Vec<Album>>,
     album_model: gtk::StringList,
     album_selection: gtk::SingleSelection,
@@ -78,6 +94,39 @@ struct State {
     play_album: gtk::Button,
     selected_actions: Vec<gtk::Button>,
     selection_options: gtk::MenuButton,
+    collection_store: CollectionStore,
+    collection_snapshot: RefCell<std::sync::Arc<crate::services::music_collections::Snapshot>>,
+    section: Cell<Section>,
+    navigation: Vec<(Section, gtk::ToggleButton)>,
+    album_scroll: gtk::ScrolledWindow,
+    group_scroll: gtk::ScrolledWindow,
+    group_model: gtk::StringList,
+    group_labels: RefCell<Vec<String>>,
+    group_section: Cell<Option<Section>>,
+    group_library_revision: Cell<u64>,
+    group_selection: gtk::SingleSelection,
+    groups: RefCell<Vec<Group>>,
+    playlist_editor: gtk::Box,
+    collection_status: gtk::Label,
+    favorite_buttons: RefCell<Vec<(glib::WeakRef<gtk::ToggleButton>, PathBuf)>>,
+    favorite_paths: RefCell<std::collections::BTreeSet<PathBuf>>,
+    catalog_paths: RefCell<std::collections::BTreeSet<PathBuf>>,
+    pending_observation: RefCell<Option<collections::PendingObservation>>,
+    mini_player: RefCell<Option<mini::MiniPlayer>>,
+    open_immersive: RefCell<Option<Rc<dyn Fn()>>>,
+    current_workspace: RefCell<String>,
+    hero_deck: gtk::Box,
+    hero_cover: gtk::Image,
+    hero_title: gtk::Label,
+    hero_detail: gtk::Label,
+    hero_badge: gtk::Label,
+    hero_seek: gtk::Scale,
+    hero_clock: gtk::Label,
+    hero_play: gtk::Button,
+    hero_speaker: gtk::Button,
+    hero_volume: gtk::Scale,
+    hero_shuffle: gtk::ToggleButton,
+    hero_repeat: gtk::Button,
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -97,6 +146,12 @@ impl std::ops::Deref for State {
 }
 
 impl MusicPlayer {
+    pub(super) fn downgrade(&self) -> WeakMusicPlayer {
+        WeakMusicPlayer {
+            state: Rc::downgrade(&self.state),
+        }
+    }
+
     pub(crate) fn for_application(application: &gtk::Application) -> Self {
         Self::with_controller(Controller::for_application(application))
     }
@@ -107,10 +162,20 @@ impl MusicPlayer {
 
     #[cfg(test)]
     fn with_session(session_path: Option<PathBuf>) -> Self {
-        Self::with_controller(Controller::with_session(session_path))
+        let controller = Controller::with_session(session_path);
+        let store = controller.collection_store.borrow().clone();
+        Self::with_collection_store(controller, store)
     }
 
     fn with_controller(controller: Rc<Controller>) -> Self {
+        let store = controller.collection_store.borrow().clone();
+        Self::with_collection_store(controller, store)
+    }
+
+    fn with_collection_store(
+        controller: Rc<Controller>,
+        collection_store: CollectionStore,
+    ) -> Self {
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         bar.add_css_class("music-transport");
         bar.set_visible(false);
@@ -198,9 +263,142 @@ impl MusicPlayer {
         queue_toggle.add_css_class("music-control");
         queue_toggle.add_css_class("music-panel-toggle");
         header.append(&queue_toggle);
+        let immersive_btn = gtk::Button::builder()
+            .tooltip_text("Open Immersive listening mode · Ctrl+I")
+            .build();
+        immersive_btn.set_child(Some(&control_contents(icons::MAXIMIZE, "Immersive")));
+        immersive_btn.add_css_class("music-control");
+        immersive_btn.add_css_class("music-panel-toggle");
+        header.append(&immersive_btn);
+        let mini_btn = gtk::Button::builder()
+            .tooltip_text("Open Floating Mini-Player")
+            .build();
+        mini_btn.set_child(Some(&control_contents(icons::EXTERNAL_LINK, "Mini")));
+        mini_btn.add_css_class("music-control");
+        mini_btn.add_css_class("music-panel-toggle");
+        header.append(&mini_btn);
         view.append(&header);
+
+        let hero_deck = gtk::Box::new(gtk::Orientation::Horizontal, 14);
+        hero_deck.add_css_class("music-hero-deck");
+        hero_deck.set_visible(false);
+
+        let hero_cover = assets::primary_icon(icons::MUSIC, 56);
+        hero_cover.set_size_request(64, 64);
+        hero_cover.add_css_class("music-hero-cover");
+        let hero_cover_btn = gtk::Button::builder()
+            .child(&hero_cover)
+            .tooltip_text("Open Immersive listening mode · Ctrl+I")
+            .build();
+        hero_cover_btn.add_css_class("music-cover-button");
+        hero_deck.append(&hero_cover_btn);
+
+        let hero_mid = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        hero_mid.set_hexpand(true);
+
+        let hero_title_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let hero_title = text("Nothing playing", "music-title");
+        hero_title.add_css_class("music-hero-title");
+        let hero_badge = text("AUDIO", "mini-subtle-badge");
+        hero_title_row.append(&hero_title);
+        hero_title_row.append(&hero_badge);
+        hero_mid.append(&hero_title_row);
+
+        let hero_detail = text("Choose a track in Music", "music-detail");
+        hero_mid.append(&hero_detail);
+
+        let hero_scrub_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let hero_seek = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
+        hero_seek.set_draw_value(false);
+        hero_seek.set_hexpand(true);
+        hero_seek.set_sensitive(false);
+        hero_seek.add_css_class("music-hero-seek");
+        let hero_clock = text("0:00 / 0:00", "music-detail");
+        hero_scrub_row.append(&hero_seek);
+        hero_scrub_row.append(&hero_clock);
+        hero_mid.append(&hero_scrub_row);
+        hero_deck.append(&hero_mid);
+
+        let hero_right = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        hero_right.set_valign(gtk::Align::Center);
+
+        let hero_transport = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        hero_transport.add_css_class("music-hero-transport");
+
+        let hero_shuffle = gtk::ToggleButton::new();
+        hero_shuffle.set_child(Some(&assets::primary_icon(icons::SHUFFLE, 16)));
+        hero_shuffle.add_css_class("music-control");
+        hero_shuffle.set_tooltip_text(Some("Shuffle"));
+
+        let hero_previous = button(icons::ARROW_LEFT, "Previous track");
+        let hero_play = button(icons::PLAY, "Play / pause music");
+        let hero_next = button(icons::ARROW_RIGHT, "Next track");
+
+        let hero_repeat = button(icons::REPEAT, "Repeat");
+        hero_repeat.add_css_class("music-mode-control");
+
+        hero_transport.append(&hero_shuffle);
+        hero_transport.append(&hero_previous);
+        hero_transport.append(&hero_play);
+        hero_transport.append(&hero_next);
+        hero_transport.append(&hero_repeat);
+        hero_right.append(&hero_transport);
+
+        let hero_bottom_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let hero_speaker = button(icons::VOLUME, "Mute / unmute");
+        hero_bottom_row.append(&hero_speaker);
+
+        let hero_volume = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.05);
+        hero_volume.set_draw_value(false);
+        hero_volume.set_value(0.75);
+        hero_volume.set_size_request(80, -1);
+        hero_volume.add_css_class("music-vol-scale");
+        hero_bottom_row.append(&hero_volume);
+
+        hero_right.append(&hero_bottom_row);
+        hero_deck.append(&hero_right);
+        view.append(&hero_deck);
+
+        let navigation_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        navigation_row.add_css_class("music-navigation");
+        let mut navigation = Vec::new();
+        for (section, label) in [
+            (Section::Albums, "Albums"),
+            (Section::Artists, "Artists"),
+            (Section::Songs, "Songs"),
+            (Section::Favorites, "Favorites"),
+            (Section::Playlists, "Playlists"),
+        ] {
+            let control = gtk::ToggleButton::with_label(label);
+            control.add_css_class("music-control");
+            control.add_css_class("music-panel-toggle");
+            if section == Section::Favorites {
+                control.set_child(Some(&control_contents(icons::HEART, label)));
+            }
+            if let Some((_, first)) = navigation.first() {
+                control.set_group(Some(first));
+            }
+            navigation_row.append(&control);
+            navigation.push((section, control));
+        }
+        navigation[0].1.set_active(true);
+        view.append(&navigation_row);
+        let playlist_editor = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        playlist_editor.add_css_class("music-playlist-actions");
+        let create_playlist = gtk::Button::with_label("Create playlist");
+        let edit_playlist = gtk::Button::with_label("Edit playlist");
+        for control in [&create_playlist, &edit_playlist] {
+            control.add_css_class("music-control");
+            playlist_editor.append(control);
+        }
+        view.append(&playlist_editor);
+        playlist_editor.set_visible(false);
+        let collection_status = text("", "music-detail");
+        collection_status.set_wrap(true);
+        collection_status.set_visible(false);
+        view.append(&collection_status);
         let status = text(
-            "Single-click to browse · double-click an album or song to play",
+            "Click any song to play · click Play to play full album",
             "music-detail",
         );
         view.append(&status);
@@ -209,14 +407,14 @@ impl MusicPlayer {
         let albums = gtk::ListView::new(Some(album_selection.clone()), Some(label_factory()));
         albums.set_single_click_activate(false);
         albums.set_tooltip_text(Some(
-            "Single-click to browse · double-click or Enter to play the full album",
+            "Click to browse · click Play or artwork to play full album",
         ));
         let album_scroll = scroller(&albums);
         album_scroll.set_size_request(245, -1);
         let track_model = gtk::StringList::new(&[]);
         let track_selection = gtk::SingleSelection::new(Some(track_model.clone()));
         let tracks = gtk::ListView::new(Some(track_selection.clone()), Some(label_factory()));
-        tracks.set_single_click_activate(false);
+        tracks.set_single_click_activate(true);
         let track_scroll = scroller(&tracks);
         track_scroll.set_hexpand(true);
         let queue_model = gtk::StringList::new(&[]);
@@ -249,7 +447,7 @@ impl MusicPlayer {
         let popup_contents = gtk::Box::new(gtk::Orientation::Vertical, 8);
         popup_contents.append(&queue_summary);
         popup_contents.append(&text(
-            "Drag to arrange · double-click to play",
+            "Drag to arrange · click to play",
             "music-detail",
         ));
         popup_contents.append(&queue_empty);
@@ -305,6 +503,14 @@ impl MusicPlayer {
         let library_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         library_row.set_vexpand(true);
         library_row.append(&album_scroll);
+        let group_model = gtk::StringList::new(&[]);
+        let group_selection = gtk::SingleSelection::new(Some(group_model.clone()));
+        let group_view = gtk::ListView::new(Some(group_selection.clone()), Some(label_factory()));
+        group_view.set_single_click_activate(false);
+        let group_scroll = scroller(&group_view);
+        group_scroll.set_size_request(210, -1);
+        group_scroll.set_visible(false);
+        library_row.append(&group_scroll);
         library_row.append(&track_scroll);
         library_row.append(&queue_panel);
         view.append(&library_row);
@@ -377,8 +583,9 @@ impl MusicPlayer {
                 }
             },
         );
+        let collection_snapshot = collection_store.snapshot();
         let state = Rc::new(State {
-            controller,
+            controller: controller.clone(),
             displayed_revision: Cell::new(u64::MAX),
             displayed_track: RefCell::new(None),
             playing_icon: Cell::new(false),
@@ -405,6 +612,7 @@ impl MusicPlayer {
             disposed: Cell::new(false),
             scan: RefCell::new(None),
             library: RefCell::new(Vec::new()),
+            library_revision: Cell::new(0),
             albums: RefCell::new(Vec::new()),
             album_model,
             album_selection,
@@ -428,7 +636,148 @@ impl MusicPlayer {
             play_album: play_album.clone(),
             selected_actions: vec![play_selected.clone(), add.clone(), play_next.clone()],
             selection_options: options.clone(),
+            collection_store,
+            collection_snapshot: RefCell::new(collection_snapshot),
+            section: Cell::new(Section::Albums),
+            navigation,
+            album_scroll,
+            group_scroll,
+            group_model,
+            group_labels: RefCell::new(Vec::new()),
+            group_section: Cell::new(None),
+            group_library_revision: Cell::new(u64::MAX),
+            group_selection,
+            groups: RefCell::new(Vec::new()),
+            playlist_editor,
+            collection_status,
+            favorite_buttons: RefCell::new(Vec::new()),
+            favorite_paths: RefCell::new(std::collections::BTreeSet::new()),
+            catalog_paths: RefCell::new(std::collections::BTreeSet::new()),
+            pending_observation: RefCell::new(None),
+            mini_player: RefCell::new(None),
+            open_immersive: RefCell::new(None),
+            current_workspace: RefCell::new("files".to_owned()),
+            hero_deck,
+            hero_cover,
+            hero_title,
+            hero_detail,
+            hero_badge,
+            hero_seek,
+            hero_clock,
+            hero_play,
+            hero_speaker,
+            hero_volume,
+            hero_shuffle,
+            hero_repeat,
         });
+        let weak_for_mini = Rc::downgrade(&state);
+        let mini = mini::MiniPlayer::new(
+            controller.clone(),
+            Rc::new(move || {
+                if let Some(state) = weak_for_mini.upgrade()
+                    && let Some(ref cb) = *state.open_immersive.borrow()
+                {
+                    cb();
+                }
+            }),
+        );
+        state.mini_player.replace(Some(mini));
+
+        let weak = Rc::downgrade(&state);
+        for btn in [&immersive_btn, &hero_cover_btn] {
+            let weak = weak.clone();
+            btn.connect_clicked(move |_| {
+                if let Some(state) = weak.upgrade()
+                    && let Some(ref cb) = *state.open_immersive.borrow()
+                {
+                    cb();
+                }
+            });
+        }
+
+        let weak = Rc::downgrade(&state);
+        mini_btn.connect_clicked(move |_| {
+            if let Some(state) = weak.upgrade()
+                && let Some(ref mini) = *state.mini_player.borrow()
+            {
+                mini.toggle();
+            }
+        });
+
+        let weak = Rc::downgrade(&state);
+        state.hero_play.connect_clicked(move |_| {
+            if let Some(state) = weak.upgrade() {
+                state.toggle();
+            }
+        });
+
+        let weak = Rc::downgrade(&state);
+        hero_previous.connect_clicked(move |_| {
+            if let Some(state) = weak.upgrade() {
+                state.previous();
+            }
+        });
+
+        let weak = Rc::downgrade(&state);
+        hero_next.connect_clicked(move |_| {
+            if let Some(state) = weak.upgrade() {
+                state.next();
+            }
+        });
+
+        let weak = Rc::downgrade(&state);
+        state.hero_speaker.connect_clicked(move |_| {
+            if let Some(state) = weak.upgrade()
+                && let Some(stream) = state.stream.borrow().clone()
+            {
+                stream.set_muted(!stream.is_muted());
+                state.notify();
+            }
+        });
+
+        let weak = Rc::downgrade(&state);
+        state.hero_volume.connect_value_changed(move |volume| {
+            if let Some(state) = weak.upgrade()
+                && !state.syncing.get()
+            {
+                state.set_volume(volume.value());
+            }
+        });
+
+        let weak = Rc::downgrade(&state);
+        state.hero_shuffle.connect_toggled(move |button| {
+            if let Some(state) = weak.upgrade()
+                && !state.syncing.get()
+            {
+                state.set_shuffle(button.is_active());
+            }
+        });
+
+        let weak = Rc::downgrade(&state);
+        state.hero_repeat.connect_clicked(move |_| {
+            if let Some(state) = weak.upgrade() {
+                let repeat = match state.controller.repeat() {
+                    Repeat::Off => Repeat::All,
+                    Repeat::All => Repeat::One,
+                    Repeat::One => Repeat::Off,
+                };
+                state.set_repeat(repeat);
+            }
+        });
+
+        let weak = Rc::downgrade(&state);
+        state.hero_seek.connect_change_value(move |_, _, value| {
+            if let Some(state) = weak.upgrade()
+                && !state.syncing.get()
+            {
+                let duration = state.controller.duration();
+                if duration > 0 {
+                    state.controller.seek((value * duration as f64) as i64);
+                }
+            }
+            glib::Propagation::Proceed
+        });
+        collections::connect(&state, &create_playlist, &edit_playlist);
         let weak = Rc::downgrade(&state);
         state.waveform_toggle.connect_toggled(move |toggle| {
             if let Some(state) = weak.upgrade() {
@@ -580,11 +929,35 @@ impl MusicPlayer {
         let weak = Rc::downgrade(&state);
         play_album.connect_clicked(move |_| {
             if let Some(state) = weak.upgrade() {
-                if state.filter.text().is_empty() {
-                    state.play_album(state.album_selection.selected() as usize);
+                if state.filter.text().is_empty() && state.section.get() == Section::Albums {
+                    let position = state
+                        .selected_album
+                        .borrow()
+                        .as_ref()
+                        .and_then(|path| {
+                            state
+                                .albums
+                                .borrow()
+                                .iter()
+                                .position(|album| &album.path == path)
+                        })
+                        .or_else(|| {
+                            let selected = state.album_selection.selected() as usize;
+                            (selected < state.albums.borrow().len()).then_some(selected)
+                        });
+                    if let Some(position) = position {
+                        state.play_album(position);
+                    } else {
+                        let tracks = state.available_tracks();
+                        if !tracks.is_empty() {
+                            state.replace(tracks, 0);
+                        }
+                    }
                 } else {
-                    let tracks = state.tracks.borrow().clone();
-                    state.replace(tracks, 0);
+                    let tracks = state.available_tracks();
+                    if !tracks.is_empty() {
+                        state.replace(tracks, 0);
+                    }
                 }
             }
         });
@@ -740,15 +1113,51 @@ impl MusicPlayer {
                     state.status.set_text(&library_notice);
                 }
                 if *state.library.borrow() != snapshot.tracks {
+                    state.observe_library_paths(&snapshot.tracks);
                     state.library.replace(snapshot.tracks);
                     state.render_library();
                 }
             }
+            state.retry_observation();
+            state.poll_collections();
             glib::ControlFlow::Continue
         });
         state.controller.attach(&state);
         state.sync_actions();
+        let weak_state = Rc::downgrade(&state);
+        super::theme::ThemeManager::shared().observe_layout(move || {
+            if let Some(state) = weak_state.upgrade() {
+                state.sync_bar_visibility();
+                let layout = super::theme::ThemeManager::shared().music_player_layout();
+                let is_top = layout == "top";
+                let ws = state.current_workspace.borrow();
+                state.hero_deck.set_visible(
+                    is_top && state.transport_visible.get() && ws.as_str() == "music",
+                );
+            }
+        });
         Self { state }
+    }
+
+    pub fn set_workspace(&self, workspace_name: &str) {
+        self.state.current_workspace.replace(workspace_name.to_owned());
+        self.state.sync_bar_visibility();
+        let layout = super::theme::ThemeManager::shared().music_player_layout();
+        let is_top = layout == "top";
+        self.state.hero_deck.set_visible(
+            is_top && self.state.transport_visible.get() && workspace_name == "music",
+        );
+    }
+
+    #[expect(dead_code, reason = "Public layout refresh hook")]
+    pub fn refresh_layout(&self) {
+        self.state.sync_bar_visibility();
+        let layout = super::theme::ThemeManager::shared().music_player_layout();
+        let is_top = layout == "top";
+        let ws = self.state.current_workspace.borrow();
+        self.state.hero_deck.set_visible(
+            is_top && self.state.transport_visible.get() && ws.as_str() == "music",
+        );
     }
 
     pub fn bar(&self) -> gtk::Widget {
@@ -760,6 +1169,7 @@ impl MusicPlayer {
             if let Some(state) = weak.upgrade() {
                 let album = state.queue.borrow().playing().map(Track::album_key);
                 if let Some(album) = album {
+                    state.navigation[0].1.set_active(true);
                     state.selected_album.replace(Some(album));
                     state.filter.set_text("");
                     let has_library = !state.library.borrow().is_empty();
@@ -774,6 +1184,18 @@ impl MusicPlayer {
     pub fn view(&self) -> gtk::Widget {
         self.state.view.clone().upcast()
     }
+    pub fn toggle_mini_player(&self) {
+        if let Some(mini) = self.state.mini_player.borrow().as_ref() {
+            mini.toggle();
+        }
+    }
+    #[expect(dead_code, reason = "Accessor for mini player instance")]
+    pub fn mini_player(&self) -> Option<mini::MiniPlayer> {
+        self.state.mini_player.borrow().clone()
+    }
+    pub fn connect_open_immersive(&self, open: Rc<dyn Fn()>) {
+        self.state.open_immersive.replace(Some(open));
+    }
     #[cfg(test)]
     pub fn is_playing(&self) -> bool {
         self.state
@@ -785,6 +1207,10 @@ impl MusicPlayer {
     pub(crate) fn dispose_view(&self) {
         self.state.disposed.set(true);
         self.state.scan.borrow_mut().take();
+        self.state.open_immersive.borrow_mut().take();
+        if let Some(mini) = self.state.mini_player.borrow_mut().take() {
+            mini.close();
+        }
         self.state.queue_button.popdown();
     }
 
@@ -843,6 +1269,8 @@ impl State {
     }
 
     fn render_library(&self) {
+        self.library_revision
+            .set(self.library_revision.get().wrapping_add(1));
         self.rendering_library.set(true);
         let mut albums = std::collections::BTreeMap::<PathBuf, Album>::new();
         for track in self.library.borrow().iter() {
@@ -879,6 +1307,7 @@ impl State {
         self.album_selection
             .set_selected(next.map_or(gtk::INVALID_LIST_POSITION, |position| position as u32));
         self.rendering_library.set(false);
+        self.render_groups();
         self.render_tracks();
     }
 
@@ -916,7 +1345,7 @@ impl State {
     }
 
     fn sync_actions(&self) {
-        let filtered = !self.filter.text().is_empty();
+        let filtered = !self.filter.text().is_empty() || self.section.get() != Section::Albums;
         self.play_album.set_child(Some(&control_contents(
             icons::PLAY,
             if filtered {
@@ -931,8 +1360,8 @@ impl State {
             "Play the full album in disc and track order; turns shuffle off"
         }));
         self.play_album
-            .set_sensitive(!self.tracks.borrow().is_empty());
-        let selected = (self.track_selection.selected() as usize) < self.tracks.borrow().len();
+            .set_sensitive(!self.available_tracks().is_empty());
+        let selected = !self.selected_tracks().is_empty();
         for control in &self.selected_actions {
             control.set_sensitive(selected);
         }
@@ -941,34 +1370,15 @@ impl State {
 
     fn render_tracks(&self) {
         let query = self.filter.text().to_lowercase();
-        let album = self.selected_album.borrow().clone();
-        let mut tracks: Vec<_> = self
-            .library
-            .borrow()
-            .iter()
-            .filter(|track| {
-                if query.is_empty() {
-                    return album
-                        .as_ref()
-                        .is_some_and(|album| track.album_key() == *album);
-                }
-                let metadata = format!(
-                    "{} {} {} {}",
-                    track.title(),
-                    track.artist(),
-                    track.album(),
-                    track.path.to_string_lossy()
-                )
-                .to_lowercase();
-                query.split_whitespace().all(|term| metadata.contains(term))
-            })
-            .cloned()
-            .collect();
-        tracks.sort_by(|left, right| {
-            left.album_key()
-                .cmp(&right.album_key())
-                .then_with(|| crate::music::compare_tracks(left, right))
-        });
+        let tracks = collections::visible_tracks(
+            &self.library.borrow(),
+            self.section.get(),
+            self.selected_album.borrow().as_deref(),
+            self.current_group().as_ref(),
+            &self.collection_snapshot.borrow().data,
+            &query,
+        );
+        self.collection_hint(tracks.len());
         if *self.tracks.borrow() == tracks {
             self.sync_actions();
             return;
@@ -1007,6 +1417,12 @@ impl State {
         self.tracks
             .borrow()
             .get(self.track_selection.selected() as usize)
+            .filter(|track| {
+                self.library
+                    .borrow()
+                    .iter()
+                    .any(|entry| entry.path == track.path)
+            })
             .cloned()
             .into_iter()
             .collect()
@@ -1021,7 +1437,10 @@ impl State {
         let Some(selected) = selected else {
             return;
         };
-        let tracks = crate::music::folder_queue(self.library.borrow().clone(), &selected);
+        let tracks = self.track_playback(&selected);
+        if tracks.is_empty() {
+            return;
+        }
         self.replace(tracks, 0);
     }
 
@@ -1036,7 +1455,8 @@ impl State {
 
     fn sync_controller(&self) {
         let track = self.current_track();
-        if *self.displayed_track.borrow() != track {
+        let track_changed = *self.displayed_track.borrow() != track;
+        if track_changed {
             self.displayed_track.replace(track.clone());
             if let Some(track) = track.as_ref() {
                 self.title.set_text(&track.title());
@@ -1060,7 +1480,7 @@ impl State {
             self.detail.set_tooltip_text(Some(&error.to_string()));
         } else {
             self.detail.set_tooltip_text(None);
-            self.detail.set_text(&track.map_or_else(
+            self.detail.set_text(&track.as_ref().map_or_else(
                 || "Choose a track in Music".into(),
                 |track| format!("{} · {}", track.artist(), track.album()),
             ));
@@ -1103,25 +1523,88 @@ impl State {
                 },
                 17,
             )));
+            self.hero_repeat.set_child(Some(&assets::primary_icon(
+                if repeat == Repeat::One { icons::REPEAT_ONE } else { icons::REPEAT },
+                16,
+            )));
         }
         if repeat == Repeat::Off {
             self.repeat.remove_css_class("repeat-enabled");
         } else {
             self.repeat.add_css_class("repeat-enabled");
         }
-        self.syncing.set(false);
         let muted = stream.as_ref().is_some_and(|stream| stream.is_muted());
         if self.muted_icon.replace(muted) != muted {
             self.speaker.set_child(Some(&assets::primary_icon(
                 if muted { icons::MUTED } else { icons::VOLUME },
                 17,
             )));
+            self.hero_speaker.set_child(Some(&assets::primary_icon(
+                if muted { icons::MUTED } else { icons::VOLUME },
+                16,
+            )));
         }
-        self.bar.set_visible(self.transport_visible.get());
+        let layout = super::theme::ThemeManager::shared().music_player_layout();
+        let is_top = layout == "top";
+        let is_music_ws = self.current_workspace.borrow().as_str() == "music";
+        self.hero_deck.set_visible(is_top && self.transport_visible.get() && is_music_ws);
+        if track_changed {
+            if let Some(track) = track.as_ref() {
+                self.hero_title.set_text(&track.title());
+                self.hero_detail.set_text(&format!("{} · {}", track.artist(), track.album()));
+                let ext = track
+                    .path
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("AUDIO")
+                    .to_uppercase();
+                self.hero_badge.set_text(&ext);
+                super::thumbnail::set_thumbnail_or_icon(
+                    &self.hero_cover,
+                    &file_entry(track),
+                    icons::MUSIC,
+                    56,
+                    64,
+                );
+            } else {
+                self.hero_title.set_text("Nothing playing");
+                self.hero_detail.set_text("Choose a track in Music");
+                self.hero_badge.set_text("AUDIO");
+                assets::set_primary_icon(&self.hero_cover, icons::MUSIC);
+            }
+        }
+        self.hero_volume.set_value(self.controller.volume());
+        self.hero_shuffle.set_active(self.controller.shuffle());
+        if repeat == Repeat::Off {
+            self.hero_repeat.remove_css_class("repeat-enabled");
+        } else {
+            self.hero_repeat.add_css_class("repeat-enabled");
+        }
+        self.syncing.set(false);
+
+        self.sync_bar_visibility();
         if self.displayed_revision.replace(self.queue_revision.get()) != self.queue_revision.get() {
             self.render_queue();
         }
         self.sync_transport();
+    }
+
+    fn sync_bar_visibility(&self) {
+        if !self.transport_visible.get() {
+            self.bar.set_visible(false);
+            return;
+        }
+        let ws = self.current_workspace.borrow();
+        if ws.as_str() == "immersive" {
+            self.bar.set_visible(false);
+            return;
+        }
+        let layout = super::theme::ThemeManager::shared().music_player_layout();
+        if ws.as_str() == "music" && layout == "top" {
+            self.bar.set_visible(false);
+            return;
+        }
+        self.bar.set_visible(true);
     }
 
     fn render_queue(&self) {
@@ -1178,6 +1661,7 @@ impl State {
         );
         self.syncing.set(true);
         self.seek_control.sync();
+        self.hero_seek.set_sensitive(stream.is_some());
         if let Some(stream) = stream {
             self.play
                 .set_tooltip_text(Some(if stream.error().is_some() {
@@ -1190,17 +1674,38 @@ impl State {
                 time_label(stream.timestamp()),
                 time_label(stream.duration())
             ));
+            let dur = stream.duration();
+            let pos = stream.timestamp();
+            let frac = if dur > 0 {
+                (pos as f64 / dur as f64).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            self.hero_seek.set_value(frac);
+            self.hero_clock.set_text(&format!(
+                "{} / {}",
+                time_label(pos),
+                time_label(dur)
+            ));
         } else {
             self.clock.set_text("0:00 / 0:00");
+            self.hero_seek.set_value(0.0);
+            self.hero_clock.set_text("0:00 / 0:00");
         }
         if self.playing_icon.replace(playing) != playing {
             self.play.set_child(Some(&assets::primary_icon(
                 if playing { icons::PAUSE } else { icons::PLAY },
                 17,
             )));
+            self.hero_play.set_child(Some(&assets::primary_icon(
+                if playing { icons::PAUSE } else { icons::PLAY },
+                17,
+            )));
         }
         self.syncing.set(false);
-        self.waveform.queue_draw();
+        if self.waveform.is_mapped() {
+            self.waveform.queue_draw();
+        }
     }
 }
 
@@ -1213,7 +1718,11 @@ fn read_folder_queue(
     selected: &std::path::Path,
     cancellation: &Cancellation,
 ) -> Result<Vec<Track>, String> {
-    let folder = selected.parent().ok_or("Song has no parent folder")?;
+    let folder = if selected.is_dir() {
+        selected
+    } else {
+        selected.parent().ok_or("Song has no parent folder")?
+    };
     let entries = std::fs::read_dir(folder).map_err(|error| error.to_string())?;
     let mut tracks = Vec::new();
     for (index, entry) in entries.enumerate() {
@@ -1225,20 +1734,34 @@ fn read_folder_queue(
         }
         let entry = entry.map_err(|error| error.to_string())?;
         let path = entry.path();
-        if !path.is_file()
-            || crate::services::classify_by_name(path.as_os_str())
-                != crate::services::FormatFamily::Audio
-        {
-            continue;
+        if path.is_file() {
+            if crate::services::classify_by_name(path.as_os_str())
+                == crate::services::FormatFamily::Audio
+            {
+                let tags =
+                    crate::adapters::music_metadata::read_tags(&path, cancellation).unwrap_or_default();
+                tracks.push(Track { path, tags });
+            }
+        } else if path.is_dir() && selected.is_dir() {
+            if let Ok(sub_entries) = std::fs::read_dir(&path) {
+                for sub_entry in sub_entries.flatten() {
+                    let sub_path = sub_entry.path();
+                    if sub_path.is_file()
+                        && crate::services::classify_by_name(sub_path.as_os_str())
+                            == crate::services::FormatFamily::Audio
+                    {
+                        let tags = crate::adapters::music_metadata::read_tags(&sub_path, cancellation)
+                            .unwrap_or_default();
+                        tracks.push(Track { path: sub_path, tags });
+                    }
+                }
+            }
         }
-        let tags =
-            crate::adapters::music_metadata::read_tags(&path, cancellation).unwrap_or_default();
-        tracks.push(Track { path, tags });
     }
     Ok(crate::music::folder_queue(tracks, selected))
 }
 
-fn file_entry(track: &Track) -> FileEntry {
+pub(super) fn file_entry(track: &Track) -> FileEntry {
     FileEntry(Rc::new(FileEntryInner {
         location: Location::local(&track.path),
         native_name: track.path.file_name().unwrap_or_default().to_owned(),
@@ -1278,7 +1801,7 @@ fn labeled_button(icon: &str, label: &str, tooltip: &str) -> gtk::Button {
     button
 }
 
-fn album_tracks(library: &[Track], album: &std::path::Path) -> Vec<Track> {
+pub(super) fn album_tracks(library: &[Track], album: &std::path::Path) -> Vec<Track> {
     let mut tracks: Vec<_> = library
         .iter()
         .filter(|track| track.album_key() == album)
@@ -1322,12 +1845,42 @@ fn album_factory(state: std::rc::Weak<State>) -> gtk::SignalListItemFactory {
     factory.connect_setup(move |_, item| {
         if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            row.add_css_class("music-album-row");
             let cover = assets::primary_icon(icons::MUSIC, 42);
             cover.set_size_request(48, 48);
+            cover.set_cursor_from_name(Some("pointer"));
+            cover.set_tooltip_text(Some("Click artwork to play album"));
+            let cover_click = gtk::GestureClick::new();
+            let weak_cover = setup_state.clone();
+            let weak_cover_item = item.downgrade();
+            cover_click.connect_pressed(move |_, _, _, _| {
+                if let (Some(state), Some(item)) = (weak_cover.upgrade(), weak_cover_item.upgrade()) {
+                    state.play_album(item.position() as usize);
+                }
+            });
+            cover.add_controller(cover_click);
+
             let label = text("", "music-row");
             label.set_hexpand(true);
             row.append(&cover);
             row.append(&label);
+
+            let play = gtk::Button::new();
+            play.set_child(Some(&assets::primary_icon(icons::PLAY, 16)));
+            play.add_css_class("music-control");
+            play.add_css_class("music-album-play");
+            play.set_tooltip_text(Some("Play album"));
+            play.update_property(&[gtk::accessible::Property::Label("Play album")]);
+            play.set_cursor_from_name(Some("pointer"));
+            let weak_play = setup_state.clone();
+            let weak_play_item = item.downgrade();
+            play.connect_clicked(move |_| {
+                if let (Some(state), Some(item)) = (weak_play.upgrade(), weak_play_item.upgrade()) {
+                    state.play_album(item.position() as usize);
+                }
+            });
+            row.append(&play);
+
             context_menu::install_row(&row, item, setup_state.clone(), context_menu::Kind::Album);
             item.set_child(Some(&row));
         }
@@ -1379,12 +1932,86 @@ fn album_factory(state: std::rc::Weak<State>) -> gtk::SignalListItemFactory {
 }
 
 fn track_factory(state: std::rc::Weak<State>) -> gtk::SignalListItemFactory {
-    let factory = label_factory();
+    let factory = gtk::SignalListItemFactory::new();
+    let setup_state = state.clone();
     factory.connect_setup(move |_, item| {
-        if let Some(item) = item.downcast_ref::<gtk::ListItem>()
-            && let Some(row) = item.child()
-        {
-            context_menu::install_row(&row, item, state.clone(), context_menu::Kind::Track);
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            row.add_css_class("music-track-row");
+            let num = text("", "music-track-num");
+            num.set_size_request(24, -1);
+            num.set_xalign(1.0);
+            row.append(&num);
+            let label = text("", "music-row");
+            label.set_hexpand(true);
+            row.append(&label);
+            let favorite = gtk::ToggleButton::new();
+            favorite.set_child(Some(&assets::primary_icon(icons::HEART, 16)));
+            favorite.add_css_class("music-control");
+            favorite.add_css_class("music-favorite");
+            favorite.set_tooltip_text(Some("Toggle favorite; never modifies audio tags"));
+            favorite.update_property(&[gtk::accessible::Property::Label("Favorite song")]);
+            let weak = setup_state.clone();
+            let weak_item = item.downgrade();
+            favorite.connect_clicked(move |control| {
+                if let (Some(state), Some(item)) = (weak.upgrade(), weak_item.upgrade())
+                    && let Some(track) = state.tracks.borrow().get(item.position() as usize)
+                {
+                    state.collection_command(CollectionCommand::Favorite(
+                        vec![track.path.clone()],
+                        control.is_active(),
+                    ));
+                }
+            });
+            row.append(&favorite);
+            context_menu::install_row(&row, item, setup_state.clone(), context_menu::Kind::Track);
+            item.set_child(Some(&row));
+        }
+    });
+    let bind_state = state.clone();
+    factory.connect_bind(move |_, item| {
+        let (Some(state), Some(item)) =
+            (bind_state.upgrade(), item.downcast_ref::<gtk::ListItem>())
+        else {
+            return;
+        };
+        let Some(row) = item.child().and_downcast::<gtk::Box>() else {
+            return;
+        };
+        let Some(track) = state.tracks.borrow().get(item.position() as usize).cloned() else {
+            return;
+        };
+        if let Some(num) = row.first_child().and_downcast::<gtk::Label>() {
+            let num_text = track.tags.track.map_or_else(String::new, |n| format!("{n:02}"));
+            num.set_text(&num_text);
+        }
+        if let Some(label) = row.first_child().and_then(|w| w.next_sibling()).and_downcast::<gtk::Label>() {
+            let title = track.title();
+            let detail = format!("{} · {}", track.artist(), track.album());
+            label.set_text(&format!("{title}\n{detail}"));
+            label.set_tooltip_text(Some(&track.path.to_string_lossy()));
+        }
+        if let Some(favorite) = row.last_child().and_downcast::<gtk::ToggleButton>() {
+            let active = state.favorite_paths.borrow().contains(&track.path);
+            favorite.set_active(active);
+            if let Some(image) = favorite.child().and_downcast::<gtk::Image>() {
+                assets::set_primary_icon(
+                    &image,
+                    if active {
+                        icons::HEART_SELECTED
+                    } else {
+                        icons::HEART
+                    },
+                );
+            }
+            favorite.update_property(&[gtk::accessible::Property::Label(if active {
+                "Remove song from favorites"
+            } else {
+                "Add song to favorites"
+            })]);
+            let mut buttons = state.favorite_buttons.borrow_mut();
+            buttons.retain(|(button, _)| button.upgrade().is_some_and(|button| button != favorite));
+            buttons.push((favorite.downgrade(), track.path));
         }
     });
     factory.connect_unbind(|_, item| {
@@ -1398,11 +2025,24 @@ fn track_factory(state: std::rc::Weak<State>) -> gtk::SignalListItemFactory {
 }
 
 fn replace_model(model: &gtk::StringList, values: &[String]) {
-    let values: Vec<_> = values.iter().map(String::as_str).collect();
-    model.splice(0, model.n_items(), &values);
+    let old_len = model.n_items();
+    let new_len = values.len() as u32;
+    let min_len = old_len.min(new_len);
+    for i in 0..min_len {
+        let new_str = &values[i as usize];
+        if model.string(i).as_deref() != Some(new_str.as_str()) {
+            model.splice(i, 1, &[new_str.as_str()]);
+        }
+    }
+    if old_len > new_len {
+        model.splice(new_len, old_len - new_len, &[]);
+    } else if new_len > old_len {
+        let added: Vec<&str> = values[(old_len as usize)..].iter().map(String::as_str).collect();
+        model.splice(old_len, 0, &added);
+    }
 }
 
-fn time_label(microseconds: i64) -> String {
+pub(super) fn time_label(microseconds: i64) -> String {
     let seconds = microseconds.max(0) / 1_000_000;
     format!("{}:{:02}", seconds / 60, seconds % 60)
 }

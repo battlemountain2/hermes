@@ -38,6 +38,7 @@ pub struct ColumnState {
     selection_anchor: Option<Location>,
     selection_target: Option<Location>,
     pub load_state: LoadState,
+    pub notice: Option<String>,
     preferences: ViewPreferences,
     base_preferences: ViewPreferences,
     sort_explicit: bool,
@@ -176,6 +177,7 @@ impl NavigationState {
                 selection_anchor: None,
                 selection_target: None,
                 load_state: LoadState::Loading,
+                notice: None,
                 preferences,
                 base_preferences: preferences,
                 sort_explicit: false,
@@ -245,6 +247,7 @@ impl NavigationState {
             selection_anchor: None,
             selection_target: None,
             load_state: LoadState::Loading,
+            notice: None,
             preferences: self.preferences,
             base_preferences: self.preferences,
             sort_explicit: false,
@@ -296,7 +299,11 @@ impl NavigationState {
             .and_then(|position| column.entries.get(position))
             .map(|entry| entry.location.clone())
             .or_else(|| column.selection_target.clone());
-        column.entries = merge_entries(Vec::new(), entries, column.preferences).0;
+        column.entries = if column.relevance_order() {
+            entries
+        } else {
+            merge_entries(Vec::new(), entries, column.preferences).0
+        };
         column.selected = selected_location.and_then(|location| {
             column.entries.iter().position(|entry| entry.location == location)
         });
@@ -414,6 +421,7 @@ impl NavigationState {
         column.entries.clear();
         column.selected = None;
         column.load_state = LoadState::Loading;
+        column.notice = None;
         column.request_id = request_id;
         Some(column.location.clone())
     }
@@ -521,9 +529,11 @@ impl NavigationState {
         if !changed && previous_preferences == column.preferences {
             return None;
         }
-        column.entries.sort_unstable_by(|left, right| {
-            compare_entries(left, right, column.preferences)
-        });
+        if !column.relevance_order() {
+            column.entries.sort_unstable_by(|left, right| {
+                compare_entries(left, right, column.preferences)
+            });
+        }
         column.selected = focused.and_then(|location| {
             column.entries.iter().position(|entry| entry.location == location)
         });
@@ -580,6 +590,12 @@ impl NavigationState {
     pub fn fail(&mut self, request_id: RequestId, message: String) -> Option<usize> {
         let (depth, column) = self.column_for_request_mut(request_id)?;
         column.load_state = LoadState::Error(message);
+        Some(depth)
+    }
+
+    pub fn set_notice(&mut self, request_id: RequestId, message: Option<String>) -> Option<usize> {
+        let (depth, column) = self.column_for_request_mut(request_id)?;
+        column.notice = message;
         Some(depth)
     }
 
@@ -837,6 +853,13 @@ impl NavigationState {
             .iter_mut()
             .enumerate()
             .find(|(_, column)| column.request_id == request_id)
+    }
+}
+
+impl ColumnState {
+    fn relevance_order(&self) -> bool {
+        !self.sort_explicit
+            && self.location.uri_value().is_some_and(|uri| uri.starts_with("search://"))
     }
 }
 

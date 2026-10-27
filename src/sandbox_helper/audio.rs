@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{fs, path::Path, process::Command};
+use std::{fs, io::Read, path::Path, process::Command};
 
 use serde::{Deserialize, Serialize};
 
@@ -25,8 +25,56 @@ pub(crate) fn read_audio_metadata(input: &Path) -> Result<String, String> {
         "1048576",
         "2000000",
     )?;
-    let metadata = parse_audio_details(&output)?;
+    let mut metadata = parse_audio_details(&output)?;
+    if metadata.properties.duration_seconds.is_none() || metadata.properties.duration_seconds == Some(0.0) {
+        if let Some(duration) = sniff_wav_duration(input) {
+            metadata.properties.duration_seconds = Some(duration);
+            if metadata.properties.container.is_none() {
+                metadata.properties.container = Some("wav".to_string());
+            }
+            if metadata.properties.codec.is_none() {
+                metadata.properties.codec = Some("pcm_s16le".to_string());
+            }
+        }
+    }
     serde_json::to_string(&metadata).map_err(|error| error.to_string())
+}
+
+pub(crate) fn sniff_wav_duration(input: &Path) -> Option<f64> {
+    use std::io::Seek;
+    let mut file = fs::File::open(input).ok()?;
+    let mut header = [0u8; 12];
+    file.read_exact(&mut header).ok()?;
+    if &header[0..4] != b"RIFF" || &header[8..12] != b"WAVE" {
+        return None;
+    }
+    let mut chunk_header = [0u8; 8];
+    let mut byte_rate = 0u32;
+    let mut data_size = 0u32;
+    while file.read_exact(&mut chunk_header).is_ok() {
+        let chunk_id = &chunk_header[0..4];
+        let chunk_size = u32::from_le_bytes(chunk_header[4..8].try_into().ok()?);
+        if chunk_id == b"fmt " {
+            if chunk_size < 16 {
+                return None;
+            }
+            let mut fmt_data = vec![0u8; chunk_size as usize];
+            file.read_exact(&mut fmt_data).ok()?;
+            byte_rate = u32::from_le_bytes(fmt_data[8..12].try_into().ok()?);
+        } else if chunk_id == b"data" {
+            data_size = chunk_size;
+            break;
+        } else {
+            file.seek(std::io::SeekFrom::Current(chunk_size as i64)).ok()?;
+        }
+    }
+    if byte_rate > 0 && data_size > 0 {
+        let duration = data_size as f64 / byte_rate as f64;
+        if duration.is_finite() && duration > 0.0 {
+            return Some(duration);
+        }
+    }
+    None
 }
 
 fn probe_audio(
@@ -166,7 +214,7 @@ fn parse_audio_details(data: &[u8]) -> Result<AudioDetails, String> {
     })
 }
 
-fn parse_music_tags(data: &[u8]) -> Result<crate::model::MusicTags, String> {
+pub(super) fn parse_music_tags(data: &[u8]) -> Result<crate::model::MusicTags, String> {
     let parsed: serde_json::Value =
         serde_json::from_slice(data).map_err(|error| error.to_string())?;
     let format = parsed.get("format").and_then(|format| format.get("tags"));
@@ -290,7 +338,7 @@ fn extract_metadata(input: &Path) -> Option<AudioMetadata> {
                 "-select_streams",
                 "a:0",
                 "-show_entries",
-                "format=format_name,duration,bit_rate:stream=sample_rate,channels",
+                "format=format_name,duration,bit_rate:stream=sample_rate,channels,duration",
                 "-of",
                 "json",
                 "-i",
@@ -312,11 +360,35 @@ fn extract_metadata(input: &Path) -> Option<AudioMetadata> {
             .unwrap_or("audio")
             .to_uppercase();
 
-        let duration = format_obj
+        let mut duration = format_obj
             .and_then(|f| f.get("duration"))
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<f64>().ok())
             .unwrap_or(0.0);
+
+        if duration <= 0.0 {
+            if let Some(d) = stream_obj
+                .and_then(|s| s.get("duration"))
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<f64>().ok())
+            {
+                duration = d;
+            }
+        }
+
+        if duration <= 0.0 {
+            if let Ok(bytes) = fs::read(input)
+                && bytes.len() >= 44
+                && &bytes[0..4] == b"RIFF"
+                && &bytes[8..12] == b"WAVE"
+            {
+                let byte_rate = u32::from_le_bytes(bytes[28..32].try_into().unwrap_or([0; 4]));
+                let data_len = bytes.len().saturating_sub(44) as u64;
+                if byte_rate > 0 {
+                    duration = data_len as f64 / byte_rate as f64;
+                }
+            }
+        }
 
         let bitrate = format_obj
             .and_then(|f| f.get("bit_rate"))

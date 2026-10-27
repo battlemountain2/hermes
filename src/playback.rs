@@ -13,10 +13,30 @@ use std::{
 use gstreamer::{self as gst, prelude::*};
 use gstreamer_app as app;
 
+pub mod spectrum;
+mod volume;
 mod wire;
 pub(crate) mod worker;
 
+pub use spectrum::SPECTRUM_BANDS;
+
 use wire::{Command, Event};
+
+pub(crate) fn warmup() -> Option<std::thread::JoinHandle<Result<(), String>>> {
+    static STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    STARTED.set(()).ok()?;
+    std::thread::Builder::new()
+        .name("hermes-media-warmup".into())
+        .spawn(|| {
+            let result = gst::init().map_err(|error| error.to_string());
+            if let Err(error) = &result {
+                tracing::warn!(%error, "media initialization failed");
+            }
+            result
+        })
+        .map_err(|error| tracing::warn!(%error, "unable to start media initialization"))
+        .ok()
+}
 
 #[derive(Default)]
 pub(crate) struct Updates {
@@ -38,7 +58,8 @@ pub(crate) struct Session {
     waiting_since: Arc<AtomicU64>,
     heartbeat: Arc<AtomicU64>,
     started: Instant,
-    volume: gst::Element,
+    volume: volume::Control,
+    spectrum: Arc<Mutex<spectrum::SpectrumAnalyzer>>,
 }
 
 impl Session {
@@ -57,6 +78,9 @@ impl Session {
             .downcast::<app::AppSrc>()
             .unwrap();
         let volume = audio.by_name("level").unwrap();
+        volume.set_property("mute", true);
+        volume.set_property("volume", 0.0_f64);
+        volume::preserve_pcm_silence(&volume)?;
         let (commands, receiver) = mpsc::sync_channel(32);
         let updates = Arc::new(Mutex::new(Updates::default()));
         let audio_updates = updates.clone();
@@ -70,6 +94,8 @@ impl Session {
             });
         }
         let stopped = Arc::new(AtomicBool::new(false));
+        let volume = volume::Control::start(volume, stopped.clone());
+        let spectrum = Arc::new(Mutex::new(spectrum::SpectrumAnalyzer::new()));
         let epoch = Arc::new(AtomicU64::new(0));
         let playing = Arc::new(AtomicBool::new(false));
         let waiting = Arc::new(AtomicBool::new(true));
@@ -129,17 +155,13 @@ impl Session {
                 if control_stopped.load(Ordering::Acquire) {
                     break;
                 }
-                match command {
-                    Command::Play => {
-                        let _state = control_audio.set_state(gst::State::Playing);
-                    }
-                    Command::Pause => {
-                        let _state = control_audio.set_state(gst::State::Ready);
-                    }
-                    Command::Seek { .. } => {
-                        let _state = control_audio.set_state(gst::State::Ready);
-                    }
-                    Command::Stop => break,
+                if matches!(command, Command::Stop) {
+                    break;
+                }
+                if control_audio.set_state(output_state(&command)).is_err() {
+                    control_updates.lock().unwrap().error =
+                        Some("Audio output could not change playback state".to_owned());
+                    break;
                 }
                 let result = (|| -> io::Result<()> {
                     serde_json::to_writer(&mut input, &command)?;
@@ -161,9 +183,10 @@ impl Session {
         let reader_playing = playing.clone();
         let reader_heartbeat = heartbeat.clone();
         let reader_audio = audio.clone();
+        let reader_spectrum = spectrum.clone();
         std::thread::spawn(move || {
             while !reader_stopped.load(Ordering::Acquire) {
-                let (event, mut data) = match wire::read_event(&mut output) {
+                let (event, data) = match wire::read_event(&mut output) {
                     Ok(packet) => packet,
                     Err(error) => {
                         if !reader_stopped.load(Ordering::Acquire) {
@@ -202,8 +225,8 @@ impl Session {
                         if epoch == current && reader_playing.load(Ordering::Acquire) =>
                     {
                         if !reader_waiting.load(Ordering::Acquire) {
-                            sanitize_pcm(&mut data);
-                            let _pushed = pcm.push_buffer(gst::Buffer::from_mut_slice(data));
+                            reader_spectrum.lock().unwrap().push_pcm(&data);
+                            let _pushed = pcm.push_buffer(pcm_buffer(data));
                         }
                     }
                     Event::Position { epoch, timestamp } if epoch == current => {
@@ -213,6 +236,7 @@ impl Session {
                         }
                     }
                     Event::Seeked { epoch, success } if epoch == current => {
+                        reader_spectrum.lock().unwrap().reset();
                         reader_waiting.store(false, Ordering::Release);
                         if reader_playing.load(Ordering::Acquire) {
                             let _state = reader_audio.set_state(gst::State::Playing);
@@ -242,6 +266,7 @@ impl Session {
             heartbeat,
             started,
             volume,
+            spectrum,
         })
     }
 
@@ -259,6 +284,7 @@ impl Session {
         let _sent = self.send(Command::Pause);
     }
     pub fn seek(&self, timestamp: i64) -> bool {
+        self.spectrum.lock().unwrap().reset();
         self.heartbeat
             .store(self.started.elapsed().as_millis() as u64, Ordering::Release);
         let epoch = self.epoch.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
@@ -268,16 +294,21 @@ impl Session {
         self.waiting.store(true, Ordering::Release);
         self.send(Command::Seek { epoch, timestamp })
     }
+    pub fn spectrum_bands(&self) -> [f32; SPECTRUM_BANDS] {
+        if self.stopped.load(Ordering::Acquire) {
+            return [0.0; SPECTRUM_BANDS];
+        }
+        let mut analyzer = self.spectrum.lock().unwrap();
+        if self.playing.load(Ordering::Acquire) {
+            analyzer.analyze()
+        } else {
+            analyzer.decay()
+        }
+    }
     pub fn set_volume(&self, muted: bool, volume: f64) {
-        self.volume.set_property("mute", muted);
-        self.volume.set_property(
-            "volume",
-            if volume.is_finite() {
-                volume.clamp(0.0, 1.0)
-            } else {
-                0.0
-            },
-        );
+        if !self.stopped.load(Ordering::Acquire) {
+            self.volume.set(muted, volume);
+        }
     }
     fn send(&self, command: Command) -> bool {
         if self.stopped.load(Ordering::Acquire) {
@@ -294,8 +325,18 @@ impl Session {
     }
     pub fn stop(&self) {
         self.stopped.store(true, Ordering::Release);
+        self.volume.wake();
         self.playing.store(false, Ordering::Release);
         let _sent = self.commands.try_send(Command::Stop);
+    }
+}
+
+fn output_state(command: &Command) -> gst::State {
+    match command {
+        Command::Play => gst::State::Playing,
+        Command::Pause => gst::State::Paused,
+        Command::Seek { .. } => gst::State::Ready,
+        Command::Stop => gst::State::Null,
     }
 }
 
@@ -356,7 +397,7 @@ fn sandbox_command(path: &Path) -> Result<std::process::Command, String> {
         .parent()
         .and_then(Path::parent)
         .ok_or("Test executable location missing")?
-        .join("strata");
+        .join("hermes");
     let mut command = std::process::Command::new("bwrap");
     command.args([
         "--unshare-all",
@@ -437,6 +478,19 @@ fn sandbox_command(path: &Path) -> Result<std::process::Command, String> {
             "--playback-worker",
         ]);
     Ok(command)
+}
+
+fn pcm_buffer(mut data: Vec<u8>) -> gst::Buffer {
+    sanitize_pcm(&mut data);
+    let frames = data.len() as u64 / 8;
+    let mut buffer = gst::Buffer::from_mut_slice(data);
+    buffer
+        .get_mut()
+        .unwrap()
+        .set_duration(gst::ClockTime::from_nseconds(
+            frames * gst::ClockTime::SECOND.nseconds() / 48_000,
+        ));
+    buffer
 }
 
 fn sanitize_pcm(data: &mut [u8]) {

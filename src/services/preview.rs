@@ -37,6 +37,11 @@ pub enum PreviewContent {
         content: String,
         truncated: bool,
     },
+    OfficeText {
+        content: String,
+        truncated: bool,
+        reason: String,
+    },
     Image,
     Media,
     Rasterized {
@@ -101,6 +106,10 @@ pub enum PreviewEvent {
 
 pub trait PreviewProvider {
     fn load(&self, request: PreviewRequest, emit: Rc<dyn Fn(PreviewEvent)>) -> LoadHandle;
+
+    fn load_layout(&self, request: PreviewRequest, emit: Rc<dyn Fn(PreviewEvent)>) -> LoadHandle {
+        self.load(request, emit)
+    }
 }
 
 #[cfg(test)]

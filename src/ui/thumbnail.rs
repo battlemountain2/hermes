@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, VecDeque},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
@@ -10,11 +10,127 @@ use std::{
 
 use gtk::{gdk, gio, glib, prelude::*};
 
+mod disk;
+mod scheduling;
+
 use crate::{
-    model::FileEntry,
+    model::{FileEntry, MetadataValue},
     sandbox::{Cancellation, ParseOperation},
-    services::{FormatCapabilities, ThumbnailHandler, capabilities_by_name},
+    services::{FormatCapabilities, FormatFamily, ThumbnailHandler, capabilities_by_name, classify_by_name, classify_by_mime},
 };
+
+#[derive(Clone, Copy)]
+pub(crate) struct PreviewPolicy {
+    pub max_bytes: u64,
+    pub streaming_media: bool,
+    pub audio: bool,
+    pub images: bool,
+    pub videos: bool,
+    pub pdf: bool,
+    pub spreadsheets: bool,
+    pub code: bool,
+}
+
+impl PreviewPolicy {
+    pub(crate) fn current() -> Self {
+        let manager = super::theme::ThemeManager::shared();
+        Self {
+            max_bytes: u64::from(manager.max_preview_size_mb().clamp(1, 500)) * 1_000_000,
+            streaming_media: false,
+            audio: manager.preview_audio(),
+            images: manager.preview_images(),
+            videos: manager.preview_videos(),
+            pdf: manager.preview_pdf(),
+            spreadsheets: manager.preview_spreadsheets(),
+            code: manager.preview_code(),
+        }
+    }
+
+    pub(crate) fn for_streaming_preview(mut self) -> Self {
+        self.streaming_media = true;
+        self
+    }
+
+    pub(crate) fn check(self, family: FormatFamily, size: Option<u64>) -> Result<(), String> {
+        let enabled = match family {
+            FormatFamily::Audio => self.audio,
+            FormatFamily::Image
+            | FormatFamily::Svg
+            | FormatFamily::GeoTiff
+            | FormatFamily::Heif
+            | FormatFamily::RawImage => self.images,
+            FormatFamily::Video => self.videos,
+            FormatFamily::Pdf => self.pdf,
+            FormatFamily::Spreadsheet => self.spreadsheets,
+            FormatFamily::PlainText => self.code,
+            _ => true,
+        };
+        if !enabled {
+            return Err("Previews for this file format are disabled in Settings".into());
+        }
+        if !(self.streaming_media && matches!(family, FormatFamily::Audio | FormatFamily::Video))
+            && size.is_some_and(|size| size > self.max_bytes)
+        {
+            return Err(format!(
+                "File exceeds the maximum preview size ({} MB)",
+                self.max_bytes / 1_000_000
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn check_entry(self, entry: &FileEntry, content_type: Option<&str>) -> Result<(), String> {
+        if entry.is_directory() {
+            return Ok(());
+        }
+        let size = match entry.size {
+            MetadataValue::Known(size) => Some(size),
+            _ => None,
+        };
+        self.check_formats(entry, content_type, size)
+    }
+
+    fn check_formats(
+        self,
+        entry: &FileEntry,
+        content_type: Option<&str>,
+        size: Option<u64>,
+    ) -> Result<(), String> {
+        let named = classify_by_name(&entry.native_name);
+        let detected = content_type.map(|content_type| {
+            let family = classify_by_mime(content_type);
+            if family == FormatFamily::Unknown && gio::content_type_is_a(content_type, "text/plain") {
+                FormatFamily::PlainText
+            } else {
+                family
+            }
+        });
+        let streamed = self.streaming_media
+            && std::iter::once(named).chain(detected).any(|family| {
+                matches!(family, FormatFamily::Audio | FormatFamily::Video)
+            });
+        for family in std::iter::once(named).chain(detected) {
+            let deferred_size = family == FormatFamily::Unknown
+                && (streamed || (self.streaming_media && content_type.is_none()));
+            self.check(family, if deferred_size { None } else { size })?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn check_source(
+        self,
+        entry: &FileEntry,
+        content_type: &str,
+        size: Option<u64>,
+    ) -> Result<(), String> {
+        self.check_entry(entry, Some(content_type))?;
+        if entry.is_directory() {
+            return Ok(());
+        }
+        let size = size.ok_or_else(|| "File size is unavailable; preview was not loaded".to_owned())?;
+        self.check_formats(entry, Some(content_type), Some(size))
+    }
+}
 
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
 const MAX_CACHE_ENTRIES: usize = 256;
@@ -24,12 +140,47 @@ thread_local! {
     static ACTIVE_REQUESTS: RefCell<HashMap<usize, ActiveRequest>> =
         RefCell::new(HashMap::new());
     static THUMBNAIL_CACHE: RefCell<ThumbnailCache> = RefCell::new(ThumbnailCache::default());
+    static CACHE_GENERATION: Cell<u64> = const { Cell::new(0) };
+    static CLEARING_CACHE: Cell<bool> = const { Cell::new(false) };
+}
+
+pub(super) fn cache_directory() -> PathBuf {
+    disk::root()
+}
+
+fn invalidate_memory_cache() {
+    CACHE_GENERATION.with(|generation| generation.set(generation.get().wrapping_add(1)));
+    THUMBNAIL_CACHE.with(|cache| *cache.borrow_mut() = ThumbnailCache::default());
+    ACTIVE_REQUESTS.with(|requests| {
+        for (_, request) in requests.borrow_mut().drain() {
+            request.cancellation.cancel();
+            if let Some(image) = request.image.upgrade() {
+                for handler in request.wake_handlers {
+                    image.disconnect(handler);
+                }
+            }
+        }
+    });
+    scheduling::wake();
+}
+
+pub(super) async fn clear_cache() -> Result<usize, String> {
+    if CLEARING_CACHE.with(|clearing| clearing.replace(true)) {
+        return Err("Thumbnail cache clear is already running".into());
+    }
+    invalidate_memory_cache();
+    let result = gio::spawn_blocking(disk::clear).await
+        .map_err(|_| "Thumbnail cache worker did not complete".to_owned())
+        .and_then(|result| result);
+    CLEARING_CACHE.with(|clearing| clearing.set(false));
+    result
 }
 
 struct ActiveRequest {
     id: u64,
     image: glib::WeakRef<gtk::Image>,
     cancellation: Cancellation,
+    wake_handlers: Vec<glib::SignalHandlerId>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -41,7 +192,7 @@ struct ThumbnailKey {
     thumbnail_size: i32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
 struct SourceIdentity {
     device: u64,
     inode: u64,
@@ -63,6 +214,7 @@ impl SourceIdentity {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct ThumbnailSource {
     key: ThumbnailKey,
     operation: ParseOperation,
@@ -84,6 +236,16 @@ struct ThumbnailCache {
 }
 
 impl ThumbnailCache {
+    fn preview(&mut self, path: &Path) -> Option<(ThumbnailKey, glib::Bytes)> {
+        let key = self
+            .recent
+            .iter()
+            .rev()
+            .find(|key| key.path == path && key.source_path == path)?
+            .clone();
+        self.get(&key).map(|bytes| (key, bytes))
+    }
+
     fn candidate(&self, path: &Path, thumbnail_size: i32) -> Option<ThumbnailKey> {
         self.recent
             .iter()
@@ -126,7 +288,54 @@ impl ThumbnailCache {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ThumbnailKind {
     FolderAlbum,
+    AudioAlbum,
     Sandboxed(ParseOperation),
+}
+
+pub(super) async fn cached_preview_bytes(path: &Path) -> Option<glib::Bytes> {
+    cached_preview_bytes_with_policy(path, PreviewPolicy::current).await
+}
+
+async fn cached_preview_bytes_with_policy(
+    path: &Path,
+    current_policy: impl Fn() -> PreviewPolicy,
+) -> Option<glib::Bytes> {
+    if CLEARING_CACHE.with(Cell::get) {
+        return None;
+    }
+    let family = classify_by_name(path.as_os_str());
+    current_policy().check(family, None).ok()?;
+    let generation = CACHE_GENERATION.with(Cell::get);
+    if let Some((key, bytes)) = THUMBNAIL_CACHE.with(|cache| cache.borrow_mut().preview(path)) {
+        let size = key.identity.size;
+        current_policy().check(family, Some(size)).ok()?;
+        let unchanged =
+            gio::spawn_blocking(move || SourceIdentity::read(&key.path) == Some(key.identity))
+                .await
+                .ok()?;
+        if CACHE_GENERATION.with(Cell::get) != generation {
+            return None;
+        }
+        if unchanged {
+            current_policy().check(family, Some(size)).ok()?;
+            return Some(bytes);
+        }
+    }
+    let path = path.to_owned();
+    let worker_path = path.clone();
+    let policy = current_policy();
+    let (bytes, size) = gio::spawn_blocking(move || {
+        let size = SourceIdentity::read(&worker_path)?.size;
+        policy.check(classify_by_name(worker_path.as_os_str()), Some(size)).ok()?;
+        Some((disk::preview(&worker_path)?, size))
+    })
+        .await
+        .ok()??;
+    if CACHE_GENERATION.with(Cell::get) != generation {
+        return None;
+    }
+    current_policy().check(family, Some(size)).ok()?;
+    Some(glib::Bytes::from_owned(bytes))
 }
 
 pub(super) fn set_thumbnail_or_icon(
@@ -136,12 +345,21 @@ pub(super) fn set_thumbnail_or_icon(
     icon_size: i32,
     thumbnail_size: i32,
 ) {
+    let audio = !entry.is_directory() && crate::app::music_order::is_audio(entry);
+    let fallback_icon = if audio {
+        crate::assets::icons::MUSIC
+    } else {
+        fallback_icon
+    };
     let (image_id, request, cancellation) = set_fallback_icon(image, fallback_icon, icon_size);
+    if CLEARING_CACHE.with(Cell::get) {
+        return;
+    }
 
     let Some(path) = entry.location.native_path().map(Path::to_path_buf) else {
         return;
     };
-    if entry.is_directory() {
+    if entry.is_directory() && fallback_icon != crate::assets::icons::MUSIC {
         mark_nonempty_folder(image, image_id, request, path.clone());
     }
     if path.extension().and_then(std::ffi::OsStr::to_str) == Some("desktop") {
@@ -166,6 +384,8 @@ pub(super) fn set_thumbnail_or_icon(
     }
     let kind = if entry.is_directory() {
         ThumbnailKind::FolderAlbum
+    } else if audio {
+        ThumbnailKind::AudioAlbum
     } else if let FormatCapabilities {
         thumbnail: Some(handler),
         ..
@@ -176,69 +396,15 @@ pub(super) fn set_thumbnail_or_icon(
         return;
     };
     let thumbnail_size = thumbnail_size.clamp(16, 256);
-    let candidate = THUMBNAIL_CACHE.with(|cache| cache.borrow().candidate(&path, thumbnail_size));
-
-    let weak_image = glib::WeakRef::new();
-    weak_image.set(Some(image));
-    glib::MainContext::default().spawn_local(async move {
-        let worker_cancellation = cancellation.clone();
-        let Ok(Ok(source)) = gio::spawn_blocking(move || {
-            if worker_cancellation.is_cancelled() {
-                return Err("Thumbnail request was cancelled".to_owned());
-            }
-            let source = thumbnail_source(
-                &path,
-                kind,
-                thumbnail_size,
-                candidate.as_ref(),
-                folder_album_art,
-            )?;
-            if worker_cancellation.is_cancelled() || !source.unchanged() {
-                return Err("Thumbnail source changed".to_owned());
-            }
-            Ok(source)
-        })
-        .await
-        else {
-            return;
-        };
-        if !request_is_current(image_id, request, &cancellation) {
-            return;
-        }
-        if weak_image.upgrade().is_none() {
-            ACTIVE_REQUESTS.with(|requests| {
-                requests.borrow_mut().remove(&image_id);
-            });
-            return;
-        }
-        let key = source.key.clone();
-        let cached = THUMBNAIL_CACHE.with(|cache| cache.borrow_mut().get(&key));
-        let bytes = if let Some(bytes) = cached {
-            bytes
-        } else {
-            let worker_cancellation = cancellation.clone();
-            let Ok(Ok(png)) = gio::spawn_blocking(move || {
-                render_thumbnail(
-                    &source,
-                    &worker_cancellation,
-                    |path, operation, size, cancellation| {
-                        crate::sandbox::parse(path, operation, size, cancellation)
-                            .map(|output| output.data)
-                    },
-                )
-            })
-            .await
-            else {
-                return;
-            };
-            glib::Bytes::from_owned(png)
-        };
-        complete_thumbnail(image_id, request, &cancellation, key, bytes, |bytes| {
-            weak_image
-                .upgrade()
-                .is_some_and(|image| apply_thumbnail(&image, bytes, thumbnail_size))
-        });
-    });
+    scheduling::enqueue(
+        image,
+        image_id,
+        request,
+        cancellation,
+        path,
+        kind,
+        thumbnail_size,
+    );
 }
 
 fn desktop_icon(path: &Path, cancellation: &Cancellation) -> Option<String> {
@@ -288,6 +454,7 @@ fn thumbnail_operation(handler: ThumbnailHandler) -> ParseOperation {
         ThumbnailHandler::Media => ParseOperation::ThumbnailVideo,
         ThumbnailHandler::Model => ParseOperation::PreviewModel,
         ThumbnailHandler::Cover => ParseOperation::PreviewArchiveCover,
+        ThumbnailHandler::Office => ParseOperation::ThumbnailOffice,
     }
 }
 
@@ -343,8 +510,12 @@ pub(super) fn cancel_thumbnail(image: &gtk::Image) {
     ACTIVE_REQUESTS.with(|requests| {
         if let Some(request) = requests.borrow_mut().remove(&(image.as_ptr() as usize)) {
             request.cancellation.cancel();
+            for handler in request.wake_handlers {
+                image.disconnect(handler);
+            }
         }
     });
+    scheduling::wake();
 }
 
 fn set_fallback_icon(image: &gtk::Image, icon: &str, size: i32) -> (usize, u64, Cancellation) {
@@ -353,6 +524,10 @@ fn set_fallback_icon(image: &gtk::Image, icon: &str, size: i32) -> (usize, u64, 
     let weak_image = glib::WeakRef::new();
     weak_image.set(Some(image));
     let cancellation = Cancellation::default();
+    let wake_handlers = vec![
+        image.connect_map(|_| scheduling::wake()),
+        image.connect_unmap(|_| scheduling::wake()),
+    ];
     ACTIVE_REQUESTS.with(|requests| {
         let mut requests = requests.borrow_mut();
         requests.retain(|_, active| {
@@ -368,9 +543,13 @@ fn set_fallback_icon(image: &gtk::Image, icon: &str, size: i32) -> (usize, u64, 
                 id: request,
                 image: weak_image,
                 cancellation: cancellation.clone(),
+                wake_handlers,
             },
         ) {
             previous.cancellation.cancel();
+            for handler in previous.wake_handlers {
+                image.disconnect(handler);
+            }
         }
     });
     image.set_pixel_size(size);
@@ -390,22 +569,36 @@ fn thumbnail_source(
         SourceIdentity::read(path).ok_or_else(|| "Thumbnail source is unavailable".to_owned())?;
     let (source_path, operation) = match kind {
         ThumbnailKind::Sandboxed(operation) => (path.to_path_buf(), operation),
+        ThumbnailKind::AudioAlbum => {
+            if let Some(candidate) = candidate
+                && candidate.path == path
+                && candidate.identity == identity
+                && candidate.source_path != path
+                && let Some(source_identity) = SourceIdentity::read(&candidate.source_path)
+            {
+                let mut key = candidate.clone();
+                key.source_identity = source_identity;
+                return Ok(ThumbnailSource {
+                    key,
+                    operation: ParseOperation::ThumbnailImage,
+                });
+            }
+            (path.to_path_buf(), ParseOperation::ThumbnailVideo)
+        }
         ThumbnailKind::FolderAlbum => {
             if let Some(candidate) = candidate
                 && candidate.path == path
                 && candidate.identity == identity
                 && let Some(source_identity) = SourceIdentity::read(&candidate.source_path)
             {
-                let operation = if candidate
-                    .source_path
-                    .extension()
-                    .and_then(std::ffi::OsStr::to_str)
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("flac"))
-                {
-                    ParseOperation::ThumbnailVideo
-                } else {
-                    ParseOperation::ThumbnailImage
-                };
+                let operation =
+                    if crate::services::classify_by_name(candidate.source_path.as_os_str())
+                        == crate::services::FormatFamily::Audio
+                    {
+                        ParseOperation::ThumbnailVideo
+                    } else {
+                        ParseOperation::ThumbnailImage
+                    };
                 let mut key = candidate.clone();
                 key.source_identity = source_identity;
                 key.thumbnail_size = size;
@@ -452,10 +645,38 @@ fn render_thumbnail(
     Ok(png)
 }
 
+fn render_thumbnail_with_cover(
+    mut source: ThumbnailSource,
+    kind: ThumbnailKind,
+    cancellation: &Cancellation,
+    mut render: impl FnMut(&Path, ParseOperation, i32, &Cancellation) -> Result<Vec<u8>, String>,
+) -> Result<(ThumbnailSource, Vec<u8>), String> {
+    match render_thumbnail(&source, cancellation, &mut render) {
+        Ok(png) => return Ok((source, png)),
+        Err(error) => {
+            if kind != ThumbnailKind::AudioAlbum
+                || cancellation.is_cancelled()
+                || !source.unchanged()
+            {
+                return Err(error);
+            }
+        }
+    }
+    let parent = source.key.path.parent().ok_or("No album folder")?;
+    let (cover, operation) = folder_album_art(parent)
+        .filter(|(_, operation)| *operation == ParseOperation::ThumbnailImage)
+        .ok_or("No album artwork was found")?;
+    source.key.source_identity = SourceIdentity::read(&cover).ok_or("Album artwork unavailable")?;
+    source.key.source_path = cover;
+    source.operation = operation;
+    let png = render_thumbnail(&source, cancellation, render)?;
+    Ok((source, png))
+}
+
 pub(crate) fn folder_album_art(directory: &Path) -> Option<(std::path::PathBuf, ParseOperation)> {
     let mut embedded = None;
     let mut images = Vec::new();
-    for entry in std::fs::read_dir(directory).ok()?.flatten() {
+    for entry in std::fs::read_dir(directory).ok()?.take(4096).flatten() {
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -464,7 +685,8 @@ pub(crate) fn folder_album_art(directory: &Path) -> Option<(std::path::PathBuf, 
             .extension()
             .and_then(std::ffi::OsStr::to_str)
             .map(str::to_ascii_lowercase);
-        if extension.as_deref() == Some("flac")
+        if crate::services::classify_by_name(path.as_os_str())
+            == crate::services::FormatFamily::Audio
             && embedded
                 .as_ref()
                 .is_none_or(|(candidate, _)| &path < candidate)
@@ -498,4 +720,4 @@ pub(crate) fn folder_album_art(directory: &Path) -> Option<(std::path::PathBuf, 
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

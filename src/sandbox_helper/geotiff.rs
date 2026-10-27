@@ -52,7 +52,7 @@ pub enum SelectionDecision {
 
 /// Color mapping options for single-band elevation models.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[expect(dead_code, reason = "DEM color map options")]
+#[cfg_attr(not(test), expect(dead_code, reason = "DEM color map options"))]
 pub enum DemColorMap {
     Hypsometric,
     Grayscale,

@@ -11,14 +11,17 @@ use gdk_pixbuf::prelude::*;
 use gtk::gio;
 
 pub(crate) mod archive_cover;
+pub(crate) mod audio;
+pub(crate) mod geotiff;
 mod heif;
 mod jpeg;
-pub(crate) mod audio;
-pub(crate) mod waveform;
-pub(crate) mod geotiff;
 pub(crate) mod model;
+pub(crate) mod office;
+mod scaled;
 pub(crate) mod sniff;
+pub(crate) mod metadata;
 pub(crate) mod table;
+pub(crate) mod waveform;
 
 pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
     if arguments
@@ -35,6 +38,12 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
     let value = value
         .parse::<i32>()
         .map_err(|_| "Invalid preview helper size or page".to_owned())?;
+
+    if operation == "image-metadata" || operation == "media-metadata" {
+        let data = if operation == "image-metadata" { metadata::image(input)? } else { metadata::media(input)? };
+        fs::write(output, data).map_err(|error| error.to_string())?;
+        return Ok(());
+    }
 
     if operation == "extract-pdf-text" {
         let text = extract_pdf_text(input, value.max(1) as usize)?;
@@ -72,15 +81,22 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         fs::write(output, text).map_err(|error| error.to_string())?;
         return Ok(());
     }
+    if operation == "convert-office-pdf" {
+        fs::write(output, office::render::convert(input)?).map_err(|error| error.to_string())?;
+        return Ok(());
+    }
 
     let (png, metadata) = match operation.as_str() {
         "thumbnail-image" => (render_image(input, value.clamp(16, 256))?, None),
         "thumbnail-heif" => (render_heif_thumbnail(input, value.clamp(16, 256))?, None),
         "thumbnail-raw" => (render_raw(input, value.clamp(16, 256))?, None),
         "thumbnail-pdf" => (render_pdf_thumbnail(input, value.clamp(16, 256))?, None),
+        "thumbnail-office" => (office::render::thumbnail(input, value.clamp(16, 256))?, None),
+        "office-poster" => (office::render::poster(input, value.clamp(16, 1400))?, None),
         "thumbnail-video" => (render_media(input, value.clamp(16, 256))?, None),
+        "preview-audio-artwork" => (render_media(input, 1024)?, None),
         "preview-image" => (render_image(input, 1400)?, None),
-        "preview-heif" => (render_imagemagick(input, 1400)?, None),
+        "preview-heif" => (render_heif_preview(input)?, None),
         "preview-pdf" => {
             let (png, page, pages, text_layer) = render_pdf_page(input, value)?;
             if let Some(text_bytes) = text_layer {
@@ -104,8 +120,14 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
             let (png, meta_json) = geotiff::render_geotiff(input, value.max(1))?;
             (png, Some(meta_json))
         }
-        "preview-model" => (model::render_model(input, value.clamp(16, 800) as u32)?, None),
-        "preview-archive-cover" => (archive_cover::render_cover(input, value.clamp(16, 1400))?, None),
+        "preview-model" => (
+            model::render_model(input, value.clamp(16, 800) as u32)?,
+            None,
+        ),
+        "preview-archive-cover" => (
+            archive_cover::render_cover(input, value.clamp(16, 1400))?,
+            None,
+        ),
         "preview-spreadsheet" => {
             let (png, json) = table::render_spreadsheet(input)?;
             (png, Some(json))
@@ -132,7 +154,9 @@ fn render_pixbuf(path: &Path, size: i32) -> Result<Vec<u8>, String> {
 }
 
 pub(crate) fn render_image(path: &Path, size: i32) -> Result<Vec<u8>, String> {
-    if size <= 256 && let Some(png) = jpeg::thumbnail(path, size) {
+    if size <= 256
+        && let Some(png) = jpeg::thumbnail(path, size)
+    {
         return Ok(png);
     }
     if let Some((width, height)) = sniff::image_dimensions(path) {
@@ -140,13 +164,26 @@ pub(crate) fn render_image(path: &Path, size: i32) -> Result<Vec<u8>, String> {
             if u64::from(width) * u64::from(height) <= sniff::MAX_PIXELS_CEILING
                 && sniff::is_jpeg(path)
             {
+                if size > 256
+                    && jpeg::external_preview_safe(path)
+                    && let Ok(png) = scaled::render(path, size)
+                {
+                    return Ok(png);
+                }
                 return render_imagemagick(path, size);
             }
-            if !sniff::is_jpeg(path) && let Some(png) = sniff::read_exif_thumbnail(path, size) {
+            if !sniff::is_jpeg(path)
+                && let Some(png) = sniff::read_exif_thumbnail(path, size)
+            {
                 return Ok(png);
             }
             return Err("Image dimensions exceed the decoded frame budget".to_owned());
         }
+    }
+    if size > 256
+        && let Some(png) = jpeg::scaled_preview(path, size)
+    {
+        return Ok(png);
     }
     // Prefer the bounded external decoder while glycin can inherit Strata's file-size limit and
     // receive SIGXFSZ when allocating shared memory for large decoded JPEG pixel buffers.
@@ -179,6 +216,7 @@ fn render_imagemagick(path: &Path, size: i32) -> Result<Vec<u8>, String> {
                 ])
                 .arg("-define")
                 .arg(format!("jpeg:size={width}x{height}"));
+            command.args(["-define", "png:compression-strategy=2"]);
         }
         let output = command
             .arg("-")
@@ -203,7 +241,14 @@ pub(crate) fn render_heif_thumbnail(path: &Path, size: i32) -> Result<Vec<u8>, S
 }
 
 pub(crate) fn render_heif_preview(path: &Path) -> Result<Vec<u8>, String> {
-    render_imagemagick(path, 1400)
+    heif::preview(path, 1400).or_else(|_| {
+        if heif::external_preview_safe(path, 1400)
+            && let Ok(png) = scaled::render(path, 1400)
+        {
+            return Ok(png);
+        }
+        render_imagemagick(path, 1400)
+    })
 }
 
 fn render_dcraw(path: &Path, size: i32) -> Result<Vec<u8>, String> {
@@ -244,7 +289,7 @@ fn render_dcraw(path: &Path, size: i32) -> Result<Vec<u8>, String> {
     Err("No embedded RAW thumbnail could be decoded".to_owned())
 }
 
-fn render_pdf_thumbnail(path: &Path, size: i32) -> Result<Vec<u8>, String> {
+pub(crate) fn render_pdf_thumbnail(path: &Path, size: i32) -> Result<Vec<u8>, String> {
     let uri = gio::File::for_path(path).uri();
     let document = poppler::Document::from_file(&uri, None).map_err(|error| error.to_string())?;
     let page = document
@@ -258,7 +303,10 @@ fn render_pdf_thumbnail(path: &Path, size: i32) -> Result<Vec<u8>, String> {
     )
 }
 
-pub(crate) fn render_pdf_page(path: &Path, requested_page: i32) -> Result<(Vec<u8>, i32, i32, Option<Vec<u8>>), String> {
+pub(crate) fn render_pdf_page(
+    path: &Path,
+    requested_page: i32,
+) -> Result<(Vec<u8>, i32, i32, Option<Vec<u8>>), String> {
     let uri = gio::File::for_path(path).uri();
     let document = poppler::Document::from_file(&uri, None).map_err(|error| error.to_string())?;
     let pages = document.n_pages();
@@ -373,59 +421,7 @@ fn archive_listing(path: &Path, byte_limit: usize) -> Result<Vec<u8>, String> {
 }
 
 fn extract_office_text(path: &Path, byte_limit: usize) -> Result<Vec<u8>, String> {
-    let extension = path
-        .extension()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or_default();
-    let member = if extension.eq_ignore_ascii_case("docx") {
-        "word/document.xml"
-    } else if extension.eq_ignore_ascii_case("odt") || extension.eq_ignore_ascii_case("ods") {
-        "content.xml"
-    } else {
-        return Err("This office document format is not supported".to_owned());
-    };
-    let xml = bounded_command_output(
-        Command::new("bsdtar").args(["-xOf"]).arg(path).arg(member),
-        byte_limit.saturating_mul(4).max(byte_limit),
-    )?;
-    let xml = String::from_utf8_lossy(&xml);
-    Ok(office_xml_text(&xml, byte_limit).into_bytes())
-}
-
-fn office_xml_text(xml: &str, byte_limit: usize) -> String {
-    let mut text = String::with_capacity(xml.len().min(byte_limit));
-    let mut in_tag = false;
-    for character in xml.chars() {
-        match character {
-            '<' => {
-                in_tag = true;
-                if !text.ends_with(char::is_whitespace) {
-                    text.push(' ');
-                }
-            }
-            '>' => in_tag = false,
-            _ if !in_tag => text.push(character),
-            _ => {}
-        }
-        if text.len() >= byte_limit {
-            break;
-        }
-    }
-    let text = text
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'");
-    let mut text = text.trim().to_owned();
-    if text.len() > byte_limit {
-        let mut end = byte_limit;
-        while !text.is_char_boundary(end) {
-            end = end.saturating_sub(1);
-        }
-        text.truncate(end);
-    }
-    text
+    office::extract_text(path, byte_limit)
 }
 
 fn bounded_command_output(command: &mut Command, byte_limit: usize) -> Result<Vec<u8>, String> {
@@ -488,7 +484,9 @@ fn render_media_preview(path: &Path, output: &Path) -> Result<(), String> {
     if media_preview_should_retry(status) {
         status = render_media_preview_attempt(path, output, true)?;
     }
-    status.success().then_some(())
+    status
+        .success()
+        .then_some(())
         .ok_or_else(|| format!("Unable to normalize media preview: ffmpeg {status}"))
 }
 
@@ -497,15 +495,32 @@ fn media_preview_should_retry(status: std::process::ExitStatus) -> bool {
     matches!(status.signal(), Some(9 | 24))
 }
 
-fn render_media_preview_attempt(path: &Path, output: &Path, compact: bool) -> Result<std::process::ExitStatus, String> {
-    let duration = if compact { compact_media_duration(path) } else { "30" };
+fn render_media_preview_attempt(
+    path: &Path,
+    output: &Path,
+    compact: bool,
+) -> Result<std::process::ExitStatus, String> {
+    let duration = if compact {
+        compact_media_duration(path)
+    } else {
+        "30"
+    };
     let filter = if compact {
         "fps=24,scale=w='min(640,iw)':h='min(480,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2"
     } else {
         "fps=30,scale=w='min(960,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2"
     };
     let status = Command::new("ffmpeg")
-        .args(["-nostdin", "-v", "error", "-threads", "2", "-filter_threads", "2", "-i"])
+        .args([
+            "-nostdin",
+            "-v",
+            "error",
+            "-threads",
+            "2",
+            "-filter_threads",
+            "2",
+            "-i",
+        ])
         .arg(path)
         .args([
             "-map",
@@ -594,27 +609,67 @@ fn render_audio_preview(path: &Path, output: &Path) -> Result<(), String> {
 }
 
 fn compact_media_duration(path: &Path) -> &'static str {
-    let probe = Command::new("ffprobe").args(["-v", "error", "-threads", "2",
-        "-probesize", "65536", "-analyzeduration", "0", "-select_streams", "v:0",
-        "-show_entries", "stream=codec_name,width,height,r_frame_rate", "-of", "json"])
-        .arg(path).output();
-    probe.ok().filter(|output| output.status.success() && output.stdout.len() <= 65536)
-        .map(|output| compact_duration_from_probe(&output.stdout)).unwrap_or("30")
+    let probe = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-threads",
+            "2",
+            "-probesize",
+            "65536",
+            "-analyzeduration",
+            "0",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=codec_name,width,height,r_frame_rate",
+            "-of",
+            "json",
+        ])
+        .arg(path)
+        .output();
+    probe
+        .ok()
+        .filter(|output| output.status.success() && output.stdout.len() <= 65536)
+        .map(|output| compact_duration_from_probe(&output.stdout))
+        .unwrap_or("30")
 }
 
 fn compact_duration_from_probe(data: &[u8]) -> &'static str {
-    let Ok(probe) = serde_json::from_slice::<serde_json::Value>(data) else { return "30"; };
-    let Some(stream) = probe.get("streams").and_then(|streams| streams.get(0)) else { return "30"; };
-    let pixels = stream.get("width").and_then(|value| value.as_u64()).unwrap_or(0)
-        .saturating_mul(stream.get("height").and_then(|value| value.as_u64()).unwrap_or(0));
-    let frame_rate = stream.get("r_frame_rate").and_then(|value| value.as_str())
-        .and_then(|rate| rate.split_once('/')).and_then(|(numerator, denominator)| {
+    let Ok(probe) = serde_json::from_slice::<serde_json::Value>(data) else {
+        return "30";
+    };
+    let Some(stream) = probe.get("streams").and_then(|streams| streams.get(0)) else {
+        return "30";
+    };
+    let pixels = stream
+        .get("width")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0)
+        .saturating_mul(
+            stream
+                .get("height")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(0),
+        );
+    let frame_rate = stream
+        .get("r_frame_rate")
+        .and_then(|value| value.as_str())
+        .and_then(|rate| rate.split_once('/'))
+        .and_then(|(numerator, denominator)| {
             let numerator = numerator.parse::<f64>().ok()?;
             let denominator = denominator.parse::<f64>().ok()?;
             (denominator > 0.0).then_some(numerator / denominator)
-        }).unwrap_or(0.0);
+        })
+        .unwrap_or(0.0);
     if stream.get("codec_name").and_then(|value| value.as_str()) == Some("hevc")
-        && frame_rate.is_finite() && pixels as f64 * frame_rate > 60_000_000.0 { "10" } else { "30" }
+        && frame_rate.is_finite()
+        && pixels as f64 * frame_rate > 60_000_000.0
+    {
+        "10"
+    } else {
+        "30"
+    }
 }
 
 fn render_animation_preview(path: &Path, output: &Path) -> Result<(), String> {
@@ -625,13 +680,18 @@ fn render_animation_preview(path: &Path, output: &Path) -> Result<(), String> {
             "-c:v", "libvpx", "-threads", "2", "-deadline", "realtime", "-cpu-used", "8",
             "-auto-alt-ref", "0", "-b:v", "2M", "-f", "webm", "-y"])
         .arg(output).status().map_err(|error| error.to_string())?;
-    status.success().then_some(()).ok_or_else(|| format!("Unable to normalize animation preview: ffmpeg {status}"))
+    status
+        .success()
+        .then_some(())
+        .ok_or_else(|| format!("Unable to normalize animation preview: ffmpeg {status}"))
 }
 
-fn render_media(path: &Path, size: i32) -> Result<Vec<u8>, String> {
+pub(crate) fn render_media(path: &Path, size: i32) -> Result<Vec<u8>, String> {
+    let input = fs::File::open(path).map_err(|error| error.to_string())?;
     let output = Command::new("ffmpegthumbnailer")
         .arg("-i")
-        .arg(path)
+        .arg("/proc/self/fd/0")
+        .stdin(Stdio::from(input))
         .args(["-o", "/dev/stdout", "-s"])
         .arg(size.to_string())
         .args(["-q", "8"])

@@ -81,6 +81,10 @@ impl Location {
         self.native_path().is_some_and(std::path::Path::is_absolute)
     }
 
+    pub fn is_home_dashboard(&self) -> bool {
+        self.uri_value() == Some("home:///")
+    }
+
     pub fn rebase(&self, from: &Self, to: &Self) -> Option<Self> {
         let suffix = self.native_path()?.strip_prefix(from.native_path()?).ok()?;
         Some(Self::local(to.native_path()?.join(suffix)))
@@ -117,6 +121,7 @@ impl Location {
                 .filter(|name| !name.is_empty())
                 .unwrap_or_else(|| path.to_string_lossy().into_owned()),
             LocationKind::Uri(uri) if uri == "trash:///" => "Trash".into(),
+            LocationKind::Uri(uri) if uri == "home:///" => "Home".into(),
             LocationKind::Uri(uri) => uri
                 .trim_end_matches('/')
                 .rsplit('/')

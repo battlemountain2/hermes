@@ -31,7 +31,7 @@ pub struct CustomCommand {
 }
 
 pub fn actions_path() -> PathBuf {
-    gtk::glib::user_config_dir().join("hermes/actions.toml")
+    crate::paths::actions_file()
 }
 
 pub fn load_custom_actions() -> Result<Vec<CustomAction>, String> {
@@ -132,11 +132,6 @@ impl CustomAction {
 const TEMPLATE: &str = r#"# Hermes custom actions
 # Each command is an argument list and is never passed through a shell.
 # Placeholders: {path}, {paths}, {parent}, and {name}.
-
-[[actions]]
-name = "Open terminal here"
-command = ["foot", "--working-directory", "{path}"]
-directories = true
 
 [[actions]]
 name = "Edit with Kate"

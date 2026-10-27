@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::{
+    cell::RefCell,
     cmp::Ordering,
     rc::Rc,
 };
 
 use gtk::{gio, glib, prelude::*};
 
-use crate::services::table::SpreadsheetData;
+use crate::{
+    assets::{self, icons},
+    services::table::{SheetData, SpreadsheetData},
+};
 
 #[derive(Clone, Debug, PartialEq)]
 enum SortKey {
@@ -39,29 +43,275 @@ impl SortKey {
     }
 }
 
-pub fn build_spreadsheet_view(data: &SpreadsheetData) -> gtk::Widget {
-    let container = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    container.set_vexpand(true);
-    container.set_hexpand(true);
+pub struct SpreadsheetView {
+    pub widget: gtk::Box,
+    window: Rc<RefCell<Option<gtk::Window>>>,
+    expand: gtk::Button,
+}
 
-    // Sheet tabs or active sheet title if multi-sheet
-    if data.sheet_names.len() > 1 {
-        let sheet_bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        sheet_bar.add_css_class("spreadsheet-sheet-bar");
-        for (idx, name) in data.sheet_names.iter().enumerate() {
-            let label = gtk::Label::new(Some(name));
-            if idx == data.active_sheet {
-                label.add_css_class("active-sheet-tab");
-            } else {
-                label.add_css_class("sheet-tab");
-            }
-            sheet_bar.append(&label);
+impl SpreadsheetView {
+    pub fn open_fullscreen(&self) -> bool {
+        let existing = self.window.borrow().clone();
+        if let Some(window) = existing {
+            window.present();
+            return true;
         }
-        container.append(&sheet_bar);
+        self.expand.emit_clicked();
+        true
     }
 
-    let rows_rc = Rc::new(data.rows.clone());
-    let cols = data.headers.len().max(
+    pub fn stop(&self) {
+        let window = self.window.borrow_mut().take();
+        if let Some(window) = window {
+            window.close();
+        }
+    }
+}
+
+impl Drop for SpreadsheetView {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> SpreadsheetView {
+    let home = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    home.set_vexpand(true);
+    home.set_hexpand(true);
+
+    let viewer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    viewer.add_css_class("spreadsheet-container");
+    viewer.set_vexpand(true);
+    viewer.set_hexpand(true);
+
+    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    controls.add_css_class("spreadsheet-header");
+
+    let metadata = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    metadata.set_hexpand(true);
+    metadata.set_valign(gtk::Align::Center);
+
+    let name_label = gtk::Label::new(Some(title));
+    name_label.add_css_class("spreadsheet-title");
+    name_label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    name_label.set_width_chars(1);
+    name_label.set_tooltip_text(Some(title));
+    name_label.set_xalign(0.0);
+    name_label.set_hexpand(true);
+    metadata.append(&name_label);
+
+    let dim_label = gtk::Label::new(None);
+    dim_label.add_css_class("spreadsheet-dimensions");
+    dim_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    dim_label.set_width_chars(1);
+    dim_label.set_xalign(0.0);
+    metadata.append(&dim_label);
+    controls.append(&metadata);
+
+    let expand = gtk::Button::builder()
+        .tooltip_text("Fullscreen spreadsheet (F)")
+        .build();
+    expand.add_css_class("spreadsheet-action");
+    expand.set_valign(gtk::Align::Center);
+    expand.set_child(Some(&assets::primary_icon(icons::MAXIMIZE, 16)));
+    controls.append(&expand);
+
+    viewer.append(&controls);
+
+    let stack = gtk::Stack::builder()
+        .hhomogeneous(false)
+        .vhomogeneous(false)
+        .transition_type(gtk::StackTransitionType::None)
+        .transition_duration(0)
+        .vexpand(true)
+        .hexpand(true)
+        .build();
+
+    let sheets: Rc<Vec<SheetData>> = Rc::new(if !data.sheets.is_empty() {
+        data.sheets.clone()
+    } else {
+        vec![SheetData {
+            name: data.sheet_names.first().cloned().unwrap_or_else(|| "Sheet1".to_string()),
+            headers: data.headers.clone(),
+            rows: data.rows.clone(),
+            total_rows: data.total_rows,
+            total_cols: data.total_cols,
+            truncated: data.truncated,
+        }]
+    });
+
+    let dim_label_for_tabs = dim_label.clone();
+    let sheet_buttons: Rc<RefCell<Vec<glib::WeakRef<gtk::Button>>>> = Rc::new(RefCell::new(Vec::new()));
+
+    if sheets.len() > 1 {
+        let sheet_bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        sheet_bar.add_css_class("spreadsheet-sheet-bar");
+
+        for (idx, sheet) in sheets.iter().enumerate() {
+            let tab_label = gtk::Label::new(Some(&sheet.name));
+            tab_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            tab_label.set_max_width_chars(20);
+            let btn = gtk::Button::new();
+            btn.set_child(Some(&tab_label));
+            btn.set_tooltip_text(Some(&sheet.name));
+            btn.add_css_class("spreadsheet-sheet-button");
+            if idx == 0 {
+                btn.add_css_class("active-sheet-tab");
+            }
+
+            let stack = stack.clone();
+            let sheet_name = format!("sheet_{idx}");
+            let sheets_for_tab = sheets.clone();
+            let buttons = sheet_buttons.clone();
+            let dim_lbl = dim_label_for_tabs.clone();
+            let s_rows = sheet.total_rows.max(sheet.rows.len() + if sheet.headers.is_empty() { 0 } else { 1 });
+            let s_cols = sheet.total_cols.max(sheet.headers.len());
+            let sheets_count = sheets.len();
+
+            btn.connect_clicked(move |clicked| {
+                for candidate in buttons.borrow().iter().filter_map(glib::WeakRef::upgrade) {
+                    candidate.remove_css_class("active-sheet-tab");
+                }
+                clicked.add_css_class("active-sheet-tab");
+                if stack.child_by_name(&sheet_name).is_none() {
+                    stack.add_named(
+                        &build_sheet_table_page(&sheets_for_tab[idx]),
+                        Some(&sheet_name),
+                    );
+                }
+                stack.set_visible_child_name(&sheet_name);
+                let dimensions = format!(
+                    "{} rows · {} cols · Sheet {} of {}",
+                    s_rows, s_cols, idx + 1, sheets_count
+                );
+                dim_lbl.set_text(&dimensions);
+                dim_lbl.set_tooltip_text(Some(&dimensions));
+            });
+
+            sheet_buttons.borrow_mut().push(btn.downgrade());
+            sheet_bar.append(&btn);
+        }
+        let sheet_scroll = gtk::ScrolledWindow::builder()
+            .child(&sheet_bar)
+            .hscrollbar_policy(gtk::PolicyType::Automatic)
+            .vscrollbar_policy(gtk::PolicyType::Never)
+            .kinetic_scrolling(false)
+            .propagate_natural_height(true)
+            .hexpand(true)
+            .build();
+        sheet_scroll.add_css_class("spreadsheet-sheet-scroll");
+        viewer.append(&sheet_scroll);
+    }
+
+    // Set initial dimension label
+    if let Some(first) = sheets.first() {
+        let s_rows = first.total_rows.max(first.rows.len() + if first.headers.is_empty() { 0 } else { 1 });
+        let s_cols = first.total_cols.max(first.headers.len());
+        if sheets.len() > 1 {
+            dim_label.set_text(&format!(
+                "{} rows · {} cols · Sheet 1 of {}",
+                s_rows, s_cols, sheets.len()
+            ));
+        } else {
+            dim_label.set_text(&format!("{} rows · {} cols", s_rows, s_cols));
+        }
+        dim_label.set_tooltip_text(Some(dim_label.text().as_str()));
+    }
+
+    if let Some(sheet) = sheets.first() {
+        stack.add_named(&build_sheet_table_page(sheet), Some("sheet_0"));
+    }
+
+    viewer.append(&stack);
+
+    if data.truncated {
+        let warning = gtk::Label::new(Some(
+            "Table preview capped at 200 rows and 256 columns; open file for complete data."
+        ));
+        warning.add_css_class("spreadsheet-note");
+        warning.set_wrap(true);
+        warning.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        warning.set_xalign(0.0);
+        viewer.append(&warning);
+    }
+
+    home.append(&viewer);
+
+    // Fullscreen controller wiring
+    let slot = Rc::new(RefCell::new(None::<gtk::Window>));
+    let shared_slot = slot.clone();
+    let weak_home = home.downgrade();
+    let weak_viewer = viewer.downgrade();
+    let expand_btn = expand.clone();
+    let title_string = title.to_string();
+    let stack_for_keys = stack.clone();
+    let sheet_buttons_for_keys = sheet_buttons.clone();
+    let sheets_count = sheets.len();
+
+    expand.connect_clicked(move |button| {
+        let existing = shared_slot.borrow().clone();
+        if let Some(window) = existing {
+            window.close();
+            return;
+        }
+        let (Some(home), Some(viewer)) = (weak_home.upgrade(), weak_viewer.upgrade()) else {
+            return;
+        };
+        let window = gtk::Window::builder()
+            .title(&format!("Hermes — {}", title_string))
+            .destroy_with_parent(true)
+            .build();
+        if let Some(parent) = home.root().and_downcast::<gtk::Window>() {
+            window.set_transient_for(Some(&parent));
+            window.set_application(parent.application().as_ref());
+        }
+        home.remove(&viewer);
+        window.set_child(Some(&viewer));
+        button.set_child(Some(&assets::primary_icon(icons::MINIMIZE, 16)));
+        button.set_tooltip_text(Some("Exit fullscreen (F or Escape)"));
+
+        let weak_slot = Rc::downgrade(&shared_slot);
+        let weak_home = home.downgrade();
+        let weak_viewer = viewer.downgrade();
+        let weak_button = button.downgrade();
+
+        window.connect_close_request(move |window| {
+            let viewer = weak_viewer.upgrade();
+            window.set_child(None::<&gtk::Widget>);
+            if let (Some(home), Some(viewer)) = (weak_home.upgrade(), viewer) {
+                if viewer.parent().is_none() {
+                    home.append(&viewer);
+                }
+            }
+            if let Some(button) = weak_button.upgrade() {
+                button.set_child(Some(&assets::primary_icon(icons::MAXIMIZE, 16)));
+                button.set_tooltip_text(Some("Fullscreen spreadsheet (F)"));
+            }
+            if let Some(slot) = weak_slot.upgrade() {
+                slot.borrow_mut().take();
+            }
+            glib::Propagation::Proceed
+        });
+
+        attach_table_key_controller(&window, &stack_for_keys, &sheet_buttons_for_keys, sheets_count, Some(window.downgrade()));
+        shared_slot.replace(Some(window.clone()));
+        window.fullscreen();
+        window.present();
+    });
+
+    viewer.set_focusable(true);
+    attach_table_key_controller(&viewer, &stack, &sheet_buttons, sheets.len(), None);
+
+    SpreadsheetView {
+        widget: home,
+        window: slot,
+        expand: expand_btn,
+    }
+}
+
+fn build_sheet_table_page(sheet: &SheetData) -> gtk::Widget {
+    let rows_rc = Rc::new(sheet.rows.clone());
+    let cols = sheet.headers.len().max(
         rows_rc.iter().map(Vec::len).max().unwrap_or(0)
     );
 
@@ -73,12 +323,13 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData) -> gtk::Widget {
     let sort_model = gtk::SortListModel::new(Some(store), None::<gtk::Sorter>);
     let no_selection = gtk::NoSelection::new(Some(sort_model.clone()));
     let column_view = gtk::ColumnView::new(Some(no_selection));
+    column_view.add_css_class("spreadsheet-grid");
     column_view.set_show_row_separators(true);
     column_view.set_show_column_separators(true);
 
     for col_idx in 0..cols {
-        let title = if col_idx < data.headers.len() && !data.headers[col_idx].is_empty() {
-            data.headers[col_idx].clone()
+        let title = if col_idx < sheet.headers.len() && !sheet.headers[col_idx].is_empty() {
+            sheet.headers[col_idx].clone()
         } else {
             column_name(col_idx)
         };
@@ -87,12 +338,10 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData) -> gtk::Widget {
         let rows_for_factory = rows_rc.clone();
         factory.connect_setup(move |_, item| {
             let label = gtk::Label::new(None);
+            label.add_css_class("spreadsheet-cell");
             label.set_xalign(0.0);
-            label.set_margin_start(8);
-            label.set_margin_end(8);
-            label.set_margin_top(4);
-            label.set_margin_bottom(4);
             label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            label.set_selectable(true);
             if let Some(list_item) = item.downcast_ref::<gtk::ColumnViewCell>() {
                 list_item.set_child(Some(&label));
             }
@@ -107,6 +356,11 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData) -> gtk::Widget {
                 if let Some(row) = rows_for_factory.get(row_idx) {
                     let text = row.get(col_idx).map(String::as_str).unwrap_or("");
                     label.set_text(text);
+                    if !text.is_empty() {
+                        label.set_tooltip_text(Some(text));
+                    } else {
+                        label.set_tooltip_text(None);
+                    }
                 }
             }
         });
@@ -142,25 +396,16 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData) -> gtk::Widget {
 
     let scroll = gtk::ScrolledWindow::builder()
         .child(&column_view)
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .hscrollbar_policy(gtk::PolicyType::Always)
+        .vscrollbar_policy(gtk::PolicyType::Always)
+        .overlay_scrolling(false)
+        .kinetic_scrolling(false)
         .vexpand(true)
         .hexpand(true)
         .build();
+    scroll.add_css_class("spreadsheet-grid-scroll");
 
-    container.append(&scroll);
-
-    if data.truncated {
-        let warning = gtk::Label::new(Some(
-            "Table preview capped at 200 rows and 256 columns; open file for complete data."
-        ));
-        warning.add_css_class("dim-label");
-        warning.set_margin_top(4);
-        warning.set_margin_bottom(4);
-        container.append(&warning);
-    }
-
-    container.upcast::<gtk::Widget>()
+    scroll.upcast()
 }
 
 fn column_name(mut idx: usize) -> String {
@@ -176,29 +421,129 @@ fn column_name(mut idx: usize) -> String {
     name
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_sort_key_comparisons() {
-        let n1 = SortKey::new("10");
-        let n2 = SortKey::new("2");
-        assert_eq!(n2.compare(&n1), Ordering::Less);
-
-        let t1 = SortKey::new("apple");
-        let t2 = SortKey::new("banana");
-        assert_eq!(t1.compare(&t2), Ordering::Less);
-
-        let empty = SortKey::new("");
-        assert_eq!(n1.compare(&empty), Ordering::Less);
-        assert_eq!(empty.compare(&n1), Ordering::Greater);
+fn attach_table_key_controller(
+    target: &impl glib::object::IsA<gtk::Widget>,
+    stack: &gtk::Stack,
+    sheet_buttons: &Rc<RefCell<Vec<glib::WeakRef<gtk::Button>>>>,
+    sheets_count: usize,
+    window_to_close: Option<glib::WeakRef<gtk::Window>>,
+) {
+    let controller = gtk::EventControllerKey::new();
+    if window_to_close.is_some() {
+        controller.set_name(Some("hermes-table-fullscreen"));
+    } else {
+        controller.set_name(Some("hermes-table-viewer"));
     }
 
-    #[test]
-    fn test_column_name_generation() {
-        assert_eq!(column_name(0), "A");
-        assert_eq!(column_name(25), "Z");
-        assert_eq!(column_name(26), "AA");
-    }
+    let stack = stack.clone();
+    let sheet_buttons = sheet_buttons.clone();
+
+    controller.connect_key_pressed(move |_, keyval, _keycode, state| {
+        // Fullscreen exit shortcuts: Escape, F/f (without Ctrl/Alt)
+        if let Some(ref weak_window) = window_to_close {
+            if keyval == gtk::gdk::Key::Escape
+                || (!state.contains(gtk::gdk::ModifierType::CONTROL_MASK)
+                    && !state.contains(gtk::gdk::ModifierType::ALT_MASK)
+                    && (keyval == gtk::gdk::Key::f || keyval == gtk::gdk::Key::F))
+            {
+                if let Some(window) = weak_window.upgrade() {
+                    window.close();
+                    return glib::Propagation::Stop;
+                }
+            }
+        }
+
+        // Sheet tab navigation
+        if sheets_count > 1 {
+            let ctrl = state.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+            let shift = state.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+
+            let next_tab = (ctrl && keyval == gtk::gdk::Key::Page_Down)
+                || (ctrl && !shift && keyval == gtk::gdk::Key::Tab);
+            let prev_tab = (ctrl && keyval == gtk::gdk::Key::Page_Up)
+                || (ctrl && (keyval == gtk::gdk::Key::ISO_Left_Tab || (shift && keyval == gtk::gdk::Key::Tab)));
+
+            if next_tab || prev_tab {
+                if let Some(current_name) = stack.visible_child_name() {
+                    if let Some(idx_str) = current_name.strip_prefix("sheet_") {
+                        if let Ok(idx) = idx_str.parse::<usize>() {
+                            let target_idx = if next_tab {
+                                (idx + 1) % sheets_count
+                            } else if idx == 0 {
+                                sheets_count - 1
+                            } else {
+                                idx - 1
+                            };
+                            let buttons = sheet_buttons.borrow();
+                            if let Some(Some(btn)) = buttons.get(target_idx).map(glib::WeakRef::upgrade) {
+                                btn.emit_clicked();
+                                return glib::Propagation::Stop;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Table scrolling with arrow keys / PageUp / PageDown / Home / End
+        if let Some(child) = stack.visible_child() {
+            if let Some(scrolled) = child.downcast_ref::<gtk::ScrolledWindow>() {
+                let vadj = scrolled.vadjustment();
+                let hadj = scrolled.hadjustment();
+
+                let step_v = vadj.step_increment().max(32.0);
+                let page_v = vadj.page_increment().max(200.0);
+                let step_h = hadj.step_increment().max(40.0);
+
+                match keyval {
+                    gtk::gdk::Key::Up => {
+                        vadj.set_value((vadj.value() - step_v).max(vadj.lower()));
+                        return glib::Propagation::Stop;
+                    }
+                    gtk::gdk::Key::Down => {
+                        vadj.set_value((vadj.value() + step_v).min(vadj.upper() - vadj.page_size()));
+                        return glib::Propagation::Stop;
+                    }
+                    gtk::gdk::Key::Left => {
+                        hadj.set_value((hadj.value() - step_h).max(hadj.lower()));
+                        return glib::Propagation::Stop;
+                    }
+                    gtk::gdk::Key::Right => {
+                        hadj.set_value((hadj.value() + step_h).min(hadj.upper() - hadj.page_size()));
+                        return glib::Propagation::Stop;
+                    }
+                    gtk::gdk::Key::Page_Up => {
+                        vadj.set_value((vadj.value() - page_v).max(vadj.lower()));
+                        return glib::Propagation::Stop;
+                    }
+                    gtk::gdk::Key::Page_Down => {
+                        vadj.set_value((vadj.value() + page_v).min(vadj.upper() - vadj.page_size()));
+                        return glib::Propagation::Stop;
+                    }
+                    gtk::gdk::Key::Home => {
+                        if state.contains(gtk::gdk::ModifierType::CONTROL_MASK) {
+                            hadj.set_value(hadj.lower());
+                        }
+                        vadj.set_value(vadj.lower());
+                        return glib::Propagation::Stop;
+                    }
+                    gtk::gdk::Key::End => {
+                        if state.contains(gtk::gdk::ModifierType::CONTROL_MASK) {
+                            hadj.set_value((hadj.upper() - hadj.page_size()).max(hadj.lower()));
+                        }
+                        vadj.set_value((vadj.upper() - vadj.page_size()).max(vadj.lower()));
+                        return glib::Propagation::Stop;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        glib::Propagation::Proceed
+    });
+
+    target.add_controller(controller);
 }
+
+#[cfg(test)]
+mod tests;

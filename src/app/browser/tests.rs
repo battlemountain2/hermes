@@ -9,6 +9,47 @@ use crate::{
 };
 
 #[test]
+fn hidden_visibility_updates_loads_monitors_and_closes_stale_peeks() {
+    struct RecordingSource(Rc<RefCell<Vec<(bool, bool)>>>);
+
+    impl FileSource for RecordingSource {
+        fn validate_location(&self, _: &Location) -> Result<(), LocationValidationError> {
+            Ok(())
+        }
+
+        fn enumerate(&self, request: DirectoryRequest, _: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
+            self.0.borrow_mut().push((false, request.include_hidden));
+            LoadHandle::new(|| {})
+        }
+
+        fn watch(&self, _: Location, include_hidden: bool, _: Rc<dyn Fn(DirectoryChange)>) -> Option<LoadHandle> {
+            self.0.borrow_mut().push((true, include_hidden));
+            Some(LoadHandle::new(|| {}))
+        }
+    }
+
+    let requests = Rc::new(RefCell::new(Vec::new()));
+    let browser = Browser::new(Rc::new(RecordingSource(requests.clone())));
+    browser.navigate(Location::local("/generated-hidden"));
+    requests.borrow_mut().clear();
+    browser.set_show_hidden(false);
+    assert!(requests.borrow().is_empty());
+    browser.begin_peek(0, Location::local("/generated-hidden/child"));
+    assert!(browser.peek_request.get().is_some());
+    requests.borrow_mut().clear();
+    browser.set_show_hidden(true);
+    assert!(browser.peek_request.get().is_none());
+    assert!(browser.column_preferences(0).unwrap().show_hidden);
+    assert_eq!(*requests.borrow(), vec![(false, true), (true, true)]);
+    requests.borrow_mut().clear();
+    browser.set_show_hidden(true);
+    assert!(requests.borrow().is_empty());
+    browser.toggle_hidden();
+    assert!(!browser.column_preferences(0).unwrap().show_hidden);
+    assert_eq!(*requests.borrow(), vec![(false, false), (true, false)]);
+}
+
+#[test]
 fn search_snapshot_observer_can_navigate_without_stale_selection_events() {
     let browser = Browser::new(Rc::new(FakeFileSource));
     browser.state.borrow_mut().navigate(Location::local("/search"), RequestId(101));
@@ -1154,6 +1195,33 @@ fn reveal_selects_an_item_when_its_parent_is_already_open() {
         browser.focused_entry().map(|entry| entry.location.clone()),
         Some(Location::local("/fixture/example.conf"))
     );
+}
+
+#[test]
+fn external_selection_notifies_the_view_without_activating_or_previewing_files() {
+    let browser = Browser::new(Rc::new(FakeFileSource));
+    browser.state.borrow_mut().navigate(Location::local("/fixture"), RequestId(900));
+    let entry = |name: &str| crate::model::FileEntry(Rc::new(crate::model::FileEntryInner {
+        location: Location::local(format!("/fixture/{name}")), native_name: OsString::from(name),
+        display_name: name.into(), kind: EntryKind::File, size: MetadataValue::Unknown,
+        modified_unix_seconds: MetadataValue::Unknown, music_tags: None,
+    }));
+    browser.handle_directory_event(DirectoryEvent::Batch {
+        request_id: RequestId(900), entries: vec![entry("a.txt"), entry("b.txt"), entry("c.txt")],
+    });
+    browser.handle_directory_event(DirectoryEvent::Finished { request_id: RequestId(900) });
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let captured = events.clone();
+    browser.observe(move |event| captured.borrow_mut().push(event));
+    assert!(browser.select_locations(0, &[
+        Location::local("/fixture/c.txt"), Location::local("/fixture/a.txt"), Location::local("/fixture/c.txt"),
+        Location::local("/fixture/missing.txt"),
+    ]));
+    assert_eq!(browser.selected_entries().len(), 2);
+    assert_eq!(browser.focused_entry().unwrap().location, Location::local("/fixture/c.txt"));
+    assert!(matches!(&events.borrow()[..], [BrowserEvent::SelectionSetChanged { positions, focused: 2, .. }] if positions == &[2, 0]));
+    assert!(!browser.select_locations(0, &[Location::local("/missing")]));
+    assert!(!browser.select_locations(99, &[Location::local("/fixture/a.txt")]));
 }
 
 #[test]
