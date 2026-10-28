@@ -203,6 +203,30 @@ impl PreviewDrawer {
             animation_generation: Rc::new(Cell::new(0)),
         });
 
+        let preview_drag = gtk::DragSource::builder()
+            .actions(gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE)
+            .build();
+        let weak_drag = Rc::downgrade(&state);
+        preview_drag.connect_prepare(move |source, _x, _y| {
+            let state = weak_drag.upgrade()?;
+            let entry = state.current.borrow().clone()?;
+            super::browser::setup_drag_icon(source, &entry, 1);
+            super::browser::file_drag_content(&[entry])
+        });
+        let weak_drag_begin = Rc::downgrade(&state);
+        preview_drag.connect_drag_begin(move |_, _| {
+            if let Some(state) = weak_drag_begin.upgrade() {
+                state.content.add_css_class("dragging");
+            }
+        });
+        let weak_drag_end = Rc::downgrade(&state);
+        preview_drag.connect_drag_end(move |_, _, _| {
+            if let Some(state) = weak_drag_end.upgrade() {
+                state.content.remove_css_class("dragging");
+            }
+        });
+        state.content.add_controller(preview_drag);
+
         for (idx, btn) in state.star_buttons.iter().enumerate() {
             let weak_state = Rc::downgrade(&state);
             btn.connect_clicked(move |_| {

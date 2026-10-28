@@ -2417,7 +2417,7 @@ fn install_explorer_drag_drop(
     let dragged_item = item.downgrade();
     let browser_for_drag = browser.clone();
     let map_for_drag = position_map.clone();
-    drag.connect_prepare(move |source, x, y| {
+    drag.connect_prepare(move |source, _x, _y| {
         let dragged_item = dragged_item.upgrade()?;
         let browser = browser_for_drag.upgrade()?;
         let position = dragged_item.position();
@@ -2437,10 +2437,9 @@ fn install_explorer_drag_drop(
         {
             selected
         } else {
-            vec![entry]
+            vec![entry.clone()]
         };
-        let paintable = gtk::WidgetPaintable::new(source.widget().as_ref());
-        source.set_icon(Some(&paintable), x.round() as i32, y.round() as i32);
+        super::browser::setup_drag_icon(source, &entry, entries.len());
         super::browser::file_drag_content(&entries)
     });
     drag.connect_drag_begin(|source, _| {

@@ -508,6 +508,7 @@ fn desktop_tabs_remain_compact_and_aligned() {
 }
 
 #[test]
+#[ignore = "Requires isolated GTK display; exercises TabBar tab reopen"]
 fn tab_bar_reopen_closed_tab_restores_last_closed_tab() {
     use crate::{
         app::{Browser, Trails},

@@ -259,6 +259,34 @@ fn present_target(
     if let Some(path) = startup.trail.active_location().and_then(Location::native_path) {
         status_bar.update_free_space(path);
     }
+    let mode_action_for_status = mode_action.clone();
+    let browser_for_status = browser.clone();
+    status_bar.set_mode_handlers(
+        {
+            let mode_action = mode_action_for_status.clone();
+            move || {
+                mode_action.activate(Some(&"columns".to_variant()));
+            }
+        },
+        {
+            let mode_action = mode_action_for_status.clone();
+            move || {
+                mode_action.activate(Some(&"grid".to_variant()));
+            }
+        },
+        {
+            let mode_action = mode_action_for_status.clone();
+            move || {
+                mode_action.activate(Some(&"list".to_variant()));
+            }
+        },
+    );
+    status_bar.set_zoom_handler({
+        let browser = browser_for_status.clone();
+        move || {
+            browser.step_density(1);
+        }
+    });
     let context_status_bar = status_bar.clone();
     let context_controller = controller.clone();
     let context_startup = startup_restore.clone();
@@ -419,12 +447,18 @@ fn present_target(
                 | BrowserEvent::Reset
         ) {
             let mut total_items = 0;
+            let mut total_bytes = 0;
             let mut selected_items = 0;
             let mut selected_bytes = 0;
             
             if let Some(depth) = context_controller.active_depth() {
                 if let Some(entries) = context_controller.column_entries(depth) {
                     total_items = entries.len();
+                    for entry in &entries {
+                        if let crate::model::MetadataValue::Known(size) = entry.size {
+                            total_bytes += size;
+                        }
+                    }
                 }
                 let selected = context_controller.selected_entries();
                 selected_items = selected.len();
@@ -434,8 +468,19 @@ fn present_target(
                     }
                 }
             }
-            context_status_bar.update_item_count(total_items);
+            context_status_bar.update_items(total_items, total_bytes);
             context_status_bar.update_selection(selected_items, selected_bytes);
+
+            let mode = context_browser.view_mode();
+            context_status_bar.update_view_mode(mode);
+            let density_str = match mode {
+                BrowserMode::Grid => "Grid".to_string(),
+                _ => match context_browser.density() {
+                    BrowserDensity::Airy => "Airy".to_string(),
+                    BrowserDensity::Compact => "Compact".to_string(),
+                },
+            };
+            context_status_bar.update_density(&density_str);
 
             if !matches!(event, BrowserEvent::SelectionSetChanged { .. }) {
                 if let Some(path) = context_controller
@@ -1282,6 +1327,18 @@ fn install_keyboard_navigation(
             view.create_new_folder();
             return glib::Propagation::Stop;
         }
+        if control && alt && matches!(key, gtk::gdk::Key::n | gtk::gdk::Key::N) {
+            view.create_new_file();
+            return glib::Propagation::Stop;
+        }
+        if control && shift && matches!(key, gtk::gdk::Key::c | gtk::gdk::Key::C) {
+            if view.filter_has_focus() {
+                return glib::Propagation::Proceed;
+            }
+            if view.copy_selection_paths() {
+                return glib::Propagation::Stop;
+            }
+        }
         if control && !shift && key == gtk::gdk::Key::v {
             if view.filter_has_focus() {
                 return glib::Propagation::Proceed;
@@ -1955,11 +2012,29 @@ impl SidebarState {
         };
         let drop = gtk::DropTarget::new(gtk::gdk::FileList::static_type(), actions);
         let entered_destination = destination.clone();
-        drop.connect_enter(move |target, _, _| sidebar_drop_action(target, &entered_destination));
+        drop.connect_enter(move |target, _, _| {
+            if let Some(widget) = target.widget() {
+                widget.add_css_class("drop-destination");
+            }
+            sidebar_drop_action(target, &entered_destination)
+        });
         let hovered_destination = destination.clone();
-        drop.connect_motion(move |target, _, _| sidebar_drop_action(target, &hovered_destination));
+        drop.connect_motion(move |target, _, _| {
+            if let Some(widget) = target.widget() {
+                widget.add_css_class("drop-destination");
+            }
+            sidebar_drop_action(target, &hovered_destination)
+        });
+        drop.connect_leave(|target| {
+            if let Some(widget) = target.widget() {
+                widget.remove_css_class("drop-destination");
+            }
+        });
         let view = self.view.clone();
         drop.connect_drop(move |target, value, _, _| {
+            if let Some(widget) = target.widget() {
+                widget.remove_css_class("drop-destination");
+            }
             let Some(sources) = super::browser::locations_from_file_list_value(value) else {
                 return false;
             };
@@ -2243,6 +2318,81 @@ impl SidebarState {
             .as_ref()
             .is_some_and(|mount| mount.can_unmount());
         if can_eject || can_unmount {
+            if let Some(content) = row.child().and_downcast::<gtk::Box>() {
+                let eject_btn = gtk::Button::builder()
+                    .has_frame(false)
+                    .valign(gtk::Align::Center)
+                    .halign(gtk::Align::End)
+                    .tooltip_text(if can_eject { "Eject drive" } else { "Unmount drive" })
+                    .build();
+                eject_btn.set_cursor_from_name(Some("pointer"));
+                eject_btn.add_css_class("sidebar-eject-btn");
+                let eject_icon = crate::assets::primary_icon(crate::assets::icons::EJECT, 14);
+                eject_btn.set_child(Some(&eject_icon));
+                content.append(&eject_btn);
+
+                let volume_action = volume.clone();
+                let eject_row = row.clone();
+                let btn_weak = eject_btn.downgrade();
+                eject_btn.connect_clicked(move |_| {
+                    let Some(btn) = btn_weak.upgrade() else {
+                        return;
+                    };
+                    btn.set_sensitive(false);
+                    btn.add_css_class("busy");
+                    let Some(window) = eject_row.root().and_downcast::<gtk::Window>() else {
+                        return;
+                    };
+                    let volume = volume_action.clone();
+                    let btn_for_done = btn.clone();
+                    let window_for_err = window.clone();
+                    glib::MainContext::default().spawn_local(async move {
+                        let result = if can_eject {
+                            if volume.can_eject() {
+                                volume
+                                    .eject_with_operation_future(
+                                        gio::MountUnmountFlags::NONE,
+                                        None::<&gio::MountOperation>,
+                                    )
+                                    .await
+                            } else if let Some(mount) = volume.get_mount() {
+                                mount
+                                    .eject_with_operation_future(
+                                        gio::MountUnmountFlags::NONE,
+                                        None::<&gio::MountOperation>,
+                                    )
+                                    .await
+                            } else {
+                                btn_for_done.remove_css_class("busy");
+                                btn_for_done.set_sensitive(true);
+                                return;
+                            }
+                        } else if let Some(mount) = volume.get_mount() {
+                            mount
+                                .unmount_with_operation_future(
+                                    gio::MountUnmountFlags::NONE,
+                                    None::<&gio::MountOperation>,
+                                )
+                                .await
+                        } else {
+                            btn_for_done.remove_css_class("busy");
+                            btn_for_done.set_sensitive(true);
+                            return;
+                        };
+                        btn_for_done.remove_css_class("busy");
+                        btn_for_done.set_sensitive(true);
+                        if let Err(error) = result {
+                            let error_dialog = gtk::AlertDialog::builder()
+                                .modal(true)
+                                .message("Unable to disconnect drive")
+                                .detail(error.to_string())
+                                .build();
+                            error_dialog.show(Some(&window_for_err));
+                        }
+                    });
+                });
+            }
+
             let menu = gtk::Box::new(gtk::Orientation::Vertical, 0);
             menu.add_css_class("folder-context-menu");
             let action_name = if can_eject { "Eject…" } else { "Unmount…" };

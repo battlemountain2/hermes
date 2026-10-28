@@ -84,6 +84,17 @@ impl ImagePreview {
             stride as i32,
         ));
         let (scroll, controls) = image_view(&pixels, upscale_to_fit);
+        if let Some((entry, _)) = context_menu.as_ref() {
+            let image_drag = gtk::DragSource::builder()
+                .actions(gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE)
+                .build();
+            let drag_entry = entry.clone();
+            image_drag.connect_prepare(move |source, _x, _y| {
+                crate::ui::browser::setup_drag_icon(source, &drag_entry, 1);
+                crate::ui::browser::file_drag_content(&[drag_entry.clone()])
+            });
+            scroll.add_controller(image_drag);
+        }
         widget.append(&scroll);
         let expand = image_action(icons::MAXIMIZE, "Fullscreen image (F)");
         controls.append(&expand);

@@ -48,12 +48,14 @@ pub fn show_shortcuts_window(parent: &impl IsA<gtk::Window>) {
     // File Operations group
     let ops_group = gtk::ShortcutsGroup::builder().title("File Operations").build();
     add_shortcut(&ops_group, "Copy files", "<Primary>c");
+    add_shortcut(&ops_group, "Copy path", "<Primary><Shift>c");
     add_shortcut(&ops_group, "Cut files", "<Primary>x");
     add_shortcut(&ops_group, "Paste files", "<Primary>v");
     add_shortcut(&ops_group, "Duplicate selection", "<Primary>d");
     add_shortcut(&ops_group, "Invert selection", "<Primary><Shift>i");
     add_shortcut(&ops_group, "Open in Terminal", "F4");
     add_shortcut(&ops_group, "New folder", "<Primary><Shift>n");
+    add_shortcut(&ops_group, "New empty file", "<Primary><Alt>n");
     add_shortcut(&ops_group, "Rename file or folder", "F2");
     add_shortcut(&ops_group, "Move to Trash", "Delete");
     add_shortcut(&ops_group, "Context menu", "Menu");

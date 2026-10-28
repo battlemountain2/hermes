@@ -27,10 +27,12 @@ pub mod icons {
     pub const ARROW_UP_NARROW_WIDE: &str = "strata-arrow-up-narrow-wide";
     pub const CHECK: &str = "strata-check";
     pub const CHECK_ON_PRIMARY: &str = "strata-check-on-primary";
+    pub const CHEVRON_DOWN: &str = "strata-chevron-down";
     pub const CHEVRON_RIGHT: &str = "strata-chevron-right";
     pub const COPY: &str = "strata-copy";
     pub const DOCUMENTS: &str = "strata-file-text";
     pub const DOWNLOADS: &str = "strata-download";
+    pub const EJECT: &str = "strata-eject";
     pub const EYE: &str = "strata-eye";
     pub const EYE_OFF: &str = "strata-eye-off";
     pub const EXTERNAL_LINK: &str = "strata-external-link";

@@ -32,6 +32,16 @@ fn item_count_formatting_handles_singular_and_plural() {
 }
 
 #[test]
+fn item_stats_formatting_includes_total_size() {
+    formatting::configure("iso", "decimal");
+    assert_eq!(format_item_stats(0, 0), "0 items");
+    assert_eq!(format_item_stats(0, 1024), "0 items");
+    assert_eq!(format_item_stats(1, 0), "1 item");
+    assert_eq!(format_item_stats(1, 1_500), "1 item (1.5 kB)");
+    assert_eq!(format_item_stats(142, 2_400_000_000), "142 items (2.4 GB)");
+}
+
+#[test]
 fn selection_formatting_handles_empty_and_populated_selections() {
     assert_eq!(format_selection(0, 0), "");
     assert_eq!(format_selection(0, 1024), "");
@@ -95,6 +105,7 @@ fn edge_case_byte_sizes_for_free_space() {
 }
 
 #[test]
+#[ignore = "Requires an isolated GTK display; no real filesystem queries"]
 fn test_status_bar_clear_free_space_widget() {
     if gtk::init().is_err() {
         eprintln!("GTK init skipped (no display server)");

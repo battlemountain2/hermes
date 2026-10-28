@@ -200,7 +200,7 @@ pub struct PeekBehavior {
 impl Default for PeekBehavior {
     fn default() -> Self {
         Self {
-            open_delay: Duration::from_millis(180),
+            open_delay: Duration::from_millis(250),
             close_delay: Duration::from_millis(80),
             fade_duration: Duration::from_millis(100),
             item_limit: 8,
@@ -735,6 +735,30 @@ impl BrowserView {
         }
     }
 
+    pub fn create_new_file(&self) {
+        let mode = self.view_mode();
+        let depth = if mode == BrowserMode::Columns {
+            new_folder_destination_depth(
+                self.state.hovered_column.get(),
+                self.state.focused_column_depth(),
+                self.state.browser.active_depth(),
+                self.state.columns.borrow().len(),
+            )
+        } else {
+            self.state.browser.active_depth()
+        };
+        if let Some((_depth, location)) = depth.and_then(|depth| {
+            self.state
+                .browser
+                .location_at(depth)
+                .map(|location| (depth, location))
+        }) {
+            if let Some(window) = self.state.overlay.root().and_downcast::<gtk::Window>() {
+                show_new_file_dialog(&self.state.browser, &window, location);
+            }
+        }
+    }
+
     pub fn paste(&self) {
         let columns = self.state.columns.borrow();
         let depth = paste_destination_depth(self.state.hovered_column.get(), columns.len());
@@ -805,6 +829,52 @@ impl BrowserView {
         }
         self.state.copy_entries(&entries);
         true
+    }
+
+    pub fn copy_selection_paths(&self) -> bool {
+        self.state.sync_mode_selection();
+        let entries = self.state.browser.selected_entries();
+        if entries.is_empty() {
+            if let Some(depth) = self.state.hovered_column.get().or_else(|| self.state.browser.active_depth()) {
+                if let Some(pos) = self.state.browser.active_child_position(depth) {
+                    if let Some(entry) = self.state.browser.entry_at(depth, pos) {
+                        copy_locations(&[entry]);
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+        copy_locations(&entries);
+        true
+    }
+
+    #[allow(dead_code)]
+    pub fn copy_selection_names(&self) -> bool {
+        self.state.sync_mode_selection();
+        let entries = self.state.browser.selected_entries();
+        let text = if entries.is_empty() {
+            if let Some(depth) = self.state.hovered_column.get().or_else(|| self.state.browser.active_depth()) {
+                if let Some(pos) = self.state.browser.active_child_position(depth) {
+                    if let Some(entry) = self.state.browser.entry_at(depth, pos) {
+                        entry.display_name.clone()
+                    } else {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        } else {
+            entries.iter().map(|e| e.display_name.clone()).collect::<Vec<_>>().join("\n")
+        };
+        if let Some(display) = gtk::gdk::Display::default() {
+            display.clipboard().set_text(&text);
+            return true;
+        }
+        false
     }
 
     pub fn cut_selection(&self) -> bool {
@@ -2895,12 +2965,138 @@ impl ViewState {
                 button.set_tooltip_text(Some(&crumb.display_path()));
                 button.set_cursor_from_name(Some("pointer"));
                 let weak = Rc::downgrade(self);
+                let nav_crumb = crumb.clone();
                 button.connect_clicked(move |_| {
                     if let Some(state) = weak.upgrade() {
-                        state.browser.navigate(crumb.clone());
+                        state.browser.navigate(nav_crumb.clone());
                     }
                 });
-                self.breadcrumbs.append(&button);
+
+                let breadcrumb_drop = gtk::DropTarget::new(
+                    gtk::gdk::FileList::static_type(),
+                    gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE,
+                );
+                let weak_drop = Rc::downgrade(self);
+                let target_crumb = crumb.clone();
+                breadcrumb_drop.connect_enter(|target, _, _| {
+                    if let Some(btn) = target.widget() {
+                        btn.add_css_class("drop-destination");
+                    }
+                    file_drop_action(target)
+                });
+                breadcrumb_drop.connect_motion(|target, _, _| {
+                    if let Some(btn) = target.widget() {
+                        btn.add_css_class("drop-destination");
+                    }
+                    file_drop_action(target)
+                });
+                breadcrumb_drop.connect_leave(|target| {
+                    if let Some(btn) = target.widget() {
+                        btn.remove_css_class("drop-destination");
+                    }
+                });
+                breadcrumb_drop.connect_drop(move |target, value, _, _| {
+                    if let Some(btn) = target.widget() {
+                        btn.remove_css_class("drop-destination");
+                    }
+                    let Some(state) = weak_drop.upgrade() else {
+                        return false;
+                    };
+                    transfer_dropped_files(&state, target, value, target_crumb.clone())
+                });
+                button.add_controller(breadcrumb_drop);
+
+                let segment = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                segment.add_css_class("breadcrumb-segment");
+                segment.append(&button);
+
+                if let Some(native_parent) = crumb.parent().and_then(|p| p.native_path().map(|np| np.to_path_buf())) {
+                    let chevron = gtk::Button::builder()
+                        .has_frame(false)
+                        .tooltip_text("Sibling folders")
+                        .build();
+                        chevron.set_cursor_from_name(Some("pointer"));
+                        chevron.add_css_class("breadcrumb-chevron");
+                        let chevron_icon = crate::assets::primary_icon(crate::assets::icons::CHEVRON_DOWN, 10);
+                        chevron.set_child(Some(&chevron_icon));
+
+                        let weak_nav = Rc::downgrade(self);
+                        let chevron_crumb = crumb.clone();
+                        chevron.connect_clicked(move |btn| {
+                            let Some(state) = weak_nav.upgrade() else {
+                                return;
+                            };
+                            let popover = gtk::Popover::builder()
+                                .autohide(true)
+                                .has_arrow(true)
+                                .build();
+                            popover.add_css_class("breadcrumb-popover");
+                            popover.set_parent(btn);
+
+                            let menu_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+                            menu_box.add_css_class("breadcrumb-dropdown-menu");
+                            let scroller = gtk::ScrolledWindow::builder()
+                                .child(&menu_box)
+                                .max_content_height(280)
+                                .propagate_natural_height(true)
+                                .hscrollbar_policy(gtk::PolicyType::Never)
+                                .vscrollbar_policy(gtk::PolicyType::Automatic)
+                                .build();
+                            popover.set_child(Some(&scroller));
+
+                            if let Ok(entries) = std::fs::read_dir(&native_parent) {
+                                let mut dirs = Vec::new();
+                                for entry in entries.flatten() {
+                                    if let Ok(ft) = entry.file_type() {
+                                        if ft.is_dir() {
+                                            let name = entry.file_name().to_string_lossy().to_string();
+                                            if !name.starts_with('.') {
+                                                dirs.push((name, entry.path()));
+                                            }
+                                        }
+                                    }
+                                }
+                                dirs.sort_by(|a, b| {
+                                    crate::app::music_order::natural_name(&a.0, &b.0)
+                                });
+
+                                let weak_pop = popover.downgrade();
+                                let weak_browser = Rc::downgrade(&state.browser);
+                                for (name, path) in dirs {
+                                    let item = gtk::Button::builder()
+                                        .has_frame(false)
+                                        .build();
+                                    item.set_cursor_from_name(Some("pointer"));
+                                    item.add_css_class("breadcrumb-dropdown-item");
+                                    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                                    let icon = crate::assets::primary_icon(crate::assets::icons::FOLDER, 14);
+                                    let label = gtk::Label::new(Some(&name));
+                                    label.set_xalign(0.0);
+                                    row.append(&icon);
+                                    row.append(&label);
+                                    item.set_child(Some(&row));
+                                    if path == chevron_crumb.native_path().unwrap_or(Path::new("")) {
+                                        item.add_css_class("current-sibling");
+                                    }
+                                    let weak_p = weak_pop.clone();
+                                    let weak_b = weak_browser.clone();
+                                    let target_loc = Location::local(path);
+                                    item.connect_clicked(move |_| {
+                                        if let Some(p) = weak_p.upgrade() {
+                                            p.popdown();
+                                        }
+                                        if let Some(b) = weak_b.upgrade() {
+                                            b.navigate(target_loc.clone());
+                                        }
+                                    });
+                                    menu_box.append(&item);
+                                }
+                            }
+                            popover.popup();
+                        });
+                        segment.append(&chevron);
+                    }
+                self.breadcrumbs.append(&segment);
             }
         }
         self.location_stack.set_visible_child_name("breadcrumbs");
@@ -3547,7 +3743,7 @@ impl ViewState {
             let dragged_item = item.downgrade();
             let source_for_drag = source_for_hover.clone();
             let filtered_for_drag = filtered_for_hover.clone();
-            drag.connect_prepare(move |source, x, y| {
+            drag.connect_prepare(move |source, _x, _y| {
                 let dragged_item = dragged_item.upgrade()?;
                 let state = weak_state_for_drag.upgrade()?;
                 let source_position = source_position_for_filtered(
@@ -3563,10 +3759,9 @@ impl ViewState {
                 {
                     selected
                 } else {
-                    vec![entry]
+                    vec![entry.clone()]
                 };
-                let paintable = gtk::WidgetPaintable::new(source.widget().as_ref());
-                source.set_icon(Some(&paintable), x.round() as i32, y.round() as i32);
+                setup_drag_icon(source, &entry, entries.len());
                 file_drag_content(&entries)
             });
             drag.connect_drag_begin(|source, _| {
@@ -3585,8 +3780,23 @@ impl ViewState {
                 gtk::gdk::FileList::static_type(),
                 gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE,
             );
-            drop.connect_enter(|target, _, _| file_drop_action(target));
-            drop.connect_motion(|target, _, _| file_drop_action(target));
+            drop.connect_enter(|target, _, _| {
+                if let Some(row) = target.widget() {
+                    row.add_css_class("drop-destination");
+                }
+                file_drop_action(target)
+            });
+            drop.connect_motion(|target, _, _| {
+                if let Some(row) = target.widget() {
+                    row.add_css_class("drop-destination");
+                }
+                file_drop_action(target)
+            });
+            drop.connect_leave(|target| {
+                if let Some(row) = target.widget() {
+                    row.remove_css_class("drop-destination");
+                }
+            });
             let weak_state_for_accept = weak_state.clone();
             let accepted_item = item.downgrade();
             let source_for_accept = source_for_hover.clone();
@@ -3616,6 +3826,9 @@ impl ViewState {
             let source_for_drop = source_for_hover.clone();
             let filtered_for_drop = filtered_for_hover.clone();
             drop.connect_drop(move |target, value, _, _| {
+                if let Some(row) = target.widget() {
+                    row.remove_css_class("drop-destination");
+                }
                 let Some(dropped_item) = dropped_item.upgrade() else {
                     return false;
                 };
@@ -4581,6 +4794,57 @@ fn filtered_position_for_source(column: &ColumnView, source_position: usize) -> 
     deprecated,
     reason = "GTK 4.10 dialog replacement is unavailable in the supported runtime"
 )]
+pub(crate) fn show_new_file_dialog(browser: &Rc<Browser>, window: &gtk::Window, folder: Location) {
+    let dialog = gtk::Dialog::builder()
+        .transient_for(window)
+        .modal(true)
+        .title("New File")
+        .build();
+    dialog.add_css_class("drive-confirm-dialog");
+    let entry = gtk::Entry::builder()
+        .placeholder_text("File name")
+        .hexpand(true)
+        .build();
+    entry.add_css_class("inline-rename");
+    dialog.content_area().append(&entry);
+    let kind = gtk::ComboBoxText::new();
+    kind.append(Some("blank"), "Blank file");
+    kind.append(Some("text"), "Text file (.txt)");
+    kind.append(Some("markdown"), "Markdown (.md)");
+    kind.append(Some("json"), "JSON (.json)");
+    kind.set_active_id(Some("blank"));
+    dialog.content_area().append(&kind);
+    dialog.add_button("Cancel", gtk::ResponseType::Cancel);
+    let create = dialog.add_button("Create", gtk::ResponseType::Accept);
+    create.add_css_class("suggested-action");
+    let browser = browser.clone();
+    let dialog_entry = entry.clone();
+    let dialog_folder = folder;
+    let dialog_kind = kind.clone();
+    dialog.connect_response(move |dialog, response| {
+        if response == gtk::ResponseType::Accept {
+            let mut name = dialog_entry.text().to_string();
+            if !name.trim().is_empty() {
+                if !name.contains('.') {
+                    let suffix = match dialog_kind.active_id().as_deref() {
+                        Some("text") => Some(".txt"),
+                        Some("markdown") => Some(".md"),
+                        Some("json") => Some(".json"),
+                        _ => None,
+                    };
+                    if let Some(suffix) = suffix {
+                        name.push_str(suffix);
+                    }
+                }
+                browser.create_file(dialog_folder.clone(), name);
+            }
+        }
+        dialog.close();
+    });
+    dialog.present();
+    entry.grab_focus();
+}
+
 pub(super) fn install_folder_context_menu(
     state: &Rc<ViewState>,
     parent: &gtk::Widget,
@@ -4599,7 +4863,7 @@ pub(super) fn install_folder_context_menu(
     popover.add_css_class("folder-context-popover");
 
     let new_folder = item_context_option(crate::assets::icons::FOLDER, "New Folder", "Ctrl+Shift+N");
-    let new_file = item_context_option(crate::assets::icons::DOCUMENTS, "New File…", "");
+    let new_file = item_context_option(crate::assets::icons::DOCUMENTS, "New File…", "Ctrl+Alt+N");
     let paste = item_context_option(crate::assets::icons::COPY, "Paste", "Ctrl+V");
     let select_all = item_context_option(crate::assets::icons::CHECK, "Select All", "Ctrl+A");
     let invert_selection = item_context_option(crate::assets::icons::CHECK, "Invert Selection", "Ctrl+Shift+I");
@@ -4649,52 +4913,7 @@ pub(super) fn install_folder_context_menu(
             .and_then(|parent| parent.root()).and_downcast::<gtk::Window>() else {
             return;
         };
-        let dialog = gtk::Dialog::builder()
-            .transient_for(&window)
-            .modal(true)
-            .title("New File")
-            .build();
-        dialog.add_css_class("drive-confirm-dialog");
-        let entry = gtk::Entry::builder()
-            .placeholder_text("File name")
-            .hexpand(true)
-            .build();
-        entry.add_css_class("inline-rename");
-        dialog.content_area().append(&entry);
-        let kind = gtk::ComboBoxText::new();
-        kind.append(Some("blank"), "Blank file");
-        kind.append(Some("text"), "Text file (.txt)");
-        kind.append(Some("markdown"), "Markdown (.md)");
-        kind.append(Some("json"), "JSON (.json)");
-        kind.set_active_id(Some("blank"));
-        dialog.content_area().append(&kind);
-        dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-        let create = dialog.add_button("Create", gtk::ResponseType::Accept);
-        create.add_css_class("suggested-action");
-        let browser = state.browser.clone();
-        let dialog_entry = entry.clone();
-        let dialog_folder = file_folder.clone();
-        let dialog_kind = kind.clone();
-        dialog.connect_response(move |dialog, response| {
-            if response == gtk::ResponseType::Accept {
-                let mut name = dialog_entry.text().to_string();
-                if !name.contains('.') {
-                    let suffix = match dialog_kind.active_id().as_deref() {
-                        Some("text") => Some(".txt"),
-                        Some("markdown") => Some(".md"),
-                        Some("json") => Some(".json"),
-                        _ => None,
-                    };
-                    if let Some(suffix) = suffix {
-                        name.push_str(suffix);
-                    }
-                }
-                browser.create_file(dialog_folder.clone(), name);
-            }
-            dialog.close();
-        });
-        dialog.present();
-        entry.grab_focus();
+        show_new_file_dialog(&state.browser, &window, file_folder.clone());
     });
     let weak = Rc::downgrade(state);
     let folder = location.clone();
@@ -4932,7 +5151,8 @@ pub(super) fn install_item_context_menu(
     let restore = item_context_option(crate::assets::icons::FOLDER, "Restore", "");
     restore.set_visible(in_trash);
     let pin = item_context_option(crate::assets::icons::PIN, "Pin to sidebar", "P");
-    let copy_path = item_context_option(crate::assets::icons::COPY, "Copy location", "Y");
+    let copy_path = item_context_option(crate::assets::icons::COPY, "Copy path", "Ctrl+Shift+C");
+    let copy_name = item_context_option(crate::assets::icons::COPY, "Copy filename", "");
     let move_to = item_context_option(crate::assets::icons::FOLDER, "Move to…", "");
     let copy_to = item_context_option(crate::assets::icons::COPY, "Copy to…", "");
     let rename = item_context_option(crate::assets::icons::PENCIL, "Rename", "F2");
@@ -4962,6 +5182,7 @@ pub(super) fn install_item_context_menu(
     single.append(&open_terminal);
     single.append(&paste_folder);
     single.append(&copy_path);
+    single.append(&copy_name);
     single.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
     single.append(&rename);
     single.append(&pin);
@@ -5178,8 +5399,35 @@ pub(super) fn install_item_context_menu(
         let Some((_, entry)) = copy_target.borrow().clone() else {
             return;
         };
-        if weak.upgrade().is_some() {
-            copy_locations(&[entry]);
+        if let Some(state) = weak.upgrade() {
+            let selected = state.browser.selected_entries();
+            if selected.is_empty() {
+                copy_locations(&[entry]);
+            } else {
+                copy_locations(&selected);
+            }
+        }
+    });
+    let weak = Rc::downgrade(state);
+    let copy_name_target = target.clone();
+    let copy_name_popover = popover.downgrade();
+    copy_name.connect_clicked(move |_| {
+        if let Some(popover) = copy_name_popover.upgrade() {
+            popover.popdown();
+        }
+        let Some((_, entry)) = copy_name_target.borrow().clone() else {
+            return;
+        };
+        if let Some(state) = weak.upgrade() {
+            let selected = state.browser.selected_entries();
+            let text = if selected.is_empty() {
+                entry.display_name.clone()
+            } else {
+                selected.iter().map(|e| e.display_name.clone()).collect::<Vec<_>>().join("\n")
+            };
+            if let Some(display) = gtk::gdk::Display::default() {
+                display.clipboard().set_text(&text);
+            }
         }
     });
     let weak = Rc::downgrade(state);
@@ -6342,7 +6590,7 @@ pub(super) fn location_for_gio_file(file: &gio::File) -> Location {
         .unwrap_or_else(|| Location::uri(file.uri().as_str()))
 }
 
-pub(super) fn file_drag_content(entries: &[FileEntry]) -> Option<gtk::gdk::ContentProvider> {
+pub(crate) fn file_drag_content(entries: &[FileEntry]) -> Option<gtk::gdk::ContentProvider> {
     let files = entries
         .iter()
         .map(|entry| gio_file_for_location(&entry.location))
@@ -6363,6 +6611,36 @@ pub(super) fn file_drag_content(entries: &[FileEntry]) -> Option<gtk::gdk::Conte
         &glib::Bytes::from_owned(uri_list.into_bytes()),
     );
     Some(gtk::gdk::ContentProvider::new_union(&[file_list, uri_list]))
+}
+
+pub(crate) fn setup_drag_icon(
+    source: &gtk::DragSource,
+    entry: &FileEntry,
+    count: usize,
+) {
+    let card = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    card.add_css_class("drag-icon-badge");
+    card.set_size_request(44, 44);
+    card.set_halign(gtk::Align::Center);
+    card.set_valign(gtk::Align::Center);
+
+    let overlay = gtk::Overlay::new();
+    let icon = crate::assets::primary_icon(entry_icon(entry), 24);
+    icon.set_halign(gtk::Align::Center);
+    icon.set_valign(gtk::Align::Center);
+    overlay.set_child(Some(&icon));
+
+    if count > 1 {
+        let badge = gtk::Label::new(Some(&count.to_string()));
+        badge.add_css_class("drag-count-badge");
+        badge.set_halign(gtk::Align::End);
+        badge.set_valign(gtk::Align::Start);
+        overlay.add_overlay(&badge);
+    }
+
+    card.append(&overlay);
+    let paintable = gtk::WidgetPaintable::new(Some(&card));
+    source.set_icon(Some(&paintable), 22, 22);
 }
 
 fn copy_locations(entries: &[FileEntry]) {

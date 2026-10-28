@@ -4,6 +4,7 @@
   border: 1px solid @theme_border;
   border-radius: 6px;
   padding: 12px;
+  transition: opacity 160ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 .hermes-hover-card .hover-filename {
@@ -5305,4 +5306,199 @@ button.music-cover-button:focus-visible {
 .hermes-picker .picker-preview-stage {
   background: @theme_bg;
   padding: 16px 12px;
+}
+
+/* Breadcrumb sibling popover and drop destinations */
+.breadcrumb-segment {
+  border-radius: 4px;
+}
+
+.breadcrumb-segment.drop-destination,
+.breadcrumb.drop-destination {
+  background: alpha(@theme_highlight, 0.85);
+  outline: 2px solid @theme_accent;
+  outline-offset: -1px;
+  border-radius: 4px;
+}
+
+.breadcrumb-chevron {
+  background: transparent;
+  color: @theme_dim_text;
+  min-height: 20px;
+  min-width: 16px;
+  padding: 1px 2px;
+  margin-left: -2px;
+  border-radius: 3px;
+  opacity: 0.6;
+}
+
+.breadcrumb-chevron:hover {
+  background: alpha(@theme_muted, 0.62);
+  color: @theme_accent;
+  opacity: 1;
+}
+
+.breadcrumb-popover {
+  background: @theme_surface;
+  border: 1px solid @theme_border;
+  border-radius: 6px;
+  padding: 4px;
+}
+
+.breadcrumb-dropdown-menu {
+  background: @theme_surface;
+  padding: 4px;
+}
+
+.breadcrumb-dropdown-item {
+  background: transparent;
+  color: @theme_text;
+  border-radius: 4px;
+  padding: 4px 8px;
+  min-height: 26px;
+  font-size: 12px;
+}
+
+.breadcrumb-dropdown-item:hover {
+  background: alpha(@theme_muted, 0.72);
+  color: @theme_accent;
+}
+
+.breadcrumb-dropdown-item.current-sibling {
+  color: @theme_accent;
+  font-weight: 600;
+  background: alpha(@theme_highlight, 0.5);
+}
+
+/* Drag icon badge and drop targets */
+.drag-icon-badge {
+  background: @theme_surface;
+  border: 1px solid @theme_border;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.drag-count-badge {
+  background: @theme_accent;
+  color: @theme_on_accent;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 9px;
+  padding: 1px 5px;
+  min-width: 14px;
+  text-align: center;
+}
+
+.column-row.drop-destination,
+.row.drop-destination,
+.grid-card.drop-destination,
+.file-grid > child.drop-destination .grid-card,
+.sidebar-row.drop-destination,
+.sidebar-place.drop-destination {
+  background: alpha(@theme_highlight, 0.85);
+  outline: 2px solid @theme_accent;
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+
+.preview-content.dragging,
+.preview-stage.dragging {
+  opacity: 0.65;
+}
+
+/* Removable drive sidebar eject button */
+.sidebar-eject-btn {
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  padding: 2px 4px;
+  margin-right: 2px;
+  opacity: 0.6;
+  color: @theme_dim_text;
+}
+
+.sidebar-eject-btn:hover {
+  opacity: 1.0;
+  color: @theme_accent;
+  background: alpha(@theme_muted, 0.6);
+}
+
+.sidebar-eject-btn:active {
+  background: @theme_highlight;
+  color: @theme_accent;
+}
+
+.sidebar-eject-btn.busy {
+  opacity: 0.35;
+}
+
+/* Status bar view switcher and rich stats */
+.status-bar {
+  background: @theme_surface;
+  border-top: 1px solid alpha(@theme_border, 0.6);
+  padding: 4px 12px;
+  min-height: 30px;
+  font-size: 11px;
+  color: @theme_dim_text;
+}
+
+.status-item-count,
+.status-selection-info,
+.status-free-space {
+  color: @theme_dim_text;
+}
+
+.status-selection-info {
+  color: @theme_text;
+  font-weight: 500;
+}
+
+.status-view-switcher {
+  background: alpha(@theme_muted, 0.35);
+  border: 1px solid alpha(@theme_border, 0.4);
+  border-radius: 5px;
+  padding: 1px;
+}
+
+.status-mode-btn {
+  background: transparent;
+  color: @theme_dim_text;
+  border: none;
+  border-radius: 4px;
+  padding: 2px 6px;
+  min-height: 22px;
+  min-width: 22px;
+  font-size: 11px;
+}
+
+.status-mode-btn:hover {
+  background: alpha(@theme_muted, 0.6);
+  color: @theme_text;
+}
+
+.status-mode-btn.active {
+  background: @theme_highlight;
+  color: @theme_accent;
+  font-weight: 600;
+}
+
+.status-density-pill {
+  background: transparent;
+  border: 1px solid alpha(@theme_border, 0.4);
+  border-radius: 4px;
+  padding: 2px 8px;
+  min-height: 22px;
+}
+
+.status-density-pill:hover {
+  background: alpha(@theme_muted, 0.6);
+}
+
+.status-density-label {
+  font-size: 11px;
+  color: @theme_dim_text;
+}
+
+.status-density-pill:hover .status-density-label {
+  color: @theme_text;
 }

@@ -1306,6 +1306,7 @@ fn test_duplicate_collision_safe_naming() {
 }
 
 #[test]
+#[ignore = "Requires an isolated GTK display; exercises BrowserView density CSS"]
 fn test_step_density_and_reset_density_updates_overlay_css() {
     if gtk::init().is_err() {
         return;
@@ -1338,6 +1339,7 @@ fn test_step_density_and_reset_density_updates_overlay_css() {
 }
 
 #[test]
+#[ignore = "Requires an isolated GTK display; exercises BrowserView context menu trigger"]
 fn test_show_context_menu_registered_trigger() {
     if gtk::init().is_err() {
         return;

@@ -1,6 +1,39 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Keyboard context menus, natural & extension sorting, zoom & density controls, and tab reopening — 2026-10-27 (current)
+## Drag & drop parity, breadcrumb sibling dropdowns, sidebar eject, and status bar polish — 2026-10-27 (current)
+
+- Branch: `feat/6-drag-drop-and-status-bar-polish` (branched off `feat/6-sorting-zoom-and-keyboard-context-menu` commit `cb2dd47`).
+- Drag & Drop Parity with Strata (`src/ui/preview.rs`, `src/ui/preview/image.rs`, `src/ui/browser.rs`, `src/ui/browser_modes.rs`, `src/style.css`):
+  - Drag directly from Preview Drawer: attached `gtk::DragSource` to `PreviewDrawer.content` and `ImagePreview.scroll`, wired with `file_drag_content` and `setup_drag_icon`. Users can grab documents, images, and media directly from the preview pane and drop them into folders, sidebar destinations, or external applications.
+  - Compact drag icon badge (`setup_drag_icon`): replaced full-widget paintable with a 44x44 card containing the Lucide file entry icon and multi-item count badge overlay, avoiding oversized drag shadows.
+  - Visual drop target highlights (`.drop-destination`): wired `connect_enter`, `connect_motion`, and `connect_leave` on column rows, grid cards, explorer rows, breadcrumb buttons, and sidebar places with theme-consistent accent outline (`outline: 2px solid @theme_accent; background: alpha(@theme_highlight, 0.85);`).
+- Breadcrumb Sibling Dropdown Popover Navigation & Ancestor Drop Target (`src/ui/browser.rs`, `src/style.css`):
+  - Intermediate breadcrumb segments include an ancestor drop target (`DropTarget`) and a `breadcrumb-chevron` button (`strata-chevron-down`).
+  - Clicking the chevron opens a popover listing sorted sibling directories with natural name ordering, highlighting the active folder and navigating directly on click.
+- Hover Preview Debounce & Fluid Transition (`src/ui/browser.rs`, `src/style.css`):
+  - Tuned `PeekBehavior.open_delay` from 180ms to 250ms for deliberate, non-distracting hover peeks.
+  - Added fluid opacity transition (`transition: opacity 160ms cubic-bezier(0.2, 0, 0, 1)`) to `.hermes-hover-card`.
+- Status Bar Rich Stats, View Mode Switcher & Density Pill (`src/ui/status_bar.rs`, `src/ui/status_bar/tests.rs`, `src/ui/window.rs`, `src/style.css`):
+  - Rich stats: displays item count and total folder size when unselected (`142 items (2.4 GB)`), selection count and byte size when selected (`2 selected, 1.4 MB`), and free disk space (`500 GB free`).
+  - View mode switcher pills: embedded `[ Columns | Grid | List ]` mode buttons in status bar with live two-way sync with toolbar and window actions.
+  - Density & zoom pill: interactive status pill showing current density ("Compact" / "Airy") or thumbnail size ("Grid") with click-to-cycle zoom handler.
+- Removable Drive Inline Eject Button (`src/ui/window.rs`, `src/assets.rs`, `data/strata.gresource.xml`, `src/style.css`):
+  - Inline eject icon button (`strata-eject` from Lucide) appended to volume sidebar row.
+  - Supports 1-click asynchronous unmount/eject with busy feedback and user error dialog if unmount fails.
+- Shortcuts & Context Menu Additions (`src/ui/browser.rs`, `src/ui/window.rs`, `src/ui/shortcuts.rs`):
+  - "New Empty File…" (`Ctrl+Alt+N`) global shortcut and modal creation dialog.
+  - "Copy Path" (`Ctrl+Shift+C`) and "Copy Filename" in context menus and global shortcut.
+  - Registered in cheatsheet overlay (`src/ui/shortcuts.rs`).
+- Theming & Icons:
+  - Bundled Lucide icons `strata-chevron-down.svg` and `strata-eject.svg` registered in GResource and `assets.rs`.
+  - All visual states styled with semantic `@theme_*` variables without static hex/RGB colors.
+- Verification & Test Coverage:
+  - `cargo check --all-targets`: 0 errors, 0 warnings.
+  - Unit tests: 1,044 passed (`cargo test --bin hermes -- --test-threads=1`).
+  - E2E tests: 165 passed (`cargo test --test e2e_tests`).
+  - Built `--release` binary and installed to `~/.local/bin/hermes`.
+
+## Keyboard context menus, natural & extension sorting, zoom & density controls, and tab reopening — 2026-10-27
 
 - Branch: `feat/6-sorting-zoom-and-keyboard-context-menu` (branched off `feat/6-desktop-workflow-parity-and-properties` commit `46fbf6f`).
 - Keyboard Context Menu (`src/ui/browser.rs`, `src/ui/window.rs`, `src/ui/shortcuts.rs`):
