@@ -933,6 +933,9 @@ fn present_target(
             "close_tab" => {
                 cmd_tab_bar.close_active();
             }
+            "reopen_tab" | "restore_tab" => {
+                cmd_tab_bar.reopen_closed_tab();
+            }
             "empty_trash" => {
                 cmd_sidebar.view.confirm_empty_trash();
             }
@@ -960,7 +963,11 @@ fn present_target(
             return glib::Propagation::Proceed;
         }
         if matches!(key, gtk::gdk::Key::t | gtk::gdk::Key::T) {
-            shortcut_tabs.new_tab();
+            if modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK) {
+                shortcut_tabs.reopen_closed_tab();
+            } else {
+                shortcut_tabs.new_tab();
+            }
             return glib::Propagation::Stop;
         }
         if matches!(key, gtk::gdk::Key::w | gtk::gdk::Key::W) {
@@ -1324,6 +1331,34 @@ fn install_keyboard_navigation(
         let is_ctrl_alt_t = control && alt && !shift && matches!(key, gtk::gdk::Key::t | gtk::gdk::Key::T);
         if (is_f4 || is_ctrl_alt_t) && !view.filter_has_focus() {
             view.open_terminal();
+            return glib::Propagation::Stop;
+        }
+        let is_menu_key = key == gtk::gdk::Key::Menu
+            || (key == gtk::gdk::Key::F10 && shift && !control && !alt);
+        if is_menu_key && !view.filter_has_focus() {
+            if view.show_context_menu() {
+                return glib::Propagation::Stop;
+            }
+        }
+        if control && !alt && (key == gtk::gdk::Key::plus || key == gtk::gdk::Key::equal || key == gtk::gdk::Key::KP_Add) {
+            view.step_density(1);
+            if let Err(error) = trails.update_active_view(capture_view()) {
+                tracing::warn!(%error, "unable to save Trail density state");
+            }
+            return glib::Propagation::Stop;
+        }
+        if control && !alt && (key == gtk::gdk::Key::minus || key == gtk::gdk::Key::KP_Subtract) {
+            view.step_density(-1);
+            if let Err(error) = trails.update_active_view(capture_view()) {
+                tracing::warn!(%error, "unable to save Trail density state");
+            }
+            return glib::Propagation::Stop;
+        }
+        if control && !alt && (key == gtk::gdk::Key::_0 || key == gtk::gdk::Key::KP_0) {
+            view.reset_density();
+            if let Err(error) = trails.update_active_view(capture_view()) {
+                tracing::warn!(%error, "unable to save Trail density state");
+            }
             return glib::Propagation::Stop;
         }
         if control && key == gtk::gdk::Key::h {

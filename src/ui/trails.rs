@@ -23,6 +23,7 @@ pub struct TabBar {
     activate_tab: Rc<dyn Fn(Trail)>,
     rendered: RefCell<Vec<(TabPresentation, gtk::Box)>>,
     rendered_active: RefCell<Option<TrailId>>,
+    closed_tabs: RefCell<Vec<Trail>>,
 }
 
 struct TabPresentation {
@@ -81,6 +82,7 @@ impl TabBar {
             activate_tab,
             rendered: RefCell::new(Vec::new()),
             rendered_active: RefCell::new(None),
+            closed_tabs: RefCell::new(Vec::new()),
         });
         let weak = Rc::downgrade(&tab_bar);
         tab_bar.new_button.connect_clicked(move |_| {
@@ -129,6 +131,25 @@ impl TabBar {
             return;
         };
         self.close_tab(&active);
+    }
+
+    pub fn reopen_closed_tab(self: &Rc<Self>) {
+        let Some(reopened) = self.closed_tabs.borrow_mut().pop() else {
+            return;
+        };
+        let Some(location) = reopened.active_location().cloned() else {
+            return;
+        };
+        let view_state = reopened.view.clone();
+        match self.trails.create(reopened.name.clone(), location, view_state) {
+            Ok(id) => {
+                if let Some(tab) = self.trails.all().into_iter().find(|tab| tab.id == id) {
+                    (self.activate_tab)(tab);
+                }
+            }
+            Err(error) => tracing::warn!(%error, "unable to reopen tab"),
+        }
+        self.refresh();
     }
 
     pub fn cycle(self: &Rc<Self>, offset: isize) {
@@ -351,6 +372,13 @@ impl TabBar {
     }
 
     fn close_tab(self: &Rc<Self>, id: &TrailId) {
+        if let Some(closed) = self.trails.all().into_iter().find(|t| &t.id == id) {
+            let mut stack = self.closed_tabs.borrow_mut();
+            if stack.len() >= 20 {
+                stack.remove(0);
+            }
+            stack.push(closed);
+        }
         match self.trails.close(id) {
             Ok(Some(tab)) => (self.activate_tab)(tab),
             Ok(None) => {}

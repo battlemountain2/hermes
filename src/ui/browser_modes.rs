@@ -199,6 +199,7 @@ struct Pane {
     filter_entry: Option<gtk::Entry>,
     filter_button: Option<gtk::ToggleButton>,
     new_folder_placeholder: Option<gtk::StringList>,
+    thumbnail_scale: Option<gtk::Scale>,
 }
 
 pub struct ModeViews {
@@ -585,6 +586,38 @@ impl ModeViews {
                 BrowserDensity::Airy => "density-airy",
             });
         }
+    }
+
+    pub fn step_zoom(&mut self, direction: i32) {
+        if self.mode == BrowserMode::Grid {
+            if let Some(pane) = self.grid_panes.last() {
+                if let Some(scale) = &pane.thumbnail_scale {
+                    let current = scale.value();
+                    let new_val = (current + direction as f64)
+                        .clamp(0.0, (GRID_THUMBNAIL_SIZES.len() - 1) as f64);
+                    scale.set_value(new_val);
+                    return;
+                }
+            }
+        }
+        let new_density = if direction > 0 {
+            BrowserDensity::Airy
+        } else {
+            BrowserDensity::Compact
+        };
+        self.set_density(new_density);
+    }
+
+    pub fn reset_zoom(&mut self) {
+        if self.mode == BrowserMode::Grid {
+            if let Some(pane) = self.grid_panes.last() {
+                if let Some(scale) = &pane.thumbnail_scale {
+                    let default_idx = thumbnail_size_index(DEFAULT_GRID_THUMBNAIL_SIZE);
+                    scale.set_value(default_idx as f64);
+                }
+            }
+        }
+        self.set_density(BrowserDensity::Compact);
     }
 
     pub fn handle(&mut self, event: &BrowserEvent) {
@@ -1426,6 +1459,7 @@ fn build_grid_pane(
         filter_entry: Some(controls.filter_entry),
         filter_button: Some(controls.filter_button),
         new_folder_placeholder: Some(new_folder_placeholder),
+        thumbnail_scale: Some(controls.thumbnail_scale),
     }
 }
 
@@ -1995,6 +2029,7 @@ fn build_explorer_pane(
         filter_entry: Some(filter_entry),
         filter_button: Some(filter_button),
         new_folder_placeholder: Some(new_folder_placeholder),
+        thumbnail_scale: None,
     }
 }
 

@@ -17,6 +17,7 @@ pub fn show_shortcuts_window(parent: &impl IsA<gtk::Window>) {
     let nav_group = gtk::ShortcutsGroup::builder().title("Navigation").build();
     add_shortcut(&nav_group, "New tab", "<Primary>t");
     add_shortcut(&nav_group, "Close tab", "<Primary>w");
+    add_shortcut(&nav_group, "Reopen closed tab", "<Primary><Shift>t");
     add_shortcut(&nav_group, "Switch to tab 1-9", "<Primary>1...9");
     add_shortcut(&nav_group, "Enclosing folder", "<Alt>Up");
     add_shortcut(&nav_group, "Back in history", "<Alt>Left");
@@ -32,6 +33,9 @@ pub fn show_shortcuts_window(parent: &impl IsA<gtk::Window>) {
     add_shortcut(&view_group, "Explorer view", "<Primary><Shift>3");
     add_shortcut(&view_group, "Toggle sidebar", "<Primary>b");
     add_shortcut(&view_group, "Preview / Quick Look", "space");
+    add_shortcut(&view_group, "Zoom in / Airy density", "<Primary>plus");
+    add_shortcut(&view_group, "Zoom out / Compact density", "<Primary>minus");
+    add_shortcut(&view_group, "Reset zoom & density", "<Primary>0");
     section.append(&view_group);
 
     // Search & Omnibar group
@@ -52,6 +56,8 @@ pub fn show_shortcuts_window(parent: &impl IsA<gtk::Window>) {
     add_shortcut(&ops_group, "New folder", "<Primary><Shift>n");
     add_shortcut(&ops_group, "Rename file or folder", "F2");
     add_shortcut(&ops_group, "Move to Trash", "Delete");
+    add_shortcut(&ops_group, "Context menu", "Menu");
+    add_shortcut(&ops_group, "Context menu (alternative)", "<Shift>F10");
     section.append(&ops_group);
 
     // General group

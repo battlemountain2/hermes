@@ -776,3 +776,67 @@ fn changing_sort_preferences_only_reorders_the_target_column() {
     assert_eq!(state.columns[0].entries[0].display_name, "a");
     assert_eq!(state.columns[1].entries[0].display_name, "z");
 }
+
+fn named_file_entry(path: &str, name: &str) -> FileEntry {
+    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner {
+        music_tags: None,
+        location: location(path),
+        native_name: OsString::from(name),
+        display_name: name.into(),
+        kind: EntryKind::File,
+        size: MetadataValue::Unknown,
+        modified_unix_seconds: MetadataValue::Unknown,
+    }))
+}
+
+#[test]
+fn natural_name_sorting_orders_numerals_and_groups_case_insensitively() {
+    let preferences = ViewPreferences {
+        sort_key: SortKey::Name,
+        sort_direction: SortDirection::Ascending,
+        ..ViewPreferences::default()
+    };
+    let mut entries = vec![
+        named_file_entry("/file10.txt", "file10.txt"),
+        named_file_entry("/file2.txt", "file2.txt"),
+        named_file_entry("/apple.txt", "apple.txt"),
+        named_file_entry("/Apple.txt", "Apple.txt"),
+        named_file_entry("/banana.txt", "banana.txt"),
+    ];
+    entries.sort_by(|left, right| compare_entries(left, right, preferences));
+    let names: Vec<&str> = entries.iter().map(|e| e.display_name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["Apple.txt", "apple.txt", "banana.txt", "file2.txt", "file10.txt"]
+    );
+}
+
+#[test]
+fn sort_by_type_groups_extensions_case_insensitively_with_natural_name_tie_breaker() {
+    let preferences = ViewPreferences {
+        sort_key: SortKey::Type,
+        sort_direction: SortDirection::Ascending,
+        ..ViewPreferences::default()
+    };
+    let mut entries = vec![
+        named_file_entry("/notes10.txt", "notes10.txt"),
+        named_file_entry("/track.flac", "track.flac"),
+        named_file_entry("/notes2.txt", "notes2.txt"),
+        named_file_entry("/image.png", "image.png"),
+        named_file_entry("/document.pdf", "document.pdf"),
+        named_file_entry("/code.rs", "code.rs"),
+    ];
+    entries.sort_by(|left, right| compare_entries(left, right, preferences));
+    let names: Vec<&str> = entries.iter().map(|e| e.display_name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec![
+            "track.flac",
+            "document.pdf",
+            "image.png",
+            "code.rs",
+            "notes2.txt",
+            "notes10.txt"
+        ]
+    );
+}

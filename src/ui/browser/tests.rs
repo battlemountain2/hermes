@@ -1304,3 +1304,60 @@ fn test_duplicate_collision_safe_naming() {
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_step_density_and_reset_density_updates_overlay_css() {
+    if gtk::init().is_err() {
+        return;
+    }
+    let view = BrowserView::new(
+        Rc::new(crate::adapters::LocalFileSource),
+        PeekBehavior::default(),
+    );
+    assert_eq!(view.density(), BrowserDensity::Compact);
+    assert!(view.state.overlay.has_css_class("density-compact"));
+
+    // Step up (zoom in / Airy)
+    view.step_density(1);
+    assert_eq!(view.density(), BrowserDensity::Airy);
+    assert!(view.state.overlay.has_css_class("density-airy"));
+    assert!(!view.state.overlay.has_css_class("density-compact"));
+
+    // Step down (zoom out / Compact)
+    view.step_density(-1);
+    assert_eq!(view.density(), BrowserDensity::Compact);
+    assert!(view.state.overlay.has_css_class("density-compact"));
+    assert!(!view.state.overlay.has_css_class("density-airy"));
+
+    // Reset density
+    view.step_density(1);
+    assert_eq!(view.density(), BrowserDensity::Airy);
+    view.reset_density();
+    assert_eq!(view.density(), BrowserDensity::Compact);
+    assert!(view.state.overlay.has_css_class("density-compact"));
+}
+
+#[test]
+fn test_show_context_menu_registered_trigger() {
+    if gtk::init().is_err() {
+        return;
+    }
+    let view = BrowserView::new(
+        Rc::new(crate::adapters::LocalFileSource),
+        PeekBehavior::default(),
+    );
+    // When no context menu is active, returns false gracefully
+    assert!(!view.show_context_menu());
+
+    // Register a mock trigger and verify invocation
+    let triggered = Rc::new(Cell::new(false));
+    let t = triggered.clone();
+    view.state
+        .active_context_menu
+        .replace(Some(Rc::new(move || {
+            t.set(true);
+            true
+        })));
+    assert!(view.show_context_menu());
+    assert!(triggered.get());
+}

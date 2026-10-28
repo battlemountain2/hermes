@@ -976,9 +976,26 @@ pub(super) fn compare_entries(left: &FileEntry, right: &FileEntry, preferences: 
     }
 
     let ordering = match preferences.sort_key {
-        SortKey::Name => left.display_name.cmp(&right.display_name),
+        SortKey::Name => super::music_order::natural_name(&left.display_name, &right.display_name),
         SortKey::Track => super::music_order::compare_tracks(left, right),
-        SortKey::Type => left.kind.cmp(&right.kind),
+        SortKey::Type => {
+            let kind_order = left.kind.cmp(&right.kind);
+            if kind_order != Ordering::Equal {
+                kind_order
+            } else {
+                let left_ext = std::path::Path::new(&left.display_name)
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| ext.to_lowercase());
+                let right_ext = std::path::Path::new(&right.display_name)
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| ext.to_lowercase());
+                left_ext
+                    .cmp(&right_ext)
+                    .then_with(|| super::music_order::natural_name(&left.display_name, &right.display_name))
+            }
+        }
         SortKey::Size => compare_metadata(&left.size, &right.size),
         SortKey::Modified => {
             compare_metadata(&left.modified_unix_seconds, &right.modified_unix_seconds)
@@ -989,7 +1006,7 @@ pub(super) fn compare_entries(left: &FileEntry, right: &FileEntry, preferences: 
         SortDirection::Descending => ordering.reverse(),
     };
     ordering
-        .then_with(|| left.display_name.cmp(&right.display_name))
+        .then_with(|| super::music_order::natural_name(&left.display_name, &right.display_name))
         .then_with(|| left.location.compare(&right.location))
 }
 

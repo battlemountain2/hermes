@@ -105,7 +105,7 @@ fn filename_track(name: &str) -> Option<u32> {
         .filter(|number| *number > 0 && *number <= 1_000_000)
 }
 
-fn natural_name(left: &str, right: &str) -> Ordering {
+pub(crate) fn natural_name(left: &str, right: &str) -> Ordering {
     let left_lower = left.to_lowercase();
     let right_lower = right.to_lowercase();
     let mut left_chars = left_lower.chars().peekable();

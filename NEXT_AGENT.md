@@ -1,6 +1,34 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Desktop workflow parity: Terminal, duplicate, invert selection, properties & continuous preview — 2026-10-27 (current)
+## Keyboard context menus, natural & extension sorting, zoom & density controls, and tab reopening — 2026-10-27 (current)
+
+- Branch: `feat/6-sorting-zoom-and-keyboard-context-menu` (branched off `feat/6-desktop-workflow-parity-and-properties` commit `46fbf6f`).
+- Keyboard Context Menu (`src/ui/browser.rs`, `src/ui/window.rs`, `src/ui/shortcuts.rs`):
+  - Accessible context menu invocation: `Menu` key or `Shift+F10` opens context menu on the active item, multiple selection, or directory background without touching the mouse.
+  - Positioned cleanly with GTK popover anchors without cursor coordinates; registered directly on pane widgets and globally in `window.rs`.
+- Natural & Case-Insensitive Name Sorting (`src/app/music_order.rs`, `src/app/navigation.rs`, `src/app/navigation/tests.rs`):
+  - Alphanumeric natural ordering (`file2.txt` < `file10.txt`) with ASCII numeric chunk length and value comparison.
+  - Case-insensitive grouping (`Apple.txt` and `apple.txt` sorted together before `banana.txt`), with deterministic case tie-breaking.
+  - Centralized in `compare_entries` for `SortKey::Name` and secondary tie-breakers.
+- Extension-Based "Sort by Type" (`src/app/navigation.rs`, `src/app/navigation/tests.rs`):
+  - Groups files by lowercase file extension (`.flac` < `.pdf` < `.png` < `.rs` < `.txt`), grouping files without extensions together.
+  - Tie-breaks matching extensions with natural name sorting.
+- Zoom & Density Controls (`src/ui/browser_modes.rs`, `src/ui/browser.rs`, `src/ui/window.rs`, `src/ui/shortcuts.rs`):
+  - Mouse wheel: `Ctrl + Scroll` vertical wheel over view overlay zooms in (scroll up) and zooms out (scroll down) smoothly without vertical jumping.
+  - Keyboard shortcuts: `Ctrl++` / `Ctrl+=` (zoom in), `Ctrl+-` (zoom out), `Ctrl+0` (reset density and zoom).
+  - Multi-mode adaptation: in Grid mode, steps thumbnail size slider across `[48, 64, 80, 96, 128, 160, 192, 256]` px; in Column and Explorer/List modes, steps density between `Compact` and `Airy`.
+- Reopen Closed Tab (`Ctrl+Shift+T`) (`src/ui/trails.rs`, `src/ui/trails/tests.rs`, `src/ui/window.rs`, `src/ui/shortcuts.rs`):
+  - Retains a stack of recently closed tabs (`closed_tabs: RefCell<Vec<Trail>>`, max 20).
+  - Restores the last closed tab with its exact location and view state upon `Ctrl+Shift+T` or Omnibar `"reopen_tab"` / `"restore_tab"`.
+- Strata Architecture & Speed Comparison:
+  - Preserved Strata's keyboard-first Miller columns, low-chroma styling, and virtualized list architecture.
+  - Surpasses upstream with 15ms 100k-item ordered batch merges, continuous preview navigation, rich multi-format sandboxed previews (Office, FLAC, HEIF, PDF), and 512 MiB SQLite catalog.
+- Verification & Test Coverage:
+  - Unit tests added: `natural_name_sorting_orders_numerals_and_groups_case_insensitively`, `sort_by_type_groups_extensions_case_insensitively_with_natural_name_tie_breaker`, `tab_bar_reopen_closed_tab_restores_last_closed_tab`, `test_step_density_and_reset_density_updates_overlay_css`, `test_show_context_menu_registered_trigger`.
+  - 1,048 unit tests pass, 165 `e2e_tests` pass, zero warnings on `cargo check --all-targets`.
+  - Built `--release` and installed to `~/.local/bin/hermes`.
+
+## Desktop workflow parity: Terminal, duplicate, invert selection, properties & continuous preview — 2026-10-27
 
 - Branch: `feat/6-desktop-workflow-parity-and-properties` (branched off `feat/6-per-folder-views-and-clipboard-interop` commit `ae6ede6`).
 - Open in Terminal (`src/ui/browser.rs`, `src/ui/window.rs`, `src/ui/search.rs`, `src/ui/shortcuts.rs`):

@@ -248,6 +248,7 @@ pub(super) struct ViewState {
     browser: Rc<Browser>,
     retained_tabs: RefCell<Vec<(TrailId, retained::Presentation)>>,
     pending_tab_view: Cell<Option<(BrowserMode, BrowserDensity)>>,
+    active_context_menu: RefCell<Option<Rc<dyn Fn() -> bool>>>,
 }
 
 #[derive(Clone)]
@@ -411,6 +412,7 @@ impl BrowserView {
             browser,
             retained_tabs: RefCell::new(Vec::new()),
             pending_tab_view: Cell::new(None),
+            active_context_menu: RefCell::new(None),
         });
 
         if let Some(display) = gtk::gdk::Display::default() {
@@ -455,7 +457,22 @@ impl BrowserView {
         let scroll_input = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
         scroll_input.set_propagation_phase(gtk::PropagationPhase::Capture);
         let scroll_state = Rc::downgrade(&state);
-        scroll_input.connect_scroll(move |_, _, _| {
+        scroll_input.connect_scroll(move |controller, _dx, dy| {
+            let modifiers = controller.current_event_state();
+            if modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK) && dy.abs() > 0.05 {
+                if let Some(state) = scroll_state.upgrade() {
+                    let direction = if dy < 0.0 { 1 } else { -1 };
+                    state.mode_views.borrow_mut().step_zoom(direction);
+                    let density = state.mode_views.borrow().density();
+                    state.overlay.remove_css_class("density-compact");
+                    state.overlay.remove_css_class("density-airy");
+                    state.overlay.add_css_class(match density {
+                        BrowserDensity::Compact => "density-compact",
+                        BrowserDensity::Airy => "density-airy",
+                    });
+                    return glib::Propagation::Stop;
+                }
+            }
             if let Some(state) = scroll_state.upgrade() {
                 state.horizontal_scroll_generation.set(state.horizontal_scroll_generation.get().wrapping_add(1));
             }
@@ -599,6 +616,32 @@ impl BrowserView {
             BrowserDensity::Compact => "density-compact",
             BrowserDensity::Airy => "density-airy",
         });
+    }
+
+    pub fn step_density(&self, direction: i32) {
+        self.state.mode_views.borrow_mut().step_zoom(direction);
+        let density = self.state.mode_views.borrow().density();
+        self.state.overlay.remove_css_class("density-compact");
+        self.state.overlay.remove_css_class("density-airy");
+        self.state.overlay.add_css_class(match density {
+            BrowserDensity::Compact => "density-compact",
+            BrowserDensity::Airy => "density-airy",
+        });
+    }
+
+    pub fn reset_density(&self) {
+        self.state.mode_views.borrow_mut().reset_zoom();
+        self.state.overlay.remove_css_class("density-compact");
+        self.state.overlay.remove_css_class("density-airy");
+        self.state.overlay.add_css_class("density-compact");
+    }
+
+    pub fn show_context_menu(&self) -> bool {
+        if let Some(trigger) = self.state.active_context_menu.borrow().as_ref() {
+            trigger()
+        } else {
+            false
+        }
     }
 
     pub fn density(&self) -> BrowserDensity {
@@ -4727,7 +4770,12 @@ pub(super) fn install_folder_context_menu(
 
     let menu_click = gtk::GestureClick::new();
     menu_click.set_button(3);
-    let selection = selection.clone();
+    let selection_for_click = selection.clone();
+    let location_for_click = location.clone();
+    let paste_for_click = paste.clone();
+    let select_all_for_click = select_all.clone();
+    let invert_for_click = invert_selection.clone();
+    let open_terminal_for_click = open_terminal.clone();
     let popover_for_click = popover.clone();
     menu_click.connect_pressed(move |gesture, _, x, y| {
         let over_item = gesture
@@ -4738,10 +4786,10 @@ pub(super) fn install_folder_context_menu(
             return;
         }
         gesture.set_state(gtk::EventSequenceState::Claimed);
-        paste.set_sensitive(clipboard_has_files());
-        select_all.set_sensitive(selection.n_items() > 0);
-        invert_selection.set_sensitive(selection.n_items() > 0);
-        open_terminal.set_sensitive(location.native_path().is_some());
+        paste_for_click.set_sensitive(clipboard_has_files());
+        select_all_for_click.set_sensitive(selection_for_click.n_items() > 0);
+        invert_for_click.set_sensitive(selection_for_click.n_items() > 0);
+        open_terminal_for_click.set_sensitive(location_for_click.native_path().is_some());
         if popover_for_click.parent().is_none()
             && let Some(parent) = gesture.widget()
         {
@@ -4756,6 +4804,36 @@ pub(super) fn install_folder_context_menu(
         popover_for_click.popup();
     });
     parent.add_controller(menu_click);
+
+    let folder_keys = gtk::EventControllerKey::new();
+    let popover_for_keys = popover.clone();
+    let selection_for_keys = selection.clone();
+    let location_for_keys = location.clone();
+    let paste_for_keys = paste.clone();
+    let select_all_for_keys = select_all.clone();
+    let invert_for_keys = invert_selection.clone();
+    let open_terminal_for_keys = open_terminal.clone();
+    folder_keys.connect_key_pressed(move |controller, key, _, modifiers| {
+        let is_menu = key == gtk::gdk::Key::Menu
+            || (key == gtk::gdk::Key::F10 && modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+        if is_menu && selection_for_keys.selection().is_empty() {
+            paste_for_keys.set_sensitive(clipboard_has_files());
+            select_all_for_keys.set_sensitive(selection_for_keys.n_items() > 0);
+            invert_for_keys.set_sensitive(selection_for_keys.n_items() > 0);
+            open_terminal_for_keys.set_sensitive(location_for_keys.native_path().is_some());
+            if popover_for_keys.parent().is_none()
+                && let Some(parent) = controller.widget()
+            {
+                popover_for_keys.set_parent(&parent);
+            }
+            popover_for_keys.set_pointing_to(None);
+            popover_for_keys.popup();
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
+        }
+    });
+    parent.add_controller(folder_keys);
 }
 
 pub(super) type ContextPickPosition = Rc<dyn Fn(&gtk::Widget) -> Option<u32>>;
@@ -5228,11 +5306,205 @@ pub(super) fn install_item_context_menu(
         }
     });
 
+    let show_menu = Rc::new({
+        let weak_state = Rc::downgrade(state);
+        let weak_popover = popover.downgrade();
+        let selection = selection.clone();
+        let source_position = source_position.clone();
+        let target = target.clone();
+        let music_actions = music_actions.clone();
+        let rating_row = rating_row.clone();
+        let rating_images = rating_images.clone();
+        let rating_buttons = rating_buttons.clone();
+        let clear_rating_btn = clear_rating_btn.clone();
+        let target_ratable_paths = target_ratable_paths.clone();
+        let open_with = open_with.clone();
+        let move_to = move_to.clone();
+        let copy_to = copy_to.clone();
+        let move_multiple = move_multiple.clone();
+        let copy_multiple = copy_multiple.clone();
+        let custom = custom.clone();
+        let custom_separator = custom_separator.clone();
+        let preview = preview.clone();
+        let extract_here = extract_here.clone();
+        let extract_to = extract_to.clone();
+        let compress = compress.clone();
+        let compress_multiple = compress_multiple.clone();
+        let pin = pin.clone();
+        let paste_folder = paste_folder.clone();
+        let duplicate = duplicate.clone();
+        let open_terminal = open_terminal.clone();
+        let duplicate_multiple = duplicate_multiple.clone();
+        let invert_multiple = invert_multiple.clone();
+        let heading = heading.clone();
+        let summary = summary.clone();
+        let open_label = open_label.clone();
+        let open_in_hermes_player = open_in_hermes_player.clone();
+        let single = single.clone();
+        let multiple = multiple.clone();
+        let content = content.clone();
+        let widget_weak = widget.downgrade();
+        move |filtered_position: usize, pointing_rect: Option<gtk::gdk::Rectangle>| -> bool {
+            let Some(state) = weak_state.upgrade() else { return false; };
+            let Some(resolved_position) = source_position(filtered_position as u32) else { return false; };
+            let Some(entry) = state.browser.entry_at(depth, resolved_position) else { return false; };
+
+            if !selection.is_selected(filtered_position as u32) {
+                selection.select_item(filtered_position as u32, true);
+            }
+            let selected_positions = bitset_positions(&selection.selection())
+                .into_iter()
+                .filter_map(|position| source_position(position))
+                .collect::<Vec<_>>();
+            state
+                .browser
+                .set_selection(depth, &selected_positions, Some(resolved_position));
+            target.replace(Some((resolved_position, entry.clone())));
+            let entries = state.browser.selected_entries();
+            let options = super::theme::ThemeManager::shared().context_menu_options();
+            music_actions.set_visible(options.music && !in_trash && audio_context_actions_visible(&entries));
+            let ratable_paths = entries
+                .iter()
+                .filter_map(|entry| {
+                    let path = entry.location.native_path()?;
+                    if crate::services::ratings::is_ratable_format(path) {
+                        Some(path.to_path_buf())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            let rating_visible = !in_trash && !ratable_paths.is_empty();
+            rating_row.set_visible(rating_visible);
+            if rating_visible {
+                target_ratable_paths.replace(ratable_paths.clone());
+                let store = crate::services::ratings::Store::shared();
+                let common_rating = {
+                    let first = store.get(&ratable_paths[0]);
+                    if ratable_paths.iter().all(|p| store.get(p) == first) {
+                        first
+                    } else {
+                        None
+                    }
+                };
+                let active = common_rating.unwrap_or(0);
+                for (i, img) in rating_images.iter().enumerate() {
+                    if (i as u8) < active {
+                        crate::assets::set_primary_icon(img, crate::assets::icons::STAR_FILLED);
+                    } else {
+                        crate::assets::set_text_icon(img, crate::assets::icons::STAR);
+                    }
+                }
+                for (i, btn) in rating_buttons.iter().enumerate() {
+                    let star_num = i + 1;
+                    btn.set_tooltip_text(Some(&if active == star_num as u8 {
+                        format!("Click to remove {star_num}-star rating")
+                    } else {
+                        format!("Rate {star_num} star{}", if star_num == 1 { "" } else { "s" })
+                    }));
+                }
+                clear_rating_btn.set_sensitive(
+                    common_rating.is_some() || ratable_paths.iter().any(|p| store.get(p).is_some()),
+                );
+            } else {
+                target_ratable_paths.replace(Vec::new());
+            }
+            open_with.set_visible(options.open_with && !entry.is_directory() && !in_trash);
+            for button in [&move_to, &copy_to, &move_multiple, &copy_multiple] {
+                button.set_visible(options.transfer_destinations && !in_trash);
+            }
+            let custom_paths = entries
+                .iter()
+                .filter_map(|entry| entry.location.native_path().map(Path::to_path_buf))
+                .collect::<Vec<_>>();
+            let mut custom_visible = false;
+            while let Some(child) = custom.first_child() { custom.remove(&child); }
+            if options.custom_actions && !in_trash && custom_paths.len() == entries.len()
+                && let Some(popover) = weak_popover.upgrade()
+                && let Some(parent) = widget_weak.upgrade()
+            {
+                match load_custom_actions() {
+                    Ok(actions) => {
+                        for action in actions.into_iter().filter(|action| action.applies_to(&custom_paths)) {
+                            let button = item_context_option(crate::assets::icons::SETTINGS_2, &action.name, "");
+                            connect_custom_action(&button, &popover, &state, &target, &parent, action);
+                            custom.append(&button);
+                            custom_visible = true;
+                        }
+                    }
+                    Err(error) => tracing::warn!(%error, "unable to load custom actions"),
+                }
+            }
+            custom.set_visible(custom_visible);
+            custom_separator.set_visible(custom_visible);
+            preview.set_visible(options.preview && entry_supports_quick_preview(&entry) && !in_trash);
+            let archive = options.archives && is_archive_entry(&entry) && !in_trash;
+            extract_here.set_visible(archive);
+            extract_to.set_visible(archive);
+            compress.set_visible(options.archives && !in_trash && (entry.is_directory() || options.compress_files));
+            compress_multiple.set_visible(options.archives && !in_trash && (entries.iter().all(FileEntry::is_directory) || options.compress_files));
+            pin.set_visible(options.pin && entry.is_directory() && !is_trash_location(&entry.location));
+            paste_folder.set_visible(entry.is_directory() && !in_trash);
+            paste_folder.set_sensitive(clipboard_has_files());
+            duplicate.set_visible(!in_trash);
+            open_terminal.set_visible(!in_trash && (entry.is_directory() || entry.location.parent().is_some()));
+            duplicate_multiple.set_visible(!in_trash);
+            invert_multiple.set_visible(selection.n_items() > 0);
+            if entries.len() > 1 {
+                heading.set_text(&format!("{} items selected", entries.len()));
+                summary.set_text(&selected_items_summary(&entries));
+                if entries.iter().all(FileEntry::is_directory) {
+                    open_label.set_text("Open folders");
+                } else {
+                    open_label.set_text("Open items");
+                }
+                open_in_hermes_player.set_visible(false);
+                single.set_visible(false);
+                multiple.set_visible(true);
+            } else {
+                heading.set_text(&entry.display_name);
+                summary.set_text(&compact_display_path(&entry.location));
+                if entry.is_directory() {
+                    open_label.set_text("Open folder");
+                    let show_open_in_hermes =
+                        options.music && !in_trash && folder_has_audio_or_is_music(&entry);
+                    open_in_hermes_player.set_visible(show_open_in_hermes);
+                } else {
+                    open_in_hermes_player.set_visible(false);
+                    let (content_type, _) = gio::content_type_guess(
+                        entry.location.native_path().map(Path::new),
+                        None::<&[u8]>,
+                    );
+                    let app_name = gio::AppInfo::default_for_type(&content_type, false)
+                        .map(|app| app.display_name().to_string());
+                    if let Some(app) = app_name {
+                        open_label.set_text(&format!("Open in {app}"));
+                    } else {
+                        open_label.set_text("Open");
+                    }
+                }
+                single.set_visible(true);
+                multiple.set_visible(false);
+            }
+            super::context_menu::tidy_separators(&single);
+            super::context_menu::tidy_separators(&multiple);
+            super::context_menu::tidy_separators(&content);
+            let Some(popover) = weak_popover.upgrade() else {
+                return false;
+            };
+            if let Some(rect) = pointing_rect {
+                popover.set_pointing_to(Some(&rect));
+            } else {
+                popover.set_pointing_to(None);
+            }
+            popover.popup();
+            true
+        }
+    });
+
     let click = gtk::GestureClick::new();
     click.set_button(3);
-    let weak_state = Rc::downgrade(state);
-    let weak_popover = popover.downgrade();
-    let selection = selection.clone();
+    let menu_for_click = show_menu.clone();
     click.connect_pressed(move |gesture, _, x, y| {
         let Some(picked) = gesture
             .widget()
@@ -5243,168 +5515,51 @@ pub(super) fn install_item_context_menu(
         let Some(filtered_position) = pick_position(&picked) else {
             return;
         };
-        let Some(resolved_position) = source_position(filtered_position) else {
-            return;
-        };
-        let Some(state) = weak_state.upgrade() else {
-            return;
-        };
-        let Some(entry) = state.browser.entry_at(depth, resolved_position) else {
-            return;
-        };
         gesture.set_state(gtk::EventSequenceState::Claimed);
-        if !selection.is_selected(filtered_position) {
-            selection.select_item(filtered_position, true);
-        }
-        let selected_positions = bitset_positions(&selection.selection())
-            .into_iter()
-            .filter_map(|position| source_position(position))
-            .collect::<Vec<_>>();
-        state
-            .browser
-            .set_selection(depth, &selected_positions, Some(resolved_position));
-        target.replace(Some((resolved_position, entry.clone())));
-        let entries = state.browser.selected_entries();
-        let options = super::theme::ThemeManager::shared().context_menu_options();
-        music_actions.set_visible(options.music && !in_trash && audio_context_actions_visible(&entries));
-        let ratable_paths = entries
-            .iter()
-            .filter_map(|entry| {
-                let path = entry.location.native_path()?;
-                if crate::services::ratings::is_ratable_format(path) {
-                    Some(path.to_path_buf())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        let rating_visible = !in_trash && !ratable_paths.is_empty();
-        rating_row.set_visible(rating_visible);
-        if rating_visible {
-            target_ratable_paths.replace(ratable_paths.clone());
-            let store = crate::services::ratings::Store::shared();
-            let common_rating = {
-                let first = store.get(&ratable_paths[0]);
-                if ratable_paths.iter().all(|p| store.get(p) == first) {
-                    first
-                } else {
-                    None
-                }
-            };
-            let active = common_rating.unwrap_or(0);
-            for (i, img) in rating_images.iter().enumerate() {
-                if (i as u8) < active {
-                    crate::assets::set_primary_icon(img, crate::assets::icons::STAR_FILLED);
-                } else {
-                    crate::assets::set_text_icon(img, crate::assets::icons::STAR);
-                }
-            }
-            for (i, btn) in rating_buttons.iter().enumerate() {
-                let star_num = i + 1;
-                btn.set_tooltip_text(Some(&if active == star_num as u8 {
-                    format!("Click to remove {star_num}-star rating")
-                } else {
-                    format!("Rate {star_num} star{}", if star_num == 1 { "" } else { "s" })
-                }));
-            }
-            clear_rating_btn.set_sensitive(
-                common_rating.is_some() || ratable_paths.iter().any(|p| store.get(p).is_some()),
-            );
-        } else {
-            target_ratable_paths.replace(Vec::new());
-        }
-        open_with.set_visible(options.open_with && !entry.is_directory() && !in_trash);
-        for button in [&move_to, &copy_to, &move_multiple, &copy_multiple] {
-            button.set_visible(options.transfer_destinations && !in_trash);
-        }
-        let custom_paths = entries
-            .iter()
-            .filter_map(|entry| entry.location.native_path().map(Path::to_path_buf))
-            .collect::<Vec<_>>();
-        let mut custom_visible = false;
-        while let Some(child) = custom.first_child() { custom.remove(&child); }
-        if options.custom_actions && !in_trash && custom_paths.len() == entries.len()
-            && let Some(popover) = weak_popover.upgrade()
-            && let Some(parent) = gesture.widget()
-        {
-            match load_custom_actions() {
-                Ok(actions) => {
-                    for action in actions.into_iter().filter(|action| action.applies_to(&custom_paths)) {
-                        let button = item_context_option(crate::assets::icons::SETTINGS_2, &action.name, "");
-                        connect_custom_action(&button, &popover, &state, &target, &parent, action);
-                        custom.append(&button);
-                        custom_visible = true;
-                    }
-                }
-                Err(error) => tracing::warn!(%error, "unable to load custom actions"),
-            }
-        }
-        custom.set_visible(custom_visible);
-        custom_separator.set_visible(custom_visible);
-        preview.set_visible(options.preview && entry_supports_quick_preview(&entry) && !in_trash);
-        let archive = options.archives && is_archive_entry(&entry) && !in_trash;
-        extract_here.set_visible(archive);
-        extract_to.set_visible(archive);
-        compress.set_visible(options.archives && !in_trash && (entry.is_directory() || options.compress_files));
-        compress_multiple.set_visible(options.archives && !in_trash && (entries.iter().all(FileEntry::is_directory) || options.compress_files));
-        pin.set_visible(options.pin && entry.is_directory() && !is_trash_location(&entry.location));
-        paste_folder.set_visible(entry.is_directory() && !in_trash);
-        paste_folder.set_sensitive(clipboard_has_files());
-        duplicate.set_visible(!in_trash);
-        open_terminal.set_visible(!in_trash && (entry.is_directory() || entry.location.parent().is_some()));
-        duplicate_multiple.set_visible(!in_trash);
-        invert_multiple.set_visible(selection.n_items() > 0);
-        if entries.len() > 1 {
-            heading.set_text(&format!("{} items selected", entries.len()));
-            summary.set_text(&selected_items_summary(&entries));
-            if entries.iter().all(FileEntry::is_directory) {
-                open_label.set_text("Open folders");
-            } else {
-                open_label.set_text("Open items");
-            }
-            open_in_hermes_player.set_visible(false);
-            single.set_visible(false);
-            multiple.set_visible(true);
-        } else {
-            heading.set_text(&entry.display_name);
-            summary.set_text(&compact_display_path(&entry.location));
-            if entry.is_directory() {
-                open_label.set_text("Open folder");
-                let show_open_in_hermes =
-                    options.music && !in_trash && folder_has_audio_or_is_music(&entry);
-                open_in_hermes_player.set_visible(show_open_in_hermes);
-            } else {
-                open_in_hermes_player.set_visible(false);
-                let (content_type, _) = gio::content_type_guess(
-                    entry.location.native_path().map(Path::new),
-                    None::<&[u8]>,
-                );
-                let app_name = gio::AppInfo::default_for_type(&content_type, false)
-                    .map(|app| app.display_name().to_string());
-                if let Some(app) = app_name {
-                    open_label.set_text(&format!("Open in {app}"));
-                } else {
-                    open_label.set_text("Open");
-                }
-            }
-            single.set_visible(true);
-            multiple.set_visible(false);
-        }
-        super::context_menu::tidy_separators(&single);
-        super::context_menu::tidy_separators(&multiple);
-        super::context_menu::tidy_separators(&content);
-        let Some(popover) = weak_popover.upgrade() else {
-            return;
-        };
-        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
-            x.round() as i32,
-            y.round() as i32,
-            1,
-            1,
-        )));
-        popover.popup();
+        let rect = gtk::gdk::Rectangle::new(x.round() as i32, y.round() as i32, 1, 1);
+        menu_for_click(filtered_position as usize, Some(rect));
     });
     widget.add_controller(click);
+
+    let trigger_keyboard_menu = Rc::new({
+        let show_menu = show_menu.clone();
+        let selection = selection.clone();
+        let weak_state = Rc::downgrade(state);
+        let source_position = source_position.clone();
+        move || -> bool {
+            let selected_positions = bitset_positions(&selection.selection());
+            let filtered_position = if let Some(first) = selected_positions.first().copied() {
+                Some(first as usize)
+            } else if let Some(state) = weak_state.upgrade()
+                && let Some((f_depth, f_pos, _)) = state.browser.focused_item()
+                && f_depth == depth
+            {
+                (0..selection.n_items()).find(|&p| source_position(p) == Some(f_pos)).map(|p| p as usize)
+            } else {
+                None
+            };
+            let Some(filtered_pos) = filtered_position else {
+                return false;
+            };
+            show_menu(filtered_pos, None)
+        }
+    });
+
+    state.active_context_menu.replace(Some(trigger_keyboard_menu.clone()));
+
+    let item_keys = gtk::EventControllerKey::new();
+    item_keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let trigger_for_keys = trigger_keyboard_menu.clone();
+    item_keys.connect_key_pressed(move |_, key, _, modifiers| {
+        let is_menu = key == gtk::gdk::Key::Menu
+            || (key == gtk::gdk::Key::F10 && modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+        if is_menu && trigger_for_keys() {
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
+        }
+    });
+    widget.add_controller(item_keys);
 }
 
 fn entry_responds_to_single_click(entry: &FileEntry, previews_enabled: bool) -> bool {

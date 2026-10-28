@@ -506,3 +506,54 @@ fn desktop_tabs_remain_compact_and_aligned() {
     single_window.close();
     gtk::style_context_remove_provider_for_display(&display, &provider);
 }
+
+#[test]
+fn tab_bar_reopen_closed_tab_restores_last_closed_tab() {
+    use crate::{
+        app::{Browser, Trails},
+        model::{Location, TrailViewState},
+        services::{StoredTrails, TrailStore},
+    };
+    use std::rc::Rc;
+
+    struct MemoryStore;
+    impl TrailStore for MemoryStore {
+        fn load(&self) -> std::io::Result<StoredTrails> {
+            Ok(StoredTrails::default())
+        }
+        fn save(&self, _: &StoredTrails) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    if gtk::init().is_err() {
+        return;
+    }
+    let trails = Trails::empty(Rc::new(MemoryStore));
+    let id1 = trails
+        .create("First", Location::local("/first"), TrailViewState::default())
+        .unwrap();
+    let id2 = trails
+        .create("Second", Location::local("/second"), TrailViewState::default())
+        .unwrap();
+    let browser = Browser::new(Rc::new(crate::adapters::RoutedFileSource::new()));
+    let bar = super::TabBar::new(
+        trails.clone(),
+        browser,
+        Rc::new(TrailViewState::default),
+        Rc::new(|_| {}),
+    );
+    assert_eq!(trails.all().len(), 2);
+
+    // Close the second tab
+    bar.close_tab(&id2);
+    assert_eq!(trails.all().len(), 1);
+    assert_eq!(trails.all()[0].id, id1);
+
+    // Reopen the closed tab (simulates Ctrl+Shift+T)
+    bar.reopen_closed_tab();
+    assert_eq!(trails.all().len(), 2);
+    let all = trails.all();
+    assert_eq!(all[1].name, "Second");
+    assert_eq!(all[1].active_location().unwrap().display_path(), "/second");
+}
