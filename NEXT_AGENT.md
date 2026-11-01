@@ -1,37 +1,27 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Drag & drop parity, breadcrumb sibling dropdowns, sidebar eject, and status bar polish — 2026-10-27 (current)
+## Drag & drop grab parity, window-anchored status bar, and view mode switcher polish — 2026-11-01 (current)
 
-- Branch: `feat/6-drag-drop-and-status-bar-polish` (branched off `feat/6-sorting-zoom-and-keyboard-context-menu` commit `cb2dd47`).
-- Drag & Drop Parity with Strata (`src/ui/preview.rs`, `src/ui/preview/image.rs`, `src/ui/browser.rs`, `src/ui/browser_modes.rs`, `src/style.css`):
-  - Drag directly from Preview Drawer: attached `gtk::DragSource` to `PreviewDrawer.content` and `ImagePreview.scroll`, wired with `file_drag_content` and `setup_drag_icon`. Users can grab documents, images, and media directly from the preview pane and drop them into folders, sidebar destinations, or external applications.
-  - Compact drag icon badge (`setup_drag_icon`): replaced full-widget paintable with a 44x44 card containing the Lucide file entry icon and multi-item count badge overlay, avoiding oversized drag shadows.
-  - Visual drop target highlights (`.drop-destination`): wired `connect_enter`, `connect_motion`, and `connect_leave` on column rows, grid cards, explorer rows, breadcrumb buttons, and sidebar places with theme-consistent accent outline (`outline: 2px solid @theme_accent; background: alpha(@theme_highlight, 0.85);`).
-- Breadcrumb Sibling Dropdown Popover Navigation & Ancestor Drop Target (`src/ui/browser.rs`, `src/style.css`):
-  - Intermediate breadcrumb segments include an ancestor drop target (`DropTarget`) and a `breadcrumb-chevron` button (`strata-chevron-down`).
-  - Clicking the chevron opens a popover listing sorted sibling directories with natural name ordering, highlighting the active folder and navigating directly on click.
-- Hover Preview Debounce & Fluid Transition (`src/ui/browser.rs`, `src/style.css`):
-  - Tuned `PeekBehavior.open_delay` from 180ms to 250ms for deliberate, non-distracting hover peeks.
-  - Added fluid opacity transition (`transition: opacity 160ms cubic-bezier(0.2, 0, 0, 1)`) to `.hermes-hover-card`.
-- Status Bar Rich Stats, View Mode Switcher & Density Pill (`src/ui/status_bar.rs`, `src/ui/status_bar/tests.rs`, `src/ui/window.rs`, `src/style.css`):
-  - Rich stats: displays item count and total folder size when unselected (`142 items (2.4 GB)`), selection count and byte size when selected (`2 selected, 1.4 MB`), and free disk space (`500 GB free`).
-  - View mode switcher pills: embedded `[ Columns | Grid | List ]` mode buttons in status bar with live two-way sync with toolbar and window actions.
-  - Density & zoom pill: interactive status pill showing current density ("Compact" / "Airy") or thumbnail size ("Grid") with click-to-cycle zoom handler.
-- Removable Drive Inline Eject Button (`src/ui/window.rs`, `src/assets.rs`, `data/strata.gresource.xml`, `src/style.css`):
-  - Inline eject icon button (`strata-eject` from Lucide) appended to volume sidebar row.
-  - Supports 1-click asynchronous unmount/eject with busy feedback and user error dialog if unmount fails.
-- Shortcuts & Context Menu Additions (`src/ui/browser.rs`, `src/ui/window.rs`, `src/ui/shortcuts.rs`):
-  - "New Empty File…" (`Ctrl+Alt+N`) global shortcut and modal creation dialog.
-  - "Copy Path" (`Ctrl+Shift+C`) and "Copy Filename" in context menus and global shortcut.
-  - Registered in cheatsheet overlay (`src/ui/shortcuts.rs`).
-- Theming & Icons:
-  - Bundled Lucide icons `strata-chevron-down.svg` and `strata-eject.svg` registered in GResource and `assets.rs`.
-  - All visual states styled with semantic `@theme_*` variables without static hex/RGB colors.
+- Branch: `feat/6-drag-drop-and-status-bar-polish` (branched off `feat/6-sorting-zoom-and-keyboard-context-menu` commit `cb2dd47`, latest commit `68367a4`).
+- Window-Anchored Status Bar (`src/ui/window.rs`, `src/style.css`):
+  - Extracted `status_bar.container` out of `browser_vbox` (which was trapped inside the `tree_paned` child) and placed it directly inside `files_vbox` underneath `preview_split`.
+  - The status bar now spans the full window width of the files workspace, preventing stats, mode switchers, or zoom pills from getting squished or clipped when columns resize, the preview drawer opens, or the folder tree is toggled.
+- View Mode Switcher Wiring & Two-Way Sync (`src/ui/window.rs`, `src/ui/status_bar.rs`):
+  - Fixed mode action invocation for the List/Explorer button in `set_mode_handlers`: mapped the third button to `"explorer"` (previously mistakenly passed `"list"`, which activated Columns mode).
+  - Added immediate `.active` CSS class toggling in status bar button click callbacks for instant visual feedback.
+  - Connected `mode_action.connect_state_notify` to automatically keep `status_bar.update_view_mode(mode)` and `status_bar.update_density(...)` synchronized across keyboard shortcuts (`Ctrl+1/2/3`), menus, command palette, and status bar clicks.
+- Grid Density / Zoom Pill Polish (`src/ui/browser.rs`, `src/ui/browser_modes.rs`, `src/ui/window.rs`):
+  - Fixed the "random Grid button" issue: when in Grid mode, the density pill displays the actual active thumbnail size (`"{size}px"` e.g., `64px`, `96px`, `128px`) instead of the redundant string `"Grid"`.
+  - Added `set_density_change_handler` on `BrowserView` and wired `connect_value_changed` on grid thumbnail scale to instantly notify and update the status pill whenever zoom changes via mouse wheel (`Ctrl+Scroll`), shortcuts (`Ctrl++` / `Ctrl+-`), slider, or status pill click.
+- Drag & Drop Grab Indicator Parity (`src/ui/browser.rs`, `src/ui/browser_modes.rs`, `src/ui/preview.rs`, `src/ui/preview/image.rs`):
+  - Replaced unparented badge box with `gtk::WidgetPaintable::new(source.widget().as_ref())` anchored to cursor click coordinates `(x, y)`.
+  - Added cursor feedback: updates cursor to `"grabbing"` on `connect_drag_begin` and restores to `"pointer"` on `connect_drag_end`.
+  - Dims dragged row/card/preview with `.dragging` class during active drag.
 - Verification & Test Coverage:
   - `cargo check --all-targets`: 0 errors, 0 warnings.
-  - Unit tests: 1,044 passed (`cargo test --bin hermes -- --test-threads=1`).
-  - E2E tests: 165 passed (`cargo test --test e2e_tests`).
+  - All status bar and UI tests passing.
   - Built `--release` binary and installed to `~/.local/bin/hermes`.
+  - Pushed to `origin/feat/6-drag-drop-and-status-bar-polish`.
 
 ## Keyboard context menus, natural & extension sorting, zoom & density controls, and tab reopening — 2026-10-27
 
