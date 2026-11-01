@@ -207,22 +207,29 @@ impl PreviewDrawer {
             .actions(gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE)
             .build();
         let weak_drag = Rc::downgrade(&state);
-        preview_drag.connect_prepare(move |source, _x, _y| {
+        preview_drag.connect_prepare(move |source, x, y| {
             let state = weak_drag.upgrade()?;
             let entry = state.current.borrow().clone()?;
-            super::browser::setup_drag_icon(source, &entry, 1);
+            let paintable = gtk::WidgetPaintable::new(source.widget().as_ref());
+            source.set_icon(Some(&paintable), x.round() as i32, y.round() as i32);
             super::browser::file_drag_content(&[entry])
         });
         let weak_drag_begin = Rc::downgrade(&state);
-        preview_drag.connect_drag_begin(move |_, _| {
+        preview_drag.connect_drag_begin(move |source, _| {
             if let Some(state) = weak_drag_begin.upgrade() {
                 state.content.add_css_class("dragging");
             }
+            if let Some(widget) = source.widget() {
+                widget.set_cursor_from_name(Some("grabbing"));
+            }
         });
         let weak_drag_end = Rc::downgrade(&state);
-        preview_drag.connect_drag_end(move |_, _, _| {
+        preview_drag.connect_drag_end(move |source, _, _| {
             if let Some(state) = weak_drag_end.upgrade() {
                 state.content.remove_css_class("dragging");
+            }
+            if let Some(widget) = source.widget() {
+                widget.set_cursor_from_name(Some("pointer"));
             }
         });
         state.content.add_controller(preview_drag);

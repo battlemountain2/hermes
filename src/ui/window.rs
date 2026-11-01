@@ -277,10 +277,24 @@ fn present_target(
         {
             let mode_action = mode_action_for_status.clone();
             move || {
-                mode_action.activate(Some(&"list".to_variant()));
+                mode_action.activate(Some(&"explorer".to_variant()));
             }
         },
     );
+    let status_bar_for_mode = status_bar.clone();
+    let browser_for_mode = browser.clone();
+    mode_action.connect_state_notify(move |action| {
+        if let Some(state_str) = action.state().and_then(|v| v.str().map(|s| s.to_string())) {
+            if let Some(mode) = BrowserMode::from_action_name(&state_str) {
+                status_bar_for_mode.update_view_mode(mode);
+                status_bar_for_mode.update_density(&browser_for_mode.density_label());
+            }
+        }
+    });
+    let status_bar_for_density = status_bar.clone();
+    browser.set_density_change_handler(Rc::new(move |label| {
+        status_bar_for_density.update_density(label);
+    }));
     status_bar.set_zoom_handler({
         let browser = browser_for_status.clone();
         move || {
@@ -473,14 +487,7 @@ fn present_target(
 
             let mode = context_browser.view_mode();
             context_status_bar.update_view_mode(mode);
-            let density_str = match mode {
-                BrowserMode::Grid => "Grid".to_string(),
-                _ => match context_browser.density() {
-                    BrowserDensity::Airy => "Airy".to_string(),
-                    BrowserDensity::Compact => "Compact".to_string(),
-                },
-            };
-            context_status_bar.update_density(&density_str);
+            context_status_bar.update_density(&context_browser.density_label());
 
             if !matches!(event, BrowserEvent::SelectionSetChanged { .. }) {
                 if let Some(path) = context_controller
@@ -564,11 +571,7 @@ fn present_target(
     folder_tree.set_visible(theme_manager.show_folder_tree());
 
     tree_paned.set_start_child(Some(&folder_tree));
-    let browser_vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    browser_vbox.append(&content_stack);
-    browser_vbox.append(&status_bar.container);
-    
-    tree_paned.set_end_child(Some(&browser_vbox));
+    tree_paned.set_end_child(Some(&content_stack));
 
     content.set_end_child(Some(&tree_paned));
     let animation_generation = Rc::new(Cell::new(0));
@@ -626,9 +629,15 @@ fn present_target(
                 + measured_browser.preview_occupied_width(available.saturating_sub(sidebar_width))
         }),
     );
+    let files_vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    files_vbox.set_vexpand(true);
+    files_vbox.set_hexpand(true);
+    files_vbox.append(&preview_split);
+    files_vbox.append(&status_bar.container);
+
     let workspace = gtk::Stack::new();
     workspace.set_vexpand(true);
-    workspace.add_named(&preview_split, Some("files"));
+    workspace.add_named(&files_vbox, Some("files"));
     workspace.add_named(&music_player.view(), Some("music"));
 
     let ws_for_imm_close = workspace.downgrade();

@@ -309,6 +309,10 @@ impl ModeViews {
         self.density
     }
 
+    pub fn grid_thumbnail_size(&self) -> i32 {
+        self.grid_thumbnail_size.get()
+    }
+
     pub fn selected_positions(&self) -> Option<(usize, Vec<usize>)> {
         let pane = match self.mode {
             BrowserMode::Columns => return None,
@@ -1201,7 +1205,7 @@ fn build_grid_pane(
     let source_for_setup = model.clone();
     let filtered_for_setup = view_model.clone().upcast::<gio::ListModel>();
     let transfers_for_setup = transfer_handler.clone();
-    let peek_for_setup = options.peek_state;
+    let peek_for_setup = options.peek_state.clone();
     let active_for_setup = active_new_folder.clone();
     let folder_location = browser.location_at(depth);
     factory.connect_setup(move |_, item| {
@@ -1378,6 +1382,7 @@ fn build_grid_pane(
     let bound_for_size = bound_items.clone();
     let thumbnail_size_for_change = thumbnail_size.clone();
     let value_for_change = controls.thumbnail_value.clone();
+    let weak_state_for_change = options.peek_state.clone();
     controls
         .thumbnail_scale
         .connect_value_changed(move |scale| {
@@ -1387,7 +1392,11 @@ fn build_grid_pane(
                 .clamp(0.0, (GRID_THUMBNAIL_SIZES.len() - 1) as f64)
                 as usize;
             let size = GRID_THUMBNAIL_SIZES[index];
+            thumbnail_size_for_change.set(size);
             value_for_change.set_label(&format!("{size} px"));
+            if let Some(state) = weak_state_for_change.as_ref().and_then(|w| w.upgrade()) {
+                state.notify_density_change();
+            }
             if let Some(pending) = pending_thumbnail_resize.take() {
                 pending.remove();
             }
@@ -2417,7 +2426,7 @@ fn install_explorer_drag_drop(
     let dragged_item = item.downgrade();
     let browser_for_drag = browser.clone();
     let map_for_drag = position_map.clone();
-    drag.connect_prepare(move |source, _x, _y| {
+    drag.connect_prepare(move |source, x, y| {
         let dragged_item = dragged_item.upgrade()?;
         let browser = browser_for_drag.upgrade()?;
         let position = dragged_item.position();
@@ -2439,17 +2448,20 @@ fn install_explorer_drag_drop(
         } else {
             vec![entry.clone()]
         };
-        super::browser::setup_drag_icon(source, &entry, entries.len());
+        let paintable = gtk::WidgetPaintable::new(source.widget().as_ref());
+        source.set_icon(Some(&paintable), x.round() as i32, y.round() as i32);
         super::browser::file_drag_content(&entries)
     });
     drag.connect_drag_begin(|source, _| {
         if let Some(row) = source.widget() {
             row.add_css_class("dragging");
+            row.set_cursor_from_name(Some("grabbing"));
         }
     });
     drag.connect_drag_end(|source, _, _| {
         if let Some(row) = source.widget() {
             row.remove_css_class("dragging");
+            row.set_cursor_from_name(Some("pointer"));
         }
     });
     row.add_controller(drag);

@@ -134,9 +134,33 @@ impl StatusBar {
         on_grid: impl Fn() + 'static,
         on_list: impl Fn() + 'static,
     ) {
-        self.columns_btn.connect_clicked(move |_| on_columns());
-        self.grid_btn.connect_clicked(move |_| on_grid());
-        self.list_btn.connect_clicked(move |_| on_list());
+        let cols = self.columns_btn.clone();
+        let grid = self.grid_btn.clone();
+        let list = self.list_btn.clone();
+
+        let (c1, g1, l1) = (cols.clone(), grid.clone(), list.clone());
+        self.columns_btn.connect_clicked(move |_| {
+            c1.add_css_class("active");
+            g1.remove_css_class("active");
+            l1.remove_css_class("active");
+            on_columns();
+        });
+
+        let (c2, g2, l2) = (cols.clone(), grid.clone(), list.clone());
+        self.grid_btn.connect_clicked(move |_| {
+            c2.remove_css_class("active");
+            g2.add_css_class("active");
+            l2.remove_css_class("active");
+            on_grid();
+        });
+
+        let (c3, g3, l3) = (cols, grid, list);
+        self.list_btn.connect_clicked(move |_| {
+            c3.remove_css_class("active");
+            g3.remove_css_class("active");
+            l3.add_css_class("active");
+            on_list();
+        });
     }
 
     pub fn set_zoom_handler(&self, on_zoom_step: impl Fn() + 'static) {

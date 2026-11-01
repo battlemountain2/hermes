@@ -249,6 +249,7 @@ pub(super) struct ViewState {
     retained_tabs: RefCell<Vec<(TrailId, retained::Presentation)>>,
     pending_tab_view: Cell<Option<(BrowserMode, BrowserDensity)>>,
     active_context_menu: RefCell<Option<Rc<dyn Fn() -> bool>>>,
+    density_change_handler: RefCell<Option<Rc<dyn Fn(&str)>>>,
 }
 
 #[derive(Clone)]
@@ -413,6 +414,7 @@ impl BrowserView {
             retained_tabs: RefCell::new(Vec::new()),
             pending_tab_view: Cell::new(None),
             active_context_menu: RefCell::new(None),
+            density_change_handler: RefCell::new(None),
         });
 
         if let Some(display) = gtk::gdk::Display::default() {
@@ -470,6 +472,7 @@ impl BrowserView {
                         BrowserDensity::Compact => "density-compact",
                         BrowserDensity::Airy => "density-airy",
                     });
+                    state.notify_density_change();
                     return glib::Propagation::Stop;
                 }
             }
@@ -606,6 +609,7 @@ impl BrowserView {
         {
             action.set_state(&mode.action_name().to_variant());
         }
+        self.state.notify_density_change();
     }
 
     pub fn set_density(&self, density: BrowserDensity) {
@@ -616,6 +620,7 @@ impl BrowserView {
             BrowserDensity::Compact => "density-compact",
             BrowserDensity::Airy => "density-airy",
         });
+        self.state.notify_density_change();
     }
 
     pub fn step_density(&self, direction: i32) {
@@ -627,6 +632,7 @@ impl BrowserView {
             BrowserDensity::Compact => "density-compact",
             BrowserDensity::Airy => "density-airy",
         });
+        self.state.notify_density_change();
     }
 
     pub fn reset_density(&self) {
@@ -634,6 +640,7 @@ impl BrowserView {
         self.state.overlay.remove_css_class("density-compact");
         self.state.overlay.remove_css_class("density-airy");
         self.state.overlay.add_css_class("density-compact");
+        self.state.notify_density_change();
     }
 
     pub fn show_context_menu(&self) -> bool {
@@ -646,6 +653,19 @@ impl BrowserView {
 
     pub fn density(&self) -> BrowserDensity {
         self.state.mode_views.borrow().density()
+    }
+
+    #[allow(dead_code)]
+    pub fn grid_thumbnail_size(&self) -> i32 {
+        self.state.mode_views.borrow().grid_thumbnail_size()
+    }
+
+    pub fn density_label(&self) -> String {
+        self.state.density_label()
+    }
+
+    pub fn set_density_change_handler(&self, handler: Rc<dyn Fn(&str)>) {
+        self.state.density_change_handler.replace(Some(handler));
     }
 
     pub fn activate_focused(&self) {
@@ -1027,6 +1047,24 @@ impl BrowserView {
 }
 
 impl ViewState {
+    pub(crate) fn notify_density_change(&self) {
+        if let Some(handler) = self.density_change_handler.borrow().as_ref() {
+            let label = self.density_label();
+            handler(&label);
+        }
+    }
+
+    pub(crate) fn density_label(&self) -> String {
+        let mode_views = self.mode_views.borrow();
+        match mode_views.mode() {
+            BrowserMode::Grid => format!("{}px", mode_views.grid_thumbnail_size()),
+            _ => match mode_views.density() {
+                BrowserDensity::Airy => "Airy".to_string(),
+                BrowserDensity::Compact => "Compact".to_string(),
+            },
+        }
+    }
+
     fn sync_mode_selection(&self) {
         let Some((depth, positions)) = self.mode_views.borrow().selected_positions() else {
             return;
@@ -3743,7 +3781,7 @@ impl ViewState {
             let dragged_item = item.downgrade();
             let source_for_drag = source_for_hover.clone();
             let filtered_for_drag = filtered_for_hover.clone();
-            drag.connect_prepare(move |source, _x, _y| {
+            drag.connect_prepare(move |source, x, y| {
                 let dragged_item = dragged_item.upgrade()?;
                 let state = weak_state_for_drag.upgrade()?;
                 let source_position = source_position_for_filtered(
@@ -3761,17 +3799,20 @@ impl ViewState {
                 } else {
                     vec![entry.clone()]
                 };
-                setup_drag_icon(source, &entry, entries.len());
+                let paintable = gtk::WidgetPaintable::new(source.widget().as_ref());
+                source.set_icon(Some(&paintable), x.round() as i32, y.round() as i32);
                 file_drag_content(&entries)
             });
             drag.connect_drag_begin(|source, _| {
                 if let Some(row) = source.widget() {
                     row.add_css_class("dragging");
+                    row.set_cursor_from_name(Some("grabbing"));
                 }
             });
             drag.connect_drag_end(|source, _, _| {
                 if let Some(row) = source.widget() {
                     row.remove_css_class("dragging");
+                    row.set_cursor_from_name(Some("pointer"));
                 }
             });
             row.add_controller(drag);
@@ -6611,36 +6652,6 @@ pub(crate) fn file_drag_content(entries: &[FileEntry]) -> Option<gtk::gdk::Conte
         &glib::Bytes::from_owned(uri_list.into_bytes()),
     );
     Some(gtk::gdk::ContentProvider::new_union(&[file_list, uri_list]))
-}
-
-pub(crate) fn setup_drag_icon(
-    source: &gtk::DragSource,
-    entry: &FileEntry,
-    count: usize,
-) {
-    let card = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    card.add_css_class("drag-icon-badge");
-    card.set_size_request(44, 44);
-    card.set_halign(gtk::Align::Center);
-    card.set_valign(gtk::Align::Center);
-
-    let overlay = gtk::Overlay::new();
-    let icon = crate::assets::primary_icon(entry_icon(entry), 24);
-    icon.set_halign(gtk::Align::Center);
-    icon.set_valign(gtk::Align::Center);
-    overlay.set_child(Some(&icon));
-
-    if count > 1 {
-        let badge = gtk::Label::new(Some(&count.to_string()));
-        badge.add_css_class("drag-count-badge");
-        badge.set_halign(gtk::Align::End);
-        badge.set_valign(gtk::Align::Start);
-        overlay.add_overlay(&badge);
-    }
-
-    card.append(&overlay);
-    let paintable = gtk::WidgetPaintable::new(Some(&card));
-    source.set_icon(Some(&paintable), 22, 22);
 }
 
 fn copy_locations(entries: &[FileEntry]) {

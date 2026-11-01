@@ -89,9 +89,22 @@ impl ImagePreview {
                 .actions(gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE)
                 .build();
             let drag_entry = entry.clone();
-            image_drag.connect_prepare(move |source, _x, _y| {
-                crate::ui::browser::setup_drag_icon(source, &drag_entry, 1);
+            image_drag.connect_prepare(move |source, x, y| {
+                let paintable = gtk::WidgetPaintable::new(source.widget().as_ref());
+                source.set_icon(Some(&paintable), x.round() as i32, y.round() as i32);
                 crate::ui::browser::file_drag_content(&[drag_entry.clone()])
+            });
+            image_drag.connect_drag_begin(|source, _| {
+                if let Some(w) = source.widget() {
+                    w.add_css_class("dragging");
+                    w.set_cursor_from_name(Some("grabbing"));
+                }
+            });
+            image_drag.connect_drag_end(|source, _, _| {
+                if let Some(w) = source.widget() {
+                    w.remove_css_class("dragging");
+                    w.set_cursor_from_name(Some("pointer"));
+                }
             });
             scroll.add_controller(image_drag);
         }
