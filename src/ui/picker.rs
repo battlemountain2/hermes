@@ -425,14 +425,6 @@ fn watch_views(widget: &gtk::Widget, state: &Rc<State>) {
         watch_model(view.model(), state);
         icons::watch_factory(view.factory(), state);
         if !watched {
-            let children = view.observe_children();
-            let weak = Rc::downgrade(state);
-            children.connect_items_changed(move |_, _, _, _| {
-                if let Some(state) = weak.upgrade() {
-                    queue_visuals(&state);
-                }
-            });
-            state.child_models.borrow_mut().push(children);
             let weak = Rc::downgrade(state);
             view.connect_model_notify(move |view| {
                 if let Some(state) = weak.upgrade() {
@@ -440,6 +432,12 @@ fn watch_views(widget: &gtk::Widget, state: &Rc<State>) {
                 }
             });
         }
+    }
+    if widget.is::<gtk::ColumnView>()
+        || widget.is::<gtk::GridView>()
+        || widget.is::<gtk::ListView>()
+    {
+        return;
     }
     let mut child = widget.first_child();
     while let Some(widget) = child {

@@ -67,6 +67,11 @@ pub(super) fn decorate(widget: &gtk::Widget, state: &Rc<State>) {
     let Some(image) = widget.first_child().and_downcast::<gtk::Image>() else {
         return;
     };
+    if widget.has_css_class("picker-thumbnail-connected") {
+        refresh(widget, &image);
+        return;
+    }
+    widget.add_css_class("picker-thumbnail-connected");
     if image.has_css_class("picker-file-icon") {
         return;
     }
