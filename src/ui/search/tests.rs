@@ -272,7 +272,7 @@ fn desktop_search_pages_preserve_rows_selection_and_footer() {
         dialog.state.more_button.tooltip_text().as_deref(),
         Some("Load the next page of search results (up to 100)")
     );
-    assert!(dialog.state.more_button.is_visible());
+    assert!(!dialog.state.more_button.is_visible());
     assert!(!dialog.state.more_button.is_sensitive());
     let items: Vec<_> = (0..205)
         .map(|number| {
@@ -375,7 +375,7 @@ fn desktop_search_pages_preserve_rows_selection_and_footer() {
             .collect::<Vec<_>>()
     );
     assert_eq!(dialog.state.notice.text(), "205 of 205 matches");
-    assert!(dialog.state.more_button.is_visible());
+    assert!(!dialog.state.more_button.is_visible());
     assert!(!dialog.state.more_button.is_sensitive());
     assert_eq!(
         dialog.state.list.selected_row().as_ref(),
@@ -1615,8 +1615,9 @@ fn desktop_interpretation_slot_and_filter_sections() {
     assert_eq!(dialog.state.notice.text(), SEARCH_NOTICE_HINT);
 
     dialog.state.layer.set_visible(true);
-    assert!(dialog.state.notice_slot.is_visible());
+    assert!(!dialog.state.notice_slot.is_visible());
     dialog.state.field.set_text("Beach House songs");
+    assert!(dialog.state.notice_slot.is_visible());
     assert!(dialog.state.interpretation_slot.is_visible());
     assert!(dialog.state.interpretation_slot.first_child().is_some());
 
@@ -1627,6 +1628,7 @@ fn desktop_interpretation_slot_and_filter_sections() {
     assert!(dialog.state.field.text().contains("\"songs\""));
     assert!(dialog.state.interpretation_slot.first_child().is_none());
     assert!(!dialog.state.interpretation_slot.is_visible());
+    assert!(!dialog.state.notice_slot.is_visible());
 
     for (query, expected) in [
         ("İ songs", "İ \"songs\""),
@@ -1680,4 +1682,27 @@ fn test_omnibar_commands_listing_and_filtering() {
 
     // Unknown command returns empty
     assert!(matching_commands("nonexistent_command_xyz").is_empty());
+}
+
+#[test]
+#[ignore = "Requires isolated GTK display; verifies Alt+Enter reveal handler triggers on search results"]
+fn test_reveal_handler_triggers_on_reveal_position() {
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let revealed = Rc::new(Cell::new(false));
+    let revealed_clone = revealed.clone();
+    let dialog = SearchDialog::new(Rc::new(|_| {}), Rc::new(|| {}));
+    dialog.set_reveal_handler(Rc::new(move |_| {
+        revealed_clone.set(true);
+    }));
+
+    let item = SearchItem::from_path(
+        PathBuf::from("/tmp/test_file.txt"),
+        Path::new("/tmp"),
+        false,
+        None,
+    );
+    dialog.state.visible_results.replace(vec![SearchResult::File(item)]);
+    reveal_position(&dialog.state, 0);
+    assert!(revealed.get());
 }

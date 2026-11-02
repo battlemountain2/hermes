@@ -800,6 +800,13 @@ fn present_target(
         dismissed_search_button.remove_css_class("active");
     });
     let search_dialog = SearchDialog::new(activate_search_result, dismiss_search);
+    let reveal_controller = controller.clone();
+    let reveal_preview = preview.clone();
+    search_dialog.set_reveal_handler(Rc::new(move |item: crate::services::SearchItem| {
+        let location = Location::local(item.path.clone());
+        reveal_preview.close();
+        reveal_controller.reveal(location);
+    }));
     let result_tabs = trails.clone();
     let activate_results = activate_tab;
     search_dialog.set_open_results(Rc::new(move |uri| {

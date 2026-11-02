@@ -30,6 +30,7 @@ pub mod icons {
     pub const CHEVRON_DOWN: &str = "strata-chevron-down";
     pub const CHEVRON_RIGHT: &str = "strata-chevron-right";
     pub const COPY: &str = "strata-copy";
+    pub const CORNER_DOWN_LEFT: &str = "strata-corner-down-left";
     pub const DOCUMENTS: &str = "strata-file-text";
     pub const DOWNLOADS: &str = "strata-download";
     pub const EJECT: &str = "strata-eject";
@@ -40,6 +41,7 @@ pub mod icons {
     pub const FILE_CODE: &str = "strata-file-code";
     pub const FOLDER: &str = "strata-folder";
     pub const FOLDER_FILLED: &str = "strata-folder-filled";
+    pub const FOLDER_OPEN: &str = "strata-folder-open";
     pub const HARD_DRIVE: &str = "strata-hard-drive";
     pub const HEART: &str = "strata-heart";
     pub const HEART_SELECTED: &str = "strata-heart-selected";
@@ -69,6 +71,7 @@ pub mod icons {
     pub const SLIDERS: &str = "strata-sliders-horizontal";
     pub const TERMINAL: &str = "strata-terminal";
     pub const TRASH: &str = "strata-trash";
+    pub const TRIANGLE_ALERT: &str = "strata-triangle-alert";
     pub const VIDEOS: &str = "strata-video";
     pub const X: &str = "strata-x";
     pub const STAR: &str = "strata-star";

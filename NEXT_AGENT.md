@@ -1,19 +1,31 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Desktop parity, search UI unification, XDG picker 120 FPS overhaul & archive expansion — 2026-11-01 (current)
+## Minimal Spotlight search overhaul, Alt+Enter reveal, consolidated filters & native parity — 2026-11-01 (current)
 
-- Branch: `feat/6-desktop-parity-and-native-chooser` (branched off `feat/6-drag-drop-and-status-bar-polish`, latest commit `4449f544`).
+- Branch: `feat/6-desktop-parity-and-native-chooser` (branched off `feat/ drag-drop-and-status-bar-polish`, latest commits `052ca051`, `531a814f`, `f5ee0ef8`, `4449f544`, `8fb81774`, and current).
+- Minimal Spotlight Search Dialog Overhaul (`src/ui/search.rs`, `src/ui/window.rs`, `src/style.css`, `src/assets.rs`, `data/strata.gresource.xml`):
+  - Streamlined Hermes's search dialog to match upstream Strata's minimalist spotlight view without redundant controls:
+    - Search header: Lucide 20px search icon, clean entry (`"Search files and folders…"`), and sleek `[Funnel] Filters ▾` button on the far right.
+    - Centered empty state: `"Type to search Home and mounted local drives"` vertically and horizontally centered with clean typography.
+    - Zero vertical clutter: completely removed intermediate scope row, category chips, path label, and back button from the main dialog.
+    - Noisy notice bar eliminated: hidden `notice_slot` and capacity strings (`0 of 0 matches · Library index limited to 100,000 entries / 512 MiB...`) so it takes 0px vertical height.
+    - Footer parity with Strata:
+      - Left: `↑ / ↓  navigate`, `↵  open` (with Lucide `CORNER_DOWN_LEFT`), `Alt+Enter  open containing folder` (with Lucide `FOLDER_OPEN`).
+      - Right: `Ctrl+F  filters` (with Lucide `FUNNEL`, clickable to open popover) and `⚠️ Partial results` badge (with Lucide `TRIANGLE_ALERT`) when index limits or unmonitored roots are encountered.
+      - Removed clunky `[Load more]` and `[Show results in tab]` buttons from the footer.
+  - Consolidated Filters Popover (`SearchFilterPanel`):
+    - Unified Scope (`Folder | Home | Music`), index `Refresh`, and `scope_label` inside the top-right `Filters ▾` popover.
+    - Grouped Categories (`All | Files | Songs | Albums | Artists`) and `Back` navigation inside the popover.
+    - Preserved rich file attributes (type chips, extension, within folder), music attributes (artist, album, title), date modified chips, and sandboxed full-text content search.
+  - `Alt+Enter` Open Containing Folder Reveal:
+    - Wired `Alt+Enter` keybinding in `SearchDialog` to `reveal_position`.
+    - Implemented `SearchDialog::set_reveal_handler` in `src/ui/window.rs`, closing the preview drawer and invoking `controller.reveal(location)` to jump to the item's containing directory and select it.
 - Productivity & Desktop Parity (`src/app/navigation.rs`, `src/app/browser.rs`, `src/ui/browser.rs`, `src/ui/browser_modes.rs`, `src/ui/window.rs`, `src/ui/app_picker.rs`):
   - Inline rename progression (`Tab` / `Shift+Tab`): committing an inline rename automatically cycles to renaming the next (or previous) item in the active column/mode.
   - Parent `$PWD` execution: launching applications or `.desktop` files sets `$PWD` to the target file's containing folder so external terminal apps, scripts, and editors resolve relative file paths properly.
   - Spacebar Quick Look toggle: tapping `Space` while any item is focused or selected toggles the preview drawer immediately without mouse intervention (respecting focused text entries).
   - Spring-loaded folders on drag: hovering over a directory or breadcrumb button for 750ms during an active drag-and-drop gesture automatically navigates into that directory.
   - Back button history popover: right-clicking or long-pressing the header Back button opens a quick navigation history menu to jump multiple levels backwards.
-- Search UI Unification (`src/ui/search.rs`, `src/style.css`):
-  - Completely eliminated all 3 dropdowns that cluttered the search interface:
-    - Scope dropdown replaced by a sleek 3-way segmented control `[ Folder | Home | Music ]` with instant 1-click radio switching and keyboard trigger sync.
-    - Type and Modified dropdowns in the filter panel replaced by horizontal `ChipSelector` filter chips (`All`, `Files`, `Folders`, `Documents`, `Images`, etc. and `Any time`, `Today`, `Past 7 days`).
-  - Search query multi-word `AND` matching preserved with instant filter chip reflection.
 - XDG File Picker Performance & Styling Overhaul (`src/ui/picker.rs`, `src/ui/picker/icons.rs`, `src/style.css`):
   - Solved the severe lag where picker performed slower than Dolphin: eliminated redundant `observe_children().connect_items_changed` signal storms during scrolling and excluded child recursion into `ColumnView`/`GridView` rows.
   - Ensured thumbnail notify signal handlers connect exactly once per cell (`picker-thumbnail-connected`), stopping thousands of redundant signal allocations per scroll frame.

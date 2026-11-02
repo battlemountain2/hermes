@@ -500,8 +500,8 @@ headerbar menubutton.header-action > button:focus-visible image {
 
 .search-dialog {
   background: @theme_surface;
-  border: 1px solid @theme_accent;
-  border-radius: 8px;
+  border: 1px solid alpha(@theme_border, 0.6);
+  border-radius: 9px;
   box-shadow: 0 12px 38px alpha(@theme_bg, 0.82), 0 0 14px alpha(@theme_accent, 0.24);
   min-height: 452px;
   min-width: 760px;
@@ -663,12 +663,11 @@ headerbar menubutton.header-action > button:focus-visible image {
 .search-filter-button {
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 0;
+  border-radius: 4px;
   box-shadow: none;
   color: @theme_dim_text;
   min-height: 28px;
-  min-width: 32px;
-  padding: 0;
+  padding: 0 8px;
 }
 
 .search-filter-button:hover,
@@ -680,6 +679,12 @@ headerbar menubutton.header-action > button:focus-visible image {
 
 .search-filter-button.active {
   color: @theme_accent;
+}
+
+.search-filter-button-label {
+  font-size: 0.88em;
+  font-weight: 500;
+  color: inherit;
 }
 
 .search-filter-popover > contents {
@@ -835,10 +840,10 @@ headerbar menubutton.header-action > button:focus-visible image {
 }
 
 .search-notice-slot {
-  min-height: 32px;
+  min-height: 0;
   padding: 0 16px;
-  border-bottom: 1px solid alpha(@theme_border, 0.35);
-  background: alpha(@theme_bg, 0.15);
+  border-bottom: none;
+  background: transparent;
 }
 
 .search-notice {
@@ -966,13 +971,36 @@ headerbar menubutton.header-action > button:focus-visible image {
 .search-footer {
   background: alpha(@theme_bg, 0.18);
   border-top: 1px solid alpha(@theme_border, 0.5);
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
   min-height: 34px;
   padding: 0 18px;
 }
 
 .search-hint {
-  color: @theme_dim_text;
+  color: @theme_text;
   font-size: 0.78em;
+  opacity: 0.72;
+}
+
+.search-hint-key {
+  color: @theme_text;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.search-hint-warning {
+  color: @theme_accent;
+  opacity: 0.9;
+}
+
+.search-hint-action {
+  cursor: pointer;
+}
+
+.search-hint-action:hover {
+  opacity: 1.0;
+  color: @theme_accent;
 }
 
 .settings-backdrop {

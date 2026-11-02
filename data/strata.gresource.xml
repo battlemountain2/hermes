@@ -28,8 +28,10 @@
     <file>icons/scalable/actions/strata-file-archive.svg</file>
     <file>icons/scalable/actions/strata-file-code.svg</file>
     <file>icons/scalable/actions/strata-file-text.svg</file>
+    <file>icons/scalable/actions/strata-corner-down-left.svg</file>
     <file>icons/scalable/actions/strata-folder.svg</file>
     <file>icons/scalable/actions/strata-folder-filled.svg</file>
+    <file>icons/scalable/actions/strata-folder-open.svg</file>
     <file>icons/scalable/actions/strata-funnel.svg</file>
     <file>icons/scalable/actions/strata-grid.svg</file>
     <file>icons/scalable/actions/strata-hard-drive.svg</file>
@@ -58,6 +60,7 @@
     <file>icons/scalable/actions/strata-sliders-horizontal.svg</file>
     <file>icons/scalable/actions/strata-terminal.svg</file>
     <file>icons/scalable/actions/strata-trash.svg</file>
+    <file>icons/scalable/actions/strata-triangle-alert.svg</file>
     <file>icons/scalable/actions/strata-video.svg</file>
     <file>icons/scalable/actions/strata-x.svg</file>
     <file>icons/scalable/actions/strata-star.svg</file>

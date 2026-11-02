@@ -19,7 +19,7 @@ use crate::services::{
     SearchResult, SearchResultKey, SearchScope, index_tree, search_filter_values, search_filter_terms,
 };
 
-const SEARCH_HELP: &str = "Search files, folders, and music across Home\n\n• Type > to open Command Palette\n• Type home: or folder: or music: to switch scope\n• Press Ctrl+F for advanced type & date filters\n• Use ↑↓ arrows to navigate and Enter to open";
+const SEARCH_HELP: &str = "Type to search Home and mounted local drives";
 const SEARCH_NOTICE_HINT: &str = "Names and metadata · Contents optional";
 const SEARCH_TYPES: [&str; 9] = [
     "All",
@@ -344,8 +344,9 @@ struct SearchState {
     results: gtk::Stack,
     status: gtk::Label,
     notice: gtk::Label,
-    #[cfg(test)]
     notice_slot: gtk::Box,
+    truncated_hint: gtk::Box,
+    reveal_handler: RefCell<Option<Rc<dyn Fn(SearchItem)>>>,
     root: RefCell<PathBuf>,
     current_folder: RefCell<PathBuf>,
     scope: ScopeSelector,
@@ -608,28 +609,15 @@ impl SearchDialog {
         search_bar.add_css_class("search-bar");
         search_bar.append(&crate::assets::primary_icon(
             crate::assets::icons::SEARCH,
-            16,
+            20,
         ));
         let field = gtk::Entry::builder()
-            .placeholder_text("Search files, music, or type > for commands…")
+            .placeholder_text("Search files and folders…")
             .hexpand(true)
             .build();
         field.add_css_class("search-field");
         field.set_max_length(1024);
         search_bar.append(&field);
-        let cmd_button = gtk::Button::with_label(">");
-        cmd_button.add_css_class("omnibar-cmd-btn");
-        cmd_button.set_tooltip_text(Some("Command Palette (type > for actions and settings)"));
-        let field_for_cmd = field.clone();
-        cmd_button.connect_clicked(move |_| {
-            field_for_cmd.set_text(">");
-            field_for_cmd.set_position(1);
-            field_for_cmd.grab_focus();
-        });
-        search_bar.append(&cmd_button);
-        let filters = SearchFilterPanel::new();
-        search_bar.append(&filters.button);
-        panel.append(&search_bar);
 
         let interpretation_slot = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         interpretation_slot.add_css_class("search-interpretation-slot");
@@ -654,16 +642,12 @@ impl SearchDialog {
         let scope_bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         scope_bar.add_css_class("search-scope-bar");
         scope_bar.set_valign(gtk::Align::Center);
+        scope_bar.set_visible(false);
         let scope = ScopeSelector::new(&["Folder", "Home", "Music"]);
         scope.set_selected(1);
         scope.set_tooltip_text(Some(
             "Folder: current location · Home: personal files · Music: library",
         ));
-        scope_bar.append(scope.widget());
-
-        let sep = gtk::Separator::new(gtk::Orientation::Vertical);
-        sep.add_css_class("search-scope-separator");
-        scope_bar.append(&sep);
 
         let category_bar = gtk::Box::new(gtk::Orientation::Horizontal, 2);
         category_bar.add_css_class("search-categories");
@@ -677,7 +661,6 @@ impl SearchDialog {
                 button
             })
             .collect();
-        scope_bar.append(&category_bar);
 
         let scope_label = gtk::Label::new(None);
         scope_label.add_css_class("search-result-path");
@@ -685,7 +668,6 @@ impl SearchDialog {
         scope_label.set_max_width_chars(1);
         scope_label.set_hexpand(true);
         scope_label.set_xalign(0.0);
-        scope_bar.append(&scope_label);
 
         let back_button = gtk::Button::with_label("Back");
         back_button.add_css_class("search-filter-clear");
@@ -693,7 +675,6 @@ impl SearchDialog {
         back_button.set_valign(gtk::Align::Center);
         back_button.set_sensitive(false);
         back_button.set_tooltip_text(Some("Back to overall search results"));
-        scope_bar.append(&back_button);
 
         let save_button = gtk::Button::with_label("Save search");
         save_button.add_css_class("search-filter-clear");
@@ -701,7 +682,6 @@ impl SearchDialog {
         save_button.set_valign(gtk::Align::Center);
         save_button.set_sensitive(false);
         save_button.set_visible(false);
-        scope_bar.append(&save_button);
 
         let refresh = gtk::Button::with_label("Refresh");
         refresh.add_css_class("search-filter-apply");
@@ -710,8 +690,17 @@ impl SearchDialog {
         refresh.set_tooltip_text(Some(
             "Rescan this scope for added or changed files (Ctrl+R)",
         ));
-        scope_bar.append(&refresh);
-        panel.append(&scope_bar);
+
+        let filters = SearchFilterPanel::new(
+            &scope,
+            &category_bar,
+            &refresh,
+            &back_button,
+            &save_button,
+            &scope_label,
+        );
+        search_bar.append(&filters.button);
+        panel.append(&search_bar);
 
         let notice = gtk::Label::new(Some(SEARCH_NOTICE_HINT));
         notice.add_css_class("search-notice");
@@ -720,10 +709,11 @@ impl SearchDialog {
         notice.set_hexpand(true);
         notice.set_max_width_chars(1);
         notice.set_xalign(0.0);
+        notice.set_visible(false);
         let notice_slot = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         notice_slot.add_css_class("search-notice-slot");
-        notice_slot.set_size_request(-1, 32);
         notice_slot.set_valign(gtk::Align::Center);
+        notice_slot.set_visible(false);
         notice_slot.append(&interpretation_view);
         notice_slot.append(&notice);
         panel.append(&notice_slot);
@@ -731,6 +721,9 @@ impl SearchDialog {
         let status = gtk::Label::new(Some(SEARCH_HELP));
         status.add_css_class("search-status");
         status.set_wrap(true);
+        status.set_justify(gtk::Justification::Center);
+        status.set_halign(gtk::Align::Center);
+        status.set_valign(gtk::Align::Center);
 
         let list = gtk::ListBox::new();
         list.add_css_class("search-results");
@@ -753,27 +746,87 @@ impl SearchDialog {
 
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 18);
         footer.add_css_class("search-footer");
-        let navigation = gtk::Label::new(Some("↑↓  navigate"));
-        let open = gtk::Label::new(Some("↵  open / explore"));
-        let filter_hint = gtk::Label::new(Some("Ctrl+F  filters"));
+
+        let hint_label = |text: &str| {
+            let label = gtk::Label::new(Some(text));
+            label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            label
+        };
+
+        let navigation = hint_label("↑ / ↓  navigate");
         navigation.add_css_class("search-hint");
-        open.add_css_class("search-hint");
-        filter_hint.add_css_class("search-hint");
         footer.append(&navigation);
+
+        let open = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        open.set_valign(gtk::Align::Center);
+        open.append(&crate::assets::primary_icon(
+            crate::assets::icons::CORNER_DOWN_LEFT,
+            13,
+        ));
+        open.append(&hint_label("open"));
+        open.add_css_class("search-hint");
         footer.append(&open);
+
+        let reveal_hint = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        reveal_hint.set_valign(gtk::Align::Center);
+        reveal_hint.append(&crate::assets::primary_icon(
+            crate::assets::icons::FOLDER_OPEN,
+            13,
+        ));
+        reveal_hint.append(&hint_label("Alt+Enter  open containing folder"));
+        reveal_hint.add_css_class("search-hint");
+        footer.append(&reveal_hint);
+
+        let footer_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        footer_spacer.set_hexpand(true);
+        footer.append(&footer_spacer);
+
+        let truncated_hint = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        truncated_hint.set_valign(gtk::Align::Center);
+        truncated_hint.append(&crate::assets::primary_icon(
+            crate::assets::icons::TRIANGLE_ALERT,
+            14,
+        ));
+        truncated_hint.append(&hint_label("Partial results"));
+        truncated_hint.add_css_class("search-hint");
+        truncated_hint.add_css_class("search-hint-warning");
+        truncated_hint.set_visible(false);
+        footer.append(&truncated_hint);
+
+        let filter_hint = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        filter_hint.set_valign(gtk::Align::Center);
+        filter_hint.append(&crate::assets::primary_icon(
+            crate::assets::icons::FUNNEL,
+            13,
+        ));
+        filter_hint.append(&hint_label("Ctrl+F  filters"));
+        filter_hint.add_css_class("search-hint");
+        filter_hint.add_css_class("search-hint-action");
+        let click = gtk::GestureClick::new();
+        let filters_for_footer = filters.clone();
+        let field_for_footer = field.clone();
+        click.connect_released(move |_, _, _, _| {
+            filters_for_footer.show(&field_for_footer.text());
+        });
+        filter_hint.add_controller(click);
         footer.append(&filter_hint);
+
         let more_button = gtk::Button::with_label("Load more");
         more_button.add_css_class("search-filter-clear");
-        more_button.set_size_request(64, 32);
+        more_button.set_size_request(0, 0);
         more_button.set_valign(gtk::Align::Center);
         more_button.set_sensitive(false);
+        more_button.set_visible(false);
         more_button.set_tooltip_text(Some("Load the next page of search results (up to 100)"));
         footer.append(&more_button);
+
         let open_results_button = gtk::Button::with_label("Show results in tab");
         open_results_button.add_css_class("search-filter-apply");
+        open_results_button.set_size_request(0, 0);
         open_results_button.set_visible(false);
         footer.append(&open_results_button);
         panel.append(&footer);
+
         let top_spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
         top_spacer.set_vexpand(true);
         let bottom_spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -791,8 +844,9 @@ impl SearchDialog {
             results,
             status,
             notice,
-            #[cfg(test)]
             notice_slot,
+            truncated_hint,
+            reveal_handler: RefCell::new(None),
             refresh,
             save_button,
             save_search: RefCell::new(None),
@@ -1003,6 +1057,10 @@ impl SearchDialog {
                     state.field.grab_focus();
                     return glib::Propagation::Stop;
                 }
+                if state.entity_scope.borrow().is_some() {
+                    back_to_results(&state);
+                    return glib::Propagation::Stop;
+                }
                 hide(&state);
                 return glib::Propagation::Stop;
             }
@@ -1017,6 +1075,14 @@ impl SearchDialog {
             {
                 state.filters.show(&state.field.text());
                 return glib::Propagation::Stop;
+            }
+            if modifiers.contains(gdk::ModifierType::ALT_MASK)
+                && matches!(key, gdk::Key::Return | gdk::Key::KP_Enter)
+            {
+                if let Some(row) = state.list.selected_row() {
+                    reveal_position(&state, row.index());
+                    return glib::Propagation::Stop;
+                }
             }
             if modifiers.intersects(
                 gdk::ModifierType::CONTROL_MASK
@@ -1048,6 +1114,10 @@ impl SearchDialog {
 
     pub fn set_command_handler(&self, handler: Rc<dyn Fn(&str)>) {
         self.state.command_handler.replace(Some(handler));
+    }
+
+    pub fn set_reveal_handler(&self, handler: Rc<dyn Fn(SearchItem)>) {
+        self.state.reveal_handler.replace(Some(handler));
     }
 
     pub fn show(&self, root: PathBuf) {
@@ -1120,14 +1190,27 @@ impl SearchDialog {
 }
 
 impl SearchFilterPanel {
-    fn new() -> Self {
+    fn new(
+        scope: &ScopeSelector,
+        category_bar: &gtk::Box,
+        refresh: &gtk::Button,
+        back_button: &gtk::Button,
+        save_button: &gtk::Button,
+        scope_label: &gtk::Label,
+    ) -> Self {
         let button = gtk::Button::builder()
-            .tooltip_text("Search filters (Ctrl+F)")
+            .tooltip_text("Search filters and scope (Ctrl+F)")
             .build();
-        button.set_child(Some(&crate::assets::primary_icon(
+        let btn_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        btn_box.set_valign(gtk::Align::Center);
+        btn_box.append(&crate::assets::primary_icon(
             crate::assets::icons::FUNNEL,
-            16,
-        )));
+            14,
+        ));
+        let btn_label = gtk::Label::new(Some("Filters ▾"));
+        btn_label.add_css_class("search-filter-button-label");
+        btn_box.append(&btn_label);
+        button.set_child(Some(&btn_box));
         button.add_css_class("search-filter-button");
 
         let content = gtk::Box::new(gtk::Orientation::Vertical, 10);
@@ -1142,6 +1225,21 @@ impl SearchFilterPanel {
         title_row.append(&title);
         title_row.append(&shortcut);
         content.append(&title_row);
+
+        append_filter_section_heading(&content, "SEARCH SCOPE");
+        let scope_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        scope_row.set_valign(gtk::Align::Center);
+        scope_row.append(scope.widget());
+        scope_row.append(refresh);
+        content.append(&scope_row);
+        content.append(scope_label);
+
+        append_filter_section_heading(&content, "CATEGORIES");
+        let cat_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        cat_row.set_valign(gtk::Align::Center);
+        cat_row.append(category_bar);
+        cat_row.append(back_button);
+        content.append(&cat_row);
 
         append_filter_section_heading(&content, "FILES");
         let file_type = ChipSelector::new_wrapped(&SEARCH_TYPES, 5);
@@ -1193,6 +1291,7 @@ impl SearchFilterPanel {
 
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         actions.set_halign(gtk::Align::End);
+        actions.append(save_button);
         let clear = gtk::Button::with_label("Clear");
         clear.add_css_class("search-filter-clear");
         let apply = gtk::Button::with_label("Apply filters");
@@ -1356,8 +1455,10 @@ fn render_inferred_chips(
     state: &Rc<SearchState>,
     inferred: &[InferredFilterChip],
 ) {
-    state.interpretation_slot.set_visible(!inferred.is_empty());
-    state.interpretation_view.set_visible(!inferred.is_empty());
+    let has_chips = !inferred.is_empty();
+    state.notice_slot.set_visible(has_chips);
+    state.interpretation_slot.set_visible(has_chips);
+    state.interpretation_view.set_visible(has_chips);
     while let Some(child) = state.interpretation_slot.first_child() {
         state.interpretation_slot.remove(&child);
     }
@@ -1681,6 +1782,13 @@ fn render_search_results(
     state
         .notice
         .set_tooltip_text(has_notice.then_some(notice.as_str()));
+    let is_partial = notice.contains("partial")
+        || notice.contains("limited")
+        || notice.contains("cannot be watched");
+    state.truncated_hint.set_visible(is_partial);
+    if is_partial {
+        state.truncated_hint.set_tooltip_text(Some(&notice));
+    }
     if changed {
         let retained: HashSet<_> = rows.iter().cloned().collect();
         for current in existing_rows {
@@ -1783,6 +1891,39 @@ fn activate_position(state: &Rc<SearchState>, position: i32) {
     }
 }
 
+fn reveal_position(state: &Rc<SearchState>, position: i32) {
+    if !state.visible_commands.borrow().is_empty() {
+        return;
+    }
+    let Some(item) = usize::try_from(position)
+        .ok()
+        .and_then(|position| state.visible_results.borrow().get(position).cloned())
+    else {
+        return;
+    };
+    match item {
+        SearchResult::File(item) => {
+            hide(state);
+            if let Some(handler) = state.reveal_handler.borrow().as_ref() {
+                handler(item);
+            } else {
+                (state.activate)(item);
+            }
+        }
+        SearchResult::Album(entity) | SearchResult::Artist(entity) => {
+            let previous_selection = Some(SearchResultKey::Entity(entity.key.clone()));
+            state.entity_scope.replace(Some(EntityScope {
+                key: entity.key,
+                previous_group: state.group.get(),
+                previous_selection,
+            }));
+            state.group.set(SearchGroup::Songs);
+            start_query(state, &state.field.text());
+            state.field.grab_focus();
+        }
+    }
+}
+
 fn back_to_results(state: &Rc<SearchState>) {
     let scope = state.entity_scope.borrow_mut().take();
     let Some(scope) = scope else {
@@ -1795,6 +1936,10 @@ fn back_to_results(state: &Rc<SearchState>) {
 }
 
 fn hide(state: &SearchState) {
+    state.truncated_hint.set_visible(false);
+    state.notice_slot.set_visible(false);
+    state.interpretation_slot.set_visible(false);
+    state.interpretation_view.set_visible(false);
     state
         .session_generation
         .set(state.session_generation.get().wrapping_add(1));
