@@ -6387,7 +6387,9 @@ fn show_compress_dialog(state: &Rc<ViewState>, entries: Vec<FileEntry>, parent: 
         .build();
     let format = gtk::ComboBoxText::new();
     format.append(Some("zip"), "ZIP archive (.zip)");
+    format.append(Some("tar-gz"), "Gzip TAR (.tar.gz)");
     format.append(Some("tar-zst"), "Compressed TAR (.tar.zst)");
+    format.append(Some("7z"), "7-Zip archive (.7z)");
     format.set_active_id(Some("zip"));
     dialog.content_area().append(&name);
     dialog.content_area().append(&format);
@@ -6397,13 +6399,14 @@ fn show_compress_dialog(state: &Rc<ViewState>, entries: Vec<FileEntry>, parent: 
     let browser = state.browser.clone();
     dialog.connect_response(move |dialog, response| {
         if response == gtk::ResponseType::Accept {
-            let extension = if format.active_id().as_deref() == Some("tar-zst") {
-                ".tar.zst"
-            } else {
-                ".zip"
+            let extension = match format.active_id().as_deref() {
+                Some("tar-gz") => ".tar.gz",
+                Some("tar-zst") => ".tar.zst",
+                Some("7z") => ".7z",
+                _ => ".zip",
             };
             let mut archive_name = name.text().trim().to_owned();
-            for known in [".zip", ".tar.zst"] {
+            for known in [".zip", ".tar.gz", ".tar.zst", ".7z"] {
                 if archive_name.to_ascii_lowercase().ends_with(known) {
                     archive_name.truncate(archive_name.len().saturating_sub(known.len()));
                 }
