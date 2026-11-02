@@ -202,6 +202,8 @@ fn private_chooser_returns_file_filters_choices_and_cancels_exactly_once() {
     let fixture = FixtureDirectory::new();
     let target = fixture.0.join("chosen.txt");
     fs::write(&target, b"generated").unwrap();
+    let _ = fs::create_dir(fixture.0.join("Projects"));
+    let _ = fs::write(fixture.0.join("music.flac"), b"audio");
     let filter: crate::portal::request::Filter = ("Text".into(), vec![(0, "*.txt".into())]);
     let choices: Vec<crate::portal::request::Choice> =
         vec![("readonly".into(), "Read only".into(), vec![], "true".into())];
