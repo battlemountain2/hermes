@@ -136,6 +136,28 @@ impl NavigationState {
         self.current_path().and_then(|path| path.parent()).is_some()
     }
 
+    pub fn back_locations(&self) -> Vec<Location> {
+        self.back_history
+            .iter()
+            .rev()
+            .filter_map(|path| path.locations().last().cloned())
+            .collect()
+    }
+
+    pub fn go_back_to(&mut self, steps: usize) -> Option<NavigationPath> {
+        if steps == 0 || steps > self.back_history.len() {
+            return None;
+        }
+        if let Some(current) = self.current_path() {
+            self.forward_history.push(current);
+        }
+        for _ in 1..steps {
+            let skipped = self.back_history.pop()?;
+            self.forward_history.push(skipped);
+        }
+        self.back_history.pop()
+    }
+
     pub fn go_back(&mut self) -> Option<NavigationPath> {
         let target = self.back_history.pop()?;
         if let Some(current) = self.current_path() {

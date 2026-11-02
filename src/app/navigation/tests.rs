@@ -570,6 +570,27 @@ fn back_and_forward_restore_committed_paths() {
 }
 
 #[test]
+fn back_locations_and_go_back_to_steps() {
+    let mut state = NavigationState::default();
+    state.navigate(location("/a"), RequestId(1));
+    state.navigate(location("/b"), RequestId(2));
+    state.navigate(location("/c"), RequestId(3));
+    state.navigate(location("/d"), RequestId(4));
+
+    let history = state.back_locations();
+    assert_eq!(
+        history,
+        vec![location("/c"), location("/b"), location("/a")]
+    );
+
+    // Jump back 2 steps to /b
+    let target = state.go_back_to(2).expect("target path");
+    assert_eq!(target.locations(), &[location("/b")]);
+    assert_eq!(state.back_locations(), vec![location("/a")]);
+    assert!(state.can_go_forward());
+}
+
+#[test]
 fn parent_removes_the_deepest_committed_column() {
     let mut state = NavigationState::default();
     state.navigate(location("/home"), RequestId(1));

@@ -416,6 +416,16 @@ impl ModeViews {
         true
     }
 
+    pub fn submit_rename(&self) -> bool {
+        let field = self.active_rename.borrow().as_ref().map(|r| r.field.clone());
+        if let Some(field) = field {
+            field.activate();
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn begin_rename(&self, depth: usize, source_position: usize, entry: &FileEntry) -> bool {
         self.cancel_rename();
         let pane = match self.mode {
@@ -1697,6 +1707,62 @@ fn column_resize_handle(
     handle
 }
 
+fn show_back_history_popover(button: &gtk::Button, browser: &Rc<Browser>) {
+    let history = browser.back_locations();
+    if history.is_empty() {
+        return;
+    }
+    let popover = gtk::Popover::builder()
+        .has_arrow(true)
+        .autohide(true)
+        .build();
+    popover.add_css_class("back-history-popover");
+    popover.set_parent(button);
+
+    let vbox = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    vbox.add_css_class("back-history-list");
+    vbox.set_margin_top(4);
+    vbox.set_margin_bottom(4);
+    vbox.set_margin_start(4);
+    vbox.set_margin_end(4);
+
+    for (index, location) in history.into_iter().take(12).enumerate() {
+        let row = gtk::Button::builder().has_frame(false).build();
+        row.add_css_class("back-history-row");
+        let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        content.append(&crate::assets::primary_icon(crate::assets::icons::FOLDER, 16));
+        let label = gtk::Label::new(Some(&location.display_name()));
+        label.set_xalign(0.0);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        content.append(&label);
+        row.set_child(Some(&content));
+
+        let weak_browser = Rc::downgrade(browser);
+        let weak_pop = popover.downgrade();
+        let steps = index + 1;
+        row.connect_clicked(move |_| {
+            if let Some(pop) = weak_pop.upgrade() {
+                pop.popdown();
+            }
+            if let Some(b) = weak_browser.upgrade() {
+                b.back_to(steps);
+            }
+        });
+        vbox.append(&row);
+    }
+
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&vbox)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .max_content_height(320)
+        .propagate_natural_height(true)
+        .build();
+    popover.set_child(Some(&scroll));
+    popover.connect_closed(|p| p.unparent());
+    popover.popup();
+}
+
 fn explorer_navigation(browser: &Rc<Browser>) -> gtk::Box {
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     actions.add_css_class("explorer-navigation");
@@ -1732,6 +1798,30 @@ fn explorer_navigation(browser: &Rc<Browser>) -> gtk::Box {
                 action(&browser);
             }
         });
+        if icon == crate::assets::icons::ARROW_LEFT {
+            let right_click = gtk::GestureClick::new();
+            right_click.set_button(3);
+            let weak_b = Rc::downgrade(browser);
+            let weak_btn = button.downgrade();
+            right_click.connect_pressed(move |gesture, _, _, _| {
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                if let (Some(b), Some(btn)) = (weak_b.upgrade(), weak_btn.upgrade()) {
+                    show_back_history_popover(&btn, &b);
+                }
+            });
+            button.add_controller(right_click);
+
+            let long_press = gtk::GestureLongPress::new();
+            let weak_b2 = Rc::downgrade(browser);
+            let weak_btn2 = button.downgrade();
+            long_press.connect_pressed(move |gesture, _, _| {
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                if let (Some(b), Some(btn)) = (weak_b2.upgrade(), weak_btn2.upgrade()) {
+                    show_back_history_popover(&btn, &b);
+                }
+            });
+            button.add_controller(long_press);
+        }
         actions.append(&button);
     }
     actions
@@ -2470,9 +2560,40 @@ fn install_explorer_drag_drop(
         gtk::gdk::FileList::static_type(),
         gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE,
     );
-    drop.connect_enter(|target, _, _| {
+    let spring_timer = Rc::new(RefCell::new(None::<glib::SourceId>));
+    let spring_item = item.downgrade();
+    let browser_for_spring = browser.clone();
+    let map_for_spring = position_map.clone();
+    let timer_enter = spring_timer.clone();
+    drop.connect_enter(move |target, _, _| {
         if let Some(row) = target.widget() {
             row.add_css_class("drop-destination");
+        }
+        if let Some(accepted_item) = spring_item.upgrade()
+            && let Some(browser) = browser_for_spring.upgrade()
+        {
+            let position = accepted_item.position();
+            let position = map_for_spring.as_ref().map_or(
+                (position != gtk::INVALID_LIST_POSITION).then_some(position as usize),
+                |(source, filtered)| source_position_for_view(source, Some(filtered), position),
+            );
+            if let Some(entry) = position
+                .and_then(|pos| browser.entry_at(depth, pos))
+                .filter(|e| e.is_directory())
+            {
+                let weak_b = Rc::downgrade(&browser);
+                let nav_loc = entry.location.clone();
+                let timer_handle = timer_enter.clone();
+                let source = glib::timeout_add_local_once(std::time::Duration::from_millis(750), move || {
+                    timer_handle.borrow_mut().take();
+                    if let Some(b) = weak_b.upgrade() {
+                        b.navigate(nav_loc);
+                    }
+                });
+                if let Some(prev) = timer_enter.borrow_mut().replace(source) {
+                    prev.remove();
+                }
+            }
         }
         super::browser::file_drop_action(target)
     });
@@ -2482,7 +2603,11 @@ fn install_explorer_drag_drop(
         }
         super::browser::file_drop_action(target)
     });
-    drop.connect_leave(|target| {
+    let timer_leave = spring_timer.clone();
+    drop.connect_leave(move |target| {
+        if let Some(timer) = timer_leave.borrow_mut().take() {
+            timer.remove();
+        }
         if let Some(row) = target.widget() {
             row.remove_css_class("drop-destination");
         }
@@ -2513,7 +2638,11 @@ fn install_explorer_drag_drop(
     let dropped_item = item.downgrade();
     let browser_for_drop = browser;
     let map_for_drop = position_map;
+    let timer_drop = spring_timer.clone();
     drop.connect_drop(move |target, value, _, _| {
+        if let Some(timer) = timer_drop.borrow_mut().take() {
+            timer.remove();
+        }
         if let Some(row) = target.widget() {
             row.remove_css_class("drop-destination");
         }

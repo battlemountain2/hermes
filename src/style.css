@@ -5502,3 +5502,35 @@ button.music-cover-button:focus-visible {
 .status-density-pill:hover .status-density-label {
   color: @theme_text;
 }
+
+/* Back button history popover */
+.back-history-popover contents {
+  background: @theme_surface;
+  border: 1px solid alpha(@theme_border, 0.7);
+  border-radius: 6px;
+  padding: 4px;
+}
+
+.back-history-list {
+  min-width: 180px;
+}
+
+.back-history-row {
+  background: transparent;
+  color: @theme_text;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 8px;
+  min-height: 28px;
+}
+
+.back-history-row:hover {
+  background: alpha(@theme_muted, 0.6);
+  color: @theme_text;
+}
+
+.back-history-row:focus-visible {
+  outline: 2px solid @theme_accent;
+  outline-offset: -1px;
+}
+

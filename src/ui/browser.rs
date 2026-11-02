@@ -552,6 +552,10 @@ impl BrowserView {
         self.state.begin_rename()
     }
 
+    pub fn advance_rename(&self, direction: i32) -> bool {
+        self.state.advance_rename(direction)
+    }
+
     pub fn cancel_rename(&self) -> bool {
         self.state.cancel_rename()
     }
@@ -2865,6 +2869,27 @@ impl ViewState {
         true
     }
 
+    pub fn advance_rename(self: &Rc<Self>, direction: i32) -> bool {
+        let active_in_columns = self.active_rename.borrow().is_some();
+        let active_in_modes = self.mode_views.borrow().rename_is_active();
+        if !active_in_columns && !active_in_modes {
+            return false;
+        }
+        if active_in_modes {
+            self.mode_views.borrow().submit_rename();
+        } else if let Some(active) = self.active_rename.borrow().as_ref() {
+            self.submit_rename(&active.field.clone());
+        }
+        self.browser.move_selection(direction);
+        let weak_self = Rc::downgrade(self);
+        glib::idle_add_local_once(move || {
+            if let Some(state) = weak_self.upgrade() {
+                state.begin_rename();
+            }
+        });
+        true
+    }
+
     fn submit_rename(self: &Rc<Self>, field: &gtk::Entry) {
         let mut active = self.active_rename.borrow_mut();
         let Some(rename) = active.as_mut().filter(|rename| rename.field == *field) else {
@@ -3016,9 +3041,25 @@ impl ViewState {
                 );
                 let weak_drop = Rc::downgrade(self);
                 let target_crumb = crumb.clone();
-                breadcrumb_drop.connect_enter(|target, _, _| {
+                let spring_timer = Rc::new(RefCell::new(None::<glib::SourceId>));
+                let weak_spring = weak_drop.clone();
+                let crumb_spring = target_crumb.clone();
+                let timer_enter = spring_timer.clone();
+                breadcrumb_drop.connect_enter(move |target, _, _| {
                     if let Some(btn) = target.widget() {
                         btn.add_css_class("drop-destination");
+                    }
+                    let weak = weak_spring.clone();
+                    let nav_crumb = crumb_spring.clone();
+                    let timer_handle = timer_enter.clone();
+                    let source = glib::timeout_add_local_once(Duration::from_millis(750), move || {
+                        timer_handle.borrow_mut().take();
+                        if let Some(state) = weak.upgrade() {
+                            state.browser.navigate(nav_crumb);
+                        }
+                    });
+                    if let Some(prev) = timer_enter.borrow_mut().replace(source) {
+                        prev.remove();
                     }
                     file_drop_action(target)
                 });
@@ -3028,12 +3069,20 @@ impl ViewState {
                     }
                     file_drop_action(target)
                 });
-                breadcrumb_drop.connect_leave(|target| {
+                let timer_leave = spring_timer.clone();
+                breadcrumb_drop.connect_leave(move |target| {
+                    if let Some(timer) = timer_leave.borrow_mut().take() {
+                        timer.remove();
+                    }
                     if let Some(btn) = target.widget() {
                         btn.remove_css_class("drop-destination");
                     }
                 });
+                let timer_drop = spring_timer.clone();
                 breadcrumb_drop.connect_drop(move |target, value, _, _| {
+                    if let Some(timer) = timer_drop.borrow_mut().take() {
+                        timer.remove();
+                    }
                     if let Some(btn) = target.widget() {
                         btn.remove_css_class("drop-destination");
                     }
@@ -3821,9 +3870,39 @@ impl ViewState {
                 gtk::gdk::FileList::static_type(),
                 gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE,
             );
-            drop.connect_enter(|target, _, _| {
+            let spring_timer = Rc::new(RefCell::new(None::<glib::SourceId>));
+            let weak_state_for_spring = weak_state.clone();
+            let spring_item = item.downgrade();
+            let source_for_spring = source_for_hover.clone();
+            let filtered_for_spring = filtered_for_hover.clone();
+            let spring_timer_enter = spring_timer.clone();
+            drop.connect_enter(move |target, _, _| {
                 if let Some(row) = target.widget() {
                     row.add_css_class("drop-destination");
+                }
+                if let Some(accepted_item) = spring_item.upgrade()
+                    && let Some(state) = weak_state_for_spring.upgrade()
+                {
+                    let entry = source_position_for_filtered(
+                        &source_for_spring,
+                        &filtered_for_spring,
+                        accepted_item.position(),
+                    )
+                    .and_then(|position| state.browser.entry_at(depth, position));
+                    if let Some(entry) = entry.filter(|e| e.is_directory()) {
+                        let weak_state = Rc::downgrade(&state);
+                        let nav_loc = entry.location.clone();
+                        let timer_handle = spring_timer_enter.clone();
+                        let source = glib::timeout_add_local_once(Duration::from_millis(750), move || {
+                            timer_handle.borrow_mut().take();
+                            if let Some(state) = weak_state.upgrade() {
+                                state.browser.navigate(nav_loc);
+                            }
+                        });
+                        if let Some(prev) = spring_timer_enter.borrow_mut().replace(source) {
+                            prev.remove();
+                        }
+                    }
                 }
                 file_drop_action(target)
             });
@@ -3833,7 +3912,11 @@ impl ViewState {
                 }
                 file_drop_action(target)
             });
-            drop.connect_leave(|target| {
+            let spring_timer_leave = spring_timer.clone();
+            drop.connect_leave(move |target| {
+                if let Some(timer) = spring_timer_leave.borrow_mut().take() {
+                    timer.remove();
+                }
                 if let Some(row) = target.widget() {
                     row.remove_css_class("drop-destination");
                 }
@@ -3866,7 +3949,11 @@ impl ViewState {
             let dropped_item = item.downgrade();
             let source_for_drop = source_for_hover.clone();
             let filtered_for_drop = filtered_for_hover.clone();
+            let spring_timer_drop = spring_timer.clone();
             drop.connect_drop(move |target, value, _, _| {
+                if let Some(timer) = spring_timer_drop.borrow_mut().take() {
+                    timer.remove();
+                }
                 if let Some(row) = target.widget() {
                     row.remove_css_class("drop-destination");
                 }
@@ -7600,14 +7687,42 @@ pub(super) fn open_location(location: &Location, parent: &impl IsA<gtk::Widget>)
             );
             return;
         };
-        if let Err(error) = app.launch(&[], None::<&gio::AppLaunchContext>) {
+        let folder = path.parent().map(|p| p.to_path_buf());
+        let previous = match (folder, std::env::current_dir()) {
+            (Some(folder), Ok(previous)) if std::env::set_current_dir(&folder).is_ok() => {
+                Some(previous)
+            }
+            _ => None,
+        };
+        let result = app.launch(&[], None::<&gio::AppLaunchContext>);
+        if let Some(previous) = previous
+            && let Err(error) = std::env::set_current_dir(&previous)
+        {
+            tracing::warn!(%error, "unable to return from the launched program's folder");
+        }
+        if let Err(error) = result {
             show_error_dialog(parent, "Unable to launch application", &error.to_string());
         }
         return;
     }
     let file = gio_file_for_location(location);
     let uri = file.uri();
-    if let Err(error) = gio::AppInfo::launch_default_for_uri(&uri, None::<&gio::AppLaunchContext>) {
+    let folder = location
+        .native_path()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+    let previous = match (folder, std::env::current_dir()) {
+        (Some(folder), Ok(previous)) if std::env::set_current_dir(&folder).is_ok() => {
+            Some(previous)
+        }
+        _ => None,
+    };
+    let result = gio::AppInfo::launch_default_for_uri(&uri, None::<&gio::AppLaunchContext>);
+    if let Some(previous) = previous
+        && let Err(error) = std::env::set_current_dir(&previous)
+    {
+        tracing::warn!(%error, "unable to return from the launched program's folder");
+    }
+    if let Err(error) = result {
         tracing::warn!(location = %location.display_path(), error = %error, "unable to open file");
         show_error_dialog(parent, "Unable to open file", &error.to_string());
     }

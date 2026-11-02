@@ -234,10 +234,23 @@ pub(super) fn present(
         {
             failures.push(format!("Could not save the default application: {error}"));
         }
-        if let Err(error) = app.launch(
+        let folder = file_for_response.path().and_then(|p| p.parent().map(|p| p.to_path_buf()));
+        let previous = match (folder, std::env::current_dir()) {
+            (Some(folder), Ok(previous)) if std::env::set_current_dir(&folder).is_ok() => {
+                Some(previous)
+            }
+            _ => None,
+        };
+        let launch_result = app.launch(
             std::slice::from_ref(&file_for_response),
             None::<&gio::AppLaunchContext>,
-        ) {
+        );
+        if let Some(previous) = previous
+            && let Err(error) = std::env::set_current_dir(&previous)
+        {
+            tracing::warn!(%error, "unable to return from the launched program's folder");
+        }
+        if let Err(error) = launch_result {
             failures.push(format!("Could not open the file: {error}"));
         }
         dialog.close();

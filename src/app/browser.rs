@@ -589,6 +589,17 @@ impl Browser {
         self.state.borrow().can_go_back()
     }
 
+    pub fn back_locations(&self) -> Vec<Location> {
+        self.state.borrow().back_locations()
+    }
+
+    pub fn back_to(self: &Rc<Self>, steps: usize) {
+        let target = self.state.borrow_mut().go_back_to(steps);
+        if let Some(target) = target {
+            self.restore_path(target);
+        }
+    }
+
     pub fn can_go_forward(&self) -> bool {
         self.state.borrow().can_go_forward()
     }

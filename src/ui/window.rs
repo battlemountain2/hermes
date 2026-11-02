@@ -1295,8 +1295,34 @@ fn install_keyboard_navigation(
         if key == gtk::gdk::Key::Escape && view.cancel_rename() {
             return glib::Propagation::Stop;
         }
+        if (key == gtk::gdk::Key::Tab || key == gtk::gdk::Key::ISO_Left_Tab) && view.rename_is_active() {
+            let direction = if shift { -1 } else { 1 };
+            if view.advance_rename(direction) {
+                return glib::Propagation::Stop;
+            }
+        }
         if view.rename_is_active() || view.new_folder_is_active() {
             return glib::Propagation::Proceed;
+        }
+        if !control && !alt && !shift && key == gtk::gdk::Key::space {
+            let text_focused = gtk::prelude::RootExt::focus(&dialog_parent).is_some_and(|focused| {
+                focused.is::<gtk::Text>() || focused.is::<gtk::TextView>() || focused.is::<gtk::Entry>()
+            });
+            if !text_focused
+                && !view.location_has_focus()
+                && !view.filter_has_focus()
+            {
+                let entry = browser
+                    .selected_entries()
+                    .first()
+                    .cloned()
+                    .or_else(|| browser.focused_item().map(|(_, _, entry)| entry));
+                preview.toggle(entry);
+                if let Err(error) = trails.update_active_view(capture_view()) {
+                    tracing::warn!(%error, "unable to save Trail preview state");
+                }
+                return glib::Propagation::Stop;
+            }
         }
         if key == gtk::gdk::Key::Escape && view.dismiss_focused_filter() {
             return glib::Propagation::Stop;
