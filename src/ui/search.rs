@@ -58,6 +58,279 @@ pub struct OmnibarCommand {
 }
 
 #[derive(Clone)]
+pub(crate) struct ScopeSelector {
+    container: gtk::Box,
+    buttons: Vec<gtk::ToggleButton>,
+    selected: Rc<Cell<u32>>,
+    listeners: Rc<RefCell<Vec<Rc<dyn Fn(u32)>>>>,
+    updating: Rc<Cell<bool>>,
+}
+
+impl ScopeSelector {
+    pub(crate) fn new(options: &[&str]) -> Self {
+        let container = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        container.add_css_class("search-scope-segmented");
+        container.set_valign(gtk::Align::Center);
+
+        let selected = Rc::new(Cell::new(1));
+        let listeners: Rc<RefCell<Vec<Rc<dyn Fn(u32)>>>> = Rc::new(RefCell::new(Vec::new()));
+        let updating = Rc::new(Cell::new(false));
+
+        let mut buttons = Vec::with_capacity(options.len());
+        for (index, label) in options.iter().enumerate() {
+            let button = gtk::ToggleButton::with_label(label);
+            button.add_css_class("search-scope-pill");
+            button.set_valign(gtk::Align::Center);
+            if index == 1 {
+                button.set_active(true);
+            }
+            buttons.push(button);
+        }
+
+        for (idx, button) in buttons.iter().enumerate() {
+            container.append(button);
+            let idx = idx as u32;
+            let sel = selected.clone();
+            let upd = updating.clone();
+            let lis = listeners.clone();
+            let siblings = buttons.clone();
+
+            button.connect_toggled(move |toggle| {
+                if upd.get() {
+                    return;
+                }
+                if toggle.is_active() {
+                    upd.set(true);
+                    sel.set(idx);
+                    for (i, sibling) in siblings.iter().enumerate() {
+                        if i as u32 != idx {
+                            sibling.set_active(false);
+                        }
+                    }
+                    upd.set(false);
+                    let callbacks = lis.borrow().clone();
+                    for cb in callbacks {
+                        cb(idx);
+                    }
+                } else if sel.get() == idx {
+                    toggle.set_active(true);
+                }
+            });
+        }
+
+        Self {
+            container,
+            buttons,
+            selected,
+            listeners,
+            updating,
+        }
+    }
+
+    pub(crate) fn selected(&self) -> u32 {
+        self.selected.get()
+    }
+
+    pub(crate) fn set_selected(&self, position: u32) {
+        let max_pos = self.buttons.len().saturating_sub(1) as u32;
+        let position = position.min(max_pos);
+        if self.selected.get() == position && self.buttons.get(position as usize).is_some_and(|b| b.is_active()) {
+            return;
+        }
+        self.updating.set(true);
+        self.selected.set(position);
+        for (i, btn) in self.buttons.iter().enumerate() {
+            btn.set_active(i as u32 == position);
+        }
+        self.updating.set(false);
+        let callbacks = self.listeners.borrow().clone();
+        for cb in callbacks {
+            cb(position);
+        }
+    }
+
+    pub(crate) fn connect_selected_notify<F: Fn(u32) + 'static>(&self, callback: F) {
+        self.listeners.borrow_mut().push(Rc::new(callback));
+    }
+
+    pub(crate) fn widget(&self) -> &gtk::Box {
+        &self.container
+    }
+
+    pub(crate) fn set_tooltip_text(&self, text: Option<&str>) {
+        self.container.set_tooltip_text(text);
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct ChipSelector {
+    container: gtk::Box,
+    buttons: Vec<gtk::ToggleButton>,
+    selected: Rc<Cell<u32>>,
+    updating: Rc<Cell<bool>>,
+}
+
+impl ChipSelector {
+    pub(crate) fn new(options: &[&str]) -> Self {
+        let container = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        container.add_css_class("search-filter-chips");
+        container.set_valign(gtk::Align::Center);
+
+        let selected = Rc::new(Cell::new(0));
+        let updating = Rc::new(Cell::new(false));
+
+        let mut buttons = Vec::with_capacity(options.len());
+        for (index, label) in options.iter().enumerate() {
+            let button = gtk::ToggleButton::with_label(label);
+            button.add_css_class("search-filter-chip");
+            button.set_valign(gtk::Align::Center);
+            if index == 0 {
+                button.set_active(true);
+            }
+            buttons.push(button);
+        }
+
+        for (idx, button) in buttons.iter().enumerate() {
+            container.append(button);
+            let idx = idx as u32;
+            let sel = selected.clone();
+            let upd = updating.clone();
+            let siblings = buttons.clone();
+
+            button.connect_toggled(move |toggle| {
+                if upd.get() {
+                    return;
+                }
+                if toggle.is_active() {
+                    upd.set(true);
+                    sel.set(idx);
+                    for (i, sibling) in siblings.iter().enumerate() {
+                        if i as u32 != idx {
+                            sibling.set_active(false);
+                        }
+                    }
+                    upd.set(false);
+                } else if sel.get() == idx {
+                    toggle.set_active(true);
+                }
+            });
+        }
+
+        Self {
+            container,
+            buttons,
+            selected,
+            updating,
+        }
+    }
+
+    pub(crate) fn new_wrapped(options: &[&str], per_row: usize) -> Self {
+        let container = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        container.add_css_class("search-filter-chips");
+        container.set_valign(gtk::Align::Center);
+
+        let selected = Rc::new(Cell::new(0));
+        let updating = Rc::new(Cell::new(false));
+
+        let mut buttons = Vec::with_capacity(options.len());
+        for (index, label) in options.iter().enumerate() {
+            let button = gtk::ToggleButton::with_label(label);
+            button.add_css_class("search-filter-chip");
+            button.set_valign(gtk::Align::Center);
+            if index == 0 {
+                button.set_active(true);
+            }
+            buttons.push(button);
+        }
+
+        let mut current_row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        for (idx, button) in buttons.iter().enumerate() {
+            if idx > 0 && idx % per_row == 0 {
+                container.append(&current_row);
+                current_row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            }
+            current_row.append(button);
+            let idx = idx as u32;
+            let sel = selected.clone();
+            let upd = updating.clone();
+            let siblings = buttons.clone();
+
+            button.connect_toggled(move |toggle| {
+                if upd.get() {
+                    return;
+                }
+                if toggle.is_active() {
+                    upd.set(true);
+                    sel.set(idx);
+                    for (i, sibling) in siblings.iter().enumerate() {
+                        if i as u32 != idx {
+                            sibling.set_active(false);
+                        }
+                    }
+                    upd.set(false);
+                } else if sel.get() == idx {
+                    toggle.set_active(true);
+                }
+            });
+        }
+        container.append(&current_row);
+
+        Self {
+            container,
+            buttons,
+            selected,
+            updating,
+        }
+    }
+
+    pub(crate) fn selected(&self) -> u32 {
+        self.selected.get()
+    }
+
+    pub(crate) fn set_selected(&self, position: u32) {
+        let max_pos = self.buttons.len().saturating_sub(1) as u32;
+        let position = position.min(max_pos);
+        if self.selected.get() == position && self.buttons.get(position as usize).is_some_and(|b| b.is_active()) {
+            return;
+        }
+        self.updating.set(true);
+        self.selected.set(position);
+        for (i, btn) in self.buttons.iter().enumerate() {
+            btn.set_active(i as u32 == position);
+        }
+        self.updating.set(false);
+    }
+
+    pub(crate) fn grab_focus(&self) {
+        let sel = self.selected.get() as usize;
+        if let Some(btn) = self.buttons.get(sel).or_else(|| self.buttons.first()) {
+            btn.grab_focus();
+        }
+    }
+
+    pub(crate) fn widget(&self) -> &gtk::Box {
+        &self.container
+    }
+
+    #[cfg(test)]
+    pub(crate) fn model(&self) -> Option<MockModel> {
+        Some(MockModel { count: self.buttons.len() as u32 })
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct MockModel {
+    count: u32,
+}
+
+#[cfg(test)]
+impl MockModel {
+    pub(crate) fn n_items(&self) -> u32 {
+        self.count
+    }
+}
+
+#[derive(Clone)]
 pub struct SearchDialog {
     state: Rc<SearchState>,
 }
@@ -75,7 +348,7 @@ struct SearchState {
     notice_slot: gtk::Box,
     root: RefCell<PathBuf>,
     current_folder: RefCell<PathBuf>,
-    scope: gtk::DropDown,
+    scope: ScopeSelector,
     scope_label: gtk::Label,
     refresh: gtk::Button,
     save_button: gtk::Button,
@@ -119,8 +392,8 @@ impl Drop for SearchState {
 struct SearchFilterPanel {
     button: gtk::Button,
     popover: gtk::Popover,
-    file_type: gtk::DropDown,
-    modified: gtk::DropDown,
+    file_type: ChipSelector,
+    modified: ChipSelector,
     extension: gtk::Entry,
     within: gtk::Entry,
     artist: gtk::Entry,
@@ -381,12 +654,16 @@ impl SearchDialog {
         let scope_bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         scope_bar.add_css_class("search-scope-bar");
         scope_bar.set_valign(gtk::Align::Center);
-        let scope = gtk::DropDown::from_strings(&["This folder", "Home", "Music library"]);
+        let scope = ScopeSelector::new(&["Folder", "Home", "Music"]);
         scope.set_selected(1);
         scope.set_tooltip_text(Some(
-            "Home searches across your files and Music. This folder searches the current location, including other drives.",
+            "Folder: current location · Home: personal files · Music: library",
         ));
-        scope_bar.append(&scope);
+        scope_bar.append(scope.widget());
+
+        let sep = gtk::Separator::new(gtk::Orientation::Vertical);
+        sep.add_css_class("search-scope-separator");
+        scope_bar.append(&sep);
 
         let category_bar = gtk::Box::new(gtk::Orientation::Horizontal, 2);
         category_bar.add_css_class("search-categories");
@@ -867,9 +1144,8 @@ impl SearchFilterPanel {
         content.append(&title_row);
 
         append_filter_section_heading(&content, "FILES");
-        let file_type = gtk::DropDown::from_strings(&SEARCH_TYPES);
-        file_type.set_hexpand(true);
-        append_filter_control(&content, "Type", &file_type);
+        let file_type = ChipSelector::new_wrapped(&SEARCH_TYPES, 5);
+        append_filter_control(&content, "Type", file_type.widget());
         let extension = filter_entry("pdf");
         append_filter_control(&content, "Extension", &extension);
         let within = filter_entry("Documents or Projects/hermes");
@@ -884,15 +1160,14 @@ impl SearchFilterPanel {
         append_filter_control(&content, "Title", &track_title);
 
         append_filter_section_heading(&content, "CONTENTS");
-        let modified = gtk::DropDown::from_strings(&[
+        let modified = ChipSelector::new(&[
             "Any time",
             "Today",
             "Yesterday",
             "Last week",
             "Past 7 days",
         ]);
-        modified.set_hexpand(true);
-        append_filter_control(&content, "Modified", &modified);
+        append_filter_control(&content, "Modified", modified.widget());
         let content_options = gtk::Box::new(gtk::Orientation::Vertical, 5);
         let content_enabled = gtk::CheckButton::with_label("Search for any text inside files");
         content_enabled.add_css_class("search-content-toggle");

@@ -584,6 +584,70 @@ headerbar menubutton.header-action > button:focus-visible image {
   padding: 4px 16px;
 }
 
+.search-scope-segmented {
+  background: alpha(@theme_bg, 0.65);
+  border: 1px solid alpha(@theme_border, 0.7);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.search-scope-pill {
+  background: transparent;
+  color: @theme_dim_text;
+  border: none;
+  border-radius: 4px;
+  box-shadow: none;
+  min-height: 24px;
+  padding: 0 10px;
+  font-size: 0.88em;
+  font-weight: 500;
+  font-family: inherit;
+}
+
+.search-scope-pill:hover {
+  background: alpha(@theme_muted, 0.6);
+  color: @theme_text;
+}
+
+.search-scope-pill:checked {
+  background: @theme_accent;
+  color: @theme_on_accent;
+  font-weight: 600;
+}
+
+.search-scope-separator {
+  margin: 4px 4px;
+  background: alpha(@theme_border, 0.4);
+}
+
+.search-filter-chips {
+  margin: 2px 0;
+}
+
+.search-filter-chip {
+  background: alpha(@theme_bg, 0.6);
+  border: 1px solid alpha(@theme_border, 0.7);
+  border-radius: 4px;
+  color: @theme_dim_text;
+  min-height: 26px;
+  padding: 2px 8px;
+  font-size: 0.82em;
+  font-family: inherit;
+  box-shadow: none;
+}
+
+.search-filter-chip:hover {
+  background: alpha(@theme_muted, 0.7);
+  color: @theme_text;
+}
+
+.search-filter-chip:checked {
+  background: alpha(@theme_highlight, 0.8);
+  border-color: @theme_accent;
+  color: @theme_accent;
+  font-weight: 600;
+}
+
 .search-scope-bar dropdown > button {
   background: @theme_bg;
   color: @theme_text;
