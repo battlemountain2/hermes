@@ -5380,6 +5380,26 @@ button.music-cover-button:focus-visible {
   outline-offset: -1px;
 }
 
+.hermes-picker .grid-card {
+  padding: 6px 4px;
+  border-radius: 6px;
+  min-width: 80px;
+}
+
+.hermes-picker .grid-card-label {
+  color: @theme_text;
+  font-size: 0.88em;
+  margin-top: 4px;
+}
+
+.hermes-picker .file-grid > child:selected .grid-card-label {
+  color: @theme_accent;
+}
+
+.hermes-picker .picker-file-icon {
+  margin: 0;
+}
+
 .hermes-picker :disabled {
   color: @theme_dim_text;
 }

@@ -248,6 +248,29 @@ fn private_chooser_returns_file_filters_choices_and_cancels_exactly_once() {
         .dialog
         .widget_for_response(gtk::ResponseType::Accept)
         .unwrap();
+    fn check_decorations(w: &gtk::Widget, thumbnails: &Cell<usize>, file_icons: &Cell<usize>) {
+        if w.type_().name() == "GtkFileThumbnail" && w.has_css_class("picker-thumbnail-connected") {
+            thumbnails.set(thumbnails.get() + 1);
+        }
+        if w.has_css_class("picker-file-icon") {
+            file_icons.set(file_icons.get() + 1);
+        }
+        let mut child = w.first_child();
+        while let Some(c) = child {
+            child = c.next_sibling();
+            check_decorations(&c, thumbnails, file_icons);
+        }
+    }
+    let thumbnails = Cell::new(0);
+    let file_icons = Cell::new(0);
+    until(|| {
+        thumbnails.set(0);
+        file_icons.set(0);
+        check_decorations(picker.0.dialog.upcast_ref(), &thumbnails, &file_icons);
+        thumbnails.get() > 0
+    });
+    assert!(thumbnails.get() > 0, "Expected decorated GtkFileThumbnail widgets");
+    assert!(file_icons.get() > 0, "Expected GtkImage with picker-file-icon");
     for id in ["paper", "graphite", "azure-glow"] {
         theme.select_theme(id);
         let deadline = Instant::now() + Duration::from_millis(120);

@@ -26,9 +26,14 @@
   - Spacebar Quick Look toggle: tapping `Space` while any item is focused or selected toggles the preview drawer immediately without mouse intervention (respecting focused text entries).
   - Spring-loaded folders on drag: hovering over a directory or breadcrumb button for 750ms during an active drag-and-drop gesture automatically navigates into that directory.
   - Back button history popover: right-clicking or long-pressing the header Back button opens a quick navigation history menu to jump multiple levels backwards.
-- XDG File Picker Performance & Styling Overhaul (`src/ui/picker.rs`, `src/ui/picker/icons.rs`, `src/style.css`):
-  - Solved the severe lag where picker performed slower than Dolphin: eliminated redundant `observe_children().connect_items_changed` signal storms during scrolling and excluded child recursion into `ColumnView`/`GridView` rows.
-  - Ensured thumbnail notify signal handlers connect exactly once per cell (`picker-thumbnail-connected`), stopping thousands of redundant signal allocations per scroll frame.
+- XDG File Picker Performance & Styling Overhaul (`src/ui/picker.rs`, `src/ui/picker/icons.rs`, `src/style.css`, `src/ui/picker/tests.rs`):
+  - Solved the issue where XDG desktop portal file chooser rendered default KDE Breeze blue icons instead of native Hermes Lucide/theme-colored icons:
+    - Root cause: `watch_views` previously early-returned on `widget.is::<gtk::GridView>()`, which prevented DOM recursion into grid cards. Because `GtkFileChooserWidget`'s GridView uses `GtkBuilderListItemFactory` instead of `SignalListItemFactory`, items were never decorated and GTK fell back to Breeze system icons.
+    - Restored `view.observe_children()` with debounced `queue_visuals` for `GridView`, and allowed `watch_views` recursion into `GridView`'s child items (`GtkListItemWidget` -> `GtkFileChooserCell`), while keeping `ColumnView` and `ListView` pruned.
+    - Added guard in `icons::decorate`: if `picker-thumbnail-connected` is present, it only re-refreshes if GTK sets `gicon` or `icon-name`, completely eliminating redundant thumbnail work during fast 120 FPS scrolling.
+    - Scaled grid icon size from `26` to `48` px for crisp, prominent Hermes theme Lucide folder and fallback file icons on 96x88 cards, and thumbnail size to `64` px.
+    - Polished `.hermes-picker .grid-card` and `.hermes-picker .grid-card-label` using semantic `@theme_*` tokens.
+    - Added automated unit test in `src/ui/picker/tests.rs` verifying that `GtkFileThumbnail` widgets in the picker tree receive `.picker-thumbnail-connected` and `.picker-file-icon`.
   - Replaced boxy `border-radius: 0;` styling with modern `border-radius: 6px;` matching the rest of Hermes, with semantic `@theme_*` tokens across buttons, entries, rows, and selections.
 - Archive Integration (`src/ui/browser.rs`):
   - Expanded 1-click compression formats to include `.tar.gz` and `.7z` alongside `.zip` and `.tar.zst`, powered by `bsdtar`.

@@ -68,7 +68,9 @@ pub(super) fn decorate(widget: &gtk::Widget, state: &Rc<State>) {
         return;
     };
     if widget.has_css_class("picker-thumbnail-connected") {
-        refresh(widget, &image);
+        if image.gicon().is_some() || image.icon_name().is_some() {
+            refresh(widget, &image);
+        }
         return;
     }
     widget.add_css_class("picker-thumbnail-connected");
@@ -120,7 +122,7 @@ fn refresh(widget: &gtk::Widget, image: &gtk::Image) {
     let Some(entry) = super::visuals::entry(&file, &info) else {
         return;
     };
-    let icon_size = if grid { 26 } else { 18 };
+    let icon_size = if grid { 48 } else { 18 };
     let fallback = super::super::browser::entry_icon(&entry);
     if super::super::thumbnail::PreviewPolicy::current()
         .check_entry(&entry, info.content_type().as_deref())
@@ -131,14 +133,14 @@ fn refresh(widget: &gtk::Widget, image: &gtk::Image) {
             &entry,
             fallback,
             icon_size,
-            if grid { 80 } else { 20 },
+            if grid { 64 } else { 20 },
         );
     } else {
         super::super::thumbnail::show_fallback_icon(image, fallback, icon_size);
     }
 }
 
-fn info_property(widget: &gtk::Widget) -> Option<&'static str> {
+pub(super) fn info_property(widget: &gtk::Widget) -> Option<&'static str> {
     ["file-info", "info"].into_iter().find(|name| {
         widget
             .find_property(name)
