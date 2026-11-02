@@ -1,6 +1,32 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Drag & drop grab parity, window-anchored status bar, and view mode switcher polish — 2026-11-01 (current)
+## Desktop parity, search UI unification, XDG picker 120 FPS overhaul & archive expansion — 2026-11-01 (current)
+
+- Branch: `feat/6-desktop-parity-and-native-chooser` (branched off `feat/6-drag-drop-and-status-bar-polish`, latest commit `4449f544`).
+- Productivity & Desktop Parity (`src/app/navigation.rs`, `src/app/browser.rs`, `src/ui/browser.rs`, `src/ui/browser_modes.rs`, `src/ui/window.rs`, `src/ui/app_picker.rs`):
+  - Inline rename progression (`Tab` / `Shift+Tab`): committing an inline rename automatically cycles to renaming the next (or previous) item in the active column/mode.
+  - Parent `$PWD` execution: launching applications or `.desktop` files sets `$PWD` to the target file's containing folder so external terminal apps, scripts, and editors resolve relative file paths properly.
+  - Spacebar Quick Look toggle: tapping `Space` while any item is focused or selected toggles the preview drawer immediately without mouse intervention (respecting focused text entries).
+  - Spring-loaded folders on drag: hovering over a directory or breadcrumb button for 750ms during an active drag-and-drop gesture automatically navigates into that directory.
+  - Back button history popover: right-clicking or long-pressing the header Back button opens a quick navigation history menu to jump multiple levels backwards.
+- Search UI Unification (`src/ui/search.rs`, `src/style.css`):
+  - Completely eliminated all 3 dropdowns that cluttered the search interface:
+    - Scope dropdown replaced by a sleek 3-way segmented control `[ Folder | Home | Music ]` with instant 1-click radio switching and keyboard trigger sync.
+    - Type and Modified dropdowns in the filter panel replaced by horizontal `ChipSelector` filter chips (`All`, `Files`, `Folders`, `Documents`, `Images`, etc. and `Any time`, `Today`, `Past 7 days`).
+  - Search query multi-word `AND` matching preserved with instant filter chip reflection.
+- XDG File Picker Performance & Styling Overhaul (`src/ui/picker.rs`, `src/ui/picker/icons.rs`, `src/style.css`):
+  - Solved the severe lag where picker performed slower than Dolphin: eliminated redundant `observe_children().connect_items_changed` signal storms during scrolling and excluded child recursion into `ColumnView`/`GridView` rows.
+  - Ensured thumbnail notify signal handlers connect exactly once per cell (`picker-thumbnail-connected`), stopping thousands of redundant signal allocations per scroll frame.
+  - Replaced boxy `border-radius: 0;` styling with modern `border-radius: 6px;` matching the rest of Hermes, with semantic `@theme_*` tokens across buttons, entries, rows, and selections.
+- Archive Integration (`src/ui/browser.rs`):
+  - Expanded 1-click compression formats to include `.tar.gz` and `.7z` alongside `.zip` and `.tar.zst`, powered by `bsdtar`.
+- Verification & Test Coverage:
+  - 1,045 unit tests pass with 0 failures (`cargo test --bin hermes -- --test-threads=1`).
+  - `cargo check --all-targets`: 0 errors, 0 warnings.
+  - Release binary built and atomically installed to `~/.local/bin/hermes`.
+  - Pushed to `origin/feat/6-desktop-parity-and-native-chooser`.
+
+## Drag & drop grab parity, window-anchored status bar, and view mode switcher polish — 2026-11-01
 
 - Branch: `feat/6-drag-drop-and-status-bar-polish` (branched off `feat/6-sorting-zoom-and-keyboard-context-menu` commit `cb2dd47`, latest commit `68367a4`).
 - Window-Anchored Status Bar (`src/ui/window.rs`, `src/style.css`):
