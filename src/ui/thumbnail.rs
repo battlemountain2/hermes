@@ -360,7 +360,11 @@ pub(super) fn set_thumbnail_or_icon(
         return;
     };
     if entry.is_directory() && fallback_icon != crate::assets::icons::MUSIC {
-        mark_nonempty_folder(image, image_id, request, path.clone());
+        if is_definitely_nonempty(&path) {
+            crate::assets::set_primary_icon(image, crate::assets::icons::FOLDER_FILLED);
+        } else {
+            mark_nonempty_folder(image, image_id, request, path.clone(), cancellation.clone());
+        }
     }
     if path.extension().and_then(std::ffi::OsStr::to_str) == Some("desktop") {
         let weak_image = image.downgrade();
@@ -458,11 +462,33 @@ fn thumbnail_operation(handler: ThumbnailHandler) -> ParseOperation {
     }
 }
 
-fn mark_nonempty_folder(image: &gtk::Image, image_id: usize, request: u64, path: PathBuf) {
+fn is_definitely_nonempty(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|meta| meta.nlink() > 2)
+        .unwrap_or(false)
+}
+
+fn mark_nonempty_folder(
+    image: &gtk::Image,
+    image_id: usize,
+    request: u64,
+    path: PathBuf,
+    cancellation: Cancellation,
+) {
+    if cancellation.is_cancelled() {
+        return;
+    }
     let weak_image = glib::WeakRef::new();
     weak_image.set(Some(image));
+    let worker_cancellation = cancellation.clone();
     glib::MainContext::default().spawn_local(async move {
+        if worker_cancellation.is_cancelled() {
+            return;
+        }
         let Ok(nonempty) = gio::spawn_blocking(move || {
+            if worker_cancellation.is_cancelled() {
+                return false;
+            }
             std::fs::read_dir(path)
                 .ok()
                 .and_then(|mut entries| entries.next())
@@ -472,14 +498,14 @@ fn mark_nonempty_folder(image: &gtk::Image, image_id: usize, request: u64, path:
         else {
             return;
         };
-        if !nonempty {
+        if !nonempty || cancellation.is_cancelled() {
             return;
         }
         let is_current = ACTIVE_REQUESTS.with(|requests| {
             requests
                 .borrow()
                 .get(&image_id)
-                .is_some_and(|active| active.id == request)
+                .is_some_and(|active| active.id == request && !active.cancellation.is_cancelled())
         });
         if is_current
             && let Some(image) = weak_image.upgrade()

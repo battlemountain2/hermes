@@ -58,8 +58,8 @@ fn streaming_enumeration_starts_small_and_keeps_all_entries() {
         std::thread::sleep(Duration::from_millis(1));
     }
     assert!(completed.get());
-    assert_eq!(batches.borrow()[0].len(), 32);
-    assert!(batches.borrow().iter().skip(1).all(|entries| entries.len() <= 128));
+    assert_eq!(batches.borrow()[0].len(), 64);
+    assert!(batches.borrow().iter().skip(1).all(|entries| entries.len() <= 256));
     let names = batches.borrow().iter().flat_map(|entries| entries.iter().map(|entry| entry.location.clone())).collect::<std::collections::HashSet<_>>();
     assert_eq!(names.len(), 300);
     drop(load);

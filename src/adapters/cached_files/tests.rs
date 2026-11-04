@@ -183,8 +183,8 @@ fn hit_is_async_batched_remaps_ids_and_preserves_native_entries() {
                 _ => panic!("unexpected replay event"),
             })
             .collect::<Vec<_>>();
-        assert_eq!(batches[0].len(), 32);
-        assert!(batches.iter().all(|batch| batch.len() <= 128));
+        assert_eq!(batches[0].len(), 64);
+        assert!(batches.iter().all(|batch| batch.len() <= 256));
         assert_eq!(batches.concat(), expected);
         assert_eq!(fake.calls.borrow().len(), 1);
         drop(hit);
@@ -493,7 +493,7 @@ fn invalidated_replay_resets_and_retains_cancel_safe_fresh_load() {
         );
         until(context, || fake.calls.borrow().len() == 2);
         assert!(
-            matches!(&events.borrow()[0], DirectoryEvent::Batch { entries, .. } if entries.len() == 32)
+            matches!(&events.borrow()[0], DirectoryEvent::Batch { entries, .. } if entries.len() == 64)
         );
         assert!(
             matches!(&events.borrow()[1], DirectoryEvent::Restarted { request_id } if *request_id == RequestId(2))
@@ -552,18 +552,19 @@ fn directory_limit_and_lru_release_watches() {
     on_context(|context| {
         let fake = Rc::new(FakeSource::default());
         let source = source(&fake);
-        for index in 0..12 {
-            let load = source.enumerate(request(index, &format!("/dir-{index}")), sink().1);
-            fake.complete(index as usize, vec![entry("one")]);
+        let limit = source.cache.borrow().limits.directories;
+        for index in 0..limit {
+            let load = source.enumerate(request(index as u64, &format!("/dir-{index}")), sink().1);
+            fake.complete(index, vec![entry("one")]);
             drop(load);
         }
         let (events, emit) = sink();
-        let hit = source.enumerate(request(20, "/dir-0"), emit);
+        let hit = source.enumerate(request(100, "/dir-0"), emit);
         until(context, || finished(&events));
-        let extra = source.enumerate(request(21, "/extra"), sink().1);
-        fake.complete(12, vec![entry("extra")]);
-        assert_eq!(source.cache.borrow().listings.len(), 12);
-        assert_eq!(fake.live_watches(), 12);
+        let extra = source.enumerate(request(101, "/extra"), sink().1);
+        fake.complete(limit, vec![entry("extra")]);
+        assert_eq!(source.cache.borrow().listings.len(), limit);
+        assert_eq!(fake.live_watches(), limit);
         assert!(
             source
                 .cache
@@ -657,7 +658,8 @@ fn ttl_is_not_extended_by_hits_and_expiration_releases_watches() {
         let cold = source.enumerate(request(1, "/fixture"), sink().1);
         fake.complete(0, vec![entry("one")]);
         drop(cold);
-        clock.set(clock.get() + Duration::from_secs(29));
+        let ttl = Limits::default().ttl;
+        clock.set(clock.get() + ttl - Duration::from_secs(1));
         let (events, emit) = sink();
         let hit = source.enumerate(request(2, "/fixture"), emit);
         until(context, || finished(&events));

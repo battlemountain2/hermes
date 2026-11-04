@@ -26,9 +26,9 @@ struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            directories: 12,
-            bytes: 32 * 1024 * 1024,
-            ttl: Duration::from_secs(30),
+            directories: 32,
+            bytes: 64 * 1024 * 1024,
+            ttl: Duration::from_secs(300),
         }
     }
 }
@@ -304,9 +304,9 @@ impl CachedFileSource {
                 let mut offset = 0;
                 loop {
                     let count = if offset == 0 {
-                        request.batch_size.clamp(1, 32)
+                        request.batch_size.clamp(1, 64)
                     } else {
-                        request.batch_size.clamp(1, 128)
+                        request.batch_size.clamp(1, 256)
                     };
                     let Some(entries) = replay_chunk(&cache, token, offset, count) else {
                         emit(DirectoryEvent::Restarted {

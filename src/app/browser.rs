@@ -412,7 +412,7 @@ impl Browser {
             DirectoryRequest {
                 id: request_id,
                 location,
-                batch_size: 128,
+                batch_size: 256,
                 include_hidden: self.preferences.get().show_hidden,
             },
             emit,
@@ -1444,7 +1444,7 @@ impl Browser {
             DirectoryRequest {
                 id: request_id,
                 location,
-                batch_size: 128,
+                batch_size: 256,
                 include_hidden: self.preferences.get().show_hidden,
             },
             emit,

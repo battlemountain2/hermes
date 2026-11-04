@@ -161,9 +161,9 @@ impl FileSource for LocalFileSource {
                 match enumerator
                     .next_files_future(
                         if first_batch {
-                            request.batch_size.clamp(1, 32)
+                            request.batch_size.clamp(1, 64)
                         } else {
-                            request.batch_size.clamp(1, 128)
+                            request.batch_size.clamp(1, 256)
                         } as i32,
                         glib::Priority::DEFAULT,
                     )
