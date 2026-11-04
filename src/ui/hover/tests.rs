@@ -27,6 +27,27 @@ fn test_kind_mappings() {
     assert_eq!(kind(&fixture_entry("doc.docx")), "Document");
     assert_eq!(kind(&fixture_entry("text.txt")), "Text");
     assert_eq!(kind(&fixture_entry("archive.zip")), "Archive");
+
+    let dir_entry = FileEntry(Rc::new(FileEntryInner {
+        music_tags: None,
+        location: Location::local("/fixture/my_folder"),
+        native_name: OsString::from("my_folder"),
+        display_name: "my_folder".to_string(),
+        kind: EntryKind::Directory,
+        size: MetadataValue::Known(0),
+        modified_unix_seconds: MetadataValue::Known(0),
+    }));
+    assert_eq!(kind(&dir_entry), "Folder");
+}
+
+#[test]
+fn test_resolution_tags() {
+    assert_eq!(resolution_tag(7680, 4320), "8K");
+    assert_eq!(resolution_tag(3840, 2160), "4K UHD");
+    assert_eq!(resolution_tag(2560, 1440), "1440p QHD");
+    assert_eq!(resolution_tag(1920, 1080), "1080p FHD");
+    assert_eq!(resolution_tag(1280, 720), "720p HD");
+    assert_eq!(resolution_tag(640, 480), "SD");
 }
 
 #[test]

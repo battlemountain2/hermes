@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use crate::sandbox_helper::metadata::Details;
 use crate::{
     model::{FileEntry, MetadataValue},
@@ -27,7 +29,7 @@ pub(super) fn install(
         if query_suppressed.get() || editing(anchor) {
             return false;
         }
-        let Some(entry) = resolve().filter(|entry| !entry.is_directory()) else {
+        let Some(entry) = resolve() else {
             return false;
         };
         if !super::theme::ThemeManager::shared().hover_previews() {
@@ -84,15 +86,32 @@ pub(super) fn install(
     anchor.add_controller(click);
 }
 
+#[derive(Clone)]
+struct FolderTile {
+    container: gtk::Box,
+    image: gtk::Image,
+    label: gtk::Label,
+}
+
 struct Card {
     widget: gtk::Box,
+    // File view
+    file_box: gtk::Box,
     image: gtk::Image,
     filename: gtk::Label,
+    badge: gtk::Label,
+    rating: gtk::Label,
     title: gtk::Label,
     artist: gtk::Label,
     album: gtk::Label,
     info: gtk::Label,
     details: gtk::Label,
+    // Folder view
+    folder_box: gtk::Box,
+    folder_name: gtk::Label,
+    folder_summary: gtk::Label,
+    folder_cells: Vec<FolderTile>,
+    // Common state
     entry: RefCell<Option<FileEntry>>,
     generation: Cell<u64>,
     cancellation: RefCell<Cancellation>,
@@ -101,12 +120,26 @@ struct Card {
 
 impl Card {
     fn new() -> Rc<Self> {
-        let widget = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        let widget = gtk::Box::new(gtk::Orientation::Vertical, 0);
         widget.add_css_class("hermes-hover-card");
-        widget.set_size_request(300, 216);
+        widget.set_size_request(310, 220);
         widget.set_overflow(gtk::Overflow::Hidden);
-        let filename = label("hover-filename", 32, 1);
-        widget.append(&filename);
+
+        // --- File View ---
+        let file_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        let header_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        header_row.set_hexpand(true);
+        let filename = label("hover-filename", 22, 1);
+        filename.set_hexpand(true);
+        let rating = label("hover-rating", 6, 1);
+        rating.set_halign(gtk::Align::End);
+        let badge = label("hover-badge", 10, 1);
+        badge.set_halign(gtk::Align::End);
+        header_row.append(&filename);
+        header_row.append(&rating);
+        header_row.append(&badge);
+        file_box.append(&header_row);
+
         let body = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         let visual = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         visual.set_size_request(104, 104);
@@ -116,6 +149,7 @@ impl Card {
         image.set_valign(gtk::Align::Center);
         visual.append(&image);
         body.append(&visual);
+
         let text = gtk::Box::new(gtk::Orientation::Vertical, 5);
         let title = label("hover-title", 17, 1);
         let artist = label("hover-secondary", 17, 1);
@@ -124,25 +158,84 @@ impl Card {
         text.append(&artist);
         text.append(&album);
         body.append(&text);
-        widget.append(&body);
-        let info = label("hover-secondary", 32, 1);
-        let details = label("hover-secondary", 32, 1);
-        widget.append(&info);
-        widget.append(&details);
+        file_box.append(&body);
+
+        let info = label("hover-secondary", 34, 1);
+        let details = label("hover-secondary", 34, 1);
+        file_box.append(&info);
+        file_box.append(&details);
+        widget.append(&file_box);
+
+        // --- Folder View ---
+        let folder_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        let folder_header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let folder_icon = crate::assets::primary_icon(crate::assets::icons::FOLDER, 22);
+        folder_header.append(&folder_icon);
+        let folder_titles = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        let folder_name = label("hover-filename", 26, 1);
+        let folder_summary = label("hover-secondary", 26, 1);
+        folder_titles.append(&folder_name);
+        folder_titles.append(&folder_summary);
+        folder_header.append(&folder_titles);
+        folder_box.append(&folder_header);
+
+        let folder_grid = gtk::Grid::builder()
+            .column_spacing(8)
+            .row_spacing(8)
+            .hexpand(true)
+            .vexpand(true)
+            .build();
+        folder_grid.add_css_class("folder-peek-grid");
+
+        let mut folder_cells = Vec::new();
+        for i in 0..4 {
+            let row = i / 2;
+            let col = i % 2;
+            let tile_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            tile_box.add_css_class("folder-peek-tile");
+            tile_box.set_size_request(138, 48);
+            tile_box.set_hexpand(true);
+
+            let tile_img = gtk::Image::new();
+            tile_img.set_pixel_size(28);
+            let tile_lbl = label("folder-tile-label", 12, 1);
+            tile_lbl.set_valign(gtk::Align::Center);
+            tile_lbl.set_hexpand(true);
+
+            tile_box.append(&tile_img);
+            tile_box.append(&tile_lbl);
+            folder_grid.attach(&tile_box, col, row, 1, 1);
+            folder_cells.push(FolderTile {
+                container: tile_box,
+                image: tile_img,
+                label: tile_lbl,
+            });
+        }
+        folder_box.append(&folder_grid);
+        widget.append(&folder_box);
+
         let card = Rc::new(Self {
             widget,
+            file_box,
             image,
             filename,
+            badge,
+            rating,
             title,
             artist,
             album,
             info,
             details,
+            folder_box,
+            folder_name,
+            folder_summary,
+            folder_cells,
             entry: RefCell::new(None),
             generation: Cell::new(0),
             cancellation: RefCell::new(Cancellation::default()),
             task: RefCell::new(None),
         });
+
         let weak = Rc::downgrade(&card);
         card.widget.connect_map(move |_| {
             if let Some(card) = weak.upgrade() {
@@ -163,40 +256,68 @@ impl Card {
             return;
         }
         self.cancel();
-        self.filename.set_text(&entry.display_name);
-        self.title.set_text(
-            entry
-                .music_tags
-                .as_ref()
-                .and_then(|tags| tags.title.as_deref())
-                .unwrap_or(&entry.display_name),
-        );
-        self.artist.set_text(
-            entry
-                .music_tags
-                .as_ref()
-                .and_then(|tags| tags.artist.as_deref().or(tags.album_artist.as_deref()))
-                .unwrap_or(""),
-        );
-        self.album.set_text(
-            entry
-                .music_tags
-                .as_ref()
-                .and_then(|tags| tags.album.as_deref())
-                .unwrap_or(""),
-        );
-        let size = match entry.size {
-            MetadataValue::Known(size) => super::formatting::format_size(size),
-            _ => "Size unavailable".into(),
-        };
-        self.info.set_text(&format!("{} · {size}", kind(&entry)));
-        self.details.set_text(&match entry.modified_unix_seconds {
-            MetadataValue::Known(modified) => {
-                format!("Modified {}", super::formatting::format_timestamp(modified))
+
+        if entry.is_directory() {
+            self.file_box.set_visible(false);
+            self.folder_box.set_visible(true);
+            self.folder_name.set_text(&entry.display_name);
+            self.folder_summary.set_text("Reading contents…");
+            for tile in &self.folder_cells {
+                tile.container.set_visible(false);
             }
-            _ => String::new(),
-        });
-        super::thumbnail::show_fallback_icon(&self.image, super::browser::entry_icon(&entry), 26);
+        } else {
+            self.folder_box.set_visible(false);
+            self.file_box.set_visible(true);
+            self.filename.set_text(&entry.display_name);
+            self.title.set_text(
+                entry
+                    .music_tags
+                    .as_ref()
+                    .and_then(|tags| tags.title.as_deref())
+                    .unwrap_or(&entry.display_name),
+            );
+            self.artist.set_text(
+                entry
+                    .music_tags
+                    .as_ref()
+                    .and_then(|tags| tags.artist.as_deref().or(tags.album_artist.as_deref()))
+                    .unwrap_or(""),
+            );
+            self.album.set_text(
+                entry
+                    .music_tags
+                    .as_ref()
+                    .and_then(|tags| tags.album.as_deref())
+                    .unwrap_or(""),
+            );
+            let size = match entry.size {
+                MetadataValue::Known(size) => super::formatting::format_size(size),
+                _ => "Size unavailable".into(),
+            };
+            self.info.set_text(&format!("{} · {size}", kind(&entry)));
+            self.details.set_text(&match entry.modified_unix_seconds {
+                MetadataValue::Known(modified) => {
+                    format!("Modified {}", super::formatting::format_timestamp(modified))
+                }
+                _ => String::new(),
+            });
+
+            if let Some(path) = entry.location.native_path() {
+                if let Some(r) = crate::services::ratings::Store::shared().get(path) {
+                    let stars = "★".repeat(r as usize);
+                    self.rating.set_text(&stars);
+                    self.rating.set_visible(true);
+                } else {
+                    self.rating.set_visible(false);
+                }
+            } else {
+                self.rating.set_visible(false);
+            }
+
+            self.badge.set_text(&kind(&entry).to_uppercase());
+            super::thumbnail::show_fallback_icon(&self.image, super::browser::entry_icon(&entry), 26);
+        }
+
         self.entry.replace(Some(entry));
         if self.widget.is_mapped() {
             self.start();
@@ -214,6 +335,75 @@ impl Card {
         if !super::theme::ThemeManager::shared().hover_previews() {
             return;
         }
+
+        let generation = self.generation.get();
+        let cancellation = Cancellation::default();
+        self.cancellation.replace(cancellation.clone());
+        let weak = Rc::downgrade(self);
+
+        if entry.is_directory() {
+            let scan_cancel = cancellation.clone();
+            let task = glib::MainContext::default().spawn_local(async move {
+                let scan_res = gio::spawn_blocking(move || {
+                    if scan_cancel.is_cancelled() {
+                        return None;
+                    }
+                    let Ok(read_dir) = std::fs::read_dir(&path) else {
+                        return None;
+                    };
+                    let mut total = 0;
+                    let mut samples = Vec::new();
+                    for child in read_dir.flatten() {
+                        if scan_cancel.is_cancelled() {
+                            return None;
+                        }
+                        let name = child.file_name().to_string_lossy().to_string();
+                        if name.starts_with('.') {
+                            continue;
+                        }
+                        total += 1;
+                        if samples.len() < 4 {
+                            let is_dir = child.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                            samples.push((name, is_dir, child.path()));
+                        }
+                    }
+                    Some((total, samples))
+                })
+                .await;
+
+                let Some(card) = weak.upgrade().filter(|c| c.generation.get() == generation && c.widget.is_mapped()) else {
+                    return;
+                };
+
+                if let Ok(Some((total, samples))) = scan_res {
+                    if total == 0 {
+                        card.folder_summary.set_text("Empty folder");
+                    } else if total == 1 {
+                        card.folder_summary.set_text("1 item");
+                    } else {
+                        card.folder_summary.set_text(&format!("{total} items"));
+                    }
+
+                    for (idx, tile) in card.folder_cells.iter().enumerate() {
+                        if let Some((name, is_dir, _child_path)) = samples.get(idx) {
+                            tile.container.set_visible(true);
+                            tile.label.set_text(name);
+                            if *is_dir {
+                                crate::assets::set_primary_icon(&tile.image, crate::assets::icons::FOLDER);
+                            } else {
+                                let icon_name = super::browser::icon_for_name(name);
+                                crate::assets::set_primary_icon(&tile.image, icon_name);
+                            }
+                        } else {
+                            tile.container.set_visible(false);
+                        }
+                    }
+                }
+            });
+            self.task.replace(Some(task));
+            return;
+        }
+
         let policy = super::thumbnail::PreviewPolicy::current();
         if policy
             .for_streaming_preview()
@@ -224,10 +414,7 @@ impl Card {
         }
         let family = classify_by_name(&entry.native_name);
         let operation = operation(family);
-        let generation = self.generation.get();
-        let cancellation = Cancellation::default();
-        self.cancellation.replace(cancellation.clone());
-        let weak = Rc::downgrade(self);
+
         let task = glib::MainContext::default().spawn_local(async move {
             let cached = super::thumbnail::cached_preview_bytes(&path).await;
             let Some(card) = weak.upgrade().filter(|card| card.current(generation)) else {
@@ -394,6 +581,9 @@ fn cold_thumbnail(entry: &FileEntry) -> bool {
 }
 
 fn kind(entry: &FileEntry) -> &'static str {
+    if entry.is_directory() {
+        return "Folder";
+    }
     match classify_by_name(&entry.native_name) {
         FormatFamily::Audio => "Song",
         FormatFamily::Video => "Video",
@@ -408,6 +598,24 @@ fn kind(entry: &FileEntry) -> &'static str {
         FormatFamily::PlainText => "Text",
         FormatFamily::Archive => "Archive",
         _ => "File",
+    }
+}
+
+fn resolution_tag(w: u32, h: u32) -> &'static str {
+    let max_dim = w.max(h);
+    let min_dim = w.min(h);
+    if max_dim >= 7680 || min_dim >= 4320 {
+        "8K"
+    } else if max_dim >= 3840 || min_dim >= 2160 {
+        "4K UHD"
+    } else if max_dim >= 2560 || min_dim >= 1440 {
+        "1440p QHD"
+    } else if max_dim >= 1920 || min_dim >= 1080 {
+        "1080p FHD"
+    } else if max_dim >= 1280 || min_dim >= 720 {
+        "720p HD"
+    } else {
+        "SD"
     }
 }
 
@@ -434,7 +642,8 @@ fn detail_text(details: &Details, family: FormatFamily) -> String {
         && width > 0
         && height > 0
     {
-        values.push(format!("{width} × {height} px"));
+        let res_tag = resolution_tag(width, height);
+        values.push(format!("{width} × {height} px ({res_tag})"));
     }
     if let Some(codec) = if family == FormatFamily::Audio {
         details.audio_codec.as_deref()

@@ -5,11 +5,29 @@
   border-radius: 6px;
   padding: 12px;
   transition: opacity 160ms cubic-bezier(0.2, 0, 0, 1);
+  box-shadow: 0 10px 30px alpha(@theme_bg, 0.5);
 }
 
 .hermes-hover-card .hover-filename {
   color: @theme_accent;
   font-weight: 600;
+}
+
+.hermes-hover-card .hover-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: @theme_accent;
+  background: alpha(@theme_accent, 0.12);
+  border: 1px solid alpha(@theme_accent, 0.25);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.hermes-hover-card .hover-rating {
+  font-size: 11px;
+  color: @theme_accent;
+  letter-spacing: 1px;
 }
 
 .hermes-hover-card .hover-title {
@@ -24,6 +42,28 @@
 .hermes-hover-card image {
   color: @theme_accent;
   background: @theme_bg;
+}
+
+.folder-peek-grid {
+  margin-top: 4px;
+}
+
+.folder-peek-tile {
+  background: alpha(@theme_bg, 0.4);
+  border: 1px solid alpha(@theme_border, 0.5);
+  border-radius: 6px;
+  padding: 6px;
+  transition: background 120ms ease;
+}
+
+.folder-peek-tile:hover {
+  background: alpha(@theme_accent, 0.1);
+  border-color: alpha(@theme_accent, 0.3);
+}
+
+.folder-peek-label {
+  font-size: 11px;
+  color: @theme_text;
 }
 
 .search-coverage-notice {
