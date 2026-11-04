@@ -1316,6 +1316,14 @@ impl Browser {
         };
         if entry.is_directory() {
             self.navigate(entry.location.clone());
+        } else if is_archive_entry(&entry) {
+            if let Some(path) = entry.location.native_path() {
+                self.navigate(Location::uri(format!("archive://{}/", path.display())));
+                return;
+            }
+            self.emit(BrowserEvent::OpenRequested {
+                location: entry.location.clone(),
+            });
         } else {
             self.emit(BrowserEvent::OpenRequested {
                 location: entry.location.clone(),
@@ -1368,6 +1376,14 @@ impl Browser {
 
         if entry.is_directory() {
             self.descend(depth, entry.location.clone());
+        } else if is_archive_entry(&entry) {
+            if let Some(path) = entry.location.native_path() {
+                self.descend(depth, Location::uri(format!("archive://{}/", path.display())));
+                return;
+            }
+            self.emit(BrowserEvent::OpenRequested {
+                location: entry.location.clone(),
+            });
         } else {
             self.emit(BrowserEvent::OpenRequested {
                 location: entry.location.clone(),
@@ -1714,6 +1730,10 @@ fn deletion_parent_location(location: &Location) -> Option<Location> {
     } else {
         location.parent()
     }
+}
+
+fn is_archive_entry(entry: &FileEntry) -> bool {
+    crate::services::classify_by_name(&entry.native_name) == crate::services::FormatFamily::Archive
 }
 
 #[cfg(test)]

@@ -1,6 +1,26 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Spacebar Floating Quick Look Modal, arrow navigation & omnibar preview — 2026-11-03 (current)
+## In-Place Archive Exploration (`archive://`), virtual folder navigation & extraction — 2026-11-03 (current)
+
+- Branch: `feat/6-desktop-parity-and-native-chooser`
+- In-Place Archive Exploration (`src/adapters/archive_source.rs`, `src/adapters/archive_source/tests.rs`, `src/adapters/mod.rs`, `src/model/mod.rs`, `src/model/tests.rs`, `src/app/browser.rs`, `src/ui/browser.rs`):
+  - In-place virtual filesystem for archives (`.zip`, `.tar.gz`, `.tar.bz2`, `.tar.xz`, `.7z`, `.rar`, `.iso`, `.apk`, `.jar`, `.cbz`, `.cbr`):
+    - Dedicated `ArchiveFileSource` implementing `FileSource` for `archive://<archive_file_path>/<member_subpath>` URIs.
+    - Zero-disk extraction listing: leverages `bsdtar -tvf` to parse permissions, file sizes, and directory hierarchy asynchronously in memory.
+    - Hierarchical synthetic directory builder: generates implicit and explicit directories with accurate sizes, entry kinds, and child listings.
+    - In-memory index caching keyed by `(PathBuf, mtime)`: subfolder navigation inside loaded archives takes **0ms**.
+    - Full `Location` integration:
+      - `Location::parent()` cleanly walks up internal archive subdirectories, and from archive root jumps directly back to the archive file's real parent directory on disk.
+      - `Location::breadcrumbs()` seamlessly bridges native path ancestors with virtual archive subfolders (e.g. `Home > Downloads > bundle.zip > Presets > Reverbs`).
+      - `Location::display_name()` correctly extracts archive and member names without raw URI noise.
+    - Direct browser activation: double-clicking or pressing Enter on an archive file in Miller columns, Grid view, or Explorer view descends straight inside it as a folder.
+    - Context menu integration: added `"Browse Archive"` with Lucide `FOLDER_OPEN` icon alongside `"Extract Here"` and `"Extract To…"`.
+- Verification & Test Coverage:
+  - All 1,052 unit tests pass with 0 failures (`cargo test --bin hermes -- --test-threads=1`).
+  - Zero warnings on `cargo check --all-targets`.
+  - Built `--release` binary and installed to `~/.local/bin/hermes`.
+
+## Spacebar Floating Quick Look Modal, arrow navigation & omnibar preview — 2026-11-03
 
 - Branch: `feat/6-desktop-parity-and-native-chooser`
 - Spacebar Quick Look Modal (`src/ui/quick_look.rs`, `src/ui/quick_look/tests.rs`, `src/ui/window.rs`, `src/ui/shortcuts.rs`, `src/ui/search.rs`, `src/style.css`):

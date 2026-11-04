@@ -5277,6 +5277,7 @@ pub(super) fn install_item_context_menu(
     );
     let open_with = item_context_option(crate::assets::icons::EXTERNAL_LINK, "Open With…", "");
     let preview = item_context_option(crate::assets::icons::EYE, "Quick preview", "Space");
+    let explore_archive = item_context_option(crate::assets::icons::FOLDER_OPEN, "Browse Archive", "");
     let extract_here = item_context_option(crate::assets::icons::FILE_ARCHIVE, "Extract Here", "");
     let extract_to = item_context_option(crate::assets::icons::FOLDER, "Extract To…", "");
     let compress = item_context_option(crate::assets::icons::FILE_ARCHIVE, "Compress…", "");
@@ -5322,6 +5323,7 @@ pub(super) fn install_item_context_menu(
     single.append(&copy_to);
     single.append(&move_to_trash);
     single.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    single.append(&explore_archive);
     single.append(&extract_here);
     single.append(&extract_to);
     single.append(&compress);
@@ -5602,6 +5604,23 @@ pub(super) fn install_item_context_menu(
     });
     connect_context_trash(&move_to_trash, &popover, state, &target, in_trash);
     connect_context_trash(&trash_multiple, &popover, state, &target, in_trash);
+    let weak_explore = Rc::downgrade(state);
+    let target_explore = target.clone();
+    let popover_explore = popover.downgrade();
+    explore_archive.connect_clicked(move |_| {
+        if let Some(popover) = popover_explore.upgrade() {
+            popover.popdown();
+        }
+        let Some((depth, entry)) = target_explore.borrow().clone() else {
+            return;
+        };
+        let Some(path) = entry.location.native_path() else {
+            return;
+        };
+        if let Some(state) = weak_explore.upgrade() {
+            state.browser.descend(depth, Location::uri(format!("archive://{}/", path.display())));
+        }
+    });
     connect_extract_here(&extract_here, &popover, state, &target);
     connect_extract_to(&extract_to, &popover, state, &target, widget);
     connect_compress(&compress, &popover, state, &target, widget);
@@ -5706,6 +5725,7 @@ pub(super) fn install_item_context_menu(
         let custom = custom.clone();
         let custom_separator = custom_separator.clone();
         let preview = preview.clone();
+        let explore_archive = explore_archive.clone();
         let extract_here = extract_here.clone();
         let extract_to = extract_to.clone();
         let compress = compress.clone();
@@ -5819,6 +5839,7 @@ pub(super) fn install_item_context_menu(
             custom_separator.set_visible(custom_visible);
             preview.set_visible(options.preview && entry_supports_quick_preview(&entry) && !in_trash);
             let archive = options.archives && is_archive_entry(&entry) && !in_trash;
+            explore_archive.set_visible(archive);
             extract_here.set_visible(archive);
             extract_to.set_visible(archive);
             compress.set_visible(options.archives && !in_trash && (entry.is_directory() || options.compress_files));

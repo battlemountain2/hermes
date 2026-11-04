@@ -679,6 +679,7 @@ fn routed_source_forwards_cold_ui_watch_and_invalidation_but_not_search_watch() 
     let routed = crate::adapters::RoutedFileSource {
         local: source(&fake),
         search: crate::adapters::SearchFileSource::new(),
+        archive: crate::adapters::ArchiveFileSource::new(),
     };
     let load = routed.enumerate(request(1, "/fixture"), sink().1);
     let watch = routed.watch(Location::local("/fixture"), true, Rc::new(|_| {}));

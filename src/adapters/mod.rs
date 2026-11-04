@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+mod archive_source;
 mod cached_files;
 mod local_files;
 mod local_operations;
@@ -10,6 +11,7 @@ pub(crate) mod music_metadata;
 
 mod search_source;
 
+pub use archive_source::ArchiveFileSource;
 pub use local_files::LocalFileSource;
 pub use local_operations::LocalOperationProvider;
 pub use local_preview::LocalPreviewProvider;
@@ -29,6 +31,7 @@ use std::rc::Rc;
 pub struct RoutedFileSource {
     local: cached_files::CachedFileSource,
     search: SearchFileSource,
+    archive: ArchiveFileSource,
 }
 
 impl RoutedFileSource {
@@ -36,6 +39,7 @@ impl RoutedFileSource {
         Self {
             local: cached_files::CachedFileSource::new(Rc::new(LocalFileSource)),
             search: SearchFileSource::new(),
+            archive: ArchiveFileSource::new(),
         }
     }
 }
@@ -50,6 +54,11 @@ impl FileSource for RoutedFileSource {
             .is_some_and(|uri| uri.starts_with("search://"))
         {
             self.search.invalidate(location);
+        } else if location
+            .uri_value()
+            .is_some_and(|uri| uri.starts_with("archive://"))
+        {
+            self.archive.invalidate(location);
         } else {
             self.local.invalidate(location);
         }
@@ -66,7 +75,7 @@ impl FileSource for RoutedFileSource {
         }
         if location
             .uri_value()
-            .is_some_and(|uri| uri.starts_with("search://"))
+            .is_some_and(|uri| uri.starts_with("search://") || uri.starts_with("archive://"))
         {
             None
         } else {
@@ -80,7 +89,7 @@ impl FileSource for RoutedFileSource {
         }
         if location
             .uri_value()
-            .is_some_and(|uri| uri.starts_with("search://"))
+            .is_some_and(|uri| uri.starts_with("search://") || uri.starts_with("archive://"))
         {
             None
         } else {
@@ -97,6 +106,11 @@ impl FileSource for RoutedFileSource {
             .is_some_and(|u| u.starts_with("search://"))
         {
             self.search.validate_location(location)
+        } else if location
+            .uri_value()
+            .is_some_and(|u| u.starts_with("archive://"))
+        {
+            self.archive.validate_location(location)
         } else {
             self.local.validate_location(location)
         }
@@ -116,6 +130,12 @@ impl FileSource for RoutedFileSource {
             .is_some_and(|u| u.starts_with("search://"))
         {
             self.search.enumerate(request, emit)
+        } else if request
+            .location
+            .uri_value()
+            .is_some_and(|u| u.starts_with("archive://"))
+        {
+            self.archive.enumerate(request, emit)
         } else {
             self.local.enumerate(request, emit)
         }

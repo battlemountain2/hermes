@@ -36,3 +36,30 @@ fn root_has_one_breadcrumb() {
         vec![Location::local("/")]
     );
 }
+
+#[test]
+fn test_archive_location_breadcrumbs_parent_and_names() {
+    let root = Location::uri("archive:///home/user/test.zip/");
+    assert_eq!(root.display_name(), "test.zip");
+    assert_eq!(root.parent(), Some(Location::local("/home/user")));
+
+    let sub = Location::uri("archive:///home/user/test.zip/folder/sub/");
+    assert_eq!(sub.display_name(), "sub");
+    assert_eq!(
+        sub.parent(),
+        Some(Location::uri("archive:///home/user/test.zip/folder/"))
+    );
+
+    let crumbs = sub.breadcrumbs();
+    assert_eq!(
+        crumbs,
+        vec![
+            Location::local("/"),
+            Location::local("/home"),
+            Location::local("/home/user"),
+            Location::uri("archive:///home/user/test.zip/"),
+            Location::uri("archive:///home/user/test.zip/folder/"),
+            Location::uri("archive:///home/user/test.zip/folder/sub/"),
+        ]
+    );
+}
