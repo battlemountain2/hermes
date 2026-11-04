@@ -470,6 +470,8 @@ fn noctalia_monitor_debounces_replacement_and_recovers_without_overriding_other_
         noctalia_monitor: RefCell::new(None),
         pending_noctalia_refresh: RefCell::new(None),
         noctalia_poll: RefCell::new(None),
+        settings_monitor: RefCell::new(None),
+        pending_settings_refresh: RefCell::new(None),
         previewing: Cell::new(false),
         layout_observers: RefCell::new(Vec::new()),
         lyrics_observers: RefCell::new(Vec::new()),
@@ -635,4 +637,15 @@ fn noctalia_monitor_debounces_replacement_and_recovers_without_overriding_other_
         "watchers do not retain the manager"
     );
     pump(Duration::from_millis(200));
+}
+
+#[test]
+fn test_sync_picker_theme_preferences() {
+    let preferences = Preferences::default();
+    assert!(preferences.sync_picker_theme);
+    let parsed: Preferences =
+        toml::from_str("mode = 'theme'\ntheme = 'azure-glow'\nsync_picker_theme = false").unwrap();
+    assert!(!parsed.sync_picker_theme);
+    let roundtripped: Preferences = toml::from_str(&toml::to_string(&parsed).unwrap()).unwrap();
+    assert!(!roundtripped.sync_picker_theme);
 }

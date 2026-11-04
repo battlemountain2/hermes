@@ -26,7 +26,24 @@
   - Spacebar Quick Look toggle: tapping `Space` while any item is focused or selected toggles the preview drawer immediately without mouse intervention (respecting focused text entries).
   - Spring-loaded folders on drag: hovering over a directory or breadcrumb button for 750ms during an active drag-and-drop gesture automatically navigates into that directory.
   - Back button history popover: right-clicking or long-pressing the header Back button opens a quick navigation history menu to jump multiple levels backwards.
-- XDG File Picker Performance & Styling Overhaul (`src/ui/picker.rs`, `src/ui/picker/icons.rs`, `src/style.css`, `src/ui/picker/tests.rs`):
+- XDG File Picker Performance & Styling Overhaul (`src/ui/picker.rs`, `src/ui/picker/icons.rs`, `src/ui/picker/visuals.rs`, `src/portal.rs`, `src/ui/theme.rs`, `src/ui/settings.rs`, `src/style.css`, `src/ui/picker/tests.rs`):
+  - Solved the launch speed delay when opening the file picker from Discord and desktop applications:
+    - Root cause: `inactivity_timeout` was set to 30 seconds (`30_000` ms). Inactivity caused the background portal service to terminate, forcing D-Bus to cold-start GTK, load fonts, and initialize D-Bus interfaces on subsequent requests (~1.5–2s latency).
+    - Extended `inactivity_timeout` to 10 minutes (`600_000` ms), keeping the process warm in memory and opening picker dialogs in ~30–50ms.
+  - Live Theme and Noctalia Synchronization:
+    - Added `settings_monitor` to `ThemeManager` (`src/ui/theme.rs`) watching `settings.toml`. When preferences, themes, or Noctalia mode change in Hermes, the background portal chooser process receives live file change events and immediately hot-reloads its CSS provider.
+    - Added `ThemeManager::reload_preferences(&self)` called in `Export::begin` right before presenting the picker window, ensuring the dialog opens with exact theme parity.
+    - Added `sync_picker_theme` preference in `src/ui/theme.rs` (default `true`) allowing users to sync or decouple file picker styling.
+  - Native Preview Drawer & Accurate Fallback Icons (`src/ui/picker/visuals.rs`, `src/ui/picker.rs`):
+    - Replaced hardcoded `DOCUMENTS` icon with `super::super::browser::entry_icon(&entry)` and `icon_for_name`, ensuring code files (`.rs`, `.py`), scripts (`.sh`), archives (`.zip`), audio, and videos display their matching themed Lucide icons instead of a generic blank page icon.
+    - Bound `notify::file` and `notify::current-folder` directly on `GtkFileChooserDialog` so preview updates trigger immediately on selection.
+    - Added dynamic header icon tracking the selected file's format.
+    - Polished 256px high-res thumbnail stage for images, videos, audio covers, and PDFs.
+  - Hermes Settings GUI Integration (`src/ui/settings.rs`):
+    - Added a dedicated "DESKTOP INTEGRATION" section in `general_page`:
+      - Toggle for "Use Hermes as system file picker (XDG portal)", syncing `picker-integration.json` and updating `/home/bry/.config/xdg-desktop-portal/portals.conf` to `FileChooser=hermes`.
+      - Toggle for "Sync theme with file picker", wired to `sync_picker_theme`.
+      - Added search keywords (`portal`, `picker`, `desktop`, `chooser`, `integration`, `xdg`) to the Settings filter.
   - Solved the issue where XDG desktop portal file chooser rendered default KDE Breeze blue icons instead of native Hermes Lucide/theme-colored icons:
     - Root cause: `watch_views` previously early-returned on `widget.is::<gtk::GridView>()`, which prevented DOM recursion into grid cards. Because `GtkFileChooserWidget`'s GridView uses `GtkBuilderListItemFactory` instead of `SignalListItemFactory`, items were never decorated and GTK fell back to Breeze system icons.
     - Restored `view.observe_children()` with debounced `queue_visuals` for `GridView`, and allowed `watch_views` recursion into `GridView`'s child items (`GtkListItemWidget` -> `GtkFileChooserCell`), while keeping `ColumnView` and `ListView` pruned.

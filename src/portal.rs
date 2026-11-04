@@ -220,6 +220,10 @@ impl Export {
             };
             let done = Rc::downgrade(&export);
             let done_path = handle.clone();
+            let themes = crate::ui::theme::ThemeManager::shared();
+            if themes.sync_picker_theme() {
+                themes.reload_preferences();
+            }
             let picker = crate::ui::picker::Picker::new(
                 &application,
                 request,
@@ -272,6 +276,54 @@ impl Drop for Export {
     }
 }
 
+pub(crate) fn is_picker_integration_enabled() -> bool {
+    is_picker_integration_enabled_at(&crate::paths::picker_integration_file())
+}
+
+pub(crate) fn is_picker_integration_enabled_at(marker: &std::path::Path) -> bool {
+    crate::file_manager::enabled_at(marker)
+}
+
+pub(crate) fn set_picker_integration_enabled(enabled: bool) -> std::io::Result<()> {
+    set_picker_integration_enabled_at(&crate::paths::picker_integration_file(), enabled)
+}
+
+pub(crate) fn set_picker_integration_enabled_at(marker: &std::path::Path, enabled: bool) -> std::io::Result<()> {
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let content = if enabled {
+        b"{\"version\":1,\"enabled\":true}\n".as_slice()
+    } else {
+        b"{\"version\":1,\"enabled\":false}\n".as_slice()
+    };
+    std::fs::write(marker, content)?;
+
+    if let Some(config_dir) = marker.parent().and_then(|p| p.parent()) {
+        let xdg_dir = config_dir.join("xdg-desktop-portal");
+        let portals_conf = xdg_dir.join("portals.conf");
+        if portals_conf.is_file()
+            && let Ok(text) = std::fs::read_to_string(&portals_conf)
+        {
+            let target = if enabled { "FileChooser=hermes" } else { "FileChooser=kde" };
+            let updated = text
+                .lines()
+                .map(|line| {
+                    if line.trim_start().starts_with("org.freedesktop.impl.portal.FileChooser=") {
+                        format!("org.freedesktop.impl.portal.{target}")
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n";
+            let _ = std::fs::write(&portals_conf, updated);
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn run() -> glib::ExitCode {
     let marker = crate::paths::picker_integration_file();
     if !crate::file_manager::enabled_at(&marker) {
@@ -282,7 +334,7 @@ pub(crate) fn run() -> glib::ExitCode {
     let application = gtk::Application::builder()
         .application_id("io.github.battlemountain2.Hermes.FileChooser")
         .flags(gio::ApplicationFlags::IS_SERVICE)
-        .inactivity_timeout(30_000)
+        .inactivity_timeout(600_000)
         .build();
     application.connect_startup(move |application| {
         if let Err(error) = crate::assets::prepare() {

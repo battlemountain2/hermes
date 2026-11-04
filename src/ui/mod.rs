@@ -19,7 +19,7 @@ pub mod search;
 mod saved_searches;
 pub mod shortcuts;
 mod settings;
-mod theme;
+pub(crate) mod theme;
 pub mod thumbnail;
 mod trails;
 pub mod status_bar;

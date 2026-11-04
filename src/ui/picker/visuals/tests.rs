@@ -24,6 +24,38 @@ fn entries_preserve_native_paths_and_file_sizes_without_reading_contents() {
 }
 
 #[test]
+fn visuals_fallback_icons_match_file_types() {
+    assert_eq!(
+        super::super::super::browser::icon_for_name("main.rs"),
+        crate::assets::icons::FILE_CODE
+    );
+    assert_eq!(
+        super::super::super::browser::icon_for_name("archive.zip"),
+        crate::assets::icons::FILE_ARCHIVE
+    );
+    assert_eq!(
+        super::super::super::browser::icon_for_name("song.flac"),
+        crate::assets::icons::MUSIC
+    );
+    assert_eq!(
+        super::super::super::browser::icon_for_name("script.sh"),
+        crate::assets::icons::TERMINAL
+    );
+    assert_eq!(
+        super::super::super::browser::icon_for_name("video.mp4"),
+        crate::assets::icons::VIDEOS
+    );
+    assert_eq!(
+        super::super::super::browser::icon_for_name("photo.png"),
+        crate::assets::icons::PICTURES
+    );
+    assert_eq!(
+        super::super::super::browser::icon_for_name("notes.txt"),
+        crate::assets::icons::DOCUMENTS
+    );
+}
+
+#[test]
 #[ignore = "Private GTK/XDG roots and built sandbox helper; generated PNG previews only"]
 fn private_picker_renders_folder_and_selected_previews_without_stale_images() {
     use std::{fs, time::Instant};

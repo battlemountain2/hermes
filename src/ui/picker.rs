@@ -21,7 +21,11 @@ mod visuals;
 
 pub(crate) fn prepare() -> Rc<super::theme::ThemeManager> {
     super::window::load_styles();
-    super::theme::ThemeManager::shared()
+    let manager = super::theme::ThemeManager::shared();
+    if manager.sync_picker_theme() {
+        manager.reload_preferences();
+    }
+    manager
 }
 
 #[derive(Clone)]
@@ -143,6 +147,18 @@ impl Picker {
         watch_views(state.dialog.upcast_ref(), &state);
         let weak = Rc::downgrade(&state);
         state.dialog.connect_filter_notify(move |_| {
+            if let Some(state) = weak.upgrade() {
+                queue_visuals(&state);
+            }
+        });
+        let weak = Rc::downgrade(&state);
+        state.dialog.connect_notify_local(Some("file"), move |_, _| {
+            if let Some(state) = weak.upgrade() {
+                queue_visuals(&state);
+            }
+        });
+        let weak = Rc::downgrade(&state);
+        state.dialog.connect_notify_local(Some("current-folder"), move |_, _| {
             if let Some(state) = weak.upgrade() {
                 queue_visuals(&state);
             }

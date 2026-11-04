@@ -144,6 +144,8 @@ struct Preferences {
     preview_code: bool,
     #[serde(default = "default_music_player_layout")]
     music_player_layout: String,
+    #[serde(default = "default_enabled")]
+    sync_picker_theme: bool,
 }
 
 impl Default for Preferences {
@@ -187,6 +189,7 @@ impl Default for Preferences {
             preview_spreadsheets: true,
             preview_code: true,
             music_player_layout: default_music_player_layout(),
+            sync_picker_theme: true,
         }
     }
 }
@@ -277,6 +280,8 @@ pub struct ThemeManager {
     noctalia_monitor: RefCell<Option<(PathBuf, gio::FileMonitor)>>,
     pending_noctalia_refresh: RefCell<Option<glib::SourceId>>,
     noctalia_poll: RefCell<Option<glib::SourceId>>,
+    settings_monitor: RefCell<Option<gio::FileMonitor>>,
+    pending_settings_refresh: RefCell<Option<glib::SourceId>>,
     previewing: Cell<bool>,
     layout_observers: RefCell<Vec<Rc<dyn Fn()>>>,
     lyrics_observers: RefCell<Vec<std::rc::Weak<dyn Fn()>>>,
@@ -332,6 +337,8 @@ impl ThemeManager {
             noctalia_monitor: RefCell::new(None),
             pending_noctalia_refresh: RefCell::new(None),
             noctalia_poll: RefCell::new(None),
+            settings_monitor: RefCell::new(None),
+            pending_settings_refresh: RefCell::new(None),
             previewing: Cell::new(false),
             layout_observers: RefCell::new(Vec::new()),
             lyrics_observers: RefCell::new(Vec::new()),
@@ -341,6 +348,7 @@ impl ThemeManager {
         manager.apply_selected();
         manager.monitor_omarchy();
         manager.monitor_noctalia();
+        manager.monitor_settings();
         manager
     }
 
@@ -745,6 +753,15 @@ impl ThemeManager {
         self.save_preferences();
     }
 
+    pub fn sync_picker_theme(&self) -> bool {
+        self.preferences.borrow().sync_picker_theme
+    }
+
+    pub fn set_sync_picker_theme(&self, sync: bool) {
+        self.preferences.borrow_mut().sync_picker_theme = sync;
+        self.save_preferences();
+    }
+
     pub fn browser_mode(&self) -> super::browser_modes::BrowserMode {
         match self.preferences.borrow().browser_mode.as_str() {
             "grid" => super::browser_modes::BrowserMode::Grid,
@@ -901,7 +918,7 @@ impl ThemeManager {
         }
     }
 
-    fn apply_selected(&self) {
+    pub(crate) fn apply_selected(&self) {
         if self.follows_noctalia() {
             self.noctalia.borrow_mut().refresh();
         }
@@ -1080,6 +1097,48 @@ impl ThemeManager {
             self.apply_selected();
         }
     }
+
+    fn monitor_settings(self: &Rc<Self>) {
+        let path = settings_path();
+        let file = gio::File::for_path(&path);
+        let Ok(monitor) =
+            file.monitor_file(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE)
+        else {
+            return;
+        };
+        let weak = Rc::downgrade(self);
+        monitor.connect_changed(move |_, _, _, _| {
+            let Some(manager) = weak.upgrade() else {
+                return;
+            };
+            if let Some(pending) = manager.pending_settings_refresh.borrow_mut().take() {
+                pending.remove();
+            }
+            let weak = weak.clone();
+            let refresh = glib::timeout_add_local_once(Duration::from_millis(50), move || {
+                let Some(manager) = weak.upgrade() else {
+                    return;
+                };
+                manager.pending_settings_refresh.borrow_mut().take();
+                manager.reload_preferences();
+            });
+            manager.pending_settings_refresh.replace(Some(refresh));
+        });
+        self.settings_monitor.replace(Some(monitor));
+    }
+
+    pub fn reload_preferences(&self) {
+        let Some(preferences) = read_preferences() else {
+            return;
+        };
+        *self.preferences.borrow_mut() = preferences;
+        if self.follows_noctalia() {
+            self.noctalia.borrow_mut().refresh();
+        }
+        if !self.previewing.get() {
+            self.apply_selected();
+        }
+    }
 }
 
 impl Drop for ThemeManager {
@@ -1088,6 +1147,7 @@ impl Drop for ThemeManager {
             &self.pending_omarchy_refresh,
             &self.pending_noctalia_refresh,
             &self.noctalia_poll,
+            &self.pending_settings_refresh,
         ] {
             if let Some(source) = source.borrow_mut().take() {
                 source.remove();
@@ -1097,6 +1157,9 @@ impl Drop for ThemeManager {
             monitor.cancel();
         }
         if let Some(monitor) = self.omarchy_monitor.borrow_mut().take() {
+            monitor.cancel();
+        }
+        if let Some(monitor) = self.settings_monitor.borrow_mut().take() {
             monitor.cancel();
         }
     }

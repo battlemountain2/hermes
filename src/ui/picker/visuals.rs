@@ -14,6 +14,7 @@ type PreviewKey = (Option<String>, Option<String>);
 
 pub(super) struct Visuals {
     pub widget: gtk::Box,
+    header_icon: gtk::Image,
     image: gtk::Image,
     name: gtk::Label,
     size: gtk::Label,
@@ -32,10 +33,11 @@ impl Visuals {
         widget.set_visible(false);
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         header.add_css_class("preview-header");
-        header.append(&crate::assets::primary_icon(
+        let header_icon = crate::assets::primary_icon(
             crate::assets::icons::DOCUMENTS,
             18,
-        ));
+        );
+        header.append(&header_icon);
         let name = gtk::Label::new(Some("Preview"));
         name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         name.set_max_width_chars(28);
@@ -62,6 +64,7 @@ impl Visuals {
         widget.append(&stage);
         Rc::new(Self {
             widget,
+            header_icon,
             image,
             name,
             size,
@@ -82,9 +85,15 @@ impl Visuals {
         }
         self.current.replace(Some(key));
         self.cancel_work();
+        let initial_icon = selected
+            .as_ref()
+            .and_then(|file| file.basename())
+            .and_then(|name| name.to_str().map(super::super::browser::icon_for_name))
+            .unwrap_or(crate::assets::icons::DOCUMENTS);
+        crate::assets::set_primary_icon(&self.header_icon, initial_icon);
         super::super::thumbnail::show_fallback_icon(
             &self.image,
-            crate::assets::icons::DOCUMENTS,
+            initial_icon,
             48,
         );
         self.name.set_text("Preview");
@@ -131,6 +140,8 @@ impl Visuals {
         self.size
             .set_text(&glib::format_size(info.size().max(0) as u64));
         self.widget.set_visible(true);
+        let fallback = super::super::browser::entry_icon(&entry);
+        crate::assets::set_primary_icon(&self.header_icon, fallback);
         if super::super::thumbnail::PreviewPolicy::current()
             .check_entry(&entry, info.content_type().as_deref())
             .is_ok()
@@ -138,10 +149,12 @@ impl Visuals {
             super::super::thumbnail::set_thumbnail_or_icon(
                 &self.image,
                 &entry,
-                crate::assets::icons::DOCUMENTS,
+                fallback,
                 48,
                 256,
             );
+        } else {
+            super::super::thumbnail::show_fallback_icon(&self.image, fallback, 48);
         }
     }
 

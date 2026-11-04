@@ -130,7 +130,7 @@ pub fn build_layer(
             "General",
             icons::SLIDERS,
             "general",
-            &["general", "startup", "delete", "safety", "history", "recent", "confirm", "motion"],
+            &["general", "startup", "delete", "safety", "history", "recent", "confirm", "motion", "portal", "picker", "desktop", "chooser", "integration", "xdg"],
         ),
         (
             "View & formats",
@@ -543,6 +543,32 @@ fn general_page(
     });
     sidebar_card.append(&folder_tree_row);
     preferences.append(&sidebar_card);
+
+    append_heading(&preferences, "DESKTOP INTEGRATION");
+    let portal_card = settings_card();
+
+    let picker_enabled = crate::portal::is_picker_integration_enabled();
+    let (picker_row, picker_toggle) = settings_option(
+        "Use Hermes as system file picker (XDG portal)",
+        "Handle Open and Save file dialogs across desktop applications (Discord, browsers, editors) with Hermes.",
+        picker_enabled,
+    );
+    picker_toggle.connect_active_notify(move |toggle| {
+        let _ = crate::portal::set_picker_integration_enabled(toggle.is_active());
+    });
+    portal_card.append(&picker_row);
+
+    let (sync_theme_row, sync_theme_toggle) = settings_option(
+        "Sync theme with file picker",
+        "Automatically apply your active Hermes theme and Noctalia colors to the system file picker dialog.",
+        manager.sync_picker_theme(),
+    );
+    let manager_for_sync = manager.clone();
+    sync_theme_toggle.connect_active_notify(move |toggle| {
+        manager_for_sync.set_sync_picker_theme(toggle.is_active());
+    });
+    portal_card.append(&sync_theme_row);
+    preferences.append(&portal_card);
 
     preferences.upcast()
 }
