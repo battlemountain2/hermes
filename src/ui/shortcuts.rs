@@ -32,7 +32,8 @@ pub fn show_shortcuts_window(parent: &impl IsA<gtk::Window>) {
     add_shortcut(&view_group, "Grid view", "<Primary><Shift>2");
     add_shortcut(&view_group, "Explorer view", "<Primary><Shift>3");
     add_shortcut(&view_group, "Toggle sidebar", "<Primary>b");
-    add_shortcut(&view_group, "Preview / Quick Look", "space");
+    add_shortcut(&view_group, "Quick Look preview modal", "space");
+    add_shortcut(&view_group, "Toggle preview panel", "<Primary>p");
     add_shortcut(&view_group, "Split view (dual pane)", "F3");
     add_shortcut(&view_group, "Switch split pane", "Tab");
     add_shortcut(&view_group, "Zoom in / Airy density", "<Primary>plus");

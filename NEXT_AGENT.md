@@ -1,6 +1,24 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Dual-Pane Split View (F3), active pane focus & inter-pane transfers — 2026-11-03 (current)
+## Spacebar Floating Quick Look Modal, arrow navigation & omnibar preview — 2026-11-03 (current)
+
+- Branch: `feat/6-desktop-parity-and-native-chooser`
+- Spacebar Quick Look Modal (`src/ui/quick_look.rs`, `src/ui/quick_look/tests.rs`, `src/ui/window.rs`, `src/ui/shortcuts.rs`, `src/ui/search.rs`, `src/style.css`):
+  - macOS / KQuickLook style centered floating preview modal:
+    - Centered `850x600` modal window (`QuickLookModal`) with sleek rounded geometry (`border-radius: 12px`), elevated box shadow, and dark translucent footer hint bar.
+    - Keyboard trigger: tapping `Space` while any item is focused or selected opens the floating Quick Look modal (while respecting focused text inputs and entries).
+    - Arrow navigation: `←` / `→` and `↑` / `↓` seamlessly step the active browser selection to the next or previous file and dynamically update the modal preview and title (`Quick Look — <filename>`).
+    - Dismissal: pressing `Space` or `Esc` closes the modal immediately and halts playback/video rendering.
+    - Two-way browser sync: selecting or focusing files in either pane of Split View while Quick Look is open updates the modal preview live via `update_entry`.
+    - Dedicated preview toggle shortcut: `Ctrl+P` toggles the docked right-hand side preview drawer, while `Space` summons the Quick Look floating modal.
+    - Omnibar integration: registered `> quick_look` / `> preview` in Omnibar command palette with `EYE` icon.
+    - Shortcuts cheatsheet documentation: documented `Quick Look preview modal` (`space`) and `Toggle preview panel` (`Ctrl+P`) in `src/ui/shortcuts.rs`.
+- Verification & Test Coverage:
+  - All 1,049 unit tests pass with 0 failures (`cargo test --bin hermes -- --test-threads=1`).
+  - Zero warnings on `cargo check --all-targets`.
+  - Built `--release` binary and installed to `~/.local/bin/hermes`.
+
+## Dual-Pane Split View (F3), active pane focus & inter-pane transfers — 2026-11-03
 
 - Branch: `feat/6-desktop-parity-and-native-chooser`
 - Dual-Pane Split View (`src/ui/split_view.rs`, `src/ui/split_view/tests.rs`, `src/ui/window.rs`, `src/ui/shortcuts.rs`, `src/ui/search.rs`, `src/style.css`, `data/icons/scalable/actions/strata-columns-2.svg`):

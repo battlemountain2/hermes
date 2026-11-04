@@ -528,6 +528,13 @@ pub fn all_omnibar_commands() -> Vec<OmnibarCommand> {
             icon: crate::assets::icons::COLUMNS_2,
         },
         OmnibarCommand {
+            id: "quick_look",
+            title: "Quick Look",
+            description: "Open floating preview modal for selected item",
+            shortcut: Some("Space"),
+            icon: crate::assets::icons::EYE,
+        },
+        OmnibarCommand {
             id: "shortcuts",
             title: "Keyboard Shortcuts",
             description: "Show keyboard shortcuts cheatsheet",

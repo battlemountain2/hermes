@@ -1838,6 +1838,25 @@ paned > separator {
   background: alpha(@theme_muted, 0.8);
 }
 
+.quick-look-window {
+  background: @theme_surface;
+  border: 1px solid alpha(@theme_border, 0.7);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px alpha(@theme_bg, 0.88), 0 0 16px alpha(@theme_accent, 0.22);
+}
+
+.quick-look-footer {
+  border-top: 1px solid alpha(@theme_border, 0.4);
+  padding: 6px 14px;
+  background: alpha(@theme_surface, 0.95);
+}
+
+.quick-look-hint {
+  color: @theme_dim_text;
+  font-size: 0.85em;
+  font-family: inherit;
+}
+
 .preview-pane {
   background: @theme_surface;
   color: @theme_text;

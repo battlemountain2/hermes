@@ -130,7 +130,23 @@ fn present_target(
         true
     }));
     let split_view = super::split_view::SplitView::new(browser.clone(), browser_right.clone());
+    let quick_look = super::quick_look::QuickLookModal::new();
+    let split_for_ql_next = split_view.clone();
+    let split_for_ql_prev = split_view.clone();
+    quick_look.set_navigation_handlers(
+        move || {
+            let active = split_for_ql_next.active_browser().browser();
+            active.move_selection(1);
+            active.focused_entry()
+        },
+        move || {
+            let active = split_for_ql_prev.active_browser().browser();
+            active.move_selection(-1);
+            active.focused_entry()
+        },
+    );
     let preview_for_selection = preview.clone();
+    let quick_look_for_selection = quick_look.clone();
     let weak_controller = Rc::downgrade(&controller);
     let observed_trails = trails.clone();
     let observed_startup = startup_restore.clone();
@@ -156,28 +172,88 @@ fn present_target(
                 tracing::warn!(%error, "unable to save active Trail");
             }
         }
-        BrowserEvent::PreviewRequested { entry } => preview_for_selection.show(entry),
+        BrowserEvent::PreviewRequested { entry } => {
+            preview_for_selection.show(entry.clone());
+            if quick_look_for_selection.is_open() {
+                quick_look_for_selection.update_entry(entry);
+            }
+        }
         BrowserEvent::FocusChanged {
             depth,
             position: Some(position),
-        } if preview_for_selection.is_open() => {
+        } => {
             if let Some(entry) = weak_controller
                 .upgrade()
                 .and_then(|browser| browser.entry_at(depth, position))
             {
-                preview_for_selection.show(entry);
+                if preview_for_selection.is_open() {
+                    preview_for_selection.show(entry.clone());
+                }
+                if quick_look_for_selection.is_open() {
+                    quick_look_for_selection.update_entry(entry);
+                }
             }
         }
         BrowserEvent::SelectionSetChanged {
             depth,
             focused,
             ..
-        } if preview_for_selection.is_open() => {
+        } => {
             if let Some(entry) = weak_controller
                 .upgrade()
                 .and_then(|browser| browser.entry_at(depth, focused))
             {
-                preview_for_selection.show(entry);
+                if preview_for_selection.is_open() {
+                    preview_for_selection.show(entry.clone());
+                }
+                if quick_look_for_selection.is_open() {
+                    quick_look_for_selection.update_entry(entry);
+                }
+            }
+        }
+        _ => {}
+    });
+    let preview_for_selection_right = preview.clone();
+    let quick_look_for_selection_right = quick_look.clone();
+    let weak_controller_right = Rc::downgrade(&controller_right);
+    controller_right.observe(move |event| match event {
+        BrowserEvent::PreviewRequested { entry } => {
+            preview_for_selection_right.show(entry.clone());
+            if quick_look_for_selection_right.is_open() {
+                quick_look_for_selection_right.update_entry(entry);
+            }
+        }
+        BrowserEvent::FocusChanged {
+            depth,
+            position: Some(position),
+        } => {
+            if let Some(entry) = weak_controller_right
+                .upgrade()
+                .and_then(|browser| browser.entry_at(depth, position))
+            {
+                if preview_for_selection_right.is_open() {
+                    preview_for_selection_right.show(entry.clone());
+                }
+                if quick_look_for_selection_right.is_open() {
+                    quick_look_for_selection_right.update_entry(entry);
+                }
+            }
+        }
+        BrowserEvent::SelectionSetChanged {
+            depth,
+            focused,
+            ..
+        } => {
+            if let Some(entry) = weak_controller_right
+                .upgrade()
+                .and_then(|browser| browser.entry_at(depth, focused))
+            {
+                if preview_for_selection_right.is_open() {
+                    preview_for_selection_right.show(entry.clone());
+                }
+                if quick_look_for_selection_right.is_open() {
+                    quick_look_for_selection_right.update_entry(entry);
+                }
             }
         }
         _ => {}
@@ -1040,6 +1116,7 @@ fn present_target(
     let cmd_music_toggle = music_toggle.clone();
     let cmd_tab_bar = tab_bar.clone();
     let cmd_split_view = split_view.clone();
+    let cmd_quick_look = quick_look.clone();
     let cmd_mode_action = mode_action.clone();
     let cmd_settings_layer = settings_layer.clone();
     let cmd_settings_btn = settings.clone();
@@ -1102,6 +1179,15 @@ fn present_target(
             "split_view" | "split" | "dual_pane" => {
                 cmd_split_view.toggle_split();
             }
+            "quick_look" | "preview" => {
+                let active = cmd_split_view.active_browser().browser();
+                let entry = active
+                    .selected_entries()
+                    .first()
+                    .cloned()
+                    .or_else(|| active.focused_item().map(|(_, _, entry)| entry));
+                cmd_quick_look.toggle(entry, &cmd_window);
+            }
             "shortcuts" | "help" => {
                 super::shortcuts::show_shortcuts_window(&cmd_window);
             }
@@ -1143,6 +1229,7 @@ fn present_target(
         &window,
         &sidebar_toggle,
         &preview,
+        &quick_look,
         trails.clone(),
         capture_view,
         &workspace,
@@ -1340,6 +1427,7 @@ fn install_keyboard_navigation(
     window: &gtk::ApplicationWindow,
     sidebar_toggle: &gtk::ToggleButton,
     preview: &PreviewDrawer,
+    quick_look: &Rc<super::quick_look::QuickLookModal>,
     trails: Rc<Trails>,
     capture_view: Rc<dyn Fn() -> TrailViewState>,
     workspace: &gtk::Stack,
@@ -1351,6 +1439,7 @@ fn install_keyboard_navigation(
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     let sidebar_toggle = sidebar_toggle.clone();
     let preview = preview.clone();
+    let quick_look = quick_look.clone();
     let dialog_parent = window.clone();
     let split_view = split_view.clone();
     let workspace = workspace.clone();
@@ -1433,6 +1522,10 @@ fn install_keyboard_navigation(
                 return glib::Propagation::Stop;
             }
         }
+        if key == gtk::gdk::Key::Escape && quick_look.is_open() {
+            quick_look.close();
+            return glib::Propagation::Stop;
+        }
         if view.rename_is_active() || view.new_folder_is_active() {
             return glib::Propagation::Proceed;
         }
@@ -1449,12 +1542,21 @@ fn install_keyboard_navigation(
                     .first()
                     .cloned()
                     .or_else(|| browser.focused_item().map(|(_, _, entry)| entry));
-                preview.toggle(entry);
-                if let Err(error) = trails.update_active_view(capture_view()) {
-                    tracing::warn!(%error, "unable to save Trail preview state");
-                }
+                quick_look.toggle(entry, &dialog_parent);
                 return glib::Propagation::Stop;
             }
+        }
+        if control && !alt && !shift && matches!(key, gtk::gdk::Key::p | gtk::gdk::Key::P) {
+            let entry = browser
+                .selected_entries()
+                .first()
+                .cloned()
+                .or_else(|| browser.focused_item().map(|(_, _, entry)| entry));
+            preview.toggle(entry);
+            if let Err(error) = trails.update_active_view(capture_view()) {
+                tracing::warn!(%error, "unable to save Trail preview state");
+            }
+            return glib::Propagation::Stop;
         }
         if key == gtk::gdk::Key::Escape && view.dismiss_focused_filter() {
             return glib::Propagation::Stop;
@@ -1590,10 +1692,6 @@ fn install_keyboard_navigation(
             return glib::Propagation::Stop;
         }
         if key == gtk::gdk::Key::Delete && !view.filter_has_focus() && view.confirm_delete(shift) {
-            return glib::Propagation::Stop;
-        }
-        if key == gtk::gdk::Key::space && !alt && !control && !view.filter_has_focus() {
-            preview.toggle(browser.focused_entry());
             return glib::Propagation::Stop;
         }
         if key == gtk::gdk::Key::Escape && preview.is_open() {
