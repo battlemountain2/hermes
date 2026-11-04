@@ -147,3 +147,31 @@ fn cached_options_apply_without_initializing_gtk_or_loading_preferences() {
     assert_eq!(date_format(), DateFormat::Relative);
     assert_eq!(format_size(1536), "1.5 kB");
 }
+
+#[test]
+fn test_format_transfer_eta() {
+    assert_eq!(
+        format_transfer_eta(10_000, 500.0),
+        "Estimating time remaining…"
+    );
+    assert_eq!(
+        format_transfer_eta(0, 10_000.0),
+        "Estimating time remaining…"
+    );
+    assert_eq!(
+        format_transfer_eta(1_000, 10_000.0),
+        "About 1 second remaining"
+    );
+    assert_eq!(
+        format_transfer_eta(300_000, 10_000.0),
+        "About 30 seconds remaining"
+    );
+    assert_eq!(
+        format_transfer_eta(6_000_000, 50_000.0),
+        "About 2 minutes remaining"
+    );
+    assert_eq!(
+        format_transfer_eta(360_000_000, 50_000.0),
+        "About 2h 0m remaining"
+    );
+}

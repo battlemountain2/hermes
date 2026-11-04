@@ -151,3 +151,23 @@ pub(crate) fn format_value(value: Value) -> String {
         Value::FreeSpace(bytes) => format!("{} free", format_size(bytes)),
     }
 }
+
+pub(crate) fn format_transfer_eta(remaining_bytes: u64, speed_bytes_per_sec: f64) -> String {
+    if speed_bytes_per_sec <= 1024.0 || remaining_bytes == 0 {
+        return "Estimating time remaining…".to_string();
+    }
+    let remaining_secs = (remaining_bytes as f64 / speed_bytes_per_sec).round() as u64;
+    if remaining_secs <= 1 {
+        "About 1 second remaining".to_string()
+    } else if remaining_secs < 60 {
+        format!("About {remaining_secs} seconds remaining")
+    } else if remaining_secs < 3600 {
+        format!("About {} minutes remaining", (remaining_secs + 59) / 60)
+    } else {
+        format!(
+            "About {}h {}m remaining",
+            remaining_secs / 3600,
+            (remaining_secs % 3600) / 60
+        )
+    }
+}

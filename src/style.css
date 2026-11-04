@@ -1260,6 +1260,75 @@ headerbar menubutton.header-action > button:focus-visible image {
   outline-offset: 1px;
 }
 
+.conflict-resolver-dialog {
+  min-width: 580px;
+}
+
+.conflict-comparison-row {
+  margin-top: 8px;
+  margin-bottom: 6px;
+}
+
+.conflict-card {
+  background: alpha(@theme_bg, 0.45);
+  border: 1px solid alpha(@theme_border, 0.45);
+  border-radius: 6px;
+  padding: 10px 12px;
+  min-width: 230px;
+}
+
+.conflict-card-heading {
+  color: @theme_dim_text;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.conflict-card-filename {
+  color: @theme_text;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.conflict-card-meta {
+  color: @theme_dim_text;
+  font-size: 11px;
+}
+
+.conflict-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-top: 3px;
+}
+
+.conflict-badge.newer {
+  background: alpha(@theme_accent, 0.14);
+  border: 1px solid alpha(@theme_accent, 0.28);
+  color: @theme_accent;
+}
+
+.conflict-badge.older {
+  background: alpha(@theme_dim_text, 0.14);
+  border: 1px solid alpha(@theme_dim_text, 0.28);
+  color: @theme_dim_text;
+}
+
+.conflict-badge.danger {
+  background: alpha(@theme_danger, 0.14);
+  border: 1px solid alpha(@theme_danger, 0.28);
+  color: @theme_danger;
+}
+
+.conflict-arrow {
+  color: @theme_accent;
+  opacity: 0.75;
+  padding: 0 4px;
+}
+
 .settings-dialog {
   background: @theme_surface;
   border: 1px solid alpha(@theme_accent, 0.22);
@@ -2430,6 +2499,30 @@ menubutton.column-header-action > button:focus-visible image {
 
 .delete-progress-dialog {
   min-width: 440px;
+}
+
+.transfer-hud {
+  min-width: 500px;
+}
+
+.transfer-telemetry-box {
+  background: alpha(@theme_bg, 0.46);
+  border: 1px solid alpha(@theme_border, 0.35);
+  border-radius: 5px;
+  padding: 6px 10px;
+  margin-top: 4px;
+}
+
+.transfer-speed-readout {
+  color: @theme_accent;
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.transfer-eta-readout {
+  color: @theme_dim_text;
+  font-size: 11px;
 }
 
 .delete-progress-status {

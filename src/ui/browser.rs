@@ -95,6 +95,10 @@ struct DeleteProgressView {
     blurred_root: Option<BlurBin>,
     progress: gtk::ProgressBar,
     status: gtk::Label,
+    telemetry: Option<gtk::Label>,
+    eta: Option<gtk::Label>,
+    last_sample: RefCell<(Instant, u64)>,
+    smoothed_speed: Cell<f64>,
 }
 
 #[derive(Clone)]
@@ -1292,9 +1296,66 @@ impl ViewState {
         });
         let is_folder_merge = is_source_dir && is_target_dir;
 
+        let source_info = source_file
+            .query_info(
+                "standard::name,standard::display-name,standard::type,standard::size,time::modified",
+                gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS,
+                None::<&gio::Cancellable>,
+            )
+            .ok();
+        let target_info = target_file.as_ref().and_then(|f| {
+            f.query_info(
+                "standard::name,standard::display-name,standard::type,standard::size,time::modified",
+                gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS,
+                None::<&gio::Cancellable>,
+            )
+            .ok()
+        });
+
+        let source_size = if is_source_dir {
+            "Folder".to_string()
+        } else {
+            source_info
+                .as_ref()
+                .map(|i| crate::ui::formatting::format_size(i.size() as u64))
+                .unwrap_or_else(|| "Unknown size".to_string())
+        };
+        let target_size = if is_target_dir {
+            "Folder".to_string()
+        } else {
+            target_info
+                .as_ref()
+                .map(|i| crate::ui::formatting::format_size(i.size() as u64))
+                .unwrap_or_else(|| "Unknown size".to_string())
+        };
+
+        let source_mtime = source_info.as_ref().and_then(|i| i.modification_date_time());
+        let target_mtime = target_info.as_ref().and_then(|i| i.modification_date_time());
+        let source_mtime_unix = source_mtime.as_ref().map(|dt| dt.to_unix());
+        let target_mtime_unix = target_mtime.as_ref().map(|dt| dt.to_unix());
+
+        let source_mtime_str = source_mtime_unix
+            .map(crate::ui::formatting::format_timestamp)
+            .unwrap_or_else(|| "Date unknown".to_string());
+        let target_mtime_str = target_mtime_unix
+            .map(crate::ui::formatting::format_timestamp)
+            .unwrap_or_else(|| "Date unknown".to_string());
+
+        let source_icon = if is_source_dir {
+            crate::assets::icons::FOLDER
+        } else {
+            icon_for_name(&name)
+        };
+        let target_icon = if is_target_dir {
+            crate::assets::icons::FOLDER
+        } else {
+            icon_for_name(&name)
+        };
+
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
         content.add_css_class("delete-confirmation");
         content.add_css_class("delete-confirmation-content");
+        content.add_css_class("conflict-resolver-dialog");
         content.set_halign(gtk::Align::Center);
         content.set_valign(gtk::Align::Center);
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
@@ -1303,7 +1364,7 @@ impl ViewState {
         symbol.add_css_class("delete-confirmation-symbol");
         symbol.set_size_request(40, 40);
         symbol.set_center_widget(Some(&crate::assets::danger_icon(
-            crate::assets::icons::COPY,
+            if is_folder_merge { crate::assets::icons::FOLDER } else { crate::assets::icons::COPY },
             20,
         )));
         let heading = gtk::Box::new(gtk::Orientation::Vertical, 1);
@@ -1335,7 +1396,7 @@ impl ViewState {
             )
         } else {
             format!(
-                "An item named “{name}” already exists in {}. Replacing it will overwrite its contents.",
+                "An item named “{name}” already exists in {}. Choose an action below:",
                 compact_display_path(&destination)
             )
         };
@@ -1345,8 +1406,94 @@ impl ViewState {
         explanation.set_wrap(true);
         explanation.set_xalign(0.0);
         body.append(&explanation);
-        let apply_all =
-            gtk::CheckButton::with_label("Apply this choice to all remaining conflicts");
+
+        // Side-by-side comparison cards
+        let comparison_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        comparison_row.add_css_class("conflict-comparison-row");
+        comparison_row.set_hexpand(true);
+
+        let existing_card = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        existing_card.add_css_class("conflict-card");
+        existing_card.set_hexpand(true);
+        let ex_header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let ex_icon = crate::assets::primary_icon(target_icon, 24);
+        let ex_title = gtk::Label::new(Some("Existing in Destination"));
+        ex_title.add_css_class("conflict-card-heading");
+        ex_title.set_xalign(0.0);
+        ex_title.set_hexpand(true);
+        ex_header.append(&ex_icon);
+        ex_header.append(&ex_title);
+        existing_card.append(&ex_header);
+
+        let ex_name = gtk::Label::new(Some(&name));
+        ex_name.add_css_class("conflict-card-filename");
+        ex_name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        ex_name.set_xalign(0.0);
+        existing_card.append(&ex_name);
+
+        let ex_meta = gtk::Label::new(Some(&format!("{target_size} · Modified {target_mtime_str}")));
+        ex_meta.add_css_class("conflict-card-meta");
+        ex_meta.set_xalign(0.0);
+        existing_card.append(&ex_meta);
+
+        let ex_badge = gtk::Label::new(Some(if is_folder_merge { "Will be merged" } else { "Will be replaced" }));
+        ex_badge.add_css_class("conflict-badge");
+        ex_badge.add_css_class("danger");
+        ex_badge.set_halign(gtk::Align::Start);
+        existing_card.append(&ex_badge);
+
+        let arrow_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        arrow_box.set_valign(gtk::Align::Center);
+        arrow_box.add_css_class("conflict-arrow");
+        let arrow_icon = crate::assets::primary_icon(crate::assets::icons::ARROW_RIGHT, 18);
+        arrow_box.append(&arrow_icon);
+
+        let incoming_card = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        incoming_card.add_css_class("conflict-card");
+        incoming_card.set_hexpand(true);
+        let in_header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let in_icon = crate::assets::primary_icon(source_icon, 24);
+        let in_title = gtk::Label::new(Some("Incoming (Source)"));
+        in_title.add_css_class("conflict-card-heading");
+        in_title.set_xalign(0.0);
+        in_title.set_hexpand(true);
+        in_header.append(&in_icon);
+        in_header.append(&in_title);
+        incoming_card.append(&in_header);
+
+        let in_name = gtk::Label::new(Some(&name));
+        in_name.add_css_class("conflict-card-filename");
+        in_name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        in_name.set_xalign(0.0);
+        incoming_card.append(&in_name);
+
+        let in_meta = gtk::Label::new(Some(&format!("{source_size} · Modified {source_mtime_str}")));
+        in_meta.add_css_class("conflict-card-meta");
+        in_meta.set_xalign(0.0);
+        incoming_card.append(&in_meta);
+
+        let (in_badge_text, in_badge_class) = match (source_mtime_unix, target_mtime_unix) {
+            (Some(s), Some(t)) if s > t => ("Newer", "newer"),
+            (Some(s), Some(t)) if s < t => ("Older", "older"),
+            _ => ("Incoming", "newer"),
+        };
+        let in_badge = gtk::Label::new(Some(in_badge_text));
+        in_badge.add_css_class("conflict-badge");
+        in_badge.add_css_class(in_badge_class);
+        in_badge.set_halign(gtk::Align::Start);
+        incoming_card.append(&in_badge);
+
+        comparison_row.append(&existing_card);
+        comparison_row.append(&arrow_box);
+        comparison_row.append(&incoming_card);
+        body.append(&comparison_row);
+
+        let apply_label = if collisions.is_empty() {
+            "Apply this choice to all remaining conflicts".to_string()
+        } else {
+            format!("Apply this choice to all remaining conflicts ({} remaining)", collisions.len())
+        };
+        let apply_all = gtk::CheckButton::with_label(&apply_label);
         apply_all.add_css_class("collision-apply-all");
         apply_all.set_visible(!collisions.is_empty());
         body.append(&apply_all);
@@ -2085,6 +2232,25 @@ impl ViewState {
         body.append(&progress);
         content.append(&body);
 
+        let (telemetry, eta) = if icon == crate::assets::icons::COPY {
+            content.add_css_class("transfer-hud");
+            let tbox = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            tbox.add_css_class("transfer-telemetry-box");
+            let tlabel = gtk::Label::new(Some("⚡ Calculating speed…"));
+            tlabel.add_css_class("transfer-speed-readout");
+            tlabel.set_xalign(0.0);
+            let elabel = gtk::Label::new(Some("Estimating time remaining…"));
+            elabel.add_css_class("transfer-eta-readout");
+            elabel.set_xalign(1.0);
+            elabel.set_hexpand(true);
+            tbox.append(&tlabel);
+            tbox.append(&elabel);
+            body.append(&tbox);
+            (Some(tlabel), Some(elabel))
+        } else {
+            (None, None)
+        };
+
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         actions.add_css_class("transfer-actions");
         let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -2103,6 +2269,10 @@ impl ViewState {
             blurred_root,
             progress,
             status,
+            telemetry,
+            eta,
+            last_sample: RefCell::new((Instant::now(), 0)),
+            smoothed_speed: Cell::new(0.0),
         }));
         let browser = self.browser.clone();
         cancel.connect_clicked(move |_| browser.cancel_file_operation());
@@ -2144,13 +2314,49 @@ impl ViewState {
         let Some(view) = progress_view.as_ref() else {
             return;
         };
+        let now = Instant::now();
+        let (prev_time, prev_bytes) = *view.last_sample.borrow();
+        let dt = now.duration_since(prev_time).as_secs_f64();
+        if dt >= 0.25 {
+            let inst_speed = (bytes_transferred.saturating_sub(prev_bytes) as f64) / dt;
+            let current_speed = view.smoothed_speed.get();
+            let new_speed = if current_speed <= 0.0 {
+                inst_speed
+            } else {
+                current_speed * 0.7 + inst_speed * 0.3
+            };
+            view.smoothed_speed.set(new_speed);
+            view.last_sample.replace((now, bytes_transferred));
+        }
+
+        let speed = view.smoothed_speed.get();
+        if let Some(telemetry_label) = view.telemetry.as_ref() {
+            if speed > 1024.0 {
+                telemetry_label.set_text(&format!("⚡ {}/s", crate::ui::formatting::format_size(speed as u64)));
+            } else if bytes_transferred > 0 {
+                telemetry_label.set_text("⚡ Starting transfer…");
+            } else {
+                telemetry_label.set_text("⚡ Calculating speed…");
+            }
+        }
+
+        if let Some(eta_label) = view.eta.as_ref() {
+            if speed > 1024.0 && let Some(total_b) = total_bytes.filter(|&b| b > bytes_transferred) {
+                let remaining_bytes = total_b - bytes_transferred;
+                eta_label.set_text(&crate::ui::formatting::format_transfer_eta(remaining_bytes, speed));
+            } else if speed > 1024.0 {
+                eta_label.set_text("Transfer in progress");
+            } else {
+                eta_label.set_text("Estimating time remaining…");
+            }
+        }
+
         if let Some(total_b) = total_bytes.filter(|&b| b > 0) {
+            let pct = ((bytes_transferred as f64 / total_b as f64) * 100.0).clamp(0.0, 100.0) as u32;
             view.status.set_text(&format!(
-                "{} of {} ({} of {} items)",
+                "{} of {} ({completed} of {total} items · {pct}%)",
                 crate::ui::formatting::format_size(bytes_transferred),
                 crate::ui::formatting::format_size(total_b),
-                completed,
-                total
             ));
             view.progress
                 .set_fraction((bytes_transferred as f64 / total_b as f64).clamp(0.0, 1.0));

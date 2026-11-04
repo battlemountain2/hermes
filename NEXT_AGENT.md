@@ -1,6 +1,48 @@
 # Next agent: Hermes performance, file features and media polish
 
-## In-Place Archive Exploration (`archive://`), virtual folder navigation & extraction — 2026-11-03 (current)
+## Interactive Copy/Move Conflict Resolver & Transfer Queue HUD (`MB/s` & ETA Telemetry) — 2026-11-03 (current)
+
+- Branch: `feat/6-desktop-parity-and-native-chooser`
+- Copy/Move Conflict Resolver (`src/ui/browser.rs`, `src/style.css`):
+  - Side-by-side comparative inspection card (`.conflict-resolver-dialog`, `.conflict-comparison-row`, `.conflict-card`):
+    - **Existing in Destination Card**: Shows format icon (or folder icon), ellipsized filename, file size, last modified date, and `"Will be replaced"` / `"Will be merged"` alert badge.
+    - **Directional Arrow**: Theme accent directional indicator (`ARROW_RIGHT`) illustrating replacement flow.
+    - **Incoming (Source) Card**: Shows source format icon, ellipsized filename, size, modified date, and relative state badge (`"Newer"`, `"Older"`, or `"Incoming"`).
+    - Clear multi-option actions:
+      - `Cancel`: Aborts file transfer cleanly.
+      - `Skip`: Skips the conflicting file and proceeds with remaining items.
+      - `Keep Both`: Automatically renames with collision-safe names (`photo (copy).jpg`) via `crate::services::naming::collision_safe_name`.
+      - `Replace` / `Merge`: Atomically overwrites the existing file (or merges directory contents).
+    - `[x] Apply this choice to all remaining conflicts (N remaining)` checkbox allowing batch execution across all collisions.
+- Transfer Progress HUD with Live Speed & ETA Telemetry (`src/ui/browser.rs`, `src/ui/formatting.rs`, `src/ui/formatting/tests.rs`, `src/style.css`):
+  - Elevated high-tech HUD card (`.transfer-hud`, `.transfer-telemetry-box`):
+    - Real-time smoothed throughput tracking ($\Delta \text{bytes}/\Delta t$ exponential moving average):
+      - Live speed telemetry badge e.g. `⚡ 124.5 MB/s`, `⚡ 3.2 MB/s`, `⚡ 850 KB/s`.
+    - Smart ETA countdown (`format_transfer_eta`):
+      - E.g. `"About 18 seconds remaining"`, `"About 3 minutes remaining"`, `"About 1h 20m remaining"`.
+    - Detailed transfer status:
+      - Transferred vs Total bytes: `1.2 GB of 3.4 GB (12 of 48 items · 35%)`.
+    - High-precision progress bar with smooth percentage calculation.
+    - Cancel button aborting active transfer at any moment via `cancel_file_operation()`.
+- Verification & Test Coverage:
+  - All 1,054 unit tests pass (`cargo test --bin hermes -- --test-threads=1`).
+  - Unit tests for `format_transfer_eta` in `src/ui/formatting/tests.rs`.
+  - Zero warnings on `cargo check --all-targets`.
+  - Release binary built and installed to `~/.local/bin/hermes`.
+
+## Rich File Hover Tooltips, 2×2 Folder Hover Peeks & Rating Stars — 2026-11-03
+
+- Branch: `feat/6-desktop-parity-and-native-chooser`
+- Hover Previews & 2×2 Composite Folder Peeks (`src/ui/hover.rs`, `src/ui/hover/tests.rs`, `src/style.css`):
+  - Dual-mode floating hover card (`.hermes-hover-card`):
+    - **Folder Hover Mode**: Header with folder icon, folder name, child item count (`"X items"` / `"Empty folder"`), and a 2×2 composite preview grid (`.folder-peek-grid`) rendering up to 4 child items with icons and truncated labels.
+    - **Rich File Mode**: Header row with filename, rating stars (`★ ★ ★ ★ ☆` retrieved live from `ratings::Store`), and format badge chip (`[PHOTO]`, `[SONG]`, `[VIDEO]`, `[PDF]`).
+    - Resolution tagging: automatically classifies media resolutions (`8K`, `4K UHD`, `1440p QHD`, `1080p FHD`, `720p HD`, `SD`) displayed in media details (e.g. `1920 × 1080 px (1080p FHD)`).
+    - Asynchronous cancellation-safe background scanning avoiding main-thread hitching.
+- Verification & Test Coverage:
+  - All 7 unit tests in `src/ui/hover/tests.rs` pass.
+
+## In-Place Archive Exploration (`archive://`), virtual folder navigation & extraction — 2026-11-03
 
 - Branch: `feat/6-desktop-parity-and-native-chooser`
 - In-Place Archive Exploration (`src/adapters/archive_source.rs`, `src/adapters/archive_source/tests.rs`, `src/adapters/mod.rs`, `src/model/mod.rs`, `src/model/tests.rs`, `src/app/browser.rs`, `src/ui/browser.rs`):
