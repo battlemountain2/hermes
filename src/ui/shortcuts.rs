@@ -33,6 +33,8 @@ pub fn show_shortcuts_window(parent: &impl IsA<gtk::Window>) {
     add_shortcut(&view_group, "Explorer view", "<Primary><Shift>3");
     add_shortcut(&view_group, "Toggle sidebar", "<Primary>b");
     add_shortcut(&view_group, "Preview / Quick Look", "space");
+    add_shortcut(&view_group, "Split view (dual pane)", "F3");
+    add_shortcut(&view_group, "Switch split pane", "Tab");
     add_shortcut(&view_group, "Zoom in / Airy density", "<Primary>plus");
     add_shortcut(&view_group, "Zoom out / Compact density", "<Primary>minus");
     add_shortcut(&view_group, "Reset zoom & density", "<Primary>0");
@@ -52,6 +54,8 @@ pub fn show_shortcuts_window(parent: &impl IsA<gtk::Window>) {
     add_shortcut(&ops_group, "Cut files", "<Primary>x");
     add_shortcut(&ops_group, "Paste files", "<Primary>v");
     add_shortcut(&ops_group, "Duplicate selection", "<Primary>d");
+    add_shortcut(&ops_group, "Copy to other pane (split view)", "F5");
+    add_shortcut(&ops_group, "Move to other pane (split view)", "F6");
     add_shortcut(&ops_group, "Invert selection", "<Primary><Shift>i");
     add_shortcut(&ops_group, "Open in Terminal", "F4");
     add_shortcut(&ops_group, "New folder", "<Primary><Shift>n");

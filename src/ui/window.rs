@@ -112,6 +112,24 @@ fn present_target(
         activated_music.play_folder(path.to_owned());
         true
     }));
+    let browser_right = BrowserView::new(Rc::new(RoutedFileSource::new()), PeekBehavior::default());
+    browser_right.set_view_mode(browser_mode(initial_view.browser_mode));
+    browser_right.set_density(browser_density(initial_view.density));
+    browser_right.set_operation_provider(Rc::new(LocalOperationProvider));
+    let controller_right = browser_right.browser();
+    controller_right.set_preferences(initial_view.preferences);
+    let activated_music_right = music_player.clone();
+    let activated_music_preview_right = preview.clone();
+    browser_right.set_open_handler(Rc::new(move |location| {
+        let Some(path) = location.native_path() else { return false; };
+        if crate::services::classify_by_name(path.as_os_str()) != crate::services::FormatFamily::Audio {
+            return false;
+        }
+        activated_music_preview_right.close();
+        activated_music_right.play_folder(path.to_owned());
+        true
+    }));
+    let split_view = super::split_view::SplitView::new(browser.clone(), browser_right.clone());
     let preview_for_selection = preview.clone();
     let weak_controller = Rc::downgrade(&controller);
     let observed_trails = trails.clone();
@@ -204,7 +222,7 @@ fn present_target(
         Some(glib::VariantTy::STRING),
         &browser.view_mode().action_name().to_variant(),
     );
-    let mode_browser = browser.clone();
+    let mode_split = split_view.clone();
     let mode_preferences = theme_manager.clone();
     let mode_trails = trails.clone();
     let mode_capture = capture_view.clone();
@@ -216,7 +234,7 @@ fn present_target(
         else {
             return;
         };
-        mode_browser.set_view_mode(mode);
+        mode_split.active_browser().set_view_mode(mode);
         if !mode_preferences.remember_folder_views() {
             mode_preferences.set_browser_mode(mode);
         }
@@ -260,7 +278,6 @@ fn present_target(
         status_bar.update_free_space(path);
     }
     let mode_action_for_status = mode_action.clone();
-    let browser_for_status = browser.clone();
     status_bar.set_mode_handlers(
         {
             let mode_action = mode_action_for_status.clone();
@@ -292,13 +309,59 @@ fn present_target(
         }
     });
     let status_bar_for_density = status_bar.clone();
+    let split_for_density_left = split_view.clone();
     browser.set_density_change_handler(Rc::new(move |label| {
-        status_bar_for_density.update_density(label);
+        if split_for_density_left.active_pane() == super::split_view::ActivePane::Left {
+            status_bar_for_density.update_density(label);
+        }
+    }));
+    let status_bar_for_density_right = status_bar.clone();
+    let split_for_density_right = split_view.clone();
+    browser_right.set_density_change_handler(Rc::new(move |label| {
+        if split_for_density_right.active_pane() == super::split_view::ActivePane::Right {
+            status_bar_for_density_right.update_density(label);
+        }
     }));
     status_bar.set_zoom_handler({
-        let browser = browser_for_status.clone();
+        let split_view = split_view.clone();
         move || {
-            browser.step_density(1);
+            split_view.active_browser().step_density(1);
+        }
+    });
+    let status_for_active_pane = status_bar.clone();
+    let split_for_active_pane = split_view.clone();
+    split_view.connect_active_pane_changed(move |_| {
+        let active_b = split_for_active_pane.active_browser();
+        let active_c = active_b.browser();
+        let mut total_items = 0;
+        let mut total_bytes = 0;
+        let mut selected_items = 0;
+        let mut selected_bytes = 0;
+        if let Some(depth) = active_c.active_depth() {
+            if let Some(entries) = active_c.column_entries(depth) {
+                total_items = entries.len();
+                for entry in &entries {
+                    if let crate::model::MetadataValue::Known(size) = entry.size {
+                        total_bytes += size;
+                    }
+                }
+            }
+            let selected = active_c.selected_entries();
+            selected_items = selected.len();
+            for entry in selected {
+                if let crate::model::MetadataValue::Known(size) = entry.size {
+                    selected_bytes += size;
+                }
+            }
+        }
+        status_for_active_pane.update_items(total_items, total_bytes);
+        status_for_active_pane.update_selection(selected_items, selected_bytes);
+        status_for_active_pane.update_view_mode(active_b.view_mode());
+        status_for_active_pane.update_density(&active_b.density_label());
+        if let Some(path) = active_c.active_location().as_ref().and_then(|l| l.native_path()) {
+            status_for_active_pane.update_free_space(path);
+        } else {
+            status_for_active_pane.clear_free_space();
         }
     });
     let context_status_bar = status_bar.clone();
@@ -323,7 +386,7 @@ fn present_target(
     content_stack.set_transition_type(gtk::StackTransitionType::Crossfade);
     content_stack.set_hexpand(true);
     content_stack.set_vexpand(true);
-    content_stack.add_named(&browser.widget(), Some("browser"));
+    content_stack.add_named(&split_view.widget(), Some("browser"));
     content_stack.add_named(home_dashboard.widget(), Some("home"));
     if startup
         .trail
@@ -504,7 +567,18 @@ fn present_target(
     });
     header.pack_start(&sidebar_toggle);
     header.pack_start(&music_toggle);
-    header.pack_start(&browser.location_widget());
+    let location_stack = gtk::Stack::new();
+    location_stack.add_named(&browser.location_widget(), Some("left"));
+    location_stack.add_named(&browser_right.location_widget(), Some("right"));
+    location_stack.set_visible_child_name("left");
+    let loc_stack_pane = location_stack.clone();
+    split_view.connect_active_pane_changed(move |pane| {
+        match pane {
+            super::split_view::ActivePane::Left => loc_stack_pane.set_visible_child_name("left"),
+            super::split_view::ActivePane::Right => loc_stack_pane.set_visible_child_name("right"),
+        }
+    });
+    header.pack_start(&location_stack);
     let search_button = gtk::Button::builder()
         .tooltip_text("Search (Ctrl+K)")
         .build();
@@ -532,8 +606,29 @@ fn present_target(
     close_window.add_css_class("header-action");
     let closing_window = window.clone();
     close_window.connect_clicked(move |_| closing_window.close());
+    let split_button = gtk::Button::builder()
+        .tooltip_text("Split view (F3)")
+        .build();
+    let split_icon = crate::assets::primary_icon(crate::assets::icons::COLUMNS_2, 16);
+    split_button.set_child(Some(&split_icon));
+    split_button.add_css_class("header-action");
+    split_button.add_css_class("split-action");
+    let split_view_btn = split_view.clone();
+    split_button.connect_clicked(move |_| {
+        split_view_btn.toggle_split();
+    });
+    let split_button_toggle = split_button.clone();
+    split_view.connect_split_toggled(move |active| {
+        if active {
+            split_button_toggle.add_css_class("active");
+        } else {
+            split_button_toggle.remove_css_class("active");
+        }
+    });
+
     let header_actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     header_actions.add_css_class("header-actions");
+    header_actions.append(&split_button);
     header_actions.append(&search_button);
     header_actions.append(&tab_bar.new_button());
     header_actions.append(&appearance);
@@ -944,6 +1039,7 @@ fn present_target(
     let cmd_sidebar_toggle = sidebar_toggle.clone();
     let cmd_music_toggle = music_toggle.clone();
     let cmd_tab_bar = tab_bar.clone();
+    let cmd_split_view = split_view.clone();
     let cmd_mode_action = mode_action.clone();
     let cmd_settings_layer = settings_layer.clone();
     let cmd_settings_btn = settings.clone();
@@ -1003,6 +1099,9 @@ fn present_target(
             "open_terminal" | "terminal" => {
                 cmd_browser.open_terminal();
             }
+            "split_view" | "split" | "dual_pane" => {
+                cmd_split_view.toggle_split();
+            }
             "shortcuts" | "help" => {
                 super::shortcuts::show_shortcuts_window(&cmd_window);
             }
@@ -1042,7 +1141,6 @@ fn present_target(
     install_modal_focus_trap(&window);
     install_keyboard_navigation(
         &window,
-        &browser,
         &sidebar_toggle,
         &preview,
         trails.clone(),
@@ -1050,6 +1148,7 @@ fn present_target(
         &workspace,
         &music_toggle,
         &music_player,
+        &split_view,
     );
     install_mouse_navigation(&window, &controller);
     let restored_browser = browser.clone();
@@ -1239,7 +1338,6 @@ fn animate_sidebar(
 
 fn install_keyboard_navigation(
     window: &gtk::ApplicationWindow,
-    view: &BrowserView,
     sidebar_toggle: &gtk::ToggleButton,
     preview: &PreviewDrawer,
     trails: Rc<Trails>,
@@ -1247,21 +1345,20 @@ fn install_keyboard_navigation(
     workspace: &gtk::Stack,
     music_toggle: &gtk::ToggleButton,
     music_player: &super::music::MusicPlayer,
+    split_view: &Rc<super::split_view::SplitView>,
 ) {
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let view = view.clone();
     let sidebar_toggle = sidebar_toggle.clone();
     let preview = preview.clone();
     let dialog_parent = window.clone();
-    let weak_browser = Rc::downgrade(&view.browser());
+    let split_view = split_view.clone();
     let workspace = workspace.clone();
     let music_toggle = music_toggle.clone();
     let music_player = music_player.clone();
     keys.connect_key_pressed(move |_, key, _, modifiers| {
-        let Some(browser) = weak_browser.upgrade() else {
-            return glib::Propagation::Proceed;
-        };
+        let view = split_view.active_browser().clone();
+        let browser = view.browser();
         if let Some(layer) = visible_modal_layer(&dialog_parent) {
             let focus_is_inside = gtk::prelude::RootExt::focus(&dialog_parent)
                 .is_some_and(|focus| focus == layer || focus.is_ancestor(&layer));
@@ -1282,6 +1379,34 @@ fn install_keyboard_navigation(
         let alt = modifiers.contains(gtk::gdk::ModifierType::ALT_MASK);
         let control = modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK);
         let shift = modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+        if key == gtk::gdk::Key::F3 {
+            split_view.toggle_split();
+            return glib::Propagation::Stop;
+        }
+        if (key == gtk::gdk::Key::Tab || key == gtk::gdk::Key::ISO_Left_Tab) && split_view.is_split() {
+            let text_focused = gtk::prelude::RootExt::focus(&dialog_parent).is_some_and(|focused| {
+                focused.is::<gtk::Text>() || focused.is::<gtk::TextView>() || focused.is::<gtk::Entry>()
+            });
+            if !text_focused
+                && !view.location_has_focus()
+                && !view.filter_has_focus()
+                && !view.rename_is_active()
+                && !view.new_folder_is_active()
+            {
+                split_view.switch_pane();
+                return glib::Propagation::Stop;
+            }
+        }
+        if key == gtk::gdk::Key::F5 && split_view.is_split() {
+            if split_view.copy_to_opposite_pane() {
+                return glib::Propagation::Stop;
+            }
+        }
+        if key == gtk::gdk::Key::F6 && split_view.is_split() {
+            if split_view.move_to_opposite_pane() {
+                return glib::Propagation::Stop;
+            }
+        }
         if control && matches!(key, gtk::gdk::Key::k | gtk::gdk::Key::K) {
             if let Err(error) =
                 gtk::prelude::WidgetExt::activate_action(&dialog_parent, if shift { "win.search-music" } else { "win.search" }, None)

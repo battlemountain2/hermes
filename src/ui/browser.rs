@@ -792,6 +792,10 @@ impl BrowserView {
         }
     }
 
+    pub fn paste_into(&self, location: Location) {
+        self.state.paste_into(location);
+    }
+
     pub(super) fn drop_sidebar_files(
         &self,
         destination: Location,

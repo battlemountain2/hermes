@@ -1814,6 +1814,30 @@ paned > separator {
   min-width: 2px;
 }
 
+.split-paned > separator {
+  background: alpha(@theme_border, 0.55);
+  min-width: 2px;
+  transition: background-color 150ms ease;
+}
+
+.split-paned > separator:hover {
+  background: @theme_accent;
+}
+
+.split-pane {
+  background: @theme_bg;
+  transition: box-shadow 150ms ease, border-color 150ms ease;
+}
+
+.split-pane.active-pane {
+  box-shadow: inset 0 0 0 1.5px alpha(@theme_accent, 0.75);
+}
+
+.header-action.split-action.active {
+  color: @theme_accent;
+  background: alpha(@theme_muted, 0.8);
+}
+
 .preview-pane {
   background: @theme_surface;
   color: @theme_text;

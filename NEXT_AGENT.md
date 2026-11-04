@@ -1,6 +1,26 @@
 # Next agent: Hermes performance, file features and media polish
 
-## Turbo loading engine & Dolphin parity, 5-minute cache TTL, batching optimizations — 2026-11-03 (current)
+## Dual-Pane Split View (F3), active pane focus & inter-pane transfers — 2026-11-03 (current)
+
+- Branch: `feat/6-desktop-parity-and-native-chooser`
+- Dual-Pane Split View (`src/ui/split_view.rs`, `src/ui/split_view/tests.rs`, `src/ui/window.rs`, `src/ui/shortcuts.rs`, `src/ui/search.rs`, `src/style.css`, `data/icons/scalable/actions/strata-columns-2.svg`):
+  - Dolphin-grade dual-pane split view toggled with `F3` or the new `Columns-2` headerbar action:
+    - Side-by-side independent file browser panes with 50/50 division in a GTK Paned container.
+    - Active pane indicator: `.split-pane.active-pane` highlights the active pane with a sharp `@theme_accent` inner border.
+    - Keyboard navigation: `Tab` / `Shift+Tab` cycles active pane focus instantly (while preserving text entry and inline rename Tab behaviors).
+    - Dynamic header location: header breadcrumbs/address stack tracks the currently active pane seamlessly.
+    - Two-way status bar synchronization: selection counts, file sizes, item counts, and free space update dynamically for the active pane.
+    - Quick inter-pane transfers:
+      - `F5`: quick-copies selected items from active pane into the opposite pane's current directory.
+      - `F6`: quick-moves selected items from active pane into the opposite pane's current directory.
+    - Omnibar / Command Palette integration: `> split` or `> dual pane` toggles split mode.
+    - Shortcuts cheatsheet documentation: documented `F3`, `Tab`, `F5`, and `F6` in `src/ui/shortcuts.rs`.
+- Verification & Test Coverage:
+  - All 1,049 unit tests pass with 0 failures (`cargo test --bin hermes -- --test-threads=1`).
+  - Zero warnings on `cargo check --all-targets`.
+  - Built `--release` binary and installed to `~/.local/bin/hermes`.
+
+## Turbo loading engine & Dolphin parity, 5-minute cache TTL, batching optimizations — 2026-11-03
 
 - Branch: `feat/6-desktop-parity-and-native-chooser`
 - Turbo Loading Engine & Dolphin Parity (`src/adapters/local_files.rs`, `src/adapters/cached_files.rs`, `src/app/browser.rs`, `src/ui/thumbnail.rs`):

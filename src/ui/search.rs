@@ -521,6 +521,13 @@ pub fn all_omnibar_commands() -> Vec<OmnibarCommand> {
             icon: crate::assets::icons::TERMINAL,
         },
         OmnibarCommand {
+            id: "split_view",
+            title: "Toggle Split View",
+            description: "Split browser into two independent side-by-side panes",
+            shortcut: Some("F3"),
+            icon: crate::assets::icons::COLUMNS_2,
+        },
+        OmnibarCommand {
             id: "shortcuts",
             title: "Keyboard Shortcuts",
             description: "Show keyboard shortcuts cheatsheet",

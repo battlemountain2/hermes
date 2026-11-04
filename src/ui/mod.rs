@@ -18,6 +18,7 @@ pub mod recent_folders;
 pub mod search;
 mod saved_searches;
 pub mod shortcuts;
+pub mod split_view;
 mod settings;
 pub(crate) mod theme;
 pub mod thumbnail;
