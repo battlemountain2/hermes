@@ -2,6 +2,7 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 use gtk::{gio, glib, prelude::*};
 
+mod integration;
 pub(crate) mod request;
 use request::{Options, Request};
 
@@ -221,9 +222,7 @@ impl Export {
             let done = Rc::downgrade(&export);
             let done_path = handle.clone();
             let themes = crate::ui::theme::ThemeManager::shared();
-            if themes.sync_picker_theme() {
-                themes.reload_preferences();
-            }
+            themes.use_picker_theme();
             let picker = crate::ui::picker::Picker::new(
                 &application,
                 request,
@@ -276,52 +275,31 @@ impl Drop for Export {
     }
 }
 
-pub(crate) fn is_picker_integration_enabled() -> bool {
-    is_picker_integration_enabled_at(&crate::paths::picker_integration_file())
+fn picker_integration() -> std::io::Result<integration::Integration> {
+    Ok(integration::Integration {
+        config: glib::user_config_dir(),
+        data: glib::user_data_dir(),
+        state: glib::user_state_dir(),
+        binary: std::env::current_exe()?,
+        desktop: std::env::var_os("XDG_CURRENT_DESKTOP").unwrap_or_default(),
+        config_dirs: std::env::var_os("XDG_CONFIG_DIRS")
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "/etc/xdg".into()),
+        data_dirs: std::env::var_os("XDG_DATA_DIRS")
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "/usr/local/share:/usr/share".into()),
+        portal_dir: std::env::var_os("XDG_DESKTOP_PORTAL_DIR"),
+        development: crate::paths::is_development(),
+    })
 }
 
-pub(crate) fn is_picker_integration_enabled_at(marker: &std::path::Path) -> bool {
-    crate::file_manager::enabled_at(marker)
+/// Configured state only; discovering the live portal owner requires a separate check.
+pub(crate) fn picker_integration_status() -> std::io::Result<bool> {
+    picker_integration()?.is_enabled()
 }
 
 pub(crate) fn set_picker_integration_enabled(enabled: bool) -> std::io::Result<()> {
-    set_picker_integration_enabled_at(&crate::paths::picker_integration_file(), enabled)
-}
-
-pub(crate) fn set_picker_integration_enabled_at(marker: &std::path::Path, enabled: bool) -> std::io::Result<()> {
-    if let Some(parent) = marker.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let content = if enabled {
-        b"{\"version\":1,\"enabled\":true}\n".as_slice()
-    } else {
-        b"{\"version\":1,\"enabled\":false}\n".as_slice()
-    };
-    std::fs::write(marker, content)?;
-
-    if let Some(config_dir) = marker.parent().and_then(|p| p.parent()) {
-        let xdg_dir = config_dir.join("xdg-desktop-portal");
-        let portals_conf = xdg_dir.join("portals.conf");
-        if portals_conf.is_file()
-            && let Ok(text) = std::fs::read_to_string(&portals_conf)
-        {
-            let target = if enabled { "FileChooser=hermes" } else { "FileChooser=kde" };
-            let updated = text
-                .lines()
-                .map(|line| {
-                    if line.trim_start().starts_with("org.freedesktop.impl.portal.FileChooser=") {
-                        format!("org.freedesktop.impl.portal.{target}")
-                    } else {
-                        line.to_string()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-                + "\n";
-            let _ = std::fs::write(&portals_conf, updated);
-        }
-    }
-    Ok(())
+    picker_integration()?.set_enabled(enabled)
 }
 
 pub(crate) fn run() -> glib::ExitCode {

@@ -29,8 +29,8 @@ impl DateBucket {
     }
 
     pub(crate) fn from_timestamp(seconds: i64, now: &glib::DateTime) -> Self {
-        let Ok(date) = glib::DateTime::from_unix_utc(seconds)
-            .and_then(|d| d.to_timezone(&now.timezone()))
+        let Ok(date) =
+            glib::DateTime::from_unix_utc(seconds).and_then(|d| d.to_timezone(&now.timezone()))
         else {
             return Self::Older;
         };
@@ -133,18 +133,19 @@ pub(crate) fn load_quick_access_folders() -> Vec<QuickAccessFolder> {
 
     let home_dir = super::window::home_directory();
     seen_paths.insert(home_dir.clone());
-    folders.push(QuickAccessFolder {
-        name: "Personal Folder".into(),
-        path_display: "~".into(),
-        location: Location::local(home_dir.clone()),
-        icon: icons::HOME,
-        is_pinned: false,
-    });
 
     let standard_dirs = [
         (glib::UserDirectory::Desktop, "Desktop", icons::FOLDER),
-        (glib::UserDirectory::Documents, "Documents", icons::DOCUMENTS),
-        (glib::UserDirectory::Downloads, "Downloads", icons::DOWNLOADS),
+        (
+            glib::UserDirectory::Documents,
+            "Documents",
+            icons::DOCUMENTS,
+        ),
+        (
+            glib::UserDirectory::Downloads,
+            "Downloads",
+            icons::DOWNLOADS,
+        ),
         (glib::UserDirectory::Music, "Music", icons::MUSIC),
         (glib::UserDirectory::Pictures, "Pictures", icons::PICTURES),
         (glib::UserDirectory::Videos, "Videos", icons::VIDEOS),
@@ -179,7 +180,7 @@ pub(crate) fn load_quick_access_folders() -> Vec<QuickAccessFolder> {
                     name,
                     path_display: display,
                     location,
-                    icon: icons::PIN,
+                    icon: icons::FOLDER,
                     is_pinned: true,
                 });
             }
@@ -205,10 +206,7 @@ pub struct HomeDashboard {
 }
 
 impl HomeDashboard {
-    pub fn new(
-        browser: BrowserView,
-        music_player: Option<super::music::MusicPlayer>,
-    ) -> Self {
+    pub fn new(browser: BrowserView, music_player: Option<super::music::MusicPlayer>) -> Self {
         let scroller = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vscrollbar_policy(gtk::PolicyType::Automatic)
@@ -232,8 +230,17 @@ impl HomeDashboard {
         let title_label = gtk::Label::new(Some("Home"));
         title_label.add_css_class("home-header-title");
         title_label.set_xalign(0.0);
+        title_label.set_hexpand(true);
         title_row.append(&home_icon);
         title_row.append(&title_label);
+        let personal = gtk::Button::with_label("Personal folder");
+        personal.add_css_class("home-personal-folder");
+        personal.set_tooltip_text(Some("Open your personal folder"));
+        let personal_browser = browser.clone();
+        personal.connect_clicked(move |_| {
+            personal_browser.navigate_location(Location::local(super::window::home_directory()))
+        });
+        title_row.append(&personal);
 
         let subtitle_label = gtk::Label::new(Some(
             "Quick access to your folders, recent activity, and music",
@@ -253,8 +260,8 @@ impl HomeDashboard {
         let quick_access_flow = gtk::FlowBox::new();
         quick_access_flow.add_css_class("home-quick-access-flow");
         quick_access_flow.set_selection_mode(gtk::SelectionMode::None);
-        quick_access_flow.set_max_children_per_line(6);
-        quick_access_flow.set_min_children_per_line(2);
+        quick_access_flow.set_max_children_per_line(5);
+        quick_access_flow.set_min_children_per_line(1);
         quick_access_flow.set_column_spacing(12);
         quick_access_flow.set_row_spacing(12);
         quick_access_flow.set_homogeneous(true);
@@ -341,24 +348,29 @@ impl HomeDashboard {
             };
             card.set_tooltip_text(Some(&tooltip));
 
-            let card_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
-            let icon = assets::primary_icon(folder.icon, 30);
-            icon.set_halign(gtk::Align::Start);
+            let card_box = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            let icon = assets::primary_icon(folder.icon, 26);
+            icon.set_valign(gtk::Align::Center);
             icon.add_css_class("home-card-icon");
 
             let name_label = gtk::Label::new(Some(&folder.name));
             name_label.add_css_class("home-card-title");
             name_label.set_xalign(0.0);
             name_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            name_label.set_max_width_chars(14);
 
             let sub_label = gtk::Label::new(Some(&folder.path_display));
             sub_label.add_css_class("home-card-subtitle");
             sub_label.set_xalign(0.0);
             sub_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            sub_label.set_max_width_chars(12);
 
             card_box.append(&icon);
-            card_box.append(&name_label);
-            card_box.append(&sub_label);
+            let labels = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            labels.set_hexpand(true);
+            labels.append(&name_label);
+            labels.append(&sub_label);
+            card_box.append(&labels);
             card.set_child(Some(&card_box));
 
             let browser = self.state.browser.clone();
@@ -568,10 +580,8 @@ impl HomeDashboard {
                 let click = gtk::GestureClick::new();
                 let uri = file.uri.clone();
                 click.connect_pressed(move |_, _, _, _| {
-                    let _ = gio::AppInfo::launch_default_for_uri(
-                        &uri,
-                        None::<&gio::AppLaunchContext>,
-                    );
+                    let _ =
+                        gio::AppInfo::launch_default_for_uri(&uri, None::<&gio::AppLaunchContext>);
                 });
                 row.add_controller(click);
 
@@ -591,12 +601,10 @@ struct WeakHomeDashboard {
 
 impl WeakHomeDashboard {
     fn upgrade(&self) -> Option<HomeDashboard> {
-        self.state
-            .upgrade()
-            .map(|state| HomeDashboard {
-                scroller: self.scroller.clone(),
-                state,
-            })
+        self.state.upgrade().map(|state| HomeDashboard {
+            scroller: self.scroller.clone(),
+            state,
+        })
     }
 }
 
