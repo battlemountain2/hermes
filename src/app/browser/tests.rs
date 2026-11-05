@@ -17,12 +17,21 @@ fn hidden_visibility_updates_loads_monitors_and_closes_stale_peeks() {
             Ok(())
         }
 
-        fn enumerate(&self, request: DirectoryRequest, _: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
+        fn enumerate(
+            &self,
+            request: DirectoryRequest,
+            _: Rc<dyn Fn(DirectoryEvent)>,
+        ) -> LoadHandle {
             self.0.borrow_mut().push((false, request.include_hidden));
             LoadHandle::new(|| {})
         }
 
-        fn watch(&self, _: Location, include_hidden: bool, _: Rc<dyn Fn(DirectoryChange)>) -> Option<LoadHandle> {
+        fn watch(
+            &self,
+            _: Location,
+            include_hidden: bool,
+            _: Rc<dyn Fn(DirectoryChange)>,
+        ) -> Option<LoadHandle> {
             self.0.borrow_mut().push((true, include_hidden));
             Some(LoadHandle::new(|| {}))
         }
@@ -52,22 +61,42 @@ fn hidden_visibility_updates_loads_monitors_and_closes_stale_peeks() {
 #[test]
 fn search_snapshot_observer_can_navigate_without_stale_selection_events() {
     let browser = Browser::new(Rc::new(FakeFileSource));
-    browser.state.borrow_mut().navigate(Location::local("/search"), RequestId(101));
+    browser
+        .state
+        .borrow_mut()
+        .navigate(Location::local("/search"), RequestId(101));
     let song = crate::app::music_order::tests::entry("song.flac", Some(1), Some(1));
-    browser.handle_directory_event(DirectoryEvent::Snapshot { request_id: RequestId(101), entries: vec![song.clone()] });
+    browser.handle_directory_event(DirectoryEvent::Snapshot {
+        request_id: RequestId(101),
+        entries: vec![song.clone()],
+    });
     browser.state.borrow_mut().select(0, 0);
     let events = Rc::new(RefCell::new(Vec::new()));
     let captured = events.clone();
     let navigated = browser.clone();
     browser.observe(move |event| {
         if matches!(event, BrowserEvent::EntriesReplaced { .. }) {
-            navigated.state.borrow_mut().navigate(Location::local("/elsewhere"), RequestId(102));
+            navigated
+                .state
+                .borrow_mut()
+                .navigate(Location::local("/elsewhere"), RequestId(102));
         }
         captured.borrow_mut().push(event);
     });
-    browser.handle_directory_event(DirectoryEvent::Snapshot { request_id: RequestId(101), entries: vec![song] });
-    assert!(!events.borrow().iter().any(|event| matches!(event, BrowserEvent::SelectionSetChanged { .. })));
-    browser.handle_directory_event(DirectoryEvent::Snapshot { request_id: RequestId(101), entries: vec![] });
+    browser.handle_directory_event(DirectoryEvent::Snapshot {
+        request_id: RequestId(101),
+        entries: vec![song],
+    });
+    assert!(
+        !events
+            .borrow()
+            .iter()
+            .any(|event| matches!(event, BrowserEvent::SelectionSetChanged { .. }))
+    );
+    browser.handle_directory_event(DirectoryEvent::Snapshot {
+        request_id: RequestId(101),
+        entries: vec![],
+    });
     assert_eq!(events.borrow().len(), 1);
 }
 
@@ -77,7 +106,10 @@ fn late_album_metadata_updates_folder_and_peek_snapshots() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let observed = events.clone();
     browser.observe(move |event| observed.borrow_mut().push(event));
-    browser.state.borrow_mut().navigate(Location::local("/album"), RequestId(101));
+    browser
+        .state
+        .borrow_mut()
+        .navigate(Location::local("/album"), RequestId(101));
     let first = crate::app::music_order::tests::entry("9. First.flac", Some(1), Some(1));
     let second = crate::app::music_order::tests::entry("1. Second.flac", Some(1), Some(2));
     let untagged = |entry: &FileEntry| {
@@ -85,23 +117,47 @@ fn late_album_metadata_updates_folder_and_peek_snapshots() {
         Rc::make_mut(&mut entry.0).music_tags = None;
         entry
     };
-    browser.handle_directory_event(DirectoryEvent::Batch { request_id: RequestId(101), entries: vec![untagged(&first), untagged(&second)] });
-    browser.handle_directory_event(DirectoryEvent::Finished { request_id: RequestId(101) });
-    browser.handle_directory_event(DirectoryEvent::MusicMetadata { request_id: RequestId(101), entries: vec![first.clone(), second.clone()] });
-    assert_eq!(browser.column_entries(0).unwrap()[0].location, first.location);
+    browser.handle_directory_event(DirectoryEvent::Batch {
+        request_id: RequestId(101),
+        entries: vec![untagged(&first), untagged(&second)],
+    });
+    browser.handle_directory_event(DirectoryEvent::Finished {
+        request_id: RequestId(101),
+    });
+    browser.handle_directory_event(DirectoryEvent::MusicMetadata {
+        request_id: RequestId(101),
+        entries: vec![first.clone(), second.clone()],
+    });
+    assert_eq!(
+        browser.column_entries(0).unwrap()[0].location,
+        first.location
+    );
     assert!(events.borrow().iter().any(|event| matches!(event,
         BrowserEvent::EntriesReplaced { entries, .. } if entries.first().is_some_and(|entry| entry.location == first.location))));
-    browser.state.borrow_mut().begin_peek(0, Location::local("/album"), RequestId(102));
-    browser.handle_directory_event(DirectoryEvent::Batch { request_id: RequestId(102), entries: vec![untagged(&second), untagged(&first)] });
-    browser.handle_directory_event(DirectoryEvent::Finished { request_id: RequestId(102) });
-    browser.handle_directory_event(DirectoryEvent::MusicMetadata { request_id: RequestId(102), entries: vec![first.clone(), second] });
+    browser
+        .state
+        .borrow_mut()
+        .begin_peek(0, Location::local("/album"), RequestId(102));
+    browser.handle_directory_event(DirectoryEvent::Batch {
+        request_id: RequestId(102),
+        entries: vec![untagged(&second), untagged(&first)],
+    });
+    browser.handle_directory_event(DirectoryEvent::Finished {
+        request_id: RequestId(102),
+    });
+    browser.handle_directory_event(DirectoryEvent::MusicMetadata {
+        request_id: RequestId(102),
+        entries: vec![first.clone(), second],
+    });
     assert!(events.borrow().iter().any(|event| matches!(event,
         BrowserEvent::PeekEntriesReplaced { entries } if entries.first().is_some_and(|entry| entry.location == first.location))));
 }
 
 #[test]
 fn deleted_trash_entries_refresh_the_trash_root() {
-    let entry = crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location: Location::uri("trash:///photo.jpg"),
+    let entry = crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner {
+        music_tags: None,
+        location: Location::uri("trash:///photo.jpg"),
         native_name: "photo.jpg".into(),
         display_name: "photo.jpg".into(),
         kind: EntryKind::File,
@@ -140,20 +196,45 @@ fn restarted_directory_events_reset_models_without_stale_peek_duplicates() {
     let captured = Rc::new(RefCell::new(Vec::new()));
     let observed = captured.clone();
     browser.observe(move |event| observed.borrow_mut().push(event));
-    browser.state.borrow_mut().navigate(Location::local("/album"), RequestId(101));
-    browser.state.borrow_mut().begin_peek(0, Location::local("/album/child"), RequestId(102));
+    browser
+        .state
+        .borrow_mut()
+        .navigate(Location::local("/album"), RequestId(101));
+    browser
+        .state
+        .borrow_mut()
+        .begin_peek(0, Location::local("/album/child"), RequestId(102));
     let first = crate::app::music_order::tests::entry("1. First.flac", Some(1), Some(1));
     let second = crate::app::music_order::tests::entry("2. Second.flac", Some(1), Some(2));
-    browser.handle_directory_event(DirectoryEvent::Batch { request_id: RequestId(102), entries: vec![first] });
+    browser.handle_directory_event(DirectoryEvent::Batch {
+        request_id: RequestId(102),
+        entries: vec![first],
+    });
     captured.borrow_mut().clear();
-    browser.handle_directory_event(DirectoryEvent::Restarted { request_id: RequestId(100) });
+    browser.handle_directory_event(DirectoryEvent::Restarted {
+        request_id: RequestId(100),
+    });
     assert!(captured.borrow().is_empty());
-    browser.handle_directory_event(DirectoryEvent::Restarted { request_id: RequestId(101) });
-    browser.handle_directory_event(DirectoryEvent::Restarted { request_id: RequestId(102) });
-    assert!(matches!(captured.borrow()[0], BrowserEvent::ColumnReloaded { depth: 0 }));
-    assert!(matches!(&captured.borrow()[1], BrowserEvent::PeekEntriesReplaced { entries } if entries.is_empty()));
-    browser.handle_directory_event(DirectoryEvent::Batch { request_id: RequestId(102), entries: vec![second.clone()] });
-    browser.handle_directory_event(DirectoryEvent::Finished { request_id: RequestId(102) });
+    browser.handle_directory_event(DirectoryEvent::Restarted {
+        request_id: RequestId(101),
+    });
+    browser.handle_directory_event(DirectoryEvent::Restarted {
+        request_id: RequestId(102),
+    });
+    assert!(matches!(
+        captured.borrow()[0],
+        BrowserEvent::ColumnReloaded { depth: 0 }
+    ));
+    assert!(
+        matches!(&captured.borrow()[1], BrowserEvent::PeekEntriesReplaced { entries } if entries.is_empty())
+    );
+    browser.handle_directory_event(DirectoryEvent::Batch {
+        request_id: RequestId(102),
+        entries: vec![second.clone()],
+    });
+    browser.handle_directory_event(DirectoryEvent::Finished {
+        request_id: RequestId(102),
+    });
     assert_eq!(browser.state.borrow().peek_entries(), vec![second]);
 }
 
@@ -166,13 +247,21 @@ fn refreshing_a_column_invalidates_warm_entries_before_enumerating() {
             Ok(())
         }
 
-        fn enumerate(&self, request: DirectoryRequest, _: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
-            self.0.borrow_mut().push(format!("load {}", request.location.display_path()));
+        fn enumerate(
+            &self,
+            request: DirectoryRequest,
+            _: Rc<dyn Fn(DirectoryEvent)>,
+        ) -> LoadHandle {
+            self.0
+                .borrow_mut()
+                .push(format!("load {}", request.location.display_path()));
             LoadHandle::new(|| {})
         }
 
         fn invalidate(&self, location: &Location) {
-            self.0.borrow_mut().push(format!("invalidate {}", location.display_path()));
+            self.0
+                .borrow_mut()
+                .push(format!("invalidate {}", location.display_path()));
         }
     }
 
@@ -181,7 +270,10 @@ fn refreshing_a_column_invalidates_warm_entries_before_enumerating() {
     browser.navigate(Location::local("/fixture"));
     browser.retry_column(0);
     browser.retry_column(9);
-    assert_eq!(calls.borrow().as_slice(), ["load /fixture", "invalidate /fixture", "load /fixture"]);
+    assert_eq!(
+        calls.borrow().as_slice(),
+        ["load /fixture", "invalidate /fixture", "load /fixture"]
+    );
 }
 
 #[derive(Default)]
@@ -208,15 +300,25 @@ impl OperationProvider for ControlledOperations {
         self.start(request.id, emit)
     }
 
-    fn create_directory(&self, request: CreateDirectoryRequest, emit: Rc<dyn Fn(OperationEvent)>) -> LoadHandle {
+    fn create_directory(
+        &self,
+        request: CreateDirectoryRequest,
+        emit: Rc<dyn Fn(OperationEvent)>,
+    ) -> LoadHandle {
         let load = self.start(request.id, emit.clone());
         if self.synchronous_create.get() {
-            emit(OperationEvent::Created { request_id: request.id });
+            emit(OperationEvent::Created {
+                request_id: request.id,
+            });
         }
         load
     }
 
-    fn create_file(&self, request: CreateFileRequest, emit: Rc<dyn Fn(OperationEvent)>) -> LoadHandle {
+    fn create_file(
+        &self,
+        request: CreateFileRequest,
+        emit: Rc<dyn Fn(OperationEvent)>,
+    ) -> LoadHandle {
         self.start(request.id, emit)
     }
 
@@ -232,16 +334,28 @@ impl OperationProvider for ControlledOperations {
         self.start(request.id, emit)
     }
 
-    fn extract_archive(&self, request: ExtractArchiveRequest, emit: Rc<dyn Fn(OperationEvent)>) -> LoadHandle {
+    fn extract_archive(
+        &self,
+        request: ExtractArchiveRequest,
+        emit: Rc<dyn Fn(OperationEvent)>,
+    ) -> LoadHandle {
         self.start(request.id, emit)
     }
 
-    fn compress_archive(&self, request: CompressArchiveRequest, emit: Rc<dyn Fn(OperationEvent)>) -> LoadHandle {
+    fn compress_archive(
+        &self,
+        request: CompressArchiveRequest,
+        emit: Rc<dyn Fn(OperationEvent)>,
+    ) -> LoadHandle {
         self.start(request.id, emit)
     }
 }
 
-fn controlled_browser() -> (Rc<Browser>, Rc<ControlledOperations>, Rc<RefCell<Vec<BrowserEvent>>>) {
+fn controlled_browser() -> (
+    Rc<Browser>,
+    Rc<ControlledOperations>,
+    Rc<RefCell<Vec<BrowserEvent>>>,
+) {
     let browser = Browser::new(Rc::new(FakeFileSource));
     let provider = Rc::new(ControlledOperations::default());
     browser.set_operation_provider(provider.clone());
@@ -257,12 +371,24 @@ fn overlapping_operations_never_replace_or_cancel_the_active_handle() {
     let source = Location::local("/fixture/source");
     let destination = Location::local("/fixture/destination");
     let entry = crate::app::music_order::tests::entry("source", None, None);
-    browser.transfer(destination.clone(), vec![source.clone()], Vec::new(), true, false);
+    browser.transfer(
+        destination.clone(),
+        vec![source.clone()],
+        Vec::new(),
+        true,
+        false,
+    );
     let request_id = browser.current_operation.get();
     browser.rename(entry.clone(), "renamed".into());
     browser.create_directory(destination.clone(), "folder".into());
     browser.create_file(destination.clone(), "file".into());
-    browser.transfer(destination.clone(), vec![source.clone()], Vec::new(), false, false);
+    browser.transfer(
+        destination.clone(),
+        vec![source.clone()],
+        Vec::new(),
+        false,
+        false,
+    );
     browser.delete(vec![entry.clone()], false);
     browser.restore(vec![entry]);
     browser.extract_archive(source.clone(), destination.clone());
@@ -271,9 +397,26 @@ fn overlapping_operations_never_replace_or_cancel_the_active_handle() {
     assert!(browser.operation_load.borrow().is_some());
     assert_eq!(provider.callbacks.borrow().len(), 1);
     assert_eq!(provider.cancellations.get(), 0);
-    assert_eq!(events.borrow().iter().filter(|event| matches!(event, BrowserEvent::OperationRejected { .. })).count(), 7);
-    assert!(events.borrow().iter().any(|event| matches!(event, BrowserEvent::RenameFailed { .. })));
-    assert!(!events.borrow().iter().any(|event| matches!(event, BrowserEvent::TransferFinished)));
+    assert_eq!(
+        events
+            .borrow()
+            .iter()
+            .filter(|event| matches!(event, BrowserEvent::OperationRejected { .. }))
+            .count(),
+        7
+    );
+    assert!(
+        events
+            .borrow()
+            .iter()
+            .any(|event| matches!(event, BrowserEvent::RenameFailed { .. }))
+    );
+    assert!(
+        !events
+            .borrow()
+            .iter()
+            .any(|event| matches!(event, BrowserEvent::TransferFinished))
+    );
     let (request_id, emit) = provider.callback(0);
     emit(OperationEvent::Pasted { request_id });
     assert_eq!(provider.cancellations.get(), 1);
@@ -286,7 +429,13 @@ fn transfer_item_success_is_nonterminal_and_partial_errors_finish_once() {
     let (browser, provider, events) = controlled_browser();
     let first = Location::local("/fixture/first");
     let second = Location::local("/fixture/second");
-    browser.transfer(Location::local("/fixture/destination"), vec![first.clone(), second.clone()], Vec::new(), true, false);
+    browser.transfer(
+        Location::local("/fixture/destination"),
+        vec![first.clone(), second.clone()],
+        Vec::new(),
+        true,
+        false,
+    );
     let (request_id, emit) = provider.callback(0);
     for (event_id, source, move_source) in [
         (OperationRequestId(999), first.clone(), true),
@@ -295,34 +444,106 @@ fn transfer_item_success_is_nonterminal_and_partial_errors_finish_once() {
         (request_id, first.clone(), true),
         (request_id, first.clone(), true),
     ] {
-        emit(OperationEvent::TransferItemCompleted { request_id: event_id, source, move_source });
+        emit(OperationEvent::TransferItemCompleted {
+            request_id: event_id,
+            source,
+            move_source,
+        });
     }
     assert_eq!(browser.current_operation.get(), Some(request_id));
     assert_eq!(*browser.transfer_sources.borrow(), vec![second]);
     assert_eq!(provider.cancellations.get(), 0);
-    assert_eq!(events.borrow().iter().filter(|event| matches!(event, BrowserEvent::TransferItemCompleted { .. })).count(), 1);
-    emit(OperationEvent::TransferCompletedWithErrors { request_id, message: "second failed".into() });
+    assert_eq!(
+        events
+            .borrow()
+            .iter()
+            .filter(|event| matches!(event, BrowserEvent::TransferItemCompleted { .. }))
+            .count(),
+        1
+    );
+    emit(OperationEvent::TransferCompletedWithErrors {
+        request_id,
+        message: "second failed".into(),
+    });
     assert_eq!(browser.current_operation.get(), None);
     assert!(browser.operation_load.borrow().is_none());
     assert_eq!(provider.cancellations.get(), 1);
-    assert!(matches!(events.borrow().last(), Some(BrowserEvent::OperationCompletedWithErrors { message }) if message == "second failed"));
+    assert!(
+        matches!(events.borrow().last(), Some(BrowserEvent::OperationCompletedWithErrors { message }) if message == "second failed")
+    );
     let count = events.borrow().len();
     emit(OperationEvent::Pasted { request_id });
     assert_eq!(events.borrow().len(), count);
 }
 
 #[test]
+fn transfer_conflicts_are_nonterminal_and_late_requests_are_cancelled() {
+    use crate::services::{ConflictAction, ConflictReply};
+    let (browser, provider, events) = controlled_browser();
+    let source = crate::app::music_order::tests::entry("song.flac", None, None);
+    browser.transfer(
+        Location::local("/fixture/destination"),
+        vec![source.location.clone()],
+        Vec::new(),
+        false,
+        false,
+    );
+    let (request_id, emit) = provider.callback(0);
+    let reply = ConflictReply::default();
+    emit(OperationEvent::TransferConflict {
+        request_id,
+        source: source.clone(),
+        existing: source.clone(),
+        reply,
+    });
+    assert_eq!(browser.current_operation.get(), Some(request_id));
+    assert_eq!(provider.cancellations.get(), 0);
+    assert!(matches!(
+        events.borrow().last(),
+        Some(BrowserEvent::TransferConflict { .. })
+    ));
+    browser.cancel_file_operation();
+    let late = ConflictReply::default();
+    let count = events.borrow().len();
+    emit(OperationEvent::TransferConflict {
+        request_id,
+        source: source.clone(),
+        existing: source,
+        reply: late.clone(),
+    });
+    assert_eq!(events.borrow().len(), count);
+    let context = gtk::glib::MainContext::new();
+    assert_eq!(context.block_on(late.wait()).action, ConflictAction::Cancel);
+}
+
+#[test]
 fn cancellation_rejects_late_outcomes_and_handles_rename_and_create() {
     let (browser, provider, events) = controlled_browser();
     let source = Location::local("/fixture/source");
-    browser.transfer(Location::local("/fixture/destination"), vec![source.clone()], Vec::new(), true, false);
+    browser.transfer(
+        Location::local("/fixture/destination"),
+        vec![source.clone()],
+        Vec::new(),
+        true,
+        false,
+    );
     let (request_id, emit) = provider.callback(0);
     browser.cancel_file_operation();
     let count = events.borrow().len();
-    emit(OperationEvent::TransferItemCompleted { request_id, source, move_source: true });
-    emit(OperationEvent::Failed { request_id, message: "late".into() });
+    emit(OperationEvent::TransferItemCompleted {
+        request_id,
+        source,
+        move_source: true,
+    });
+    emit(OperationEvent::Failed {
+        request_id,
+        message: "late".into(),
+    });
     assert_eq!(events.borrow().len(), count);
-    browser.rename(crate::app::music_order::tests::entry("source", None, None), "renamed".into());
+    browser.rename(
+        crate::app::music_order::tests::entry("source", None, None),
+        "renamed".into(),
+    );
     browser.cancel_file_operation();
     browser.create_directory(Location::local("/fixture"), "folder".into());
     browser.cancel_file_operation();
@@ -346,14 +567,25 @@ fn finishing_observer_can_start_an_operation_without_losing_its_handle() {
     let weak = Rc::downgrade(&browser);
     browser.observe(move |event| {
         if matches!(event, BrowserEvent::TransferFinished) {
-            weak.upgrade().unwrap().create_file(Location::local("/fixture"), "next".into());
+            weak.upgrade()
+                .unwrap()
+                .create_file(Location::local("/fixture"), "next".into());
         }
     });
-    browser.transfer(Location::local("/fixture/destination"), vec![Location::local("/fixture/source")], Vec::new(), false, false);
+    browser.transfer(
+        Location::local("/fixture/destination"),
+        vec![Location::local("/fixture/source")],
+        Vec::new(),
+        false,
+        false,
+    );
     let (request_id, emit) = provider.callback(0);
     emit(OperationEvent::Pasted { request_id });
     assert_eq!(provider.callbacks.borrow().len(), 2);
-    assert_eq!(browser.current_operation.get(), Some(provider.callback(1).0));
+    assert_eq!(
+        browser.current_operation.get(),
+        Some(provider.callback(1).0)
+    );
     assert!(browser.operation_load.borrow().is_some());
     assert_eq!(provider.cancellations.get(), 1);
 }
@@ -367,7 +599,13 @@ fn cancellation_from_started_observer_does_not_launch_the_provider() {
             weak.upgrade().unwrap().cancel_file_operation();
         }
     });
-    browser.transfer(Location::local("/fixture/destination"), vec![Location::local("/fixture/source")], Vec::new(), true, false);
+    browser.transfer(
+        Location::local("/fixture/destination"),
+        vec![Location::local("/fixture/source")],
+        Vec::new(),
+        true,
+        false,
+    );
     assert_eq!(browser.current_operation.get(), None);
     assert!(provider.callbacks.borrow().is_empty());
 }
@@ -402,13 +640,17 @@ impl FileSource for WatchingFileSource {
     fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
         emit(DirectoryEvent::Batch {
             request_id: request.id,
-            entries: vec![crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location: Location::local("/fixture/child"),
-                native_name: OsString::from("child"),
-                display_name: "child".into(),
-                kind: EntryKind::Directory,
-                size: MetadataValue::Unknown,
-                modified_unix_seconds: MetadataValue::Unknown,
-            }))],
+            entries: vec![crate::model::FileEntry(std::rc::Rc::new(
+                crate::model::FileEntryInner {
+                    music_tags: None,
+                    location: Location::local("/fixture/child"),
+                    native_name: OsString::from("child"),
+                    display_name: "child".into(),
+                    kind: EntryKind::Directory,
+                    size: MetadataValue::Unknown,
+                    modified_unix_seconds: MetadataValue::Unknown,
+                },
+            ))],
         });
         emit(DirectoryEvent::Finished {
             request_id: request.id,
@@ -475,13 +717,17 @@ impl FileSource for RetryFileSource {
         } else {
             emit(DirectoryEvent::Batch {
                 request_id: request.id,
-                entries: vec![crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location: Location::local("/fixture/recovered"),
-                    native_name: OsString::from("recovered"),
-                    display_name: "recovered".into(),
-                    kind: EntryKind::Directory,
-                    size: MetadataValue::Unknown,
-                    modified_unix_seconds: MetadataValue::Unknown,
-                }))],
+                entries: vec![crate::model::FileEntry(std::rc::Rc::new(
+                    crate::model::FileEntryInner {
+                        music_tags: None,
+                        location: Location::local("/fixture/recovered"),
+                        native_name: OsString::from("recovered"),
+                        display_name: "recovered".into(),
+                        kind: EntryKind::Directory,
+                        size: MetadataValue::Unknown,
+                        modified_unix_seconds: MetadataValue::Unknown,
+                    },
+                ))],
             });
             emit(DirectoryEvent::Finished {
                 request_id: request.id,
@@ -513,13 +759,17 @@ impl FileSource for FilePreviewSource {
     fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
         emit(DirectoryEvent::Batch {
             request_id: request.id,
-            entries: vec![crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location: Location::local("/fixture/example.conf"),
-                native_name: OsString::from("example.conf"),
-                display_name: "example.conf".into(),
-                kind: EntryKind::File,
-                size: MetadataValue::Known(12),
-                modified_unix_seconds: MetadataValue::Known(1),
-            }))],
+            entries: vec![crate::model::FileEntry(std::rc::Rc::new(
+                crate::model::FileEntryInner {
+                    music_tags: None,
+                    location: Location::local("/fixture/example.conf"),
+                    native_name: OsString::from("example.conf"),
+                    display_name: "example.conf".into(),
+                    kind: EntryKind::File,
+                    size: MetadataValue::Known(12),
+                    modified_unix_seconds: MetadataValue::Known(1),
+                },
+            ))],
         });
         emit(DirectoryEvent::Finished {
             request_id: request.id,
@@ -536,13 +786,17 @@ impl FileSource for FakeFileSource {
     fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
         emit(DirectoryEvent::Batch {
             request_id: request.id,
-            entries: vec![crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location: Location::local("/fixture/child"),
-                native_name: OsString::from("child"),
-                display_name: "child".into(),
-                kind: EntryKind::Directory,
-                size: MetadataValue::Unknown,
-                modified_unix_seconds: MetadataValue::Unknown,
-            }))],
+            entries: vec![crate::model::FileEntry(std::rc::Rc::new(
+                crate::model::FileEntryInner {
+                    music_tags: None,
+                    location: Location::local("/fixture/child"),
+                    native_name: OsString::from("child"),
+                    display_name: "child".into(),
+                    kind: EntryKind::Directory,
+                    size: MetadataValue::Unknown,
+                    modified_unix_seconds: MetadataValue::Unknown,
+                },
+            ))],
         });
         emit(DirectoryEvent::Finished {
             request_id: request.id,
@@ -591,13 +845,17 @@ fn filesystem_notifications_update_the_affected_column_incrementally() {
         .borrow()
         .clone()
         .expect("the directory watcher should be installed");
-    callback(DirectoryChange::Upsert(crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location: Location::local("/fixture/added"),
-        native_name: OsString::from("added"),
-        display_name: "added".into(),
-        kind: EntryKind::File,
-        size: MetadataValue::Known(4),
-        modified_unix_seconds: MetadataValue::Known(1),
-    }))));
+    callback(DirectoryChange::Upsert(crate::model::FileEntry(
+        std::rc::Rc::new(crate::model::FileEntryInner {
+            music_tags: None,
+            location: Location::local("/fixture/added"),
+            native_name: OsString::from("added"),
+            display_name: "added".into(),
+            kind: EntryKind::File,
+            size: MetadataValue::Known(4),
+            modified_unix_seconds: MetadataValue::Known(1),
+        }),
+    )));
 
     assert!(events.borrow().iter().any(|event| matches!(
         event,
@@ -933,14 +1191,19 @@ fn peek_replaced_by_started_observer_preserves_the_newer_load() {
         if matches!(event, BrowserEvent::PeekStarted { location }
             if location == Location::local("/fixture/first"))
         {
-            weak.upgrade().unwrap().begin_peek(0, Location::local("/fixture/second"));
+            weak.upgrade()
+                .unwrap()
+                .begin_peek(0, Location::local("/fixture/second"));
         }
     });
 
     browser.begin_peek(0, Location::local("/fixture/first"));
 
     assert_eq!(requests.borrow().len(), 2);
-    assert_eq!(browser.state.borrow().peek_target(), Some((0, Location::local("/fixture/second"))));
+    assert_eq!(
+        browser.state.borrow().peek_target(),
+        Some((0, Location::local("/fixture/second")))
+    );
     assert!(browser.peek_load.borrow().is_some());
 }
 
@@ -955,7 +1218,11 @@ fn peek_replaced_during_enumeration_cancels_only_the_obsolete_handle() {
             Ok(())
         }
 
-        fn enumerate(&self, request: DirectoryRequest, _: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
+        fn enumerate(
+            &self,
+            request: DirectoryRequest,
+            _: Rc<dyn Fn(DirectoryEvent)>,
+        ) -> LoadHandle {
             let callback = self.on_enumerate.take();
             if let Some(callback) = callback {
                 callback();
@@ -973,16 +1240,27 @@ fn peek_replaced_during_enumeration_cancels_only_the_obsolete_handle() {
     browser.navigate(Location::local("/fixture"));
     let weak = Rc::downgrade(&browser);
     on_enumerate.replace(Some(Box::new(move || {
-        weak.upgrade().unwrap().begin_peek(0, Location::local("/fixture/second"));
+        weak.upgrade()
+            .unwrap()
+            .begin_peek(0, Location::local("/fixture/second"));
     })));
 
     browser.begin_peek(0, Location::local("/fixture/first"));
 
     assert_eq!(*cancelled.borrow(), vec![Location::local("/fixture/first")]);
-    assert_eq!(browser.state.borrow().peek_target(), Some((0, Location::local("/fixture/second"))));
+    assert_eq!(
+        browser.state.borrow().peek_target(),
+        Some((0, Location::local("/fixture/second")))
+    );
     assert!(browser.peek_load.borrow().is_some());
     browser.close_peek();
-    assert_eq!(*cancelled.borrow(), vec![Location::local("/fixture/first"), Location::local("/fixture/second")]);
+    assert_eq!(
+        *cancelled.borrow(),
+        vec![
+            Location::local("/fixture/first"),
+            Location::local("/fixture/second")
+        ]
+    );
 }
 
 #[test]
@@ -995,13 +1273,18 @@ fn navigation_from_peek_started_does_not_load_the_abandoned_peek() {
     let weak = Rc::downgrade(&browser);
     browser.observe(move |event| {
         if matches!(event, BrowserEvent::PeekStarted { .. }) {
-            weak.upgrade().unwrap().navigate(Location::local("/different"));
+            weak.upgrade()
+                .unwrap()
+                .navigate(Location::local("/different"));
         }
     });
 
     browser.begin_peek(0, Location::local("/fixture/child"));
 
-    assert_eq!(browser.active_location(), Some(Location::local("/different")));
+    assert_eq!(
+        browser.active_location(),
+        Some(Location::local("/different"))
+    );
     assert_eq!(requests.borrow().len(), 2);
     assert!(browser.peek_load.borrow().is_none());
 }
@@ -1200,26 +1483,48 @@ fn reveal_selects_an_item_when_its_parent_is_already_open() {
 #[test]
 fn external_selection_notifies_the_view_without_activating_or_previewing_files() {
     let browser = Browser::new(Rc::new(FakeFileSource));
-    browser.state.borrow_mut().navigate(Location::local("/fixture"), RequestId(900));
-    let entry = |name: &str| crate::model::FileEntry(Rc::new(crate::model::FileEntryInner {
-        location: Location::local(format!("/fixture/{name}")), native_name: OsString::from(name),
-        display_name: name.into(), kind: EntryKind::File, size: MetadataValue::Unknown,
-        modified_unix_seconds: MetadataValue::Unknown, music_tags: None,
-    }));
+    browser
+        .state
+        .borrow_mut()
+        .navigate(Location::local("/fixture"), RequestId(900));
+    let entry = |name: &str| {
+        crate::model::FileEntry(Rc::new(crate::model::FileEntryInner {
+            location: Location::local(format!("/fixture/{name}")),
+            native_name: OsString::from(name),
+            display_name: name.into(),
+            kind: EntryKind::File,
+            size: MetadataValue::Unknown,
+            modified_unix_seconds: MetadataValue::Unknown,
+            music_tags: None,
+        }))
+    };
     browser.handle_directory_event(DirectoryEvent::Batch {
-        request_id: RequestId(900), entries: vec![entry("a.txt"), entry("b.txt"), entry("c.txt")],
+        request_id: RequestId(900),
+        entries: vec![entry("a.txt"), entry("b.txt"), entry("c.txt")],
     });
-    browser.handle_directory_event(DirectoryEvent::Finished { request_id: RequestId(900) });
+    browser.handle_directory_event(DirectoryEvent::Finished {
+        request_id: RequestId(900),
+    });
     let events = Rc::new(RefCell::new(Vec::new()));
     let captured = events.clone();
     browser.observe(move |event| captured.borrow_mut().push(event));
-    assert!(browser.select_locations(0, &[
-        Location::local("/fixture/c.txt"), Location::local("/fixture/a.txt"), Location::local("/fixture/c.txt"),
-        Location::local("/fixture/missing.txt"),
-    ]));
+    assert!(browser.select_locations(
+        0,
+        &[
+            Location::local("/fixture/c.txt"),
+            Location::local("/fixture/a.txt"),
+            Location::local("/fixture/c.txt"),
+            Location::local("/fixture/missing.txt"),
+        ]
+    ));
     assert_eq!(browser.selected_entries().len(), 2);
-    assert_eq!(browser.focused_entry().unwrap().location, Location::local("/fixture/c.txt"));
-    assert!(matches!(&events.borrow()[..], [BrowserEvent::SelectionSetChanged { positions, focused: 2, .. }] if positions == &[2, 0]));
+    assert_eq!(
+        browser.focused_entry().unwrap().location,
+        Location::local("/fixture/c.txt")
+    );
+    assert!(
+        matches!(&events.borrow()[..], [BrowserEvent::SelectionSetChanged { positions, focused: 2, .. }] if positions == &[2, 0])
+    );
     assert!(!browser.select_locations(0, &[Location::local("/missing")]));
     assert!(!browser.select_locations(99, &[Location::local("/fixture/a.txt")]));
 }

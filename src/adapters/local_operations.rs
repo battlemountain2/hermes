@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod tests;
 
+mod merge;
 mod transfer;
 
 use std::{
@@ -44,25 +45,6 @@ fn validated_child(parent: &gio::File, name: &str) -> Result<gio::File, &'static
 
 fn transfer_is_noop(source: &gio::File, destination: &gio::File, target: &gio::File) -> bool {
     source.equal(target) || source.equal(destination) || destination.has_prefix(source)
-}
-
-fn recursive_item_size(path: &Path) -> u64 {
-    let Ok(meta) = std::fs::symlink_metadata(path) else {
-        return 0;
-    };
-    if meta.is_file() {
-        return meta.len();
-    }
-    if meta.is_dir() {
-        let mut total = 0u64;
-        if let Ok(entries) = std::fs::read_dir(path) {
-            for entry in entries.flatten() {
-                total = total.saturating_add(recursive_item_size(&entry.path()));
-            }
-        }
-        return total;
-    }
-    0
 }
 
 fn copy_recursively(
@@ -290,10 +272,15 @@ impl OperationProvider for LocalOperationProvider {
             let mut total_bytes = 0u64;
             let mut all_sizes_known = true;
             for loc in &request.sources {
-                if let Some(path) = loc.native_path() {
-                    total_bytes = total_bytes.saturating_add(recursive_item_size(&path));
-                } else {
-                    all_sizes_known = false;
+                match gio_file(loc).query_info_future(
+                    "standard::size,standard::type",
+                    gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS,
+                    glib::Priority::DEFAULT,
+                ).await {
+                    Ok(info) if info.file_type() == gio::FileType::Regular && info.has_attribute("standard::size") && info.size() >= 0 => {
+                        total_bytes = total_bytes.saturating_add(info.size() as u64);
+                    },
+                    _ => all_sizes_known = false,
                 }
             }
             let total_bytes_opt = if all_sizes_known && total_bytes > 0 {
@@ -301,7 +288,7 @@ impl OperationProvider for LocalOperationProvider {
             } else {
                 None
             };
-            let mut bytes_transferred = 0u64;
+            let mut tree = merge::TransferTree::new(request.id, emit.clone(), worker_cancellable.clone(), request.move_sources);
             let mut errors = Vec::new();
             for (completed, location) in request.sources.iter().enumerate() {
                 let source = gio_file(location);
@@ -310,15 +297,21 @@ impl OperationProvider for LocalOperationProvider {
                     .get(completed)
                     .and_then(|n| n.as_ref())
                     .cloned();
-                let name = custom_name
-                    .or_else(|| source.basename().map(|b| b.to_string_lossy().to_string()));
+                if let Some(name) = &custom_name
+                    && let Err(message) = validate_basename(name)
+                {
+                    errors.push(message.to_owned());
+                    continue;
+                }
+                let name = custom_name.map(std::ffi::OsString::from)
+                    .or_else(|| source.basename().map(PathBuf::into_os_string));
                 let Some(name) = name else {
                     errors.push("A clipboard item has no file name".to_owned());
                     emit(OperationEvent::TransferProgress {
                         request_id: request.id,
                         completed: completed + 1,
                         total,
-                        bytes_transferred,
+                        bytes_transferred: tree.bytes_transferred,
                         total_bytes: total_bytes_opt,
                     });
                     continue;
@@ -329,61 +322,53 @@ impl OperationProvider for LocalOperationProvider {
                         request_id: request.id,
                         completed: completed + 1,
                         total,
-                        bytes_transferred,
+                        bytes_transferred: tree.bytes_transferred,
                         total_bytes: total_bytes_opt,
                     });
                     continue;
                 }
-                let item_bytes = location
-                    .native_path()
-                    .map(|p| recursive_item_size(&p))
-                    .unwrap_or(0);
-                match transfer::transfer_item(
+                match tree.transfer(
                     source,
                     target.clone(),
-                    request.move_sources,
                     request.overwrite_existing,
-                    worker_cancellable.clone(),
+                    0,
                 )
                 .await
                 {
-                    Ok(()) => {
-                        bytes_transferred = bytes_transferred.saturating_add(item_bytes);
-                        if request.move_sources {
-                            if let (Some(from), Some(to)) = (location.native_path(), target.path())
-                            {
-                                let _ = crate::services::music_collections::Store::shared()
-                                    .relocate(from.to_path_buf(), to.clone());
-                                let _ = crate::services::ratings::Store::shared()
-                                    .relocate(from.to_path_buf(), to.clone());
-                                crate::services::FolderViewStore::shared()
-                                    .relocate(&from.to_string_lossy(), &to.to_string_lossy());
-                            }
-                        }
+                    Ok(outcome) if outcome.complete => {
                         emit(OperationEvent::TransferItemCompleted {
                             request_id: request.id,
                             source: location.clone(),
                             move_source: request.move_sources,
                         });
                     }
-                    Err(error) => errors.push(format!("{name}: {error}")),
+                    Ok(_) => {},
+                    Err(error) if error.matches(gio::IOErrorEnum::Cancelled) => {
+                        errors.push("Transfer cancelled; completed items were kept and remaining sources were retained".to_owned());
+                        break;
+                    },
+                    Err(error) => errors.push(format!("{}: {error}", name.to_string_lossy())),
                 }
                 emit(OperationEvent::TransferProgress {
                     request_id: request.id,
                     completed: completed + 1,
                     total,
-                    bytes_transferred,
+                    bytes_transferred: tree.bytes_transferred,
                     total_bytes: total_bytes_opt,
                 });
             }
-            if errors.is_empty() {
+            if errors.is_empty() && tree.skipped == 0 {
                 emit(OperationEvent::Pasted {
                     request_id: request.id,
                 });
             } else {
                 emit(OperationEvent::TransferCompletedWithErrors {
                     request_id: request.id,
-                    message: operation_error_summary(&errors, "transferred"),
+                    message: if errors.is_empty() {
+                        format!("{} conflicts skipped; their sources and existing destinations were kept", tree.skipped)
+                    } else {
+                        operation_error_summary(&errors, "transferred")
+                    },
                 });
             }
         });
