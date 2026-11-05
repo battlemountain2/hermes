@@ -1,192 +1,103 @@
-# Hermes 1.0 Transition Blueprint & Migration Guide
+# Hermes identity and legacy-data import
 
-## 1. Executive Summary
+Current implementation: November 4, 2026, on `fix/6-release-safety`.
+This supersedes the earlier automatic-migration blueprint. Implemented does not
+mean qualified for a stable release; see [release roadmap](1.0-roadmap.md).
 
-As Hermes reaches feature maturity and establishes its own design identity—combining rich previews, high-performance search, an integrated music library, and native Wayland/Linux desktop integration—this document specifies the architectural and operational blueprint for transitioning the project identity from **Strata** to **Hermes 1.0**.
+## Identity and isolated storage
 
-The transition guarantees:
-- **Zero user disruption**: Automatic, transparent migration of user configuration, sessions, playlists, and ratings on first launch.
-- **Data safety & isolation**: Transactional atomic file copies with a recorded migration journal (`migration-v1.json`). Legacy Strata files are preserved untouched and never overwritten or deleted.
-- **Zero symlink traps**: No symlinks are created between legacy Strata and modern Hermes data directories to prevent recursive loops, stale references, and permission anomalies.
-- **Clean upstream identity**: Distinct application ID (`io.github.battlemountain2.Hermes`), D-Bus service names, and clean package naming for distribution packaging (PKGBUILD, AUR, Homebrew).
+The stable application ID is `io.github.battlemountain2.Hermes`. The approved
+winged-H assets and upstream attribution remain. Necessary internal `strata-`
+icon names and compatibility environment variables are not branding defects.
+Do not install writable aliases to upstream Strata stores or take over its
+binary/desktop entry.
 
----
+`src/paths.rs` resolves config, data, state and cache roots through GLib's
+platform directories. On Linux these normally use the XDG locations:
 
-## 2. Naming & Identifiers
+| Profile | Config | Data | State | Cache |
+| --- | --- | --- | --- | --- |
+| Stable | `~/.config/hermes` | `~/.local/share/hermes` | `~/.local/state/hermes` | `~/.cache/hermes` |
+| Development | `~/.config/hermes-dev` | `~/.local/share/hermes-dev` | `~/.local/state/hermes-dev` | `~/.cache/hermes-dev` |
 
-| Component | Legacy (v0.2.x) | 1.0 Target (Hermes) | Compatibility Strategy |
-| :--- | :--- | :--- | :--- |
-| **Cargo Crate Name** | `hermes` | `hermes` | Primary crate and binary |
-| **Primary Binary** | `strata` | `hermes` | `strata` symlink to `hermes` in distribution packages |
-| **Application ID** | `org.strata.Strata` | `io.github.battlemountain2.Hermes` | Desktop entry & D-Bus service identifier |
-| **Window Class** | `strata` | `hermes` | WM rule matching `^(hermes\|strata)$` |
-| **D-Bus Bus Name** | `org.strata.Strata` | `io.github.battlemountain2.Hermes` | Single-instance bus acquisition |
-| **Config Directory** | `~/.config/strata` | `~/.config/hermes` | Centralized in `crate::paths::config_dir()`; dev mode uses `hermes-dev` |
-| **Data Directory** | `~/.local/share/strata` | `~/.local/share/hermes` | Centralized in `crate::paths::data_dir()` |
-| **State Directory** | `~/.local/state/strata` | `~/.local/state/hermes` | Centralized in `crate::paths::state_dir()` |
-| **Cache Directory** | `~/.cache/strata` | `~/.cache/hermes` | Isolated per-app cache root in `crate::paths::cache_dir()` |
-| **Log Env Var** | `STRATA_LOG` | `HERMES_LOG` | `HERMES_LOG` inspected first; falls back to `STRATA_LOG` |
-| **Dev Mode Env Var** | `STRATA_DEV` | `HERMES_DEV` | `HERMES_DEV=1` isolates configuration to `hermes-dev` |
+Presence of `HERMES_DEV` or compatibility `STRATA_DEV` selects Development
+(including a value of `0`; unset both to select Stable). Development never
+inspects/imports legacy stores and cannot enable or restore desktop picker
+defaults. Different application IDs alone are not data isolation.
 
----
+## Explicit import and startup order
 
-## 3. Directory & State Migration Strategy
+Stable startup checks legacy `strata` config/data/state roots in a worker.
+If importable files or an unfinished import exist, a setup window asks the user
+to import/resume, continue with existing Hermes data, or retry the check.
+Controllers and browsing windows initialize after that decision succeeds.
+No user-data copies happen before consent.
 
-### 3.1 Migration Life-Cycle on Startup
+The import allowlist is:
 
-When Hermes initializes, `paths::migrate_legacy_data_if_needed()` runs immediately before any service or UI component reads state:
+- Config: `settings.toml`, `trails.toml`, `folder_views.json`,
+  `sidebar-order`, `recent-folders.toml`, and `themes/*.toml`.
+- Data: `music-collections-v1.json`, `ratings-v1.json`, and
+  `saved-searches/queries-v1.json`.
+- State: `music-queue-v1.json`.
 
-```
-                  ┌────────────────────────┐
-                  │ Hermes Startup Process │
-                  └───────────┬────────────┘
-                              │
-               Does migration-v1.json exist in state?
-                     ├── Yes ──> Already migrated / initialized; skip
-                     │
-                     └── No ───> Check legacy Strata roots:
-                                   ├── No legacy files ──> Skip migration
-                                   │
-                                   └── Found legacy files ──> Transactional Copy:
-                                        1. Atomic copy legacy config -> ~/.config/hermes/
-                                        2. Atomic copy legacy data -> ~/.local/share/hermes/
-                                        3. Atomic copy legacy state -> ~/.local/state/hermes/
-                                        4. Atomic copy custom themes -> ~/.config/hermes/themes/
-                                        5. Write migration journal: migration-v1.json
-                                        6. Leave legacy Strata files completely untouched
-```
+Ratings remain local photo/video/document ratings; hearts are separate music
+favorites. Importing a saved-search file does not introduce a Smart Folder UI.
 
-### 3.2 Migrated State Artifacts
+Existing destination files are preserved, including files changed during
+recovery. Conflicting collections are not merged. Originals are never removed,
+and caches, desktop-provider settings and arbitrary legacy files are excluded.
+Caches rebuild independently.
 
-1. **User Settings (`settings.toml`):**
-   - Startup directory preferences, hidden file defaults, layout density, and view modes.
-2. **Folder Trails & Tabs (`trails.toml`):**
-   - Active and background tabs, navigation history, and split-pane configurations.
-3. **Folder Views (`folder_views.json`):**
-   - Per-directory custom sort columns, directions, and view preferences.
-4. **Sidebar Order (`sidebar-order`):**
-   - User-defined sidebar places and bookmark order.
-5. **Recent Folders (`recent-folders.toml`):**
-   - Recently accessed locations for jump lists and dialogs.
-6. **Custom Themes (`themes/*.toml`):**
-   - Custom user theme definition files.
-7. **Music Collections (`music-collections-v1.json`):**
-   - Playlists, favorite tracks, albums, and artists.
-8. **Track Ratings (`ratings-v1.json`):**
-   - 1-to-5 star user ratings for music files.
-9. **Saved Searches (`saved-searches/queries-v1.json`):**
-   - User queries, filters, and smart folder definitions.
-10. **Music Playback Session (`music-queue-v1.json`):**
-    - Current track, playlist queue, repeat/shuffle status, and volume.
+## Recovery records and bounds
 
-### 3.3 Idempotency & Failure Safety
+The Linux implementation in `src/paths/legacy_import.rs` uses:
 
-- **Atomic staging**: Files are copied to a temporary file (`<dst>.hermes-migrating-tmp`) before being renamed into place via `fs::rename`.
-- **No clobbering**: If a destination file already exists in Hermes, the migration engine skips it, preserving user modifications.
-- **Non-destructive**: Legacy Strata files are **never deleted or modified** during migration. They remain intact in `~/.config/strata`, `~/.local/share/strata`, and `~/.local/state/strata`.
-- **No symlinks**: No symlinks are created between Strata and Hermes roots.
-- **Migration Journal**: A structured record is written to `~/.local/state/hermes/migration-v1.json` documenting exact sources, destinations, byte counts, and migration status. Once the journal exists, future launches skip migration checks.
+- A private `legacy-import-v2/` transaction directory under Hermes's state root.
+- Immutable `journal-NNNN.json` generations written before publication.
+- Verified, private `backups/NNN.backup` files for entries that need copying.
+- Exclusive staging and no-clobber hard-link publication, with file/directory
+  synchronization and descriptor-anchored traversal rejecting symbolic links.
+- A process-released directory lock; simultaneous imports fail visibly.
+- Limits of 16 MiB per file, 128 MiB total, 128 files, 128 KiB per journal and
+  1,024 journal generations. Larger collections require manual review.
 
----
+A completed v1 journal remains compatible. An unfinished v1 journal prompts
+again; its bytes are backed up, but its stored paths are never executed.
+A resumed v2 import can recover a backed-up entry after its original disappears.
+Choosing Continue records that decision; it does not remove unfinished backups.
 
-## 4. Desktop & Window Manager Integration
+On an invalid journal, unsafe path, changed backup, permission failure or full
+storage, startup shows an error and retains originals and recovery records.
+Fix the underlying storage problem and retry. Do not delete recovery records or
+copy a backup over a newer Hermes file without reviewing both.
 
-### 4.1 Desktop Entry (`io.github.battlemountain2.Hermes.desktop`)
+This implementation requires Linux descriptor paths and hard-link support.
+The macOS import adapter is not implemented; do not reuse Linux flag constants
+or promise equivalent Mac recovery based only on a successful compilation.
 
-```ini
-[Desktop Entry]
-Name=Hermes
-GenericName=File Manager
-Comment=A fast, polished, personal file manager for Linux
-Exec=hermes %U
-Terminal=false
-Type=Application
-Icon=io.github.battlemountain2.Hermes
-Categories=System;FileTools;FileManager;Utility;
-MimeType=inode/directory;
-StartupNotify=true
-StartupWMClass=hermes
-Actions=NewWindow;Home;Music;
+## Desktop integration is a separate opt-in
 
-[Desktop Action NewWindow]
-Name=New Window
-Exec=hermes --new-window
+Changing identity or importing data never changes default handlers. Folder
+defaults and the Open/Save portal are separate integrations. Picker setup in
+Settings embeds the same restoration/journal owner as
+`scripts/desktop-integration.py` and requires Python 3. It restores the recorded
+previous provider rather than assuming KDE. Unknown legacy state or intervening
+external edits fail visibly and preserve recovery records. It does not restart
+portal services or interrupt screen sharing.
 
-[Desktop Action Home]
-Name=Open Home
-Exec=hermes ~
+See [desktop integration](desktop-integration.md) for supported launch/setup
+commands. The former blueprint's proposed flags and package aliases were not
+evidence that those behaviors existed.
 
-[Desktop Action Music]
-Name=Open Music
-Exec=hermes --workspace=music
-```
+## Evidence and remaining gates
 
-### 4.2 Window Manager Rules (Hyprland / Omarchy)
+Automated fixtures cover explicit consent, Development isolation, safe existing
+destinations, symlink/ancestor changes, interruption before/after backup and
+publication, checksum failures, v1 recovery, concurrent import and size limits.
+A private GTK test exercises the first-launch choice before import; it uses
+generated files and isolated XDG roots.
 
-To ensure window positioning, floating rules, opacity, and decorations function identically regardless of whether the binary was invoked as `hermes` or `strata`:
-
-```lua
--- ~/.config/hypr/hyprland.lua
--- Match both new and legacy window classes
-windowrulev2 = "float, class:^(hermes|strata)$, title:^(Settings|Properties)$"
-windowrulev2 = "size 800 600, class:^(hermes|strata)$, title:^(Settings)$"
-windowrulev2 = "center, class:^(hermes|strata)$, title:^(Settings)$"
-windowrulev2 = "opacity 0.96 0.92, class:^(hermes|strata)$"
-```
-
----
-
-## 5. Build System & Packaging Blueprint
-
-### 5.1 Cargo Configuration
-
-```toml
-[package]
-name = "hermes"
-version = "0.2.0" # Bumping to 1.0.0 for release milestone
-edition = "2024"
-description = "A fast, polished, personal file manager for Linux"
-authors = ["battlemountain2"]
-license = "GPL-3.0-or-later"
-repository = "https://github.com/battlemountain2/hermes"
-keywords = ["file-manager", "gtk4", "linux", "wayland"]
-categories = ["filesystem", "gui"]
-
-[[bin]]
-name = "hermes"
-path = "src/main.rs"
-```
-
-### 5.2 Packaging (PKGBUILD for Arch Linux / Omarchy)
-
-```bash
-pkgname=hermes-git
-pkgver=1.0.0.r0
-pkgrel=1
-pkgdesc="A fast, polished, personal file manager for Linux"
-arch=('x86_64' 'aarch64')
-url="https://github.com/battlemountain2/hermes"
-license=('GPL-3.0-or-later')
-depends=('gtk4' 'cairo' 'glib2' 'gstreamer' 'gst-plugins-base' 'poppler-glib')
-makedepends=('cargo' 'git')
-provides=('strata' 'hermes')
-conflicts=('strata')
-
-package() {
-    cd "$srcdir/hermes"
-    install -Dm755 "target/release/hermes" "$pkgdir/usr/bin/hermes"
-    ln -s "hermes" "$pkgdir/usr/bin/strata"
-    install -Dm644 "data/io.github.battlemountain2.Hermes.desktop" "$pkgdir/usr/share/applications/io.github.battlemountain2.Hermes.desktop"
-    ln -s "io.github.battlemountain2.Hermes.desktop" "$pkgdir/usr/share/applications/strata.desktop"
-}
-```
-
----
-
-## 6. Implementation Status for 1.0 Release
-
-- [x] Foundation: Centralized, platform-aware paths module (`src/paths.rs`) with `hermes-dev` support.
-- [x] Foundation: Non-destructive, transactional migration engine with temporary file atomic rename and `migration-v1.json` journaling.
-- [x] Foundation: Clean component wiring across settings, trails, folder views, sidebar, recent folders, ratings, collections, saved searches, queue, waveforms, lyrics, and thumbnails.
-- [ ] Packaging: Native PKGBUILD recipes for x86_64 and Asahi aarch64.
-- [ ] Pipeline: Clean GitHub Actions release matrix for Arch and macOS Homebrew tap.
+Clean package installation, upgrade/uninstall retention and physical desktop
+acceptance remain release gates. No installed app, actual user profile or
+desktop default was changed while preparing this batch.

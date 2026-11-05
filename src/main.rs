@@ -26,7 +26,12 @@ fn main() -> gtk::glib::ExitCode {
         .iter()
         .any(|value| value == "--version" || value == "-v" || value == "-V")
     {
-        println!("{} {} ({})", identity::NAME, build_info::VERSION, build_info::COMMIT);
+        println!(
+            "{} {} ({})",
+            identity::NAME,
+            build_info::VERSION,
+            build_info::COMMIT
+        );
         return gtk::glib::ExitCode::SUCCESS;
     }
     if arguments
@@ -40,13 +45,21 @@ fn main() -> gtk::glib::ExitCode {
         .get(1)
         .is_some_and(|value| value == "--desktop-integration-info")
     {
-        println!(r#"{{"capability":"HERMES_FILE_MANAGER1_V1","picker_capability":"HERMES_FILE_CHOOSER_V1","folders":true,"picker":true}}"#);
+        println!(
+            r#"{{"capability":"HERMES_FILE_MANAGER1_V1","picker_capability":"HERMES_FILE_CHOOSER_V1","folders":true,"picker":true}}"#
+        );
         return gtk::glib::ExitCode::SUCCESS;
     }
-    if arguments.get(1).is_some_and(|value| value == "--portal-file-chooser") {
+    if arguments
+        .get(1)
+        .is_some_and(|value| value == "--portal-file-chooser")
+    {
         return portal::run();
     }
-    if arguments.get(1).is_some_and(|value| value == "--playback-worker") {
+    if arguments
+        .get(1)
+        .is_some_and(|value| value == "--playback-worker")
+    {
         if let Err(error) = playback::worker::run() {
             playback::worker::report_error(&error);
             eprintln!("Playback worker failed: {error}");
@@ -74,8 +87,6 @@ fn main() -> gtk::glib::ExitCode {
         eprintln!("Unable to prepare bundled assets: {error}");
     }
 
-    let _ = paths::migrate_legacy_data_if_needed();
-
     gtk::glib::set_application_name(identity::NAME);
     let application_id = identity::application_id(
         std::env::var_os("HERMES_DEV").is_some() || std::env::var_os("STRATA_DEV").is_some(),
@@ -86,10 +97,9 @@ fn main() -> gtk::glib::ExitCode {
         .build();
 
     application.connect_startup(|_| gtk::Window::set_default_icon_name(identity::ICON_NAME));
+    // The reveal service must retain its startup/service-mode behavior. Its UI
+    // requests pass through the same consent gate as activation and file opens.
     application.connect_startup(file_manager::initialize);
-    application.connect_startup(ui::initialize_music);
-    application.connect_startup(ui::initialize_saved_searches);
-    application.connect_startup(ui::initialize_ratings);
     application.connect_activate(ui::present);
     application.connect_open(|application, files, _| {
         for file in files.iter().take(16) {
@@ -166,7 +176,11 @@ fn print_diagnostics() {
             "release"
         }
     );
-    println!("Target: {}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    println!(
+        "Target: {}-{}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
     println!(
         "Session Type: {}",
         std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".into())
@@ -196,6 +210,9 @@ fn print_diagnostics() {
         ("LibreOffice (document layout)", "soffice"),
     ] {
         let available = check_executable(binary);
-        println!("  - {name}: {}", if available { "available" } else { "not found" });
+        println!(
+            "  - {name}: {}",
+            if available { "available" } else { "not found" }
+        );
     }
 }
