@@ -34,9 +34,10 @@ const COLUMN_OFFSET: i32 = 24;
 const COLUMN_TRANSITION: Duration = Duration::from_millis(220);
 
 mod app_chooser;
-mod retained;
-mod preview_menu;
+mod conflicts;
 pub(super) mod loading;
+mod preview_menu;
+mod retained;
 
 use loading::LoadingTransition;
 
@@ -142,10 +143,7 @@ impl LoadPresentation {
             feedback.append(button);
         }
 
-        let stack = gtk::Stack::builder()
-            .hexpand(true)
-            .vexpand(true)
-            .build();
+        let stack = gtk::Stack::builder().hexpand(true).vexpand(true).build();
         stack.add_named(content, Some("content"));
         stack.add_named(&skeleton, Some("loading"));
         stack.add_named(&feedback, Some("feedback"));
@@ -248,6 +246,7 @@ pub(super) struct ViewState {
     active_rename: RefCell<Option<ActiveRename>>,
     active_new_folder: RefCell<Option<ActiveNewFolder>>,
     delete_progress: RefCell<Option<DeleteProgressView>>,
+    transfer_conflict: RefCell<Option<conflicts::ConflictView>>,
     pin_handler: RefCell<Option<PinHandler>>,
     browser: Rc<Browser>,
     retained_tabs: RefCell<Vec<(TrailId, retained::Presentation)>>,
@@ -340,8 +339,12 @@ impl BrowserView {
             ..crate::model::ViewPreferences::default()
         });
         let mode_views = ModeViews::new(&scroller, browser.clone());
-        let presentations = gtk::Stack::builder().hexpand(true).vexpand(true)
-            .hhomogeneous(false).vhomogeneous(false).build();
+        let presentations = gtk::Stack::builder()
+            .hexpand(true)
+            .vexpand(true)
+            .hhomogeneous(false)
+            .vhomogeneous(false)
+            .build();
         presentations.add_child(&mode_views.widget());
         overlay.set_child(Some(&presentations));
         let clipboard_indicator = gtk::Button::new();
@@ -377,7 +380,11 @@ impl BrowserView {
         let shown_clipboard = clipboard_popover.downgrade();
         clipboard_indicator.connect_clicked(move |_| {
             if let Some(popover) = shown_clipboard.upgrade() {
-                if popover.is_visible() { popover.popdown(); } else { popover.popup(); }
+                if popover.is_visible() {
+                    popover.popdown();
+                } else {
+                    popover.popup();
+                }
             }
         });
         let state = Rc::new(ViewState {
@@ -413,6 +420,7 @@ impl BrowserView {
             active_rename: RefCell::new(None),
             active_new_folder: RefCell::new(None),
             delete_progress: RefCell::new(None),
+            transfer_conflict: RefCell::new(None),
             pin_handler: RefCell::new(None),
             browser,
             retained_tabs: RefCell::new(Vec::new()),
@@ -436,7 +444,9 @@ impl BrowserView {
             });
             let changed = RefCell::new(Some(changed));
             state.overlay.connect_destroy(move |_| {
-                if let Some(changed) = changed.borrow_mut().take() { clipboard.disconnect(changed); }
+                if let Some(changed) = changed.borrow_mut().take() {
+                    clipboard.disconnect(changed);
+                }
             });
         }
 
@@ -460,7 +470,8 @@ impl BrowserView {
             .browser
             .observe(move |event| observer_state.handle(event));
 
-        let scroll_input = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
+        let scroll_input =
+            gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
         scroll_input.set_propagation_phase(gtk::PropagationPhase::Capture);
         let scroll_state = Rc::downgrade(&state);
         scroll_input.connect_scroll(move |controller, _dx, dy| {
@@ -481,7 +492,9 @@ impl BrowserView {
                 }
             }
             if let Some(state) = scroll_state.upgrade() {
-                state.horizontal_scroll_generation.set(state.horizontal_scroll_generation.get().wrapping_add(1));
+                state
+                    .horizontal_scroll_generation
+                    .set(state.horizontal_scroll_generation.get().wrapping_add(1));
             }
             glib::Propagation::Proceed
         });
@@ -588,7 +601,13 @@ impl BrowserView {
             .columns
             .borrow()
             .iter()
-            .map(|column| column.shell.measure(gtk::Orientation::Horizontal, -1).0.max(COLUMN_WIDTH))
+            .map(|column| {
+                column
+                    .shell
+                    .measure(gtk::Orientation::Horizontal, -1)
+                    .0
+                    .max(COLUMN_WIDTH)
+            })
             .fold(0, i32::saturating_add)
     }
 
@@ -844,11 +863,8 @@ impl BrowserView {
                 }
             });
         } else {
-            self.state.start_transfer(
-                destination,
-                sources,
-                action == gtk::gdk::DragAction::MOVE,
-            );
+            self.state
+                .start_transfer(destination, sources, action == gtk::gdk::DragAction::MOVE);
         }
         true
     }
@@ -867,7 +883,12 @@ impl BrowserView {
         self.state.sync_mode_selection();
         let entries = self.state.browser.selected_entries();
         if entries.is_empty() {
-            if let Some(depth) = self.state.hovered_column.get().or_else(|| self.state.browser.active_depth()) {
+            if let Some(depth) = self
+                .state
+                .hovered_column
+                .get()
+                .or_else(|| self.state.browser.active_depth())
+            {
                 if let Some(pos) = self.state.browser.active_child_position(depth) {
                     if let Some(entry) = self.state.browser.entry_at(depth, pos) {
                         copy_locations(&[entry]);
@@ -886,7 +907,12 @@ impl BrowserView {
         self.state.sync_mode_selection();
         let entries = self.state.browser.selected_entries();
         let text = if entries.is_empty() {
-            if let Some(depth) = self.state.hovered_column.get().or_else(|| self.state.browser.active_depth()) {
+            if let Some(depth) = self
+                .state
+                .hovered_column
+                .get()
+                .or_else(|| self.state.browser.active_depth())
+            {
                 if let Some(pos) = self.state.browser.active_child_position(depth) {
                     if let Some(entry) = self.state.browser.entry_at(depth, pos) {
                         entry.display_name.clone()
@@ -900,7 +926,11 @@ impl BrowserView {
                 return false;
             }
         } else {
-            entries.iter().map(|e| e.display_name.clone()).collect::<Vec<_>>().join("\n")
+            entries
+                .iter()
+                .map(|e| e.display_name.clone())
+                .collect::<Vec<_>>()
+                .join("\n")
         };
         if let Some(display) = gtk::gdk::Display::default() {
             display.clipboard().set_text(&text);
@@ -931,7 +961,9 @@ impl BrowserView {
 
     pub fn invert_selection(&self) {
         if self.view_mode() == BrowserMode::Columns {
-            if let Some(depth) = self.state.focused_column_depth()
+            if let Some(depth) = self
+                .state
+                .focused_column_depth()
                 .or_else(|| self.state.columns.borrow().len().checked_sub(1))
             {
                 self.state.invert_selection(depth);
@@ -964,12 +996,15 @@ impl BrowserView {
                 }
             })
             .or_else(|| {
-                self.state.browser.active_depth()
+                self.state
+                    .browser
+                    .active_depth()
                     .and_then(|depth| self.state.browser.location_at(depth))
             })
             .or_else(|| self.state.browser.active_location());
 
-        if let Some(path) = target_location.and_then(|loc| loc.native_path().map(Path::to_path_buf)) {
+        if let Some(path) = target_location.and_then(|loc| loc.native_path().map(Path::to_path_buf))
+        {
             open_terminal_at(&path);
         }
     }
@@ -1114,11 +1149,7 @@ impl ViewState {
             let source_positions: Vec<_> = positions
                 .iter()
                 .filter_map(|pos| {
-                    source_position_for_filtered(
-                        &column.model,
-                        &column.filtered_model,
-                        *pos,
-                    )
+                    source_position_for_filtered(&column.model, &column.filtered_model, *pos)
                 })
                 .collect();
             self.browser.set_selection(
@@ -1136,7 +1167,9 @@ impl ViewState {
         if entries.is_empty() {
             return;
         }
-        let active_dest = self.browser.active_depth()
+        let active_dest = self
+            .browser
+            .active_depth()
             .and_then(|depth| self.browser.location_at(depth))
             .or_else(|| self.browser.active_location());
 
@@ -1145,26 +1178,26 @@ impl ViewState {
 
         for entry in entries {
             let destination = entry.location.parent().or_else(|| active_dest.clone());
-            let Some(destination) = destination else { continue; };
-            let Some(dest_path) = destination.native_path() else { continue; };
+            let Some(destination) = destination else {
+                continue;
+            };
+            let Some(dest_path) = destination.native_path() else {
+                continue;
+            };
             let original_name = entry.display_name.clone();
             let parent = dest_path.to_path_buf();
-            let safe_name = crate::services::naming::collision_safe_name(&original_name, &|candidate| {
-                parent.join(candidate).exists()
-            });
+            let safe_name =
+                crate::services::naming::collision_safe_name(&original_name, &|candidate| {
+                    parent.join(candidate).exists()
+                });
             let group = grouped.entry(destination).or_default();
             group.0.push(entry.location.clone());
             group.1.push(Some(safe_name));
         }
 
         for (destination, (sources, target_names)) in grouped {
-            self.browser.transfer(
-                destination,
-                sources,
-                target_names,
-                false,
-                false,
-            );
+            self.browser
+                .transfer(destination, sources, target_names, false, false);
         }
     }
 
@@ -1226,420 +1259,16 @@ impl ViewState {
         sources: Vec<Location>,
         move_sources: bool,
     ) {
-        let cut_generation = (move_sources && self.owns_cut_clipboard()
-            && sources.iter().any(|source| self.cut_locations.borrow().contains(source)))
-            .then(|| self.cut_generation.get());
-        let mut accepted = Vec::new();
-        let mut collisions = Vec::new();
-        for source in sources {
-            if transfer_has_collision(&source, &destination) {
-                collisions.push(source);
-            } else {
-                accepted.push((source, None));
-            }
-        }
-        self.resolve_transfer_collisions(
-            destination,
-            collisions,
-            accepted,
-            move_sources,
-            false,
-            cut_generation,
-        );
-    }
-
-    fn resolve_transfer_collisions(
-        self: &Rc<Self>,
-        destination: Location,
-        mut collisions: Vec<Location>,
-        accepted: Vec<(Location, Option<String>)>,
-        move_sources: bool,
-        overwrite_existing: bool,
-        cut_generation: Option<u64>,
-    ) {
-        if collisions.is_empty() {
-            let previous = self.pending_cut_generation.replace(cut_generation);
-            let (sources, target_names): (Vec<_>, Vec<_>) = accepted.into_iter().unzip();
-            self.browser
-                .transfer(destination, sources, target_names, move_sources, overwrite_existing);
-            self.pending_cut_generation.set(previous);
-            return;
-        }
-        let source = collisions.remove(0);
-        let Some(window_overlay) = self
-            .overlay
-            .root()
-            .and_downcast::<gtk::Window>()
-            .and_then(|window| window.child())
-            .and_downcast::<gtk::Overlay>()
-        else {
-            return;
-        };
-        let blurred_root = window_overlay.child().and_downcast::<BlurBin>();
-        if let Some(root) = blurred_root.as_ref() {
-            root.set_blurred(true);
-        }
-
-        let source_file = gio_file_for_location(&source);
-        let dest_file = gio_file_for_location(&destination);
-        let name = source.display_name();
-        let target_file = source_file.basename().map(|b| dest_file.child(b));
-        let is_source_dir = source_file.query_file_type(
-            gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS,
-            None::<&gio::Cancellable>,
-        ) == gio::FileType::Directory;
-        let is_target_dir = target_file.as_ref().is_some_and(|f| {
-            f.query_file_type(
-                gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS,
-                None::<&gio::Cancellable>,
-            ) == gio::FileType::Directory
-        });
-        let is_folder_merge = is_source_dir && is_target_dir;
-
-        let source_info = source_file
-            .query_info(
-                "standard::name,standard::display-name,standard::type,standard::size,time::modified",
-                gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS,
-                None::<&gio::Cancellable>,
-            )
-            .ok();
-        let target_info = target_file.as_ref().and_then(|f| {
-            f.query_info(
-                "standard::name,standard::display-name,standard::type,standard::size,time::modified",
-                gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS,
-                None::<&gio::Cancellable>,
-            )
-            .ok()
-        });
-
-        let source_size = if is_source_dir {
-            "Folder".to_string()
-        } else {
-            source_info
-                .as_ref()
-                .map(|i| crate::ui::formatting::format_size(i.size() as u64))
-                .unwrap_or_else(|| "Unknown size".to_string())
-        };
-        let target_size = if is_target_dir {
-            "Folder".to_string()
-        } else {
-            target_info
-                .as_ref()
-                .map(|i| crate::ui::formatting::format_size(i.size() as u64))
-                .unwrap_or_else(|| "Unknown size".to_string())
-        };
-
-        let source_mtime = source_info.as_ref().and_then(|i| i.modification_date_time());
-        let target_mtime = target_info.as_ref().and_then(|i| i.modification_date_time());
-        let source_mtime_unix = source_mtime.as_ref().map(|dt| dt.to_unix());
-        let target_mtime_unix = target_mtime.as_ref().map(|dt| dt.to_unix());
-
-        let source_mtime_str = source_mtime_unix
-            .map(crate::ui::formatting::format_timestamp)
-            .unwrap_or_else(|| "Date unknown".to_string());
-        let target_mtime_str = target_mtime_unix
-            .map(crate::ui::formatting::format_timestamp)
-            .unwrap_or_else(|| "Date unknown".to_string());
-
-        let source_icon = if is_source_dir {
-            crate::assets::icons::FOLDER
-        } else {
-            icon_for_name(&name)
-        };
-        let target_icon = if is_target_dir {
-            crate::assets::icons::FOLDER
-        } else {
-            icon_for_name(&name)
-        };
-
-        let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        content.add_css_class("delete-confirmation");
-        content.add_css_class("delete-confirmation-content");
-        content.add_css_class("conflict-resolver-dialog");
-        content.set_halign(gtk::Align::Center);
-        content.set_valign(gtk::Align::Center);
-        let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        header.add_css_class("delete-confirmation-header");
-        let symbol = gtk::CenterBox::new();
-        symbol.add_css_class("delete-confirmation-symbol");
-        symbol.set_size_request(40, 40);
-        symbol.set_center_widget(Some(&crate::assets::danger_icon(
-            if is_folder_merge { crate::assets::icons::FOLDER } else { crate::assets::icons::COPY },
-            20,
-        )));
-        let heading = gtk::Box::new(gtk::Orientation::Vertical, 1);
-        heading.set_hexpand(true);
-        let title_text = if is_folder_merge {
-            "Folder already exists"
-        } else {
-            "File already exists"
-        };
-        let title = gtk::Label::new(Some(title_text));
-        title.add_css_class("delete-confirmation-title");
-        title.set_xalign(0.0);
-        let subtitle = gtk::Label::new(Some(&name));
-        subtitle.add_css_class("delete-confirmation-subtitle");
-        subtitle.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-        subtitle.set_xalign(0.0);
-        heading.append(&title);
-        heading.append(&subtitle);
-        header.append(&symbol);
-        header.append(&heading);
-        content.append(&header);
-
-        let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        body.add_css_class("delete-confirmation-body");
-        let explanation_text = if is_folder_merge {
-            format!(
-                "A folder named “{name}” already exists in {}. Merging will combine its contents without deleting unrelated files.",
-                compact_display_path(&destination)
-            )
-        } else {
-            format!(
-                "An item named “{name}” already exists in {}. Choose an action below:",
-                compact_display_path(&destination)
-            )
-        };
-        let explanation = gtk::Label::new(Some(&explanation_text));
-        explanation.add_css_class("delete-confirmation-explanation");
-        explanation.set_max_width_chars(64);
-        explanation.set_wrap(true);
-        explanation.set_xalign(0.0);
-        body.append(&explanation);
-
-        // Side-by-side comparison cards
-        let comparison_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-        comparison_row.add_css_class("conflict-comparison-row");
-        comparison_row.set_hexpand(true);
-
-        let existing_card = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        existing_card.add_css_class("conflict-card");
-        existing_card.set_hexpand(true);
-        let ex_header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let ex_icon = crate::assets::primary_icon(target_icon, 24);
-        let ex_title = gtk::Label::new(Some("Existing in Destination"));
-        ex_title.add_css_class("conflict-card-heading");
-        ex_title.set_xalign(0.0);
-        ex_title.set_hexpand(true);
-        ex_header.append(&ex_icon);
-        ex_header.append(&ex_title);
-        existing_card.append(&ex_header);
-
-        let ex_name = gtk::Label::new(Some(&name));
-        ex_name.add_css_class("conflict-card-filename");
-        ex_name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-        ex_name.set_xalign(0.0);
-        existing_card.append(&ex_name);
-
-        let ex_meta = gtk::Label::new(Some(&format!("{target_size} · Modified {target_mtime_str}")));
-        ex_meta.add_css_class("conflict-card-meta");
-        ex_meta.set_xalign(0.0);
-        existing_card.append(&ex_meta);
-
-        let ex_badge = gtk::Label::new(Some(if is_folder_merge { "Will be merged" } else { "Will be replaced" }));
-        ex_badge.add_css_class("conflict-badge");
-        ex_badge.add_css_class("danger");
-        ex_badge.set_halign(gtk::Align::Start);
-        existing_card.append(&ex_badge);
-
-        let arrow_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        arrow_box.set_valign(gtk::Align::Center);
-        arrow_box.add_css_class("conflict-arrow");
-        let arrow_icon = crate::assets::primary_icon(crate::assets::icons::ARROW_RIGHT, 18);
-        arrow_box.append(&arrow_icon);
-
-        let incoming_card = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        incoming_card.add_css_class("conflict-card");
-        incoming_card.set_hexpand(true);
-        let in_header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let in_icon = crate::assets::primary_icon(source_icon, 24);
-        let in_title = gtk::Label::new(Some("Incoming (Source)"));
-        in_title.add_css_class("conflict-card-heading");
-        in_title.set_xalign(0.0);
-        in_title.set_hexpand(true);
-        in_header.append(&in_icon);
-        in_header.append(&in_title);
-        incoming_card.append(&in_header);
-
-        let in_name = gtk::Label::new(Some(&name));
-        in_name.add_css_class("conflict-card-filename");
-        in_name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-        in_name.set_xalign(0.0);
-        incoming_card.append(&in_name);
-
-        let in_meta = gtk::Label::new(Some(&format!("{source_size} · Modified {source_mtime_str}")));
-        in_meta.add_css_class("conflict-card-meta");
-        in_meta.set_xalign(0.0);
-        incoming_card.append(&in_meta);
-
-        let (in_badge_text, in_badge_class) = match (source_mtime_unix, target_mtime_unix) {
-            (Some(s), Some(t)) if s > t => ("Newer", "newer"),
-            (Some(s), Some(t)) if s < t => ("Older", "older"),
-            _ => ("Incoming", "newer"),
-        };
-        let in_badge = gtk::Label::new(Some(in_badge_text));
-        in_badge.add_css_class("conflict-badge");
-        in_badge.add_css_class(in_badge_class);
-        in_badge.set_halign(gtk::Align::Start);
-        incoming_card.append(&in_badge);
-
-        comparison_row.append(&existing_card);
-        comparison_row.append(&arrow_box);
-        comparison_row.append(&incoming_card);
-        body.append(&comparison_row);
-
-        let apply_label = if collisions.is_empty() {
-            "Apply this choice to all remaining conflicts".to_string()
-        } else {
-            format!("Apply this choice to all remaining conflicts ({} remaining)", collisions.len())
-        };
-        let apply_all = gtk::CheckButton::with_label(&apply_label);
-        apply_all.add_css_class("collision-apply-all");
-        apply_all.set_visible(!collisions.is_empty());
-        body.append(&apply_all);
-        content.append(&body);
-
-        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        actions.add_css_class("delete-confirmation-actions");
-        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        spacer.set_hexpand(true);
-        let cancel = gtk::Button::with_label("Cancel");
-        cancel.add_css_class("delete-confirmation-cancel");
-        let skip = gtk::Button::with_label("Skip");
-        skip.add_css_class("delete-confirmation-cancel");
-        let keep_both = gtk::Button::with_label("Keep both");
-        keep_both.add_css_class("delete-confirmation-cancel");
-        let replace = gtk::Button::with_label(if is_folder_merge { "Merge" } else { "Replace" });
-        if is_folder_merge {
-            replace.add_css_class("delete-confirmation-merge");
-        } else {
-            replace.add_css_class("delete-confirmation-delete");
-        }
-        actions.append(&spacer);
-        actions.append(&cancel);
-        actions.append(&skip);
-        actions.append(&keep_both);
-        actions.append(&replace);
-        content.append(&actions);
-
-        let layer = modal_layer(&content);
-        window_overlay.add_overlay(&layer);
-        let cancel_layer = layer.clone();
-        let cancel_overlay = window_overlay.clone();
-        let cancel_root = blurred_root.clone();
-        cancel.connect_clicked(move |_| {
-            dismiss_modal_layer(&cancel_layer, &cancel_overlay, cancel_root.as_ref());
-        });
-
-        let skipped_layer = layer.clone();
-        let skipped_overlay = window_overlay.clone();
-        let skipped_root = blurred_root.clone();
-        let skipped_state = self.clone();
-        let skipped_destination = destination.clone();
-        let skipped_collisions = collisions.clone();
-        let skipped_accepted = accepted.clone();
-        let skip_all = apply_all.clone();
-        skip.connect_clicked(move |_| {
-            dismiss_modal_layer(&skipped_layer, &skipped_overlay, skipped_root.as_ref());
-            skipped_state.resolve_transfer_collisions(
-                skipped_destination.clone(),
-                if skip_all.is_active() {
-                    Vec::new()
-                } else {
-                    skipped_collisions.clone()
-                },
-                skipped_accepted.clone(),
-                move_sources,
-                overwrite_existing,
-                cut_generation,
-            );
-        });
-
-        let keep_both_layer = layer.clone();
-        let keep_both_overlay = window_overlay.clone();
-        let keep_both_root = blurred_root.clone();
-        let keep_both_state = self.clone();
-        let keep_both_destination = destination.clone();
-        let keep_both_source = source.clone();
-        let keep_both_collisions = collisions.clone();
-        let keep_both_accepted = accepted.clone();
-        let keep_both_all = apply_all.clone();
-        keep_both.connect_clicked(move |_| {
-            dismiss_modal_layer(&keep_both_layer, &keep_both_overlay, keep_both_root.as_ref());
-            let dest_file = gio_file_for_location(&keep_both_destination);
-            let name = keep_both_source.display_name();
-            let mut accepted = keep_both_accepted.clone();
-            let safe_name = crate::services::naming::collision_safe_name(&name, &|candidate| {
-                dest_file.child(candidate).query_exists(None::<&gio::Cancellable>)
-            });
-            accepted.push((keep_both_source.clone(), Some(safe_name)));
-            let remaining = if keep_both_all.is_active() {
-                for col in &keep_both_collisions {
-                    let col_name = col.display_name();
-                    let col_safe_name = crate::services::naming::collision_safe_name(&col_name, &|candidate| {
-                        dest_file.child(candidate).query_exists(None::<&gio::Cancellable>)
-                            || accepted.iter().any(|(_, opt)| opt.as_deref() == Some(candidate))
-                    });
-                    accepted.push((col.clone(), Some(col_safe_name)));
-                }
-                Vec::new()
-            } else {
-                keep_both_collisions.clone()
-            };
-            keep_both_state.resolve_transfer_collisions(
-                keep_both_destination.clone(),
-                remaining,
-                accepted,
-                move_sources,
-                overwrite_existing,
-                cut_generation,
-            );
-        });
-
-        let replaced_layer = layer.clone();
-        let replaced_overlay = window_overlay.clone();
-        let replaced_root = blurred_root.clone();
-        let replaced_state = self.clone();
-        let replace_all = apply_all;
-        let replace_source = source.clone();
-        let replace_collisions = collisions.clone();
-        let replace_accepted = accepted.clone();
-        replace.connect_clicked(move |_| {
-            dismiss_modal_layer(&replaced_layer, &replaced_overlay, replaced_root.as_ref());
-            let mut accepted = replace_accepted.clone();
-            accepted.push((replace_source.clone(), None));
-            let remaining = if replace_all.is_active() {
-                for col in &replace_collisions {
-                    accepted.push((col.clone(), None));
-                }
-                Vec::new()
-            } else {
-                replace_collisions.clone()
-            };
-            replaced_state.resolve_transfer_collisions(
-                destination.clone(),
-                remaining,
-                accepted,
-                move_sources,
-                true,
-                cut_generation,
-            );
-        });
-
-        let escape = gtk::EventControllerKey::new();
-        let escaped_layer = layer.clone();
-        let escaped_overlay = window_overlay;
-        let escaped_root = blurred_root;
-        escape.connect_key_pressed(move |_, key, _, _| {
-            if key == gtk::gdk::Key::Escape {
-                dismiss_modal_layer(&escaped_layer, &escaped_overlay, escaped_root.as_ref());
-                glib::Propagation::Stop
-            } else {
-                glib::Propagation::Proceed
-            }
-        });
-        layer.add_controller(escape);
-        cancel.grab_focus();
+        let cut_generation = (move_sources
+            && self.owns_cut_clipboard()
+            && sources
+                .iter()
+                .any(|source| self.cut_locations.borrow().contains(source)))
+        .then(|| self.cut_generation.get());
+        let previous = self.pending_cut_generation.replace(cut_generation);
+        self.browser
+            .transfer(destination, sources, Vec::new(), move_sources, false);
+        self.pending_cut_generation.set(previous);
     }
 
     fn copy_entries(&self, entries: &[FileEntry]) {
@@ -1651,9 +1280,11 @@ impl ViewState {
 
     fn cut_entries(&self, entries: &[FileEntry]) {
         if set_files_clipboard(entries, true) {
-            self.cut_generation.set(self.cut_generation.get().wrapping_add(1));
-            self.cut_clipboard.replace(gtk::gdk::Display::default()
-                .and_then(|display| display.clipboard().content()));
+            self.cut_generation
+                .set(self.cut_generation.get().wrapping_add(1));
+            self.cut_clipboard.replace(
+                gtk::gdk::Display::default().and_then(|display| display.clipboard().content()),
+            );
             self.cut_locations
                 .replace(entries.iter().map(|entry| entry.location.clone()).collect());
             self.refresh_cut_rows();
@@ -1662,7 +1293,8 @@ impl ViewState {
     }
 
     fn show_clipboard_indicator(&self, entries: &[FileEntry], cut: bool) {
-        let items = entries.iter()
+        let items = entries
+            .iter()
             .map(|entry| (entry.location.clone(), entry.display_name.clone()))
             .collect::<Vec<_>>();
         self.show_clipboard_items(&items, cut);
@@ -1672,8 +1304,9 @@ impl ViewState {
         let action = if cut { "Cut" } else { "Copied" };
         let label = format!("{action} · {}", items.len());
         self.clipboard_indicator.set_label(&label);
-        self.indicated_clipboard.replace(gtk::gdk::Display::default()
-            .and_then(|display| display.clipboard().content()));
+        self.indicated_clipboard.replace(
+            gtk::gdk::Display::default().and_then(|display| display.clipboard().content()),
+        );
         self.clipboard_popover.popdown();
         while let Some(child) = self.clipboard_list.first_child() {
             self.clipboard_list.remove(&child);
@@ -1687,14 +1320,18 @@ impl ViewState {
             item.set_tooltip_text(Some(&location.display_path()));
             self.clipboard_list.append(&item);
         }
-        let details = format!("{action} {} {} · Click to view", items.len(),
-            if items.len() == 1 { "item" } else { "items" });
+        let details = format!(
+            "{action} {} {} · Click to view",
+            items.len(),
+            if items.len() == 1 { "item" } else { "items" }
+        );
         self.clipboard_indicator.set_tooltip_text(Some(&details));
         self.clipboard_indicator.set_visible(true);
     }
 
     fn clear_cut(&self) {
-        self.cut_generation.set(self.cut_generation.get().wrapping_add(1));
+        self.cut_generation
+            .set(self.cut_generation.get().wrapping_add(1));
         self.cut_clipboard.borrow_mut().take();
         if self.cut_locations.borrow().is_empty() {
             return;
@@ -1706,7 +1343,9 @@ impl ViewState {
     fn complete_cut_transfer(&self, transferred: &[Location]) {
         if self.transfer_cut_generation.get() != Some(self.cut_generation.get())
             || !self.owns_cut_clipboard()
-            || !transferred.iter().any(|location| self.cut_locations.borrow().contains(location))
+            || !transferred
+                .iter()
+                .any(|location| self.cut_locations.borrow().contains(location))
         {
             return;
         }
@@ -1725,15 +1364,20 @@ impl ViewState {
             self.cut_clipboard.borrow_mut().take();
         } else {
             if set_location_files_clipboard(&remaining, true) {
-                self.cut_clipboard.replace(gtk::gdk::Display::default()
-                    .and_then(|display| display.clipboard().content()));
+                self.cut_clipboard.replace(
+                    gtk::gdk::Display::default().and_then(|display| display.clipboard().content()),
+                );
             }
-            let items = remaining.iter().map(|location| {
-                let name = gio_file_for_location(location).basename()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| location.display_path());
-                (location.clone(), name)
-            }).collect::<Vec<_>>();
+            let items = remaining
+                .iter()
+                .map(|location| {
+                    let name = gio_file_for_location(location)
+                        .basename()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| location.display_path());
+                    (location.clone(), name)
+                })
+                .collect::<Vec<_>>();
             self.show_clipboard_items(&items, true);
         }
         self.refresh_cut_rows();
@@ -1744,7 +1388,8 @@ impl ViewState {
         owned.as_ref().is_some_and(|provider| {
             gtk::gdk::Display::default()
                 .and_then(|display| display.clipboard().content())
-                .as_ref() == Some(provider)
+                .as_ref()
+                == Some(provider)
         })
     }
 
@@ -1802,7 +1447,9 @@ impl ViewState {
             }
 
             if sources.is_empty() && formats.contain_mime_type("x-special/gnome-copied-files") {
-                if let Some(bytes) = read_clipboard_bytes(&clipboard, "x-special/gnome-copied-files").await {
+                if let Some(bytes) =
+                    read_clipboard_bytes(&clipboard, "x-special/gnome-copied-files").await
+                {
                     let (is_cut, locs) = parse_gnome_copied_files(&bytes);
                     if !locs.is_empty() {
                         sources = locs;
@@ -1834,14 +1481,18 @@ impl ViewState {
             }
 
             if !external_cut && formats.contain_mime_type("application/x-kde-cutselection") {
-                if let Some(bytes) = read_clipboard_bytes(&clipboard, "application/x-kde-cutselection").await {
+                if let Some(bytes) =
+                    read_clipboard_bytes(&clipboard, "application/x-kde-cutselection").await
+                {
                     if bytes.starts_with(b"1") {
                         external_cut = true;
                     }
                 }
             }
             if !external_cut && formats.contain_mime_type("x-special/gnome-copied-files") {
-                if let Some(bytes) = read_clipboard_bytes(&clipboard, "x-special/gnome-copied-files").await {
+                if let Some(bytes) =
+                    read_clipboard_bytes(&clipboard, "x-special/gnome-copied-files").await
+                {
                     let (is_cut, _) = parse_gnome_copied_files(&bytes);
                     if is_cut {
                         external_cut = true;
@@ -2332,7 +1983,10 @@ impl ViewState {
         let speed = view.smoothed_speed.get();
         if let Some(telemetry_label) = view.telemetry.as_ref() {
             if speed > 1024.0 {
-                telemetry_label.set_text(&format!("⚡ {}/s", crate::ui::formatting::format_size(speed as u64)));
+                telemetry_label.set_text(&format!(
+                    "⚡ {}/s",
+                    crate::ui::formatting::format_size(speed as u64)
+                ));
             } else if bytes_transferred > 0 {
                 telemetry_label.set_text("⚡ Starting transfer…");
             } else {
@@ -2341,9 +1995,14 @@ impl ViewState {
         }
 
         if let Some(eta_label) = view.eta.as_ref() {
-            if speed > 1024.0 && let Some(total_b) = total_bytes.filter(|&b| b > bytes_transferred) {
+            if speed > 1024.0
+                && let Some(total_b) = total_bytes.filter(|&b| b > bytes_transferred)
+            {
                 let remaining_bytes = total_b - bytes_transferred;
-                eta_label.set_text(&crate::ui::formatting::format_transfer_eta(remaining_bytes, speed));
+                eta_label.set_text(&crate::ui::formatting::format_transfer_eta(
+                    remaining_bytes,
+                    speed,
+                ));
             } else if speed > 1024.0 {
                 eta_label.set_text("Transfer in progress");
             } else {
@@ -2352,7 +2011,8 @@ impl ViewState {
         }
 
         if let Some(total_b) = total_bytes.filter(|&b| b > 0) {
-            let pct = ((bytes_transferred as f64 / total_b as f64) * 100.0).clamp(0.0, 100.0) as u32;
+            let pct =
+                ((bytes_transferred as f64 / total_b as f64) * 100.0).clamp(0.0, 100.0) as u32;
             view.status.set_text(&format!(
                 "{} of {} ({completed} of {total} items · {pct}%)",
                 crate::ui::formatting::format_size(bytes_transferred),
@@ -2441,10 +2101,7 @@ impl ViewState {
         title.add_css_class("delete-confirmation-title");
         title.set_xalign(0.0);
         let subtitle = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        let count = gtk::Label::new(Some(&format!(
-            "{} ·",
-            item_count_label(summary.item_count)
-        )));
+        let count = gtk::Label::new(Some(&format!("{} ·", item_count_label(summary.item_count))));
         let reclaimed = gtk::Label::new(None);
         formatting::bind(&reclaimed, Value::Size(summary.total_size));
         let explanation = gtk::Label::new(Some("will be reclaimed"));
@@ -2606,7 +2263,11 @@ impl ViewState {
             bind_entry_size(
                 &metadata,
                 Some(entry),
-                if entry.is_directory() { "Folder" } else { "—" },
+                if entry.is_directory() {
+                    "Folder"
+                } else {
+                    "—"
+                },
             );
             metadata.add_css_class("delete-confirmation-file-metadata");
             row.append(&icon);
@@ -2781,7 +2442,9 @@ impl ViewState {
         let size = properties_row(&details, "SIZE", "—");
         if trash_root {
             formatting::clear(&size, "Calculating…");
-        } else if let Some(crate::model::MetadataValue::Known(bytes)) = entry.as_ref().map(|entry| &entry.size) {
+        } else if let Some(crate::model::MetadataValue::Known(bytes)) =
+            entry.as_ref().map(|entry| &entry.size)
+        {
             formatting::bind(&size, Value::Size(*bytes));
         } else {
             formatting::clear(&size, "—");
@@ -3262,12 +2925,13 @@ impl ViewState {
                     let weak = weak_spring.clone();
                     let nav_crumb = crumb_spring.clone();
                     let timer_handle = timer_enter.clone();
-                    let source = glib::timeout_add_local_once(Duration::from_millis(750), move || {
-                        timer_handle.borrow_mut().take();
-                        if let Some(state) = weak.upgrade() {
-                            state.browser.navigate(nav_crumb);
-                        }
-                    });
+                    let source =
+                        glib::timeout_add_local_once(Duration::from_millis(750), move || {
+                            timer_handle.borrow_mut().take();
+                            if let Some(state) = weak.upgrade() {
+                                state.browser.navigate(nav_crumb);
+                            }
+                        });
                     if let Some(prev) = timer_enter.borrow_mut().replace(source) {
                         prev.remove();
                     }
@@ -3307,92 +2971,93 @@ impl ViewState {
                 segment.add_css_class("breadcrumb-segment");
                 segment.append(&button);
 
-                if let Some(native_parent) = crumb.parent().and_then(|p| p.native_path().map(|np| np.to_path_buf())) {
+                if let Some(native_parent) = crumb
+                    .parent()
+                    .and_then(|p| p.native_path().map(|np| np.to_path_buf()))
+                {
                     let chevron = gtk::Button::builder()
                         .has_frame(false)
                         .tooltip_text("Sibling folders")
                         .build();
-                        chevron.set_cursor_from_name(Some("pointer"));
-                        chevron.add_css_class("breadcrumb-chevron");
-                        let chevron_icon = crate::assets::primary_icon(crate::assets::icons::CHEVRON_DOWN, 10);
-                        chevron.set_child(Some(&chevron_icon));
+                    chevron.set_cursor_from_name(Some("pointer"));
+                    chevron.add_css_class("breadcrumb-chevron");
+                    let chevron_icon =
+                        crate::assets::primary_icon(crate::assets::icons::CHEVRON_DOWN, 10);
+                    chevron.set_child(Some(&chevron_icon));
 
-                        let weak_nav = Rc::downgrade(self);
-                        let chevron_crumb = crumb.clone();
-                        chevron.connect_clicked(move |btn| {
-                            let Some(state) = weak_nav.upgrade() else {
-                                return;
-                            };
-                            let popover = gtk::Popover::builder()
-                                .autohide(true)
-                                .has_arrow(true)
-                                .build();
-                            popover.add_css_class("breadcrumb-popover");
-                            popover.set_parent(btn);
+                    let weak_nav = Rc::downgrade(self);
+                    let chevron_crumb = crumb.clone();
+                    chevron.connect_clicked(move |btn| {
+                        let Some(state) = weak_nav.upgrade() else {
+                            return;
+                        };
+                        let popover = gtk::Popover::builder()
+                            .autohide(true)
+                            .has_arrow(true)
+                            .build();
+                        popover.add_css_class("breadcrumb-popover");
+                        popover.set_parent(btn);
 
-                            let menu_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
-                            menu_box.add_css_class("breadcrumb-dropdown-menu");
-                            let scroller = gtk::ScrolledWindow::builder()
-                                .child(&menu_box)
-                                .max_content_height(280)
-                                .propagate_natural_height(true)
-                                .hscrollbar_policy(gtk::PolicyType::Never)
-                                .vscrollbar_policy(gtk::PolicyType::Automatic)
-                                .build();
-                            popover.set_child(Some(&scroller));
+                        let menu_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+                        menu_box.add_css_class("breadcrumb-dropdown-menu");
+                        let scroller = gtk::ScrolledWindow::builder()
+                            .child(&menu_box)
+                            .max_content_height(280)
+                            .propagate_natural_height(true)
+                            .hscrollbar_policy(gtk::PolicyType::Never)
+                            .vscrollbar_policy(gtk::PolicyType::Automatic)
+                            .build();
+                        popover.set_child(Some(&scroller));
 
-                            if let Ok(entries) = std::fs::read_dir(&native_parent) {
-                                let mut dirs = Vec::new();
-                                for entry in entries.flatten() {
-                                    if let Ok(ft) = entry.file_type() {
-                                        if ft.is_dir() {
-                                            let name = entry.file_name().to_string_lossy().to_string();
-                                            if !name.starts_with('.') {
-                                                dirs.push((name, entry.path()));
-                                            }
+                        if let Ok(entries) = std::fs::read_dir(&native_parent) {
+                            let mut dirs = Vec::new();
+                            for entry in entries.flatten() {
+                                if let Ok(ft) = entry.file_type() {
+                                    if ft.is_dir() {
+                                        let name = entry.file_name().to_string_lossy().to_string();
+                                        if !name.starts_with('.') {
+                                            dirs.push((name, entry.path()));
                                         }
                                     }
-                                }
-                                dirs.sort_by(|a, b| {
-                                    crate::app::music_order::natural_name(&a.0, &b.0)
-                                });
-
-                                let weak_pop = popover.downgrade();
-                                let weak_browser = Rc::downgrade(&state.browser);
-                                for (name, path) in dirs {
-                                    let item = gtk::Button::builder()
-                                        .has_frame(false)
-                                        .build();
-                                    item.set_cursor_from_name(Some("pointer"));
-                                    item.add_css_class("breadcrumb-dropdown-item");
-                                    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-                                    let icon = crate::assets::primary_icon(crate::assets::icons::FOLDER, 14);
-                                    let label = gtk::Label::new(Some(&name));
-                                    label.set_xalign(0.0);
-                                    row.append(&icon);
-                                    row.append(&label);
-                                    item.set_child(Some(&row));
-                                    if path == chevron_crumb.native_path().unwrap_or(Path::new("")) {
-                                        item.add_css_class("current-sibling");
-                                    }
-                                    let weak_p = weak_pop.clone();
-                                    let weak_b = weak_browser.clone();
-                                    let target_loc = Location::local(path);
-                                    item.connect_clicked(move |_| {
-                                        if let Some(p) = weak_p.upgrade() {
-                                            p.popdown();
-                                        }
-                                        if let Some(b) = weak_b.upgrade() {
-                                            b.navigate(target_loc.clone());
-                                        }
-                                    });
-                                    menu_box.append(&item);
                                 }
                             }
-                            popover.popup();
-                        });
-                        segment.append(&chevron);
-                    }
+                            dirs.sort_by(|a, b| crate::app::music_order::natural_name(&a.0, &b.0));
+
+                            let weak_pop = popover.downgrade();
+                            let weak_browser = Rc::downgrade(&state.browser);
+                            for (name, path) in dirs {
+                                let item = gtk::Button::builder().has_frame(false).build();
+                                item.set_cursor_from_name(Some("pointer"));
+                                item.add_css_class("breadcrumb-dropdown-item");
+                                let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                                let icon =
+                                    crate::assets::primary_icon(crate::assets::icons::FOLDER, 14);
+                                let label = gtk::Label::new(Some(&name));
+                                label.set_xalign(0.0);
+                                row.append(&icon);
+                                row.append(&label);
+                                item.set_child(Some(&row));
+                                if path == chevron_crumb.native_path().unwrap_or(Path::new("")) {
+                                    item.add_css_class("current-sibling");
+                                }
+                                let weak_p = weak_pop.clone();
+                                let weak_b = weak_browser.clone();
+                                let target_loc = Location::local(path);
+                                item.connect_clicked(move |_| {
+                                    if let Some(p) = weak_p.upgrade() {
+                                        p.popdown();
+                                    }
+                                    if let Some(b) = weak_b.upgrade() {
+                                        b.navigate(target_loc.clone());
+                                    }
+                                });
+                                menu_box.append(&item);
+                            }
+                        }
+                        popover.popup();
+                    });
+                    segment.append(&chevron);
+                }
                 self.breadcrumbs.append(&segment);
             }
         }
@@ -3421,20 +3086,31 @@ impl ViewState {
             }
             _ => {}
         }
-        if matches!(&event, BrowserEvent::Reset | BrowserEvent::ColumnsTruncated { .. }
-            | BrowserEvent::ColumnReloaded { .. } | BrowserEvent::EntriesInserted { .. }
-            | BrowserEvent::EntriesReplaced { .. } | BrowserEvent::EntriesSpliced { .. })
-        {
+        if matches!(
+            &event,
+            BrowserEvent::Reset
+                | BrowserEvent::ColumnsTruncated { .. }
+                | BrowserEvent::ColumnReloaded { .. }
+                | BrowserEvent::EntriesInserted { .. }
+                | BrowserEvent::EntriesReplaced { .. }
+                | BrowserEvent::EntriesSpliced { .. }
+        ) {
             cancel_source(&self.pending_peek);
             self.peek_anchor.take();
         }
-        if !matches!(&event, BrowserEvent::PeekStarted { .. } | BrowserEvent::PeekEntriesReplaced { .. }
-            | BrowserEvent::PeekFinished | BrowserEvent::PeekFailed { .. } | BrowserEvent::PeekClosed)
-        {
+        if !matches!(
+            &event,
+            BrowserEvent::PeekStarted { .. }
+                | BrowserEvent::PeekEntriesReplaced { .. }
+                | BrowserEvent::PeekFinished
+                | BrowserEvent::PeekFailed { .. }
+                | BrowserEvent::PeekClosed
+        ) {
             self.mode_views.borrow_mut().handle(&event);
         }
         match event {
-            BrowserEvent::TabStored { .. } | BrowserEvent::TabRestored { .. }
+            BrowserEvent::TabStored { .. }
+            | BrowserEvent::TabRestored { .. }
             | BrowserEvent::TabDiscarded { .. } => {}
             BrowserEvent::Reset => {
                 self.truncate(0);
@@ -3577,8 +3253,11 @@ impl ViewState {
             BrowserEvent::PeekEntriesReplaced { entries } => {
                 let peek = self.peek.borrow().clone();
                 if let Some(peek) = peek {
-                    let labels: Vec<_> = entries.iter().take(self.peek_behavior.item_limit.max(1))
-                        .map(entry_model_value).collect();
+                    let labels: Vec<_> = entries
+                        .iter()
+                        .take(self.peek_behavior.item_limit.max(1))
+                        .map(entry_model_value)
+                        .collect();
                     let labels: Vec<_> = labels.iter().map(String::as_str).collect();
                     peek.entry_count.set(labels.len());
                     peek.model.splice(0, peek.model.n_items(), &labels);
@@ -3685,13 +3364,21 @@ impl ViewState {
             }
             BrowserEvent::RestorationFinished => self.dismiss_delete_progress(),
             BrowserEvent::TransferStarted { total } => {
-                self.transfer_cut_generation.set(self.pending_cut_generation.get());
+                self.transfer_cut_generation
+                    .set(self.pending_cut_generation.get());
                 self.show_file_operation_progress(
                     total,
                     crate::assets::icons::COPY,
                     "Transferring items",
                     "Copying or moving files",
                 );
+            }
+            BrowserEvent::TransferConflict {
+                source,
+                existing,
+                reply,
+            } => {
+                self.show_transfer_conflict(source, existing, reply);
             }
             BrowserEvent::TransferProgress {
                 completed,
@@ -3701,12 +3388,16 @@ impl ViewState {
             } => {
                 self.update_transfer_progress(completed, total, bytes_transferred, total_bytes);
             }
-            BrowserEvent::TransferItemCompleted { source, move_source } => {
+            BrowserEvent::TransferItemCompleted {
+                source,
+                move_source,
+            } => {
                 if move_source {
                     self.complete_cut_transfer(std::slice::from_ref(&source));
                 }
             }
             BrowserEvent::TransferFinished => {
+                self.dismiss_transfer_conflict();
                 self.transfer_cut_generation.set(None);
                 self.dismiss_delete_progress();
             }
@@ -3991,13 +3682,21 @@ impl ViewState {
             let hover_state = weak_state.clone();
             let hover_source = source_for_hover.clone();
             let hover_filtered = filtered_for_hover.clone();
-            super::hover::install(&row, item, Rc::new(move || {
-                let item = hovered_item.upgrade()?;
-                item.item()?;
-                let state = hover_state.upgrade()?;
-                let position = source_position_for_filtered(&hover_source, &hover_filtered, item.position())?;
-                state.browser.entry_at(depth, position)
-            }));
+            super::hover::install(
+                &row,
+                item,
+                Rc::new(move || {
+                    let item = hovered_item.upgrade()?;
+                    item.item()?;
+                    let state = hover_state.upgrade()?;
+                    let position = source_position_for_filtered(
+                        &hover_source,
+                        &hover_filtered,
+                        item.position(),
+                    )?;
+                    state.browser.entry_at(depth, position)
+                }),
+            );
             let motion = gtk::EventControllerMotion::new();
             let list_item = item.downgrade();
             let weak_state_for_enter = weak_state.clone();
@@ -4103,12 +3802,13 @@ impl ViewState {
                         let weak_state = Rc::downgrade(&state);
                         let nav_loc = entry.location.clone();
                         let timer_handle = spring_timer_enter.clone();
-                        let source = glib::timeout_add_local_once(Duration::from_millis(750), move || {
-                            timer_handle.borrow_mut().take();
-                            if let Some(state) = weak_state.upgrade() {
-                                state.browser.navigate(nav_loc);
-                            }
-                        });
+                        let source =
+                            glib::timeout_add_local_once(Duration::from_millis(750), move || {
+                                timer_handle.borrow_mut().take();
+                                if let Some(state) = weak_state.upgrade() {
+                                    state.browser.navigate(nav_loc);
+                                }
+                            });
                         if let Some(prev) = spring_timer_enter.borrow_mut().replace(source) {
                             prev.remove();
                         }
@@ -4660,7 +4360,8 @@ impl ViewState {
         if let Some(previous) = previous.as_ref() {
             previous.set_hexpand(false);
         }
-        self.columns_widget.borrow()
+        self.columns_widget
+            .borrow()
             .insert_child_after(&shell, previous.as_ref());
         self.columns.borrow_mut().push(ColumnView {
             shell: shell.clone(),
@@ -4711,7 +4412,8 @@ impl ViewState {
             if measured_shell.width() <= 0 || adjustment.page_size() <= 0.0 {
                 return glib::ControlFlow::Continue;
             }
-            let Some(bounds) = measured_shell.compute_bounds(&*state.columns_widget.borrow()) else {
+            let Some(bounds) = measured_shell.compute_bounds(&*state.columns_widget.borrow())
+            else {
                 return glib::ControlFlow::Continue;
             };
             let target = horizontal_reveal_target(
@@ -4745,12 +4447,9 @@ impl ViewState {
         cancel_source(&self.pending_peek);
         cancel_source(&self.pending_close);
         self.peek_anchor.take();
-        if self
-            .peek
-            .borrow()
-            .as_ref()
-            .is_some_and(|peek| peek.location == location && peek.anchor.upgrade().as_ref() == Some(&anchor))
-        {
+        if self.peek.borrow().as_ref().is_some_and(|peek| {
+            peek.location == location && peek.anchor.upgrade().as_ref() == Some(&anchor)
+        }) {
             return;
         }
         let origin = self.browser.location_at(origin_depth);
@@ -4759,8 +4458,14 @@ impl ViewState {
         let column = self.columns.borrow().get(origin_depth).cloned();
         let bound_item = column.as_ref().and_then(|column| {
             column.bound_rows.borrow().iter().find_map(|bound| {
-                (bound.row.upgrade().map(|row| row.upcast::<gtk::Widget>()).as_ref() == Some(&anchor))
-                    .then(|| bound.item.upgrade()).flatten()
+                (bound
+                    .row
+                    .upgrade()
+                    .map(|row| row.upcast::<gtk::Widget>())
+                    .as_ref()
+                    == Some(&anchor))
+                .then(|| bound.item.upgrade())
+                .flatten()
             })
         });
         let bound_value = bound_item.as_ref().and_then(|item| item.item());
@@ -4771,13 +4476,21 @@ impl ViewState {
                 let Some(anchor) = weak_anchor.upgrade() else {
                     return;
                 };
-                if !state.peek_enabled.get() || !anchor.is_mapped()
+                if !state.peek_enabled.get()
+                    || !anchor.is_mapped()
                     || !anchor.is_ancestor(&state.overlay)
                     || state.browser.location_at(origin_depth) != origin
-                    || bound_item.as_ref().is_some_and(|item| item.item() != bound_value)
-                    || !state.browser.column_entries(origin_depth).is_some_and(|entries| {
-                        entries.iter().any(|entry| entry.location == location && entry.is_directory())
-                    })
+                    || bound_item
+                        .as_ref()
+                        .is_some_and(|item| item.item() != bound_value)
+                    || !state
+                        .browser
+                        .column_entries(origin_depth)
+                        .is_some_and(|entries| {
+                            entries
+                                .iter()
+                                .any(|entry| entry.location == location && entry.is_directory())
+                        })
                 {
                     return;
                 }
@@ -4914,7 +4627,11 @@ impl ViewState {
         let weak_state = Rc::downgrade(self);
         glib::idle_add_local_once(move || {
             let active = weak_state.upgrade().is_some_and(|state| {
-                state.peek.borrow().as_ref().is_some_and(|peek| peek.revealer == revealer)
+                state
+                    .peek
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|peek| peek.revealer == revealer)
             });
             if active {
                 revealer.set_reveal_child(true);
@@ -5200,12 +4917,18 @@ pub(super) fn install_folder_context_menu(
         .build();
     popover.add_css_class("folder-context-popover");
 
-    let new_folder = item_context_option(crate::assets::icons::FOLDER, "New Folder", "Ctrl+Shift+N");
+    let new_folder =
+        item_context_option(crate::assets::icons::FOLDER, "New Folder", "Ctrl+Shift+N");
     let new_file = item_context_option(crate::assets::icons::DOCUMENTS, "New File…", "Ctrl+Alt+N");
     let paste = item_context_option(crate::assets::icons::COPY, "Paste", "Ctrl+V");
     let select_all = item_context_option(crate::assets::icons::CHECK, "Select All", "Ctrl+A");
-    let invert_selection = item_context_option(crate::assets::icons::CHECK, "Invert Selection", "Ctrl+Shift+I");
-    let open_terminal = item_context_option(crate::assets::icons::TERMINAL, "Open in Terminal", "F4");
+    let invert_selection = item_context_option(
+        crate::assets::icons::CHECK,
+        "Invert Selection",
+        "Ctrl+Shift+I",
+    );
+    let open_terminal =
+        item_context_option(crate::assets::icons::TERMINAL, "Open in Terminal", "F4");
     let copy_location = item_context_option(crate::assets::icons::COPY, "Copy location", "");
     let properties = item_context_option(crate::assets::icons::INFO, "Properties", "Alt+Enter");
     content.append(&new_folder);
@@ -5222,9 +4945,13 @@ pub(super) fn install_folder_context_menu(
     let location_popover = popover.downgrade();
     copy_location.connect_clicked(move |_| {
         if let Some(display) = gtk::gdk::Display::default() {
-            display.clipboard().set_text(&copied_location.display_path());
+            display
+                .clipboard()
+                .set_text(&copied_location.display_path());
         }
-        if let Some(popover) = location_popover.upgrade() { popover.popdown(); }
+        if let Some(popover) = location_popover.upgrade() {
+            popover.popdown();
+        }
     });
 
     let pending_new_folder = Rc::new(Cell::new(false));
@@ -5247,8 +4974,11 @@ pub(super) fn install_folder_context_menu(
         let Some(state) = weak.upgrade() else {
             return;
         };
-        let Some(window) = file_parent_widget.upgrade()
-            .and_then(|parent| parent.root()).and_downcast::<gtk::Window>() else {
+        let Some(window) = file_parent_widget
+            .upgrade()
+            .and_then(|parent| parent.root())
+            .and_downcast::<gtk::Window>()
+        else {
             return;
         };
         show_new_file_dialog(&state.browser, &window, file_folder.clone());
@@ -5372,7 +5102,8 @@ pub(super) fn install_folder_context_menu(
     let open_terminal_for_keys = open_terminal.clone();
     folder_keys.connect_key_pressed(move |controller, key, _, modifiers| {
         let is_menu = key == gtk::gdk::Key::Menu
-            || (key == gtk::gdk::Key::F10 && modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+            || (key == gtk::gdk::Key::F10
+                && modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK));
         if is_menu && selection_for_keys.selection().is_empty() {
             paste_for_keys.set_sensitive(clipboard_has_files());
             select_all_for_keys.set_sensitive(selection_for_keys.n_items() > 0);
@@ -5431,7 +5162,8 @@ pub(super) fn install_item_context_menu(
     content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
 
     let music_actions = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let play_music = item_context_option(crate::assets::icons::PLAY, "Play in Hermes", "Ctrl+Enter");
+    let play_music =
+        item_context_option(crate::assets::icons::PLAY, "Play in Hermes", "Ctrl+Enter");
     let queue_music = item_context_option(crate::assets::icons::PLUS, "Add to music queue", "");
     music_actions.append(&play_music);
     music_actions.append(&queue_music);
@@ -5483,7 +5215,8 @@ pub(super) fn install_item_context_menu(
     );
     let open_with = item_context_option(crate::assets::icons::EXTERNAL_LINK, "Open With…", "");
     let preview = item_context_option(crate::assets::icons::EYE, "Quick preview", "Space");
-    let explore_archive = item_context_option(crate::assets::icons::FOLDER_OPEN, "Browse Archive", "");
+    let explore_archive =
+        item_context_option(crate::assets::icons::FOLDER_OPEN, "Browse Archive", "");
     let extract_here = item_context_option(crate::assets::icons::FILE_ARCHIVE, "Extract Here", "");
     let extract_to = item_context_option(crate::assets::icons::FOLDER, "Extract To…", "");
     let compress = item_context_option(crate::assets::icons::FILE_ARCHIVE, "Compress…", "");
@@ -5498,7 +5231,8 @@ pub(super) fn install_item_context_menu(
     let cut = item_context_option(crate::assets::icons::SCISSORS, "Cut", "Ctrl+X");
     let copy = item_context_option(crate::assets::icons::COPY, "Copy", "Ctrl+C");
     let duplicate = item_context_option(crate::assets::icons::COPY, "Duplicate", "Ctrl+D");
-    let open_terminal = item_context_option(crate::assets::icons::TERMINAL, "Open in Terminal", "F4");
+    let open_terminal =
+        item_context_option(crate::assets::icons::TERMINAL, "Open in Terminal", "F4");
     let paste_folder = item_context_option(crate::assets::icons::COPY, "Paste into folder", "");
     let delete_label = if in_trash {
         "Permanently delete"
@@ -5548,7 +5282,11 @@ pub(super) fn install_item_context_menu(
     let cut_multiple = item_context_option(crate::assets::icons::SCISSORS, "Cut", "Ctrl+X");
     let copy_clipboard_multiple = item_context_option(crate::assets::icons::COPY, "Copy", "Ctrl+C");
     let duplicate_multiple = item_context_option(crate::assets::icons::COPY, "Duplicate", "Ctrl+D");
-    let invert_multiple = item_context_option(crate::assets::icons::CHECK, "Invert selection", "Ctrl+Shift+I");
+    let invert_multiple = item_context_option(
+        crate::assets::icons::CHECK,
+        "Invert selection",
+        "Ctrl+Shift+I",
+    );
     let trash_multiple =
         item_context_danger_option(crate::assets::icons::TRASH, delete_label, "Del");
     trash_multiple.add_css_class("danger");
@@ -5676,8 +5414,11 @@ pub(super) fn install_item_context_menu(
             return;
         };
         let file = gio::File::for_path(path);
-        let Some(window) = chooser_parent_widget.upgrade()
-            .and_then(|parent| parent.root()).and_downcast::<gtk::Window>() else {
+        let Some(window) = chooser_parent_widget
+            .upgrade()
+            .and_then(|parent| parent.root())
+            .and_downcast::<gtk::Window>()
+        else {
             return;
         };
         let dialog = app_chooser::dialog(&window, &file);
@@ -5763,7 +5504,11 @@ pub(super) fn install_item_context_menu(
             let text = if selected.is_empty() {
                 entry.display_name.clone()
             } else {
-                selected.iter().map(|e| e.display_name.clone()).collect::<Vec<_>>().join("\n")
+                selected
+                    .iter()
+                    .map(|e| e.display_name.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n")
             };
             if let Some(display) = gtk::gdk::Display::default() {
                 display.clipboard().set_text(&text);
@@ -5802,11 +5547,15 @@ pub(super) fn install_item_context_menu(
     let paste_target = target.clone();
     let paste_popover = popover.downgrade();
     paste_folder.connect_clicked(move |_| {
-        if let Some(popover) = paste_popover.upgrade() { popover.popdown(); }
+        if let Some(popover) = paste_popover.upgrade() {
+            popover.popdown();
+        }
         if let Some(state) = weak.upgrade()
             && let Some((_, entry)) = paste_target.borrow().as_ref()
             && entry.is_directory()
-        { state.paste_into(entry.location.clone()); }
+        {
+            state.paste_into(entry.location.clone());
+        }
     });
     connect_context_trash(&move_to_trash, &popover, state, &target, in_trash);
     connect_context_trash(&trash_multiple, &popover, state, &target, in_trash);
@@ -5824,7 +5573,10 @@ pub(super) fn install_item_context_menu(
             return;
         };
         if let Some(state) = weak_explore.upgrade() {
-            state.browser.descend(depth, Location::uri(format!("archive://{}/", path.display())));
+            state.browser.descend(
+                depth,
+                Location::uri(format!("archive://{}/", path.display())),
+            );
         }
     });
     connect_extract_here(&extract_here, &popover, state, &target);
@@ -5857,7 +5609,10 @@ pub(super) fn install_item_context_menu(
         let target_path = if entry.is_directory() {
             entry.location.native_path().map(Path::to_path_buf)
         } else {
-            entry.location.parent().and_then(|p| p.native_path().map(Path::to_path_buf))
+            entry
+                .location
+                .parent()
+                .and_then(|p| p.native_path().map(Path::to_path_buf))
         };
         if let Some(path) = target_path {
             open_terminal_at(&path);
@@ -5951,9 +5706,15 @@ pub(super) fn install_item_context_menu(
         let content = content.clone();
         let widget_weak = widget.downgrade();
         move |filtered_position: usize, pointing_rect: Option<gtk::gdk::Rectangle>| -> bool {
-            let Some(state) = weak_state.upgrade() else { return false; };
-            let Some(resolved_position) = source_position(filtered_position as u32) else { return false; };
-            let Some(entry) = state.browser.entry_at(depth, resolved_position) else { return false; };
+            let Some(state) = weak_state.upgrade() else {
+                return false;
+            };
+            let Some(resolved_position) = source_position(filtered_position as u32) else {
+                return false;
+            };
+            let Some(entry) = state.browser.entry_at(depth, resolved_position) else {
+                return false;
+            };
 
             if !selection.is_selected(filtered_position as u32) {
                 selection.select_item(filtered_position as u32, true);
@@ -5968,7 +5729,8 @@ pub(super) fn install_item_context_menu(
             target.replace(Some((resolved_position, entry.clone())));
             let entries = state.browser.selected_entries();
             let options = super::theme::ThemeManager::shared().context_menu_options();
-            music_actions.set_visible(options.music && !in_trash && audio_context_actions_visible(&entries));
+            music_actions
+                .set_visible(options.music && !in_trash && audio_context_actions_visible(&entries));
             let ratable_paths = entries
                 .iter()
                 .filter_map(|entry| {
@@ -6006,7 +5768,10 @@ pub(super) fn install_item_context_menu(
                     btn.set_tooltip_text(Some(&if active == star_num as u8 {
                         format!("Click to remove {star_num}-star rating")
                     } else {
-                        format!("Rate {star_num} star{}", if star_num == 1 { "" } else { "s" })
+                        format!(
+                            "Rate {star_num} star{}",
+                            if star_num == 1 { "" } else { "s" }
+                        )
                     }));
                 }
                 clear_rating_btn.set_sensitive(
@@ -6024,16 +5789,29 @@ pub(super) fn install_item_context_menu(
                 .filter_map(|entry| entry.location.native_path().map(Path::to_path_buf))
                 .collect::<Vec<_>>();
             let mut custom_visible = false;
-            while let Some(child) = custom.first_child() { custom.remove(&child); }
-            if options.custom_actions && !in_trash && custom_paths.len() == entries.len()
+            while let Some(child) = custom.first_child() {
+                custom.remove(&child);
+            }
+            if options.custom_actions
+                && !in_trash
+                && custom_paths.len() == entries.len()
                 && let Some(popover) = weak_popover.upgrade()
                 && let Some(parent) = widget_weak.upgrade()
             {
                 match load_custom_actions() {
                     Ok(actions) => {
-                        for action in actions.into_iter().filter(|action| action.applies_to(&custom_paths)) {
-                            let button = item_context_option(crate::assets::icons::SETTINGS_2, &action.name, "");
-                            connect_custom_action(&button, &popover, &state, &target, &parent, action);
+                        for action in actions
+                            .into_iter()
+                            .filter(|action| action.applies_to(&custom_paths))
+                        {
+                            let button = item_context_option(
+                                crate::assets::icons::SETTINGS_2,
+                                &action.name,
+                                "",
+                            );
+                            connect_custom_action(
+                                &button, &popover, &state, &target, &parent, action,
+                            );
                             custom.append(&button);
                             custom_visible = true;
                         }
@@ -6043,18 +5821,29 @@ pub(super) fn install_item_context_menu(
             }
             custom.set_visible(custom_visible);
             custom_separator.set_visible(custom_visible);
-            preview.set_visible(options.preview && entry_supports_quick_preview(&entry) && !in_trash);
+            preview
+                .set_visible(options.preview && entry_supports_quick_preview(&entry) && !in_trash);
             let archive = options.archives && is_archive_entry(&entry) && !in_trash;
             explore_archive.set_visible(archive);
             extract_here.set_visible(archive);
             extract_to.set_visible(archive);
-            compress.set_visible(options.archives && !in_trash && (entry.is_directory() || options.compress_files));
-            compress_multiple.set_visible(options.archives && !in_trash && (entries.iter().all(FileEntry::is_directory) || options.compress_files));
-            pin.set_visible(options.pin && entry.is_directory() && !is_trash_location(&entry.location));
+            compress.set_visible(
+                options.archives && !in_trash && (entry.is_directory() || options.compress_files),
+            );
+            compress_multiple.set_visible(
+                options.archives
+                    && !in_trash
+                    && (entries.iter().all(FileEntry::is_directory) || options.compress_files),
+            );
+            pin.set_visible(
+                options.pin && entry.is_directory() && !is_trash_location(&entry.location),
+            );
             paste_folder.set_visible(entry.is_directory() && !in_trash);
             paste_folder.set_sensitive(clipboard_has_files());
             duplicate.set_visible(!in_trash);
-            open_terminal.set_visible(!in_trash && (entry.is_directory() || entry.location.parent().is_some()));
+            open_terminal.set_visible(
+                !in_trash && (entry.is_directory() || entry.location.parent().is_some()),
+            );
             duplicate_multiple.set_visible(!in_trash);
             invert_multiple.set_visible(selection.n_items() > 0);
             if entries.len() > 1 {
@@ -6141,7 +5930,9 @@ pub(super) fn install_item_context_menu(
                 && let Some((f_depth, f_pos, _)) = state.browser.focused_item()
                 && f_depth == depth
             {
-                (0..selection.n_items()).find(|&p| source_position(p) == Some(f_pos)).map(|p| p as usize)
+                (0..selection.n_items())
+                    .find(|&p| source_position(p) == Some(f_pos))
+                    .map(|p| p as usize)
             } else {
                 None
             };
@@ -6152,14 +5943,17 @@ pub(super) fn install_item_context_menu(
         }
     });
 
-    state.active_context_menu.replace(Some(trigger_keyboard_menu.clone()));
+    state
+        .active_context_menu
+        .replace(Some(trigger_keyboard_menu.clone()));
 
     let item_keys = gtk::EventControllerKey::new();
     item_keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     let trigger_for_keys = trigger_keyboard_menu.clone();
     item_keys.connect_key_pressed(move |_, key, _, modifiers| {
         let is_menu = key == gtk::gdk::Key::Menu
-            || (key == gtk::gdk::Key::F10 && modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK));
+            || (key == gtk::gdk::Key::F10
+                && modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK));
         if is_menu && trigger_for_keys() {
             glib::Propagation::Stop
         } else {
@@ -6282,7 +6076,9 @@ fn trash_file_entry(file: gio::File, info: &gio::FileInfo) -> FileEntry {
         (gio::FileType::SymbolicLink, _) => EntryKind::SymbolicLink,
         _ => EntryKind::Other,
     };
-    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location: location_for_gio_file(&file),
+    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner {
+        music_tags: None,
+        location: location_for_gio_file(&file),
         native_name: info.name().into_os_string(),
         display_name: info.display_name().to_string(),
         kind,
@@ -6530,8 +6326,11 @@ fn connect_extract_to(
         let Some(archive_path) = entry.location.native_path() else {
             return;
         };
-        let Some(window) = parent.upgrade()
-            .and_then(|parent| parent.root()).and_downcast::<gtk::Window>() else {
+        let Some(window) = parent
+            .upgrade()
+            .and_then(|parent| parent.root())
+            .and_downcast::<gtk::Window>()
+        else {
             return;
         };
         let chooser = gtk::FileChooserNative::builder()
@@ -6737,7 +6536,11 @@ fn connect_context_clipboard(
         }
         if let Some(state) = weak.upgrade() {
             let entries = context_entries(&state, &target);
-            if cut { state.cut_entries(&entries); } else { state.copy_entries(&entries); }
+            if cut {
+                state.cut_entries(&entries);
+            } else {
+                state.copy_entries(&entries);
+            }
         }
     });
 }
@@ -6884,6 +6687,7 @@ fn install_directory_drop_target(
     widget.add_controller(drop);
 }
 
+#[cfg(test)]
 fn transfer_has_collision(source: &Location, destination: &Location) -> bool {
     let source = gio_file_for_location(source);
     let destination = gio_file_for_location(destination);
@@ -7010,12 +6814,14 @@ fn set_location_files_clipboard(locations: &[Location], is_cut: bool) -> bool {
     let Some(content) = native_file_clipboard_content(locations, is_cut) else {
         return false;
     };
-    gtk::gdk::Display::default().is_some_and(|display| {
-        display.clipboard().set_content(Some(&content)).is_ok()
-    })
+    gtk::gdk::Display::default()
+        .is_some_and(|display| display.clipboard().set_content(Some(&content)).is_ok())
 }
 
-fn native_file_clipboard_content(locations: &[Location], is_cut: bool) -> Option<gtk::gdk::ContentProvider> {
+fn native_file_clipboard_content(
+    locations: &[Location],
+    is_cut: bool,
+) -> Option<gtk::gdk::ContentProvider> {
     let uri_bytes = file_clipboard_uri_list(locations)?;
     let gnome_bytes = gnome_copied_files_bytes(locations, is_cut)?;
     let kde_bytes = kde_cut_selection_bytes(is_cut);
@@ -7053,8 +6859,14 @@ fn kde_cut_selection_bytes(is_cut: bool) -> glib::Bytes {
 }
 
 async fn read_clipboard_bytes(clipboard: &gtk::gdk::Clipboard, mime_type: &str) -> Option<Vec<u8>> {
-    let (stream, _) = clipboard.read_future(&[mime_type], glib::Priority::DEFAULT).await.ok()?;
-    let bytes = stream.read_bytes_future(64 * 1024, glib::Priority::DEFAULT).await.ok()?;
+    let (stream, _) = clipboard
+        .read_future(&[mime_type], glib::Priority::DEFAULT)
+        .await
+        .ok()?;
+    let bytes = stream
+        .read_bytes_future(64 * 1024, glib::Priority::DEFAULT)
+        .await
+        .ok()?;
     Some(bytes.to_vec())
 }
 
@@ -7076,7 +6888,10 @@ fn parse_gnome_copied_files(bytes: &[u8]) -> (bool, Vec<Location>) {
         return (false, Vec::new());
     };
     let mut lines = text.lines();
-    let first = lines.next().map(|s| s.trim_matches(|c| c == '\r' || c == '\n' || c == '\0' || c == ' ')).unwrap_or("");
+    let first = lines
+        .next()
+        .map(|s| s.trim_matches(|c| c == '\r' || c == '\n' || c == '\0' || c == ' '))
+        .unwrap_or("");
     let is_cut = first.eq_ignore_ascii_case("cut");
     let mut locations = Vec::new();
     for line in lines {
@@ -7139,7 +6954,11 @@ fn item_context_option(icon: &str, label: &str, accelerator: &str) -> gtk::Butto
     item_context_option_with_icon(crate::assets::text_icon(icon, 15), label, accelerator)
 }
 
-fn item_context_option_labeled(icon: &str, label: &str, accelerator: &str) -> (gtk::Button, gtk::Label) {
+fn item_context_option_labeled(
+    icon: &str,
+    label: &str,
+    accelerator: &str,
+) -> (gtk::Button, gtk::Label) {
     let button = gtk::Button::new();
     button.add_css_class("item-context-option");
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -7168,10 +6987,11 @@ fn folder_has_audio_or_is_music(entry: &FileEntry) -> bool {
             return true;
         }
     }
-    if path
-        .components()
-        .any(|c| c.as_os_str().to_string_lossy().eq_ignore_ascii_case("music"))
-    {
+    if path.components().any(|c| {
+        c.as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case("music")
+    }) {
         return true;
     }
     if let Ok(entries) = std::fs::read_dir(path) {
@@ -7231,7 +7051,9 @@ pub(super) fn column_sort_menu(browser: &Rc<Browser>, depth: usize) -> gtk::Menu
     ] {
         let (option, check) = column_menu_option(label, preferences.sort_key == key);
         if key == SortKey::Track {
-            option.set_tooltip_text(Some("Disc then track metadata; numbered filenames when tags are missing"));
+            option.set_tooltip_text(Some(
+                "Disc then track metadata; numbered filenames when tags are missing",
+            ));
         }
         selected_checks.borrow_mut().push((key, check));
         let checks = selected_checks.clone();
@@ -7350,10 +7172,14 @@ pub(super) fn sync_sort_direction_header(
     browser: &Browser,
     depth: usize,
 ) {
-    let Some(preferences) = browser.column_preferences(depth) else { return; };
+    let Some(preferences) = browser.column_preferences(depth) else {
+        return;
+    };
     let mut widgets = std::collections::VecDeque::from([root.as_ref().clone()]);
     for _ in 0..64 {
-        let Some(widget) = widgets.pop_front() else { break; };
+        let Some(widget) = widgets.pop_front() else {
+            break;
+        };
         if widget.widget_name() == "hermes-sort-direction" {
             if let Some(button) = widget.downcast_ref::<gtk::ToggleButton>()
                 && let Some(icon) = button.child().and_downcast::<gtk::Image>()
@@ -7366,7 +7192,9 @@ pub(super) fn sync_sort_direction_header(
         while let Some(current) = child {
             child = current.next_sibling();
             widgets.push_back(current);
-            if widgets.len() >= 64 { break; }
+            if widgets.len() >= 64 {
+                break;
+            }
         }
     }
 }

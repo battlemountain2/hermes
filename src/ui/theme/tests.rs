@@ -118,7 +118,9 @@ fn filled_controls_choose_the_more_legible_semantic_foreground() {
 fn desktop_filled_player_controls_render_with_live_theme_contrast() {
     use gtk::{gdk::prelude::*, prelude::*};
     gtk::init().unwrap();
-    gtk::Settings::default().unwrap().set_gtk_enable_animations(false);
+    gtk::Settings::default()
+        .unwrap()
+        .set_gtk_enable_animations(false);
     crate::assets::prepare().unwrap();
     let manager = super::ThemeManager::shared();
     let styles = gtk::CssProvider::new();
@@ -134,7 +136,11 @@ fn desktop_filled_player_controls_render_with_live_theme_contrast() {
     content.set_margin_start(24);
     content.set_margin_end(24);
     let mut buttons = Vec::new();
-    for class in ["immersive-play-btn", "preview-audio-play-button", "mini-play-btn"] {
+    for class in [
+        "immersive-play-btn",
+        "preview-audio-play-button",
+        "mini-play-btn",
+    ] {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
         row.append(&gtk::Label::new(Some(class)));
         for state in [
@@ -197,7 +203,9 @@ fn desktop_filled_player_controls_render_with_live_theme_contrast() {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             };
             let Some(node) = node else {
-                eprintln!("Optional screenshot unavailable for {theme}; no frame from isolated display");
+                eprintln!(
+                    "Optional screenshot unavailable for {theme}; no frame from isolated display"
+                );
                 continue;
             };
             let renderer = gtk::gsk::CairoRenderer::new();
@@ -471,6 +479,8 @@ fn noctalia_monitor_debounces_replacement_and_recovers_without_overriding_other_
         pending_noctalia_refresh: RefCell::new(None),
         noctalia_poll: RefCell::new(None),
         settings_monitor: RefCell::new(None),
+        themes_monitor: RefCell::new(None),
+        picker_mode: Cell::new(false),
         pending_settings_refresh: RefCell::new(None),
         previewing: Cell::new(false),
         layout_observers: RefCell::new(Vec::new()),
@@ -648,4 +658,94 @@ fn test_sync_picker_theme_preferences() {
     assert!(!parsed.sync_picker_theme);
     let roundtripped: Preferences = toml::from_str(&toml::to_string(&parsed).unwrap()).unwrap();
     assert!(!roundtripped.sync_picker_theme);
+}
+
+#[test]
+#[ignore = "Private GTK display and isolated XDG roots; replaces generated theme files"]
+fn picker_tracks_atomic_preferences_new_custom_themes_and_font_changes() {
+    use gtk::glib;
+    use std::{
+        fs,
+        time::{Duration, Instant},
+    };
+    gtk::init().unwrap();
+    assert!(
+        crate::paths::config_dir().starts_with(std::env::temp_dir()),
+        "Use isolated XDG directories"
+    );
+    let config = crate::paths::config_dir();
+    fs::create_dir_all(&config).unwrap();
+    let mut preferences = Preferences::default();
+    fs::write(
+        super::settings_path(),
+        toml::to_string(&preferences).unwrap(),
+    )
+    .unwrap();
+    let manager = super::ThemeManager::load();
+    manager.use_picker_theme();
+    let until = |condition: &dyn Fn() -> bool| {
+        let start = Instant::now();
+        while !condition() {
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "Theme monitor did not update"
+            );
+            while glib::MainContext::default().iteration(false) {}
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    let replace = |preferences: &Preferences| {
+        let stage = config.join("generated-preferences.tmp");
+        fs::write(&stage, toml::to_string(preferences).unwrap()).unwrap();
+        fs::rename(stage, super::settings_path()).unwrap();
+    };
+    let mut custom = super::azure_tokens();
+    custom.name = "Warm copper".into();
+    custom.accent = "#eebb99".into();
+    fs::create_dir_all(super::themes_directory()).unwrap();
+    let custom_path = super::themes_directory().join("warm-copper.toml");
+    fs::write(&custom_path, toml::to_string(&custom).unwrap()).unwrap();
+    preferences.theme = "warm-copper".into();
+    preferences.interface_font = "sans".into();
+    preferences.interface_font_size = 17;
+    replace(&preferences);
+    until(&|| {
+        manager
+            .applied_tokens
+            .borrow()
+            .as_ref()
+            .is_some_and(|tokens| tokens.accent == custom.accent)
+            && manager.interface_font_size() == 17
+    });
+    assert_eq!(manager.interface_font(), "sans");
+    preferences.interface_font_size = 20;
+    replace(&preferences);
+    until(&|| manager.interface_font_size() == 20);
+    custom.accent = "#aaddee".into();
+    fs::write(custom_path, toml::to_string(&custom).unwrap()).unwrap();
+    until(&|| {
+        manager
+            .applied_tokens
+            .borrow()
+            .as_ref()
+            .is_some_and(|tokens| tokens.accent == custom.accent)
+    });
+    preferences.sync_picker_theme = false;
+    preferences.theme = "paper".into();
+    replace(&preferences);
+    until(&|| !manager.sync_picker_theme());
+    assert_eq!(
+        manager.applied_tokens.borrow().as_ref().unwrap().accent,
+        custom.accent
+    );
+    preferences.sync_picker_theme = true;
+    replace(&preferences);
+    until(&|| {
+        manager
+            .applied_tokens
+            .borrow()
+            .as_ref()
+            .is_some_and(|tokens| tokens.name == "Paper")
+    });
+    assert!(manager.sync_picker_theme());
 }

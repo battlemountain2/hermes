@@ -33,16 +33,6 @@ fn backend_exposes_only_chooser_methods_request_close_and_version() {
 }
 
 #[test]
-fn picker_integration_toggle_roundtrips() {
-    let directory = crate::sandbox::browser::format_tests::FixtureDirectory::new();
-    let marker = directory.0.join("picker-integration.json");
-    assert!(set_picker_integration_enabled_at(&marker, true).is_ok());
-    assert!(is_picker_integration_enabled_at(&marker));
-    assert!(set_picker_integration_enabled_at(&marker, false).is_ok());
-    assert!(!is_picker_integration_enabled_at(&marker));
-}
-
-#[test]
 #[ignore = "Private GTK display and fresh D-Bus only; exercises generated files, not the real desktop portal"]
 #[expect(
     deprecated,

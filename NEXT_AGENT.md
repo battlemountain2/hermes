@@ -1,5 +1,52 @@
 # Next agent: Hermes performance, file features and media polish
 
+## November 4 safety and UI checkpoint — current
+
+Worktree: `/home/bry/hermes-worktrees/safety`; branch `fix/6-release-safety`;
+base `6d2d0299`, issue #6. The installed app and the primary checkout were
+left untouched. This checkpoint supersedes conflicting implementation claims in
+the historical notes below.
+
+- Interactive transfer conflicts now come from the recursive transfer worker.
+  A folder Merge choice does not approve nested file replacements. Skip, Keep
+  both, Replace/Merge and Cancel apply within the current operation; unrelated
+  destination files and skipped move sources are preserved.
+- Stable startup asks before legacy import; Dev never reads/imports legacy data.
+  Version-2 private backup/journal recovery replaces the automatic v1 import.
+  See `docs/branding-and-migration.md` for precise guarantees and limits.
+- Picker enable/restore uses the embedded, shared desktop-setup journal owner.
+  Settings waits asynchronously, surfaces errors and never assumes KDE was the
+  previous provider. Python 3 is an optional setup dependency.
+- Picker has a labelled New folder control and Ctrl+Shift+N, preserves Save
+  filenames, follows settings/font/custom-theme changes and styles menu states
+  semantically. Header actions no longer depend on the host's dialog layout.
+- Home uses compact horizontal shortcuts, consistent folder icons for pinned
+  locations, and a Personal folder header action. Six standard + four pinned
+  folders form two equal rows at the tested size; Recent Music/Files remain.
+- User confirmed **Follow Noctalia** for main app and picker. Read-only check of
+  stable settings already showed `mode = "noctalia"` and
+  `sync_picker_theme = true`; no actual settings edit was necessary.
+
+Validation: all-target compilation and test compilation passed without warnings;
+130 targeted checks passed, including seven GTK tests on private displays/buses
+and generated XDG roots. No user document/profile/default was used. The
+overwrite-test GLib critical was traced to the test program lacking a GLib
+program name; setting the test identity resolves it with criticals fatal.
+The two invalid base stylesheet properties (`cursor`/`text-align`) were removed.
+
+Reproduce: build test executable with
+`cargo test --locked --bin hermes --no-run -j 2`, then
+`python3 scripts/check-release-safety.py --test-binary <printed-executable>`.
+The runner explicitly executes the seven ignored, dependency-bound GUI tests.
+It retains generated logs and Home/picker screenshots under its printed /tmp root.
+
+Remaining: continuous byte telemetry, full-disk/read-only/cross-device physical
+checks, transfer descriptor-relative race hardening, durable recovery of failed
+collection-reference updates, archive-worker audit, search paging/coverage,
+split-view lifecycle/routing, repository-wide CI/lint debt and immutable release
+publishing. No clean-package, Asahi/Mac or physical Wayland/audio certification.
+See `docs/release-safety-checkpoint.md`; do not close the entire audit or issue #6.
+
 ## Interactive Copy/Move Conflict Resolver & Transfer Queue HUD (`MB/s` & ETA Telemetry) — 2026-11-03 (current)
 
 - Branch: `feat/6-desktop-parity-and-native-chooser`

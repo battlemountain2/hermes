@@ -94,7 +94,11 @@ pub fn build_layer(
         .vexpand(true)
         .build();
     stack.add_named(
-        &scroll_page(&general_page(browser, themes.clone(), refresh_sidebar.clone())),
+        &scroll_page(&general_page(
+            browser,
+            themes.clone(),
+            refresh_sidebar.clone(),
+        )),
         Some("general"),
     );
     stack.add_named(
@@ -105,14 +109,8 @@ pub fn build_layer(
         &scroll_page(&previews_page(browser, themes.clone())),
         Some("previews"),
     );
-    stack.add_named(
-        &scroll_page(&audio_page(themes.clone())),
-        Some("audio"),
-    );
-    stack.add_named(
-        &scroll_page(&search_page(themes.clone())),
-        Some("search"),
-    );
+    stack.add_named(&scroll_page(&audio_page(themes.clone())), Some("audio"));
+    stack.add_named(&scroll_page(&search_page(themes.clone())), Some("search"));
     stack.add_named(
         &scroll_page(&context_menu_page(themes.clone())),
         Some("context-menu"),
@@ -130,55 +128,137 @@ pub fn build_layer(
             "General",
             icons::SLIDERS,
             "general",
-            &["general", "startup", "delete", "safety", "history", "recent", "confirm", "motion", "portal", "picker", "desktop", "chooser", "integration", "xdg"],
+            &[
+                "general",
+                "startup",
+                "delete",
+                "safety",
+                "history",
+                "recent",
+                "confirm",
+                "motion",
+                "portal",
+                "picker",
+                "desktop",
+                "chooser",
+                "integration",
+                "xdg",
+            ],
         ),
         (
             "View & formats",
             icons::GRID,
             "view-formats",
-            &["view", "format", "layout", "density", "columns", "grid", "date", "time", "iso", "size", "units", "decimal", "binary", "hidden"],
+            &[
+                "view", "format", "layout", "density", "columns", "grid", "date", "time", "iso",
+                "size", "units", "decimal", "binary", "hidden",
+            ],
         ),
         (
             "Previews & files",
             icons::EYE,
             "previews",
-            &["preview", "previews", "files", "thumbnail", "audio", "image", "video", "pdf", "spreadsheet", "xlsx", "code", "size limit", "mb", "peek", "hover"],
+            &[
+                "preview",
+                "previews",
+                "files",
+                "thumbnail",
+                "audio",
+                "image",
+                "video",
+                "pdf",
+                "spreadsheet",
+                "xlsx",
+                "code",
+                "size limit",
+                "mb",
+                "peek",
+                "hover",
+            ],
         ),
         (
             "Audio & DSP",
             icons::MUSIC,
             "audio",
-            &["audio", "dsp", "music", "playback", "continuous", "sound", "spectrum", "equalizer", "decay", "bands", "flac", "symphonia", "lossless"],
+            &[
+                "audio",
+                "dsp",
+                "music",
+                "playback",
+                "continuous",
+                "sound",
+                "spectrum",
+                "equalizer",
+                "decay",
+                "bands",
+                "flac",
+                "symphonia",
+                "lossless",
+            ],
         ),
         (
             "Search & index",
             icons::SEARCH,
             "search",
-            &["search", "index", "catalog", "sqlite", "query", "exclude", "reconcile", "rebuild", "find"],
+            &[
+                "search",
+                "index",
+                "catalog",
+                "sqlite",
+                "query",
+                "exclude",
+                "reconcile",
+                "rebuild",
+                "find",
+            ],
         ),
         (
             "Context menu",
             icons::LIST,
             "context-menu",
-            &["context", "menu", "right click", "actions", "open with", "pin", "copy", "compress"],
+            &[
+                "context",
+                "menu",
+                "right click",
+                "actions",
+                "open with",
+                "pin",
+                "copy",
+                "compress",
+            ],
         ),
         (
             "Custom actions",
             icons::SETTINGS_2,
             "actions",
-            &["custom", "actions", "commands", "scripts", "bash", "execute", "tools"],
+            &[
+                "custom", "actions", "commands", "scripts", "bash", "execute", "tools",
+            ],
         ),
         (
             "Themes",
             icons::PALETTE,
             "theme",
-            &["theme", "themes", "color", "palette", "dark", "light", "noctalia", "omarchy", "accent", "surface"],
+            &[
+                "theme", "themes", "color", "palette", "dark", "light", "noctalia", "omarchy",
+                "accent", "surface",
+            ],
         ),
         (
             "Fonts",
             icons::FILE_CODE,
             "fonts",
-            &["font", "fonts", "typography", "monospace", "size", "jet-brains", "maple", "fira", "hack"],
+            &[
+                "font",
+                "fonts",
+                "typography",
+                "monospace",
+                "size",
+                "jet-brains",
+                "maple",
+                "fira",
+                "hack",
+            ],
         ),
         (
             "Keyboard shortcuts",
@@ -190,24 +270,47 @@ pub fn build_layer(
             "Diagnostics",
             icons::TERMINAL,
             "diagnostics",
-            &["diagnostics", "system", "wayland", "x11", "gtk", "paths", "cache", "thumbnails", "storage", "telemetry"],
+            &[
+                "diagnostics",
+                "system",
+                "wayland",
+                "x11",
+                "gtk",
+                "paths",
+                "cache",
+                "thumbnails",
+                "storage",
+                "telemetry",
+            ],
         ),
         (
             "About",
             icons::INFO,
             "about",
-            &["about", "version", "strata", "hermes", "license", "release", "credits"],
+            &[
+                "about", "version", "strata", "hermes", "license", "release", "credits",
+            ],
         ),
     ];
 
-    let nav_buttons: Rc<RefCell<Vec<(gtk::Button, &'static str, &'static str, &'static [&'static str])>>> =
-        Rc::new(RefCell::new(Vec::new()));
+    let nav_buttons: Rc<
+        RefCell<
+            Vec<(
+                gtk::Button,
+                &'static str,
+                &'static str,
+                &'static [&'static str],
+            )>,
+        >,
+    > = Rc::new(RefCell::new(Vec::new()));
     for (label, icon, name, keywords) in items {
         let button = navigation_button(icon, label);
         if *name == "general" {
             button.add_css_class("settings-nav-active");
         }
-        nav_buttons.borrow_mut().push((button.clone(), *name, *label, *keywords));
+        nav_buttons
+            .borrow_mut()
+            .push((button.clone(), *name, *label, *keywords));
         let buttons = nav_buttons.clone();
         let stack = stack.clone();
         let title = title.clone();
@@ -420,9 +523,27 @@ fn general_page(
 
     let current_startup = manager.startup_location();
     let startup_options = [
-        ("home", "HOME", "Home Folder", "Start in your Home folder without removing saved tabs.", icons::HOME),
-        ("music", "MUSIC", "Music Library", "Open your music library without starting playback.", icons::MUSIC),
-        ("last", "RESUME", "Last Session", "Reopen the last active folder and retain your saved tabs and view settings.", icons::REPEAT),
+        (
+            "home",
+            "HOME",
+            "Home Folder",
+            "Start in your Home folder without removing saved tabs.",
+            icons::HOME,
+        ),
+        (
+            "music",
+            "MUSIC",
+            "Music Library",
+            "Open your music library without starting playback.",
+            icons::MUSIC,
+        ),
+        (
+            "last",
+            "RESUME",
+            "Last Session",
+            "Reopen the last active folder and retain your saved tabs and view settings.",
+            icons::REPEAT,
+        ),
     ];
 
     let startup_buttons = Rc::new(RefCell::new(Vec::<gtk::glib::WeakRef<gtk::Button>>::new()));
@@ -433,7 +554,11 @@ fn general_page(
         let manager = manager.clone();
         card.connect_clicked(move |clicked| {
             manager.set_startup_location(id);
-            for button in buttons.borrow().iter().filter_map(gtk::glib::WeakRef::upgrade) {
+            for button in buttons
+                .borrow()
+                .iter()
+                .filter_map(gtk::glib::WeakRef::upgrade)
+            {
                 button.remove_css_class("selected");
             }
             clicked.add_css_class("selected");
@@ -477,7 +602,9 @@ fn general_page(
         manager.reduce_motion(),
     );
     let manager_for_motion = manager.clone();
-    reduce_motion.connect_active_notify(move |toggle| manager_for_motion.set_reduce_motion(toggle.is_active()));
+    reduce_motion.connect_active_notify(move |toggle| {
+        manager_for_motion.set_reduce_motion(toggle.is_active())
+    });
     safety_card.append(&motion_row);
     preferences.append(&safety_card);
 
@@ -547,16 +674,81 @@ fn general_page(
     append_heading(&preferences, "DESKTOP INTEGRATION");
     let portal_card = settings_card();
 
-    let picker_enabled = crate::portal::is_picker_integration_enabled();
+    let development = crate::paths::is_development();
     let (picker_row, picker_toggle) = settings_option(
         "Use Hermes as system file picker (XDG portal)",
-        "Handle Open and Save file dialogs across desktop applications (Discord, browsers, editors) with Hermes.",
-        picker_enabled,
+        "Choose Hermes for desktop Open and Save dialogs. Applications may need a new session to use the configured picker.",
+        false,
     );
-    picker_toggle.connect_active_notify(move |toggle| {
-        let _ = crate::portal::set_picker_integration_enabled(toggle.is_active());
-    });
+    picker_toggle.set_sensitive(false);
     portal_card.append(&picker_row);
+    let picker_error = gtk::Label::new(None);
+    picker_error.set_xalign(0.0);
+    picker_error.set_wrap(true);
+    picker_error.add_css_class("theme-editor-error");
+    picker_error.set_visible(false);
+    portal_card.append(&picker_error);
+    let picker_restore = gtk::Button::with_label("Restore previous picker settings");
+    picker_restore.set_visible(false);
+    portal_card.append(&picker_restore);
+    let updating = Rc::new(std::cell::Cell::new(false));
+    let weak_toggle = picker_toggle.downgrade();
+    let weak_restore = picker_restore.downgrade();
+    let weak_error = picker_error.downgrade();
+    let updating_picker = updating.clone();
+    let apply_picker: Rc<dyn Fn(Option<bool>)> = Rc::new(move |enabled| {
+        if updating_picker.replace(true) {
+            return;
+        }
+        if let Some(toggle) = weak_toggle.upgrade() {
+            toggle.set_sensitive(false);
+        }
+        if let Some(restore) = weak_restore.upgrade() {
+            restore.set_sensitive(false);
+        }
+        let toggle = weak_toggle.clone();
+        let restore = weak_restore.clone();
+        let error_label = weak_error.clone();
+        let updating = updating_picker.clone();
+        gtk::glib::MainContext::default().spawn_local(async move {
+            let result = gio::spawn_blocking(move || {
+                let applied = match enabled {
+                    Some(enabled) => crate::portal::set_picker_integration_enabled(enabled),
+                    None => Ok(()),
+                };
+                (applied, crate::portal::picker_integration_status())
+            }).await;
+            let (enabled, failure) = match result {
+                Ok((applied, status)) => {
+                    let configured = status.as_ref().is_ok_and(|value| *value);
+                    (configured, applied.err().or_else(|| status.err()).map(|error| error.to_string()))
+                }
+                Err(_) => (false, Some("Picker setup stopped unexpectedly. Retry restoration before changing its configuration.".to_owned())),
+            };
+            if let Some(toggle) = toggle.upgrade() {
+                toggle.set_active(enabled);
+                toggle.set_sensitive(!development && failure.is_none());
+            }
+            if let Some(label) = error_label.upgrade() {
+                label.set_visible(failure.is_some());
+                if let Some(message) = failure.as_ref() { label.set_text(message); }
+            }
+            if let Some(restore) = restore.upgrade() {
+                restore.set_visible(failure.is_some() && !development);
+                restore.set_sensitive(!development);
+            }
+            updating.set(false);
+        });
+    });
+    let apply_picker_toggle = apply_picker.clone();
+    picker_toggle.connect_active_notify(move |toggle| {
+        if !updating.get() {
+            apply_picker_toggle(Some(toggle.is_active()));
+        }
+    });
+    let apply_picker_restore = apply_picker.clone();
+    picker_restore.connect_clicked(move |_| apply_picker_restore(Some(false)));
+    apply_picker(None);
 
     let (sync_theme_row, sync_theme_toggle) = settings_option(
         "Sync theme with file picker",
@@ -585,9 +777,24 @@ fn view_formats_page(
     layout_cards.add_css_class("settings-choice-cards");
 
     let layout_options = [
-        ("columns", "MILLER HIERARCHY", "Columns View", "Cascading columns with instant branch navigation."),
-        ("grid", "THUMBNAIL GALLERY", "Grid Gallery", "High-density responsive grid for photos and media."),
-        ("explorer", "DUAL-PANE TREE", "Explorer Split", "Classic sidebar folder tree paired with active file list."),
+        (
+            "columns",
+            "MILLER HIERARCHY",
+            "Columns View",
+            "Cascading columns with instant branch navigation.",
+        ),
+        (
+            "grid",
+            "THUMBNAIL GALLERY",
+            "Grid Gallery",
+            "High-density responsive grid for photos and media.",
+        ),
+        (
+            "explorer",
+            "DUAL-PANE TREE",
+            "Explorer Split",
+            "Classic sidebar folder tree paired with active file list.",
+        ),
     ];
 
     let layout_buttons = Rc::new(RefCell::new(Vec::<gtk::glib::WeakRef<gtk::Button>>::new()));
@@ -597,11 +804,22 @@ fn view_formats_page(
             "explorer" => BrowserMode::Explorer,
             _ => BrowserMode::Columns,
         };
-        let card = visual_choice_card(tag, title, desc, Some(id), None, browser.view_mode() == mode);
+        let card = visual_choice_card(
+            tag,
+            title,
+            desc,
+            Some(id),
+            None,
+            browser.view_mode() == mode,
+        );
         let buttons = layout_buttons.clone();
         let browser = browser.clone();
         card.connect_clicked(move |clicked| {
-            for btn in buttons.borrow().iter().filter_map(gtk::glib::WeakRef::upgrade) {
+            for btn in buttons
+                .borrow()
+                .iter()
+                .filter_map(gtk::glib::WeakRef::upgrade)
+            {
                 btn.remove_css_class("selected");
             }
             clicked.add_css_class("selected");
@@ -617,9 +835,24 @@ fn view_formats_page(
     density_cards.add_css_class("settings-choice-cards");
 
     let density_options = [
-        ("compact", "MAXIMUM DENSITY", "Compact", "Tight spacing and compact row heights for power users."),
-        ("standard", "BALANCED", "Standard", "Standard balanced padding and icon sizing."),
-        ("airy", "GENEROUS SPACING", "Airy", "Spacious line heights and generous touch targets."),
+        (
+            "compact",
+            "MAXIMUM DENSITY",
+            "Compact",
+            "Tight spacing and compact row heights for power users.",
+        ),
+        (
+            "standard",
+            "BALANCED",
+            "Standard",
+            "Standard balanced padding and icon sizing.",
+        ),
+        (
+            "airy",
+            "GENEROUS SPACING",
+            "Airy",
+            "Spacious line heights and generous touch targets.",
+        ),
     ];
 
     let density_buttons = Rc::new(RefCell::new(Vec::<gtk::glib::WeakRef<gtk::Button>>::new()));
@@ -634,13 +867,26 @@ fn view_formats_page(
         } else {
             desc.to_owned()
         };
-        let card = visual_choice_card(tag, title, &description, Some(id), None, density == Some(browser.density()));
+        let card = visual_choice_card(
+            tag,
+            title,
+            &description,
+            Some(id),
+            None,
+            density == Some(browser.density()),
+        );
         card.set_sensitive(density.is_some());
         let buttons = density_buttons.clone();
         let browser = browser.clone();
         card.connect_clicked(move |clicked| {
-            let Some(density) = density else { return; };
-            for btn in buttons.borrow().iter().filter_map(gtk::glib::WeakRef::upgrade) {
+            let Some(density) = density else {
+                return;
+            };
+            for btn in buttons
+                .borrow()
+                .iter()
+                .filter_map(gtk::glib::WeakRef::upgrade)
+            {
                 btn.remove_css_class("selected");
             }
             clicked.add_css_class("selected");
@@ -696,12 +942,10 @@ fn view_formats_page(
         selected_date_idx,
     );
     let manager_for_date = manager.clone();
-    date_format.connect_selected_notify(move |choice| {
-        match choice.selected() {
-            0 => manager_for_date.set_date_format("relative"),
-            1 => manager_for_date.set_date_format("iso"),
-            _ => {}
-        }
+    date_format.connect_selected_notify(move |choice| match choice.selected() {
+        0 => manager_for_date.set_date_format("relative"),
+        1 => manager_for_date.set_date_format("iso"),
+        _ => {}
     });
     let (date_sample_row, date_sample) = sample_telemetry_row(
         "Live timestamp example",
@@ -709,7 +953,10 @@ fn view_formats_page(
         "—",
     );
     if let Ok(now) = gtk::glib::DateTime::now_local() {
-        super::formatting::bind(&date_sample, super::formatting::Value::Timestamp(now.to_unix().saturating_sub(240)));
+        super::formatting::bind(
+            &date_sample,
+            super::formatting::Value::Timestamp(now.to_unix().saturating_sub(240)),
+        );
     }
     card2.append(&date_row);
     card2.append(&date_sample_row);
@@ -732,12 +979,10 @@ fn view_formats_page(
         selected_unit_idx,
     );
     let manager_for_unit = manager.clone();
-    size_unit.connect_selected_notify(move |choice| {
-        match choice.selected() {
-            0 => manager_for_unit.set_size_unit("decimal"),
-            1 => manager_for_unit.set_size_unit("binary"),
-            _ => {}
-        }
+    size_unit.connect_selected_notify(move |choice| match choice.selected() {
+        0 => manager_for_unit.set_size_unit("decimal"),
+        1 => manager_for_unit.set_size_unit("binary"),
+        _ => {}
     });
     let (size_sample_row, size_sample) = sample_telemetry_row(
         "Live file size example",
@@ -890,8 +1135,20 @@ fn audio_page(manager: Rc<ThemeManager>) -> gtk::Widget {
 
     let current_layout = manager.music_player_layout();
     let layout_options = [
-        ("top", "HERO DECK", "Top Hero Deck", "Integrated player card above library.", "hero"),
-        ("bottom", "BOTTOM DOCK", "Bottom Dock", "Full library with persistent bottom dock.", "dock"),
+        (
+            "top",
+            "HERO DECK",
+            "Top Hero Deck",
+            "Integrated player card above library.",
+            "hero",
+        ),
+        (
+            "bottom",
+            "BOTTOM DOCK",
+            "Bottom Dock",
+            "Full library with persistent bottom dock.",
+            "dock",
+        ),
     ];
 
     let layout_buttons = Rc::new(RefCell::new(Vec::<gtk::glib::WeakRef<gtk::Button>>::new()));
@@ -902,7 +1159,11 @@ fn audio_page(manager: Rc<ThemeManager>) -> gtk::Widget {
         let manager_for_layout = manager.clone();
         let layout_id = id.to_owned();
         card.connect_clicked(move |clicked| {
-            for btn in buttons.borrow().iter().filter_map(gtk::glib::WeakRef::upgrade) {
+            for btn in buttons
+                .borrow()
+                .iter()
+                .filter_map(gtk::glib::WeakRef::upgrade)
+            {
                 btn.remove_css_class("selected");
             }
             clicked.add_css_class("selected");
@@ -1002,15 +1263,34 @@ fn audio_page(manager: Rc<ThemeManager>) -> gtk::Widget {
 
     append_heading(&content, "DSP PIPELINE TELEMETRY");
     let telemetry_card = settings_card();
-    append_telemetry_row(&telemetry_card, "Decoder core", "GStreamer · sandboxed media worker");
-    append_telemetry_row(&telemetry_card, "Audio output", "GStreamer autoaudiosink · system audio backend");
-    append_telemetry_row(&telemetry_card, "Internal format", "48 kHz · 32-bit float PCM · Stereo");
+    append_telemetry_row(
+        &telemetry_card,
+        "Decoder core",
+        "GStreamer · sandboxed media worker",
+    );
+    append_telemetry_row(
+        &telemetry_card,
+        "Audio output",
+        "GStreamer autoaudiosink · system audio backend",
+    );
+    append_telemetry_row(
+        &telemetry_card,
+        "Internal format",
+        "48 kHz · 32-bit float PCM · Stereo",
+    );
     append_telemetry_row(
         &telemetry_card,
         "Filterbank",
-        &format!("{} log-spaced bands · 50 Hz – 16 kHz", crate::playback::SPECTRUM_BANDS),
+        &format!(
+            "{} log-spaced bands · 50 Hz – 16 kHz",
+            crate::playback::SPECTRUM_BANDS
+        ),
     );
-    append_telemetry_row(&telemetry_card, "Codec availability", "Depends on installed GStreamer decoder plugins");
+    append_telemetry_row(
+        &telemetry_card,
+        "Codec availability",
+        "Depends on installed GStreamer decoder plugins",
+    );
     content.append(&telemetry_card);
 
     content.upcast()
@@ -1131,7 +1411,9 @@ fn search_page(manager: Rc<ThemeManager>) -> gtk::Widget {
     content.upcast()
 }
 
-fn library_refresh_result(snapshot: &crate::services::music_library::Snapshot) -> Option<Result<(), String>> {
+fn library_refresh_result(
+    snapshot: &crate::services::music_library::Snapshot,
+) -> Option<Result<(), String>> {
     if snapshot.indexing {
         None
     } else {
@@ -1162,7 +1444,12 @@ fn diagnostics_page() -> gtk::Widget {
     append_telemetry_row(
         &card1,
         "GTK version",
-        &format!("{}.{}.{}", gtk::major_version(), gtk::minor_version(), gtk::micro_version()),
+        &format!(
+            "{}.{}.{}",
+            gtk::major_version(),
+            gtk::minor_version(),
+            gtk::micro_version()
+        ),
     );
     let renderer = gtk::Window::list_toplevels()
         .into_iter()
@@ -1179,7 +1466,11 @@ fn diagnostics_page() -> gtk::Widget {
     let config_dir = crate::paths::config_dir();
     let cache_dir = crate::paths::cache_dir();
     let data_dir = crate::paths::data_dir();
-    append_telemetry_row(&card2, "Configuration directory", &config_dir.display().to_string());
+    append_telemetry_row(
+        &card2,
+        "Configuration directory",
+        &config_dir.display().to_string(),
+    );
     append_telemetry_row(&card2, "Cache directory", &cache_dir.display().to_string());
     append_telemetry_row(&card2, "Data directory", &data_dir.display().to_string());
     content.append(&card2);

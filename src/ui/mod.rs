@@ -5,31 +5,46 @@ mod blur;
 mod browser;
 mod browser_modes;
 mod context_menu;
-mod formatting;
-mod hover;
 pub mod folder_tree;
+mod formatting;
 pub mod home_dashboard;
+mod hover;
+mod legacy_import;
 mod motion;
 mod music;
-mod seek;
-pub mod preview;
 pub(crate) mod picker;
-pub mod recent_folders;
-pub mod search;
-mod saved_searches;
+pub mod preview;
 pub mod quick_look;
+pub mod recent_folders;
+mod saved_searches;
+pub mod search;
+mod seek;
+mod settings;
 pub mod shortcuts;
 pub mod split_view;
-mod settings;
+pub mod status_bar;
+pub mod table_view;
 pub(crate) mod theme;
 pub mod thumbnail;
 mod trails;
-pub mod status_bar;
-pub mod table_view;
 mod window;
 
-pub use window::present;
-pub(crate) use window::present_reveal;
+pub fn present(application: &gtk::Application) {
+    legacy_import::present(application, None);
+}
+
+pub(crate) fn present_reveal(
+    application: &gtk::Application,
+    request: crate::file_manager::Request,
+) {
+    legacy_import::present(application, Some(request));
+}
+
+fn initialize_stores(application: &gtk::Application) {
+    initialize_music(application);
+    initialize_saved_searches(application);
+    initialize_ratings(application);
+}
 
 pub(crate) fn initialize_saved_searches(application: &gtk::Application) {
     use gtk::prelude::*;

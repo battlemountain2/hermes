@@ -29,6 +29,7 @@ optdepends=(
     'ffmpegthumbnailer: video thumbnail extraction'
     'imagemagick: scaled preview rendering for large image formats'
     'libreoffice: office document rendering'
+    'python: reversible desktop picker setup from Settings'
 )
 provides=('hermes')
 conflicts=('hermes')

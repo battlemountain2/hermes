@@ -281,6 +281,8 @@ pub struct ThemeManager {
     pending_noctalia_refresh: RefCell<Option<glib::SourceId>>,
     noctalia_poll: RefCell<Option<glib::SourceId>>,
     settings_monitor: RefCell<Option<gio::FileMonitor>>,
+    themes_monitor: RefCell<Option<gio::FileMonitor>>,
+    picker_mode: Cell<bool>,
     pending_settings_refresh: RefCell<Option<glib::SourceId>>,
     previewing: Cell<bool>,
     layout_observers: RefCell<Vec<Rc<dyn Fn()>>>,
@@ -338,6 +340,8 @@ impl ThemeManager {
             pending_noctalia_refresh: RefCell::new(None),
             noctalia_poll: RefCell::new(None),
             settings_monitor: RefCell::new(None),
+            themes_monitor: RefCell::new(None),
+            picker_mode: Cell::new(false),
             pending_settings_refresh: RefCell::new(None),
             previewing: Cell::new(false),
             layout_observers: RefCell::new(Vec::new()),
@@ -919,6 +923,9 @@ impl ThemeManager {
     }
 
     pub(crate) fn apply_selected(&self) {
+        if self.picker_mode.get() && !self.sync_picker_theme() {
+            return;
+        }
         if self.follows_noctalia() {
             self.noctalia.borrow_mut().refresh();
         }
@@ -1101,36 +1108,85 @@ impl ThemeManager {
     fn monitor_settings(self: &Rc<Self>) {
         let path = settings_path();
         let file = gio::File::for_path(&path);
-        let Ok(monitor) =
-            file.monitor_file(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE)
+        let monitor = gio::File::for_path(crate::paths::config_dir())
+            .monitor_directory(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE)
+            .or_else(|_| {
+                file.monitor_file(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE)
+            });
+        let Ok(monitor) = monitor else {
+            return;
+        };
+        let weak = Rc::downgrade(self);
+        monitor.connect_changed(move |_, file, other, _| {
+            let Some(manager) = weak.upgrade() else {
+                return;
+            };
+            if [Some(file), other].into_iter().flatten().any(|file| {
+                file.path()
+                    .is_some_and(|path| path == settings_path() || path == themes_directory())
+            }) {
+                manager.queue_preferences_refresh();
+            }
+        });
+        self.settings_monitor.replace(Some(monitor));
+        self.monitor_theme_files();
+    }
+
+    fn monitor_theme_files(self: &Rc<Self>) {
+        if self
+            .themes_monitor
+            .borrow()
+            .as_ref()
+            .is_some_and(|monitor| !monitor.is_cancelled())
+        {
+            return;
+        }
+        let Ok(monitor) = gio::File::for_path(themes_directory())
+            .monitor_directory(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE)
         else {
             return;
         };
         let weak = Rc::downgrade(self);
         monitor.connect_changed(move |_, _, _, _| {
-            let Some(manager) = weak.upgrade() else {
-                return;
-            };
-            if let Some(pending) = manager.pending_settings_refresh.borrow_mut().take() {
-                pending.remove();
+            if let Some(manager) = weak.upgrade() {
+                manager.queue_preferences_refresh();
             }
-            let weak = weak.clone();
-            let refresh = glib::timeout_add_local_once(Duration::from_millis(50), move || {
-                let Some(manager) = weak.upgrade() else {
-                    return;
-                };
-                manager.pending_settings_refresh.borrow_mut().take();
-                manager.reload_preferences();
-            });
-            manager.pending_settings_refresh.replace(Some(refresh));
         });
-        self.settings_monitor.replace(Some(monitor));
+        self.themes_monitor.replace(Some(monitor));
+    }
+
+    fn queue_preferences_refresh(self: &Rc<Self>) {
+        if let Some(pending) = self.pending_settings_refresh.borrow_mut().take() {
+            pending.remove();
+        }
+        let weak = Rc::downgrade(self);
+        let refresh = glib::timeout_add_local_once(Duration::from_millis(50), move || {
+            if let Some(manager) = weak.upgrade() {
+                manager.pending_settings_refresh.borrow_mut().take();
+                manager.monitor_theme_files();
+                manager.reload_preferences();
+            }
+        });
+        self.pending_settings_refresh.replace(Some(refresh));
+    }
+
+    pub(crate) fn use_picker_theme(&self) {
+        self.picker_mode.set(true);
+        self.reload_preferences();
     }
 
     pub fn reload_preferences(&self) {
-        let Some(preferences) = read_preferences() else {
+        let Some(mut preferences) = read_preferences() else {
             return;
         };
+        if self.picker_mode.get() && !preferences.sync_picker_theme {
+            self.preferences.borrow_mut().sync_picker_theme = false;
+            return;
+        }
+        let mut themes = builtins();
+        themes.extend(load_custom_themes());
+        preferences.theme = migrate_theme_id(&preferences.theme).to_owned();
+        *self.themes.borrow_mut() = themes;
         *self.preferences.borrow_mut() = preferences;
         if self.follows_noctalia() {
             self.noctalia.borrow_mut().refresh();
@@ -1160,6 +1216,9 @@ impl Drop for ThemeManager {
             monitor.cancel();
         }
         if let Some(monitor) = self.settings_monitor.borrow_mut().take() {
+            monitor.cancel();
+        }
+        if let Some(monitor) = self.themes_monitor.borrow_mut().take() {
             monitor.cancel();
         }
     }

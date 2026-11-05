@@ -113,6 +113,29 @@ fn missing_source_never_removes_the_existing_destination() -> Result<(), Box<dyn
 }
 
 #[test]
+fn destination_changed_during_copy_requires_a_new_conflict_decision() -> Result<(), Box<dyn Error>>
+{
+    let fixture = Fixture::new()?;
+    let result = stage_and_commit(
+        &fixture.source(),
+        &fixture.target(),
+        false,
+        true,
+        &gio::Cancellable::new(),
+        |stage| {
+            fs::copy(fixture.source(), stage).map_err(super::io_error)?;
+            fs::write(fixture.target(), b"a newer destination version").map_err(super::io_error)?;
+            Ok(())
+        },
+    );
+    assert!(result.unwrap_err().matches(gio::IOErrorEnum::Exists));
+    assert_eq!(fs::read(fixture.target())?, b"a newer destination version");
+    assert_eq!(fs::read(fixture.source())?, b"new contents");
+    fixture.assert_clean()?;
+    Ok(())
+}
+
+#[test]
 fn failed_partial_copy_keeps_both_originals_and_cleans_staging() -> Result<(), Box<dyn Error>> {
     for move_source in [false, true] {
         let fixture = Fixture::new()?;
@@ -526,113 +549,27 @@ fn folder_merging_combines_contents_and_preserves_unrelated_files() -> Result<()
 }
 
 #[test]
-fn folder_merging_recursive_tree_with_conflicts_preserves_unrelated_and_updates_collisions()
--> Result<(), Box<dyn Error>> {
+fn folder_approval_does_not_authorize_nested_file_replacement() -> Result<(), Box<dyn Error>> {
     for move_source in [false, true] {
         let fixture = Fixture::new()?;
         fs::remove_file(fixture.source())?;
         fs::remove_file(fixture.target())?;
-
-        // Setup complex source tree
-        fs::create_dir_all(fixture.source().join("sub/deep"))?;
-        fs::write(fixture.source().join("root_keep.txt"), b"source root keep")?;
-        fs::write(
-            fixture.source().join("conflict.txt"),
-            b"source conflict version",
-        )?;
-        fs::write(
-            fixture.source().join("sub/nested_keep.txt"),
-            b"source nested keep",
-        )?;
-        fs::write(
-            fixture.source().join("sub/nested_conflict.txt"),
-            b"source nested conflict",
-        )?;
-        fs::write(
-            fixture.source().join("sub/deep/leaf.txt"),
-            b"source deep leaf",
-        )?;
-
-        // Setup complex target tree
-        fs::create_dir_all(fixture.target().join("sub"))?;
-        fs::create_dir_all(fixture.target().join("other"))?;
-        fs::write(
-            fixture.target().join("root_untouched.txt"),
-            b"target root untouched",
-        )?;
-        fs::write(
-            fixture.target().join("conflict.txt"),
-            b"target old conflict",
-        )?;
-        fs::write(
-            fixture.target().join("sub/nested_untouched.txt"),
-            b"target nested untouched",
-        )?;
-        fs::write(
-            fixture.target().join("sub/nested_conflict.txt"),
-            b"target old nested conflict",
-        )?;
-        fs::write(
-            fixture.target().join("other/extra.txt"),
-            b"target other extra",
-        )?;
-
+        fs::create_dir_all(fixture.source().join("nested"))?;
+        fs::create_dir_all(fixture.target().join("nested"))?;
+        fs::write(fixture.source().join("nested/conflict"), b"incoming")?;
+        fs::write(fixture.target().join("nested/conflict"), b"existing")?;
+        fs::write(fixture.target().join("unrelated"), b"keep")?;
         let result = transfer(&fixture.source(), &fixture.target(), move_source, true);
-        assert!(
-            result.is_ok(),
-            "recursive folder merge failed: {:?}",
-            result.err()
-        );
-
-        // Target must preserve untouched files
+        assert!(result.is_err());
         assert_eq!(
-            fs::read(fixture.target().join("root_untouched.txt"))?,
-            b"target root untouched"
+            fs::read(fixture.source().join("nested/conflict"))?,
+            b"incoming"
         );
         assert_eq!(
-            fs::read(fixture.target().join("sub/nested_untouched.txt"))?,
-            b"target nested untouched"
+            fs::read(fixture.target().join("nested/conflict"))?,
+            b"existing"
         );
-        assert_eq!(
-            fs::read(fixture.target().join("other/extra.txt"))?,
-            b"target other extra"
-        );
-
-        // Target must receive new files
-        assert_eq!(
-            fs::read(fixture.target().join("root_keep.txt"))?,
-            b"source root keep"
-        );
-        assert_eq!(
-            fs::read(fixture.target().join("sub/nested_keep.txt"))?,
-            b"source nested keep"
-        );
-        assert_eq!(
-            fs::read(fixture.target().join("sub/deep/leaf.txt"))?,
-            b"source deep leaf"
-        );
-
-        // Conflicting files must be updated to source version
-        assert_eq!(
-            fs::read(fixture.target().join("conflict.txt"))?,
-            b"source conflict version"
-        );
-        assert_eq!(
-            fs::read(fixture.target().join("sub/nested_conflict.txt"))?,
-            b"source nested conflict"
-        );
-
-        if move_source {
-            assert!(
-                !fixture.source().exists(),
-                "source tree must be removed after move-merge"
-            );
-        } else {
-            assert!(
-                fixture.source().join("sub/deep/leaf.txt").exists(),
-                "source must remain on copy-merge"
-            );
-        }
+        assert_eq!(fs::read(fixture.target().join("unrelated"))?, b"keep");
         fixture.assert_clean()?;
     }
     Ok(())

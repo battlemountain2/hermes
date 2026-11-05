@@ -136,6 +136,11 @@ pub enum BrowserEvent {
         bytes_transferred: u64,
         total_bytes: Option<u64>,
     },
+    TransferConflict {
+        source: FileEntry,
+        existing: FileEntry,
+        reply: crate::services::ConflictReply,
+    },
     TransferItemCompleted {
         source: Location,
         move_source: bool,
@@ -1120,6 +1125,7 @@ impl Browser {
                 | OperationEvent::Created { request_id }
                 | OperationEvent::Pasted { request_id }
                 | OperationEvent::TransferProgress { request_id, .. }
+                | OperationEvent::TransferConflict { request_id, .. }
                 | OperationEvent::TransferItemCompleted { request_id, .. }
                 | OperationEvent::TransferCompletedWithErrors { request_id, .. }
                 | OperationEvent::DeleteProgress { request_id, .. }
@@ -1133,6 +1139,26 @@ impl Browser {
                 | OperationEvent::Failed { request_id, .. } => *request_id,
             };
             if event_id != request_id || browser.current_operation.get() != Some(event_id) {
+                if let OperationEvent::TransferConflict { reply, .. } = &event {
+                    reply.respond(crate::services::ConflictResolution {
+                        action: crate::services::ConflictAction::Cancel,
+                        apply_to_remaining: false,
+                    });
+                }
+                return;
+            }
+            if let OperationEvent::TransferConflict {
+                source,
+                existing,
+                reply,
+                ..
+            } = &event
+            {
+                browser.emit(BrowserEvent::TransferConflict {
+                    source: source.clone(),
+                    existing: existing.clone(),
+                    reply: reply.clone(),
+                });
                 return;
             }
             if let OperationEvent::TransferItemCompleted {
@@ -1262,6 +1288,7 @@ impl Browser {
                     browser.refresh_location(&refresh);
                 }
                 OperationEvent::DeleteProgress { .. }
+                | OperationEvent::TransferConflict { .. }
                 | OperationEvent::RestoreProgress { .. }
                 | OperationEvent::TransferItemCompleted { .. }
                 | OperationEvent::TransferProgress { .. } => {}
@@ -1378,7 +1405,10 @@ impl Browser {
             self.descend(depth, entry.location.clone());
         } else if is_archive_entry(&entry) {
             if let Some(path) = entry.location.native_path() {
-                self.descend(depth, Location::uri(format!("archive://{}/", path.display())));
+                self.descend(
+                    depth,
+                    Location::uri(format!("archive://{}/", path.display())),
+                );
                 return;
             }
             self.emit(BrowserEvent::OpenRequested {

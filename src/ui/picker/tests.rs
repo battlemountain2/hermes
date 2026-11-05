@@ -7,6 +7,100 @@ use std::{
 };
 
 #[test]
+#[ignore = "Private GTK display and isolated XDG roots; creates only generated folders"]
+fn private_new_folder_control_creates_and_enters_folder_without_changing_save_name() {
+    glib::set_prgname(Some("hermes-picker-test"));
+    gtk::init().unwrap();
+    crate::assets::prepare().unwrap();
+    let theme = prepare();
+    theme.select_theme("graphite");
+    let application = gtk::Application::builder()
+        .application_id("io.github.battlemountain2.Hermes.FolderTest")
+        .flags(gio::ApplicationFlags::NON_UNIQUE)
+        .build();
+    application.register(None::<&gio::Cancellable>).unwrap();
+    let fixture = FixtureDirectory::new();
+    let request = Request::parse(
+        "SaveFile",
+        "Save generated archive".into(),
+        String::new(),
+        Options::from([
+            (
+                "current_folder".into(),
+                [fixture.0.as_os_str().as_encoded_bytes(), &[0]]
+                    .concat()
+                    .to_variant(),
+            ),
+            ("current_name".into(), "download.7z".to_variant()),
+        ]),
+    )
+    .unwrap();
+    let picker = Picker::new(&application, request, Rc::new(|_| {}));
+    until(|| {
+        picker
+            .0
+            .dialog
+            .current_folder()
+            .and_then(|folder| folder.path())
+            .as_ref()
+            == Some(&fixture.0)
+    });
+    fn find<T: IsA<gtk::Widget> + glib::object::IsClass>(
+        widget: &gtk::Widget,
+        predicate: &impl Fn(&T) -> bool,
+    ) -> Option<T> {
+        if let Ok(found) = widget.clone().downcast::<T>()
+            && predicate(&found)
+        {
+            return Some(found);
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            child = current.next_sibling();
+            if let Some(found) = find(&current, predicate) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    let button = find::<gtk::MenuButton>(picker.0.dialog.upcast_ref(), &|button| {
+        button.has_css_class("picker-new-folder")
+    })
+    .unwrap();
+    button.popup();
+    let popover = button.popover().unwrap();
+    let field = find::<gtk::Entry>(popover.upcast_ref(), &|entry| {
+        entry.placeholder_text().as_deref() == Some("Folder name")
+    })
+    .unwrap();
+    let create = find::<gtk::Button>(popover.upcast_ref(), &|button| {
+        button.label().as_deref() == Some("Create folder")
+    })
+    .unwrap();
+    assert!(!create.is_sensitive());
+    field.set_text("../outside");
+    assert!(!create.is_sensitive());
+    field.set_text("New folder");
+    assert!(create.is_sensitive());
+    create.emit_clicked();
+    until(|| {
+        picker
+            .0
+            .dialog
+            .current_folder()
+            .and_then(|folder| folder.path())
+            .as_ref()
+            == Some(&fixture.0.join("New folder"))
+    });
+    assert_eq!(
+        picker.0.dialog.current_name().as_deref(),
+        Some("download.7z")
+    );
+    assert!(fixture.0.join("New folder").is_dir());
+    picker.close();
+}
+
+#[test]
 fn chooser_styles_use_only_existing_semantic_color_tokens() {
     let styles = include_str!("../../style.css");
     let chooser = styles.split(".hermes-picker,").nth(1).unwrap();
@@ -190,6 +284,7 @@ fn until(condition: impl Fn() -> bool) {
 #[test]
 #[ignore = "Private GTK display and isolated XDG roots only; generated chooser files, no user documents"]
 fn private_chooser_returns_file_filters_choices_and_cancels_exactly_once() {
+    glib::set_prgname(Some("hermes-picker-test"));
     gtk::init().unwrap();
     glib::set_application_name(crate::identity::NAME);
     crate::assets::prepare().unwrap();
@@ -271,8 +366,14 @@ fn private_chooser_returns_file_filters_choices_and_cancels_exactly_once() {
         check_decorations(picker.0.dialog.upcast_ref(), &thumbnails, &file_icons);
         thumbnails.get() > 0
     });
-    assert!(thumbnails.get() > 0, "Expected decorated GtkFileThumbnail widgets");
-    assert!(file_icons.get() > 0, "Expected GtkImage with picker-file-icon");
+    assert!(
+        thumbnails.get() > 0,
+        "Expected decorated GtkFileThumbnail widgets"
+    );
+    assert!(
+        file_icons.get() > 0,
+        "Expected GtkImage with picker-file-icon"
+    );
     for id in ["paper", "graphite", "azure-glow"] {
         theme.select_theme(id);
         let deadline = Instant::now() + Duration::from_millis(120);
@@ -289,23 +390,47 @@ fn private_chooser_returns_file_filters_choices_and_cancels_exactly_once() {
         );
     }
     if let Some(path) = std::env::var_os("HERMES_PICKER_SCREENSHOT") {
-        until(|| picker.0.dialog.width() > 0);
-        let paintable = gtk::WidgetPaintable::new(Some(&picker.0.dialog));
-        let snapshot = gtk::Snapshot::new();
-        paintable.snapshot(
-            &snapshot,
-            f64::from(picker.0.dialog.width()),
-            f64::from(picker.0.dialog.height()),
-        );
-        if let Some(node) = snapshot.to_node() {
-            let renderer = gtk::gsk::CairoRenderer::new();
-            renderer.realize(None::<&gtk::gdk::Surface>).unwrap();
-            renderer
-                .render_texture(&node, None)
-                .save_to_png(path)
-                .unwrap();
-            renderer.unrealize();
+        // Broadway has no browser client to acknowledge frames in this test.
+        // Use a fresh chooser after the live-theme assertions so its render
+        // nodes do not depend on a previous, unacknowledged theme frame.
+        theme.select_theme("graphite");
+        let sample = Picker::new(&application, request.clone(), Rc::new(|_| {}));
+        until(|| sample.0.dialog.width() > 0);
+        let deadline = Instant::now() + Duration::from_millis(250);
+        while Instant::now() < deadline {
+            while glib::MainContext::default().iteration(false) {}
+            std::thread::sleep(Duration::from_millis(5));
         }
+        fn invalidate(widget: &gtk::Widget) {
+            widget.queue_draw();
+            let mut child = widget.first_child();
+            while let Some(current) = child {
+                child = current.next_sibling();
+                invalidate(&current);
+            }
+        }
+        invalidate(sample.0.dialog.upcast_ref());
+        sample
+            .0
+            .dialog
+            .allocate(sample.0.dialog.width(), sample.0.dialog.height(), -1, None);
+        let snapshot = gtk::Snapshot::new();
+        let mut child = sample.0.dialog.first_child();
+        while let Some(current) = child {
+            child = current.next_sibling();
+            sample.0.dialog.snapshot_child(&current, &snapshot);
+        }
+        let node = snapshot
+            .to_node()
+            .expect("The chooser must render before saving its screenshot");
+        let renderer = gtk::gsk::CairoRenderer::new();
+        renderer.realize(None::<&gtk::gdk::Surface>).unwrap();
+        renderer
+            .render_texture(&node, None)
+            .save_to_png(path)
+            .unwrap();
+        renderer.unrealize();
+        sample.close();
     }
     picker.0.dialog.response(gtk::ResponseType::Accept);
     until(|| !received.borrow().is_empty());
@@ -346,6 +471,7 @@ fn private_chooser_returns_file_filters_choices_and_cancels_exactly_once() {
 #[test]
 #[ignore = "Private GTK display and generated save destinations only; never writes to user documents"]
 fn private_save_requires_overwrite_confirmation_and_closes_child_dialogs() {
+    glib::set_prgname(Some("hermes-picker-test"));
     gtk::init().unwrap();
     glib::set_application_name(crate::identity::NAME);
     crate::assets::prepare().unwrap();

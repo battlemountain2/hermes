@@ -16,15 +16,14 @@ use gtk::{gio, glib, prelude::*};
 
 use crate::portal::request::{Kind, Options, Request};
 
+mod folders;
 mod icons;
 mod visuals;
 
 pub(crate) fn prepare() -> Rc<super::theme::ThemeManager> {
     super::window::load_styles();
     let manager = super::theme::ThemeManager::shared();
-    if manager.sync_picker_theme() {
-        manager.reload_preferences();
-    }
+    manager.use_picker_theme();
     manager
 }
 
@@ -62,15 +61,15 @@ impl Picker {
             Kind::Open { .. } => gtk::FileChooserAction::Open,
             Kind::Save => gtk::FileChooserAction::Save,
         };
-        let dialog = gtk::FileChooserDialog::new(
-            Some(request.title.as_str()),
-            None::<&gtk::Window>,
-            action,
-            &[
-                ("Cancel", gtk::ResponseType::Cancel),
-                (&request.accept_label, gtk::ResponseType::Accept),
-            ],
-        );
+        let dialog = gtk::FileChooserDialog::builder()
+            .title(request.title.as_str())
+            .action(action)
+            .use_header_bar(1)
+            .build();
+        dialog.add_buttons(&[
+            ("Cancel", gtk::ResponseType::Cancel),
+            (&request.accept_label, gtk::ResponseType::Accept),
+        ]);
         dialog.set_application(Some(application));
         dialog.set_icon_name(Some(crate::identity::ICON_NAME));
         dialog.add_css_class("hermes-picker");
@@ -78,6 +77,7 @@ impl Picker {
         dialog.set_modal(false);
         dialog.set_default_response(gtk::ResponseType::Accept);
         dialog.set_select_multiple(matches!(request.kind, Kind::Open { multiple: true, .. }));
+        dialog.set_create_folders(true);
         if let Some(button) = dialog.widget_for_response(gtk::ResponseType::Accept) {
             button.add_css_class("picker-accept");
         }
@@ -144,6 +144,7 @@ impl Picker {
             file_images: RefCell::new(Vec::new()),
             child_models: RefCell::new(Vec::new()),
         });
+        folders::install(&state);
         watch_views(state.dialog.upcast_ref(), &state);
         let weak = Rc::downgrade(&state);
         state.dialog.connect_filter_notify(move |_| {
@@ -152,17 +153,21 @@ impl Picker {
             }
         });
         let weak = Rc::downgrade(&state);
-        state.dialog.connect_notify_local(Some("file"), move |_, _| {
-            if let Some(state) = weak.upgrade() {
-                queue_visuals(&state);
-            }
-        });
+        state
+            .dialog
+            .connect_notify_local(Some("file"), move |_, _| {
+                if let Some(state) = weak.upgrade() {
+                    queue_visuals(&state);
+                }
+            });
         let weak = Rc::downgrade(&state);
-        state.dialog.connect_notify_local(Some("current-folder"), move |_, _| {
-            if let Some(state) = weak.upgrade() {
-                queue_visuals(&state);
-            }
-        });
+        state
+            .dialog
+            .connect_notify_local(Some("current-folder"), move |_, _| {
+                if let Some(state) = weak.upgrade() {
+                    queue_visuals(&state);
+                }
+            });
         let events = gtk::EventControllerLegacy::new();
         let weak = Rc::downgrade(&state);
         events.connect_event(move |_, event| {

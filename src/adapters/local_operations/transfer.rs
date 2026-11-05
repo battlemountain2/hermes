@@ -66,7 +66,6 @@ fn merge_directory(
     source: gio::File,
     target: gio::File,
     move_source: bool,
-    overwrite: bool,
     cancellable: gio::Cancellable,
 ) -> Pin<Box<dyn Future<Output = Result<(), glib::Error>>>> {
     Box::pin(async move {
@@ -99,7 +98,7 @@ fn merge_directory(
                     child_source,
                     child_target,
                     move_source,
-                    overwrite,
+                    false,
                     cancellable.clone(),
                 ))
                 .await?;
@@ -129,6 +128,9 @@ pub(super) async fn transfer_item(
         )
         .await?
         .file_type();
+    if source_type == gio::FileType::Directory {
+        validate_directory_target(&source, &target, &cancellable).await?;
+    }
     let target_type = match target
         .query_info_future(
             "standard::type",
@@ -150,7 +152,7 @@ pub(super) async fn transfer_item(
             ));
         }
         if source_type == gio::FileType::Directory && target_type == gio::FileType::Directory {
-            return merge_directory(source, target, move_source, overwrite, cancellable).await;
+            return merge_directory(source, target, move_source, cancellable).await;
         }
         replacement_supported(native_paths.is_some(), source_type, target_type)?;
     }
@@ -173,15 +175,53 @@ pub(super) async fn transfer_item(
     }
     check_cancelled(&cancellable)?;
     if move_source {
+        let flags = gio::FileCopyFlags::ALL_METADATA | gio::FileCopyFlags::NOFOLLOW_SYMLINKS;
         let (transfer, _progress) = source.move_future(
             &target,
-            gio::FileCopyFlags::ALL_METADATA | gio::FileCopyFlags::NOFOLLOW_SYMLINKS,
+            if source_type == gio::FileType::Directory {
+                flags | gio::FileCopyFlags::NO_FALLBACK_FOR_MOVE
+            } else {
+                flags
+            },
             glib::Priority::DEFAULT,
         );
         transfer.await
     } else {
         copy_recursively(source, target).await
     }
+}
+
+pub(super) async fn validate_directory_target(
+    source: &gio::File,
+    target: &gio::File,
+    cancellable: &gio::Cancellable,
+) -> Result<(), glib::Error> {
+    let Some((source, target)) = source.path().zip(target.path()) else {
+        return Ok(());
+    };
+    run_native(cancellable.clone(), move |cancellable| {
+        check_cancelled(&cancellable)?;
+        let source = fs::canonicalize(source).map_err(io_error)?;
+        let identity = fs::metadata(&source).map_err(io_error)?;
+        let parent = target.parent().ok_or_else(|| failure("Invalid destination"))?;
+        let parent = fs::canonicalize(parent).map_err(io_error)?;
+        if parent.starts_with(&source) {
+            return Err(failure("A folder cannot be transferred into itself or one of its subfolders, including through a symbolic link"));
+        }
+        for ancestor in parent.ancestors() {
+            check_cancelled(&cancellable)?;
+            let metadata = fs::metadata(ancestor).map_err(io_error)?;
+            if identity.dev() == metadata.dev() && identity.ino() == metadata.ino() {
+                return Err(failure("The destination refers back to the source folder"));
+            }
+        }
+        if let Ok(metadata) = fs::metadata(&target)
+            && identity.dev() == metadata.dev() && identity.ino() == metadata.ino()
+        {
+            return Err(failure("Source and destination refer to the same folder"));
+        }
+        Ok(())
+    }).await
 }
 
 struct CancelWorkerOnDrop(Option<gio::Cancellable>);
@@ -337,6 +377,15 @@ fn stage_and_commit(
 ) -> Result<(), glib::Error> {
     check_cancelled(cancellable)?;
     let original = validate_native_transfer(source, target, overwrite)?;
+    let destination = if overwrite {
+        match fs::symlink_metadata(target) {
+            Ok(metadata) => Some(metadata),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(io_error(error)),
+        }
+    } else {
+        None
+    };
     let staging = StagingDirectory::create(
         target
             .parent()
@@ -357,6 +406,21 @@ fn stage_and_commit(
     }
     check_cancelled(cancellable)?;
     if overwrite {
+        let current = match fs::symlink_metadata(target) {
+            Ok(metadata) => Some(metadata),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(io_error(error)),
+        };
+        if !match (&destination, &current) {
+            (Some(before), Some(after)) => unchanged(before, after),
+            (None, None) => true,
+            _ => false,
+        } {
+            return Err(glib::Error::new(
+                gio::IOErrorEnum::Exists,
+                "The destination changed during transfer; review the new conflict before replacing it",
+            ));
+        }
         fs::rename(&stage, target).map_err(io_error)?;
     } else {
         fs::hard_link(&stage, target).map_err(io_error)?;
