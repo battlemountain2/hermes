@@ -31,9 +31,13 @@ host-built candidate: it is not proof of a clean Arch install or portability.
 
 The **Native Arch package** workflow builds x86_64 in a disposable Arch container
 and uploads the package, recipe, source identity and checksums as CI artifacts.
-Actual downloaded-package install/upgrade/uninstall, retained collections, missing
-dependencies, browser picker opt-in/restore, common previews and physical desktop
-acceptance remain required. Perform clean-chroot qualification before release.
+A separate fresh runtime job checks offline dependency refusal, installation,
+installed-binary CLI/private-display startup, same-version reinstall, removal and
+data/default fixture retention. Its downloadable evidence records remaining gates.
+See [package qualification](package-qualification.md) for the downloaded-artifact
+checkpoint and reproduction. Previous-release upgrades, installed-app migration,
+browser picker opt-in/restore, common previews and physical desktop acceptance
+remain required.
 
 The immutable release workflow currently publishes GNU/Linux binary bundles and
 source, not these native packages. Stable native-package publication and package
