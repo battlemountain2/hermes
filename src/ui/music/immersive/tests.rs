@@ -344,6 +344,9 @@ fn desktop_online_lyrics_rejects_stale_results_cancels_on_opt_out_and_never_inve
         .lyrics_status
         .replace(LyricsStatus::LoadingOnline);
     view.state.visualizer_btn.set_active(true);
+    // Combined mode still displays lyrics; only hiding lyrics cancels lookup.
+    assert!(!hidden_cancelled.is_cancelled());
+    view.state.lyrics_btn.set_active(false);
     assert!(hidden_cancelled.is_cancelled());
     assert!(view.state.lyrics_request.borrow().is_none());
     view.state

@@ -59,6 +59,8 @@ fn desktop_save_search_preserves_physical_queries_without_resizing() {
         .expect("generated fixture must provide the expected value");
     let bounds = (panel.width(), panel.height());
     for (position, group) in SEARCH_GROUPS.iter().enumerate() {
+        // Categories and Save search now live in the contextual Filters popover.
+        dialog.state.filters.show(query);
         dialog.state.categories[position].emit_clicked();
         settle();
         assert_eq!((panel.width(), panel.height()), bounds);

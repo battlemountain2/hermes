@@ -1204,6 +1204,8 @@ fn desktop_real_folder_full_song_and_auto_next() {
 #[ignore = "Requires isolated GTK display"]
 fn desktop_workspace_switching_and_layout_changes_update_bar_visibility() {
     gtk::init().expect("initialize the isolated GTK display");
+    // The application window owns this shared manager for its whole lifetime.
+    let manager = super::super::theme::ThemeManager::shared();
     let player = MusicPlayer::with_session(None);
     player.controller().transport_visible.set(true);
 
@@ -1215,7 +1217,7 @@ fn desktop_workspace_switching_and_layout_changes_update_bar_visibility() {
     );
 
     // Switching to music with top layout hides bottom dock and shows hero deck
-    super::super::theme::ThemeManager::shared().set_music_player_layout("top");
+    manager.set_music_player_layout("top");
     player.set_workspace("music");
     assert!(
         !player.bar().is_visible(),
@@ -1227,7 +1229,7 @@ fn desktop_workspace_switching_and_layout_changes_update_bar_visibility() {
     );
 
     // Switching to bottom layout shows bottom dock and hides hero deck
-    super::super::theme::ThemeManager::shared().set_music_player_layout("bottom");
+    manager.set_music_player_layout("bottom");
     assert!(
         player.bar().is_visible(),
         "bottom dock visible with bottom layout"
@@ -1245,7 +1247,7 @@ fn desktop_workspace_switching_and_layout_changes_update_bar_visibility() {
     );
 
     // Restore top layout
-    super::super::theme::ThemeManager::shared().set_music_player_layout("top");
+    manager.set_music_player_layout("top");
     player.shutdown();
 }
 

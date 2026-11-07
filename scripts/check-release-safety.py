@@ -35,6 +35,9 @@ def run_case(binary, base, case, index, gui):
     private_home = profile / "private-home"
     private_home.mkdir(mode=0o700)
     env = os.environ.copy()
+    for key in list(env):
+        if key.startswith(("HERMES_", "STRATA_")):
+            env.pop(key)
     for key in ("DBUS_SESSION_BUS_ADDRESS", "DBUS_STARTER_ADDRESS", "DBUS_STARTER_BUS_TYPE",
                 "DISPLAY", "WAYLAND_DISPLAY", "HERMES_DEV", "STRATA_DEV",
                 "XDG_DESKTOP_PORTAL_DIR", "GTK_THEME", "HERMES_PICKER_SCREENSHOT",
@@ -46,7 +49,8 @@ def run_case(binary, base, case, index, gui):
         path = profile / directory
         path.mkdir(mode=0o700)
         env[key] = str(path)
-    env.update(HERMES_SAFETY_TEST_ROOT=str(profile), GDK_BACKEND="broadway",
+    env.update(HERMES_SAFETY_TEST_ROOT=str(profile), HERMES_PICKER_TEST_ROOT=str(profile),
+               HERMES_PREVIEW_PROBE=str(profile), GDK_BACKEND="broadway",
                BROADWAY_DISPLAY=f":{1000 + (os.getpid() % 20000) + index}", GTK_A11Y="none",
                GTK_USE_PORTAL="0", GDK_DEBUG="no-portals", G_DEBUG="fatal-criticals",
                GSETTINGS_BACKEND="memory", GIO_USE_VFS="local", GIO_USE_VOLUME_MONITOR="unix",
@@ -71,6 +75,8 @@ def run_case(binary, base, case, index, gui):
         env["HERMES_PICKER_SCREENSHOT"] = str(profile / "picker.png")
     if case == GTK_TESTS[5]:
         env["HERMES_HOME_SCREENSHOT"] = str(profile / "home.png")
+    if case.endswith("desktop_smart_search_chips_and_notices_keep_geometry_at_supported_fonts"):
+        env["HERMES_SEARCH_LAYOUT_SHOTS"] = str(profile)
     with (profile / "display.log").open("w") as display_log:
         server = subprocess.Popen(["gtk4-broadwayd", "-a", "127.0.0.1", "--port", "0",
                                    env["BROADWAY_DISPLAY"]], env=env, stdout=display_log, stderr=display_log)

@@ -656,7 +656,7 @@ impl SearchDialog {
         interpretation_slot.set_hexpand(false);
         interpretation_slot.set_visible(false);
         let interpretation_view = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::External)
+            .hscrollbar_policy(gtk::PolicyType::Automatic)
             .vscrollbar_policy(gtk::PolicyType::Never)
             .propagate_natural_width(true)
             .max_content_width(420)
@@ -740,11 +740,9 @@ impl SearchDialog {
         notice.set_hexpand(true);
         notice.set_max_width_chars(1);
         notice.set_xalign(0.0);
-        notice.set_visible(false);
         let notice_slot = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         notice_slot.add_css_class("search-notice-slot");
         notice_slot.set_valign(gtk::Align::Center);
-        notice_slot.set_visible(false);
         notice_slot.append(&interpretation_view);
         notice_slot.append(&notice);
         panel.append(&notice_slot);
@@ -1478,7 +1476,9 @@ fn append_filter_control(container: &gtk::Box, label: &str, control: &impl IsA<g
 
 fn render_inferred_chips(state: &Rc<SearchState>, inferred: &[InferredFilterChip]) {
     let has_chips = !inferred.is_empty();
-    state.notice_slot.set_visible(has_chips);
+    // Reserve the same compact row for progress, coverage and inferred filters.
+    // Toggling the row itself makes the panel jump while results stream in.
+    state.notice_slot.set_visible(true);
     state.interpretation_slot.set_visible(has_chips);
     state.interpretation_view.set_visible(has_chips);
     while let Some(child) = state.interpretation_slot.first_child() {

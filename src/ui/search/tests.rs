@@ -143,6 +143,26 @@ fn desktop_search_geometry_and_rows_stay_stable_during_updates() {
 #[test]
 #[ignore = "Private GTK display; stable search chrome across smart chips, notices, scopes and font sizes"]
 fn desktop_smart_search_chips_and_notices_keep_geometry_at_supported_fonts() {
+    fn refresh_layout(window: &gtk::Window) {
+        // Broadway does not necessarily paint every descendant after a CSS
+        // provider change. Resolve styles before taking a geometry baseline.
+        let mut pending =
+            std::collections::VecDeque::from([window.clone().upcast::<gtk::Widget>()]);
+        while let Some(widget) = pending.pop_front() {
+            let _color = widget.color();
+            let _font = widget.pango_context().font_description();
+            widget.queue_draw();
+            widget.queue_resize();
+            let mut child = widget.first_child();
+            while let Some(widget) = child {
+                child = widget.next_sibling();
+                pending.push_back(widget);
+            }
+        }
+        window.measure(gtk::Orientation::Horizontal, -1);
+        window.measure(gtk::Orientation::Vertical, window.width());
+        window.allocate(window.width(), window.height(), -1, None);
+    }
     fn settle() {
         let deadline = std::time::Instant::now() + Duration::from_millis(100);
         while std::time::Instant::now() < deadline {
@@ -206,6 +226,22 @@ fn desktop_smart_search_chips_and_notices_keep_geometry_at_supported_fonts() {
         theme.set_interface_font_size(size);
         dialog.state.field.set_text("");
         begin_query(&dialog.state, "");
+        let font_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while footer
+            .pango_context()
+            .font_description()
+            .expect("footer font")
+            .size()
+            != size as i32 * gtk::pango::SCALE
+        {
+            assert!(
+                std::time::Instant::now() < font_deadline,
+                "Font preference was not applied"
+            );
+            settle();
+        }
+        settle();
+        refresh_layout(&window);
         settle();
         let baseline = bounds();
         assert!(baseline.0.x() >= 0.0);
@@ -241,12 +277,9 @@ fn desktop_smart_search_chips_and_notices_keep_geometry_at_supported_fonts() {
             if query == long_query
                 && let Ok(directory) = std::env::var("HERMES_SEARCH_LAYOUT_SHOTS")
             {
+                refresh_layout(&window);
                 let snapshot = gtk::Snapshot::new();
-                gtk::WidgetPaintable::new(Some(&window)).snapshot(
-                    &snapshot,
-                    window.width() as f64,
-                    window.height() as f64,
-                );
+                window.snapshot_child(&dialog.widget(), &snapshot);
                 let node = snapshot.to_node().expect("Mapped search render node");
                 let renderer = gtk::gsk::CairoRenderer::new();
                 renderer
@@ -1080,6 +1113,8 @@ fn desktop_grouped_search_pages_entities_and_back_preserve_context() {
                 .expect("expected test value from dialog .state .notice .parent() .unwrap() .compute_bounds(&window)"),
         )
     };
+    dialog.state.filters.show(query);
+    settle();
     let initial = geometry();
     assert!(dialog.state.back_button.is_visible());
     assert!(!dialog.state.back_button.is_sensitive());
@@ -1881,7 +1916,7 @@ fn desktop_interpretation_slot_and_filter_sections() {
     assert_eq!(dialog.state.notice.text(), SEARCH_NOTICE_HINT);
 
     dialog.state.layer.set_visible(true);
-    assert!(!dialog.state.notice_slot.is_visible());
+    assert!(dialog.state.notice_slot.is_visible());
     dialog.state.field.set_text("Beach House songs");
     assert!(dialog.state.notice_slot.is_visible());
     assert!(dialog.state.interpretation_slot.is_visible());
@@ -1904,7 +1939,7 @@ fn desktop_interpretation_slot_and_filter_sections() {
     assert!(dialog.state.field.text().contains("\"songs\""));
     assert!(dialog.state.interpretation_slot.first_child().is_none());
     assert!(!dialog.state.interpretation_slot.is_visible());
-    assert!(!dialog.state.notice_slot.is_visible());
+    assert!(dialog.state.notice_slot.is_visible());
 
     for (query, expected) in [
         ("İ songs", "İ \"songs\""),

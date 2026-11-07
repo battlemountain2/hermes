@@ -83,11 +83,16 @@ fn external_hidden_properties_request_opens_the_file_properties_not_parent_prope
             startup_id: String::new(),
         },
     );
-    let window = application
-        .windows()
-        .into_iter()
-        .next()
-        .expect("expected test value from application.windows().into_iter().next()");
+    // Presentation first passes through the asynchronous legacy-import gate.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let window = loop {
+        if let Some(window) = application.windows().into_iter().next() {
+            break window;
+        }
+        assert!(Instant::now() < deadline, "Reveal window was not presented");
+        gtk::glib::MainContext::default().iteration(false);
+        std::thread::sleep(Duration::from_millis(2));
+    };
     fn find(widget: &gtk::Widget, class: &str) -> Option<gtk::Label> {
         if widget.has_css_class(class) {
             return widget.clone().downcast::<gtk::Label>().ok();
