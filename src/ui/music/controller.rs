@@ -167,7 +167,7 @@ impl Controller {
     }
 
     fn new(session_path: Option<&std::path::Path>) -> Rc<Self> {
-        let controller = Rc::new_cyclic(|weak| Self {
+        Rc::new_cyclic(|weak| Self {
             weak: weak.clone(),
             stream: RefCell::new(None),
             queue: RefCell::new(Queue::default()),
@@ -207,8 +207,7 @@ impl Controller {
             checkpoint: Cell::new(std::time::Instant::now()),
             collection_store: RefCell::new(CollectionStore::start(None)),
             listening: RefCell::new(listening::Listening::default()),
-        });
-        controller
+        })
     }
 
     pub(crate) fn with_session(session_path: Option<PathBuf>) -> Rc<Self> {

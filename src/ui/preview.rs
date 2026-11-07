@@ -32,8 +32,8 @@ mod pdf_fullscreen;
 #[cfg(test)]
 mod pdf_ranges_tests;
 mod pdf_text;
-mod workbook;
 pub(crate) mod stream;
+mod workbook;
 
 const DEFAULT_WIDTH: i32 = 520;
 const MIN_WIDTH: i32 = 280;
@@ -237,17 +237,21 @@ impl PreviewDrawer {
         for (idx, btn) in state.star_buttons.iter().enumerate() {
             let weak_state = Rc::downgrade(&state);
             btn.connect_clicked(move |_| {
-                let Some(state) = weak_state.upgrade() else { return };
+                let Some(state) = weak_state.upgrade() else {
+                    return;
+                };
                 let star = (idx + 1) as u8;
                 let new_rating = if state.current_rating.get() == Some(star) {
                     None
                 } else {
                     Some(star)
                 };
-                if let Some(path) = state.current_path.borrow().clone() {
-                    if crate::services::ratings::Store::shared().set(path, new_rating).is_ok() {
-                        state.update_rating_display(new_rating);
-                    }
+                if let Some(path) = state.current_path.borrow().clone()
+                    && crate::services::ratings::Store::shared()
+                        .set(path, new_rating)
+                        .is_ok()
+                {
+                    state.update_rating_display(new_rating);
                 }
             });
         }
@@ -300,7 +304,10 @@ impl PreviewDrawer {
             };
             let available = split.width();
             if available > 0 && state.opened.get() && !state.animating.get() {
-                let occupied = state.occupied_width.borrow().as_ref()
+                let occupied = state
+                    .occupied_width
+                    .borrow()
+                    .as_ref()
                     .map_or(0, |width| width());
                 let width_changed = available != state.last_split_width.replace(available);
                 let occupied_changed = occupied != state.last_occupied_width.replace(occupied);
@@ -395,7 +402,10 @@ impl PreviewState {
             btn.set_tooltip_text(Some(&if active == star_num as u8 {
                 format!("Click to remove {star_num}-star rating")
             } else {
-                format!("Rate {star_num} star{}", if star_num == 1 { "" } else { "s" })
+                format!(
+                    "Rate {star_num} star{}",
+                    if star_num == 1 { "" } else { "s" }
+                )
             }));
         }
     }
@@ -509,20 +519,29 @@ impl PreviewState {
         self.title
             .set_tooltip_text(Some(&entry.location.display_path()));
         match entry.size {
-            MetadataValue::Known(bytes) => super::formatting::bind(&self.size, super::formatting::Value::Size(bytes)),
+            MetadataValue::Known(bytes) => {
+                super::formatting::bind(&self.size, super::formatting::Value::Size(bytes))
+            }
             _ => super::formatting::clear(&self.size, "—"),
         }
         match entry.modified_unix_seconds {
-            MetadataValue::Known(seconds) => super::formatting::bind(&self.modified, super::formatting::Value::Timestamp(seconds)),
+            MetadataValue::Known(seconds) => super::formatting::bind(
+                &self.modified,
+                super::formatting::Value::Timestamp(seconds),
+            ),
             _ => super::formatting::clear(&self.modified, "—"),
         }
         self.content_type.set_text(file_extension(&entry));
         self.show_loading();
         if classify_by_name(&entry.native_name) == FormatFamily::Spreadsheet {
             let spinner = self.content.first_child();
-            if let Some(spinner) = spinner.as_ref() { self.content.remove(spinner); }
+            if let Some(spinner) = spinner.as_ref() {
+                self.content.remove(spinner);
+            }
             self.render_workbook_controls(&entry, layout);
-            if let Some(spinner) = spinner { self.content.append(&spinner); }
+            if let Some(spinner) = spinner {
+                self.content.append(&spinner);
+            }
         }
         self.load.borrow_mut().take();
         self.pdf_loads.borrow_mut().clear();
@@ -542,11 +561,11 @@ impl PreviewState {
             state.handle_event(request_id, event);
         });
         let request = PreviewRequest {
-                id: request_id,
-                entry,
-                text_byte_limit: TEXT_BYTE_LIMIT,
-                pdf_page,
-            };
+            id: request_id,
+            entry,
+            text_byte_limit: TEXT_BYTE_LIMIT,
+            pdf_page,
+        };
         let load = if layout {
             self.provider.load_layout(request, emit)
         } else {
@@ -607,11 +626,15 @@ impl PreviewState {
         self.content_type.set_text(family.display_label());
         self.clear_content();
         let path = preview.entry.location.native_path().map(Path::to_owned);
-        let ratable = path.as_deref().is_some_and(crate::services::ratings::is_ratable_format);
+        let ratable = path
+            .as_deref()
+            .is_some_and(crate::services::ratings::is_ratable_format);
         self.rating_group.set_visible(ratable);
         if ratable {
             self.current_path.replace(path.clone());
-            let rating = path.as_deref().and_then(|p| crate::services::ratings::Store::shared().get(p));
+            let rating = path
+                .as_deref()
+                .and_then(|p| crate::services::ratings::Store::shared().get(p));
             self.update_rating_display(rating);
         } else {
             self.current_path.replace(None);
@@ -631,7 +654,10 @@ impl PreviewState {
             self.content.append(&notice);
         }
         match preview.content {
-            PreviewContent::Text { content, truncated } | PreviewContent::OfficeText { content, truncated, .. } => {
+            PreviewContent::Text { content, truncated }
+            | PreviewContent::OfficeText {
+                content, truncated, ..
+            } => {
                 let buffer = sourceview5::Buffer::new(None);
                 let languages = sourceview5::LanguageManager::default();
                 let language = languages.guess_language(
@@ -726,10 +752,17 @@ impl PreviewState {
                 text_layer,
             } => {
                 if family == FormatFamily::OfficeDocument {
-                    let name = preview.entry.native_name.to_string_lossy().to_ascii_lowercase();
-                    let slides = [".pptx", ".ppsx", ".potx"].iter().any(|extension| name.ends_with(extension));
+                    let name = preview
+                        .entry
+                        .native_name
+                        .to_string_lossy()
+                        .to_ascii_lowercase();
+                    let slides = [".pptx", ".ppsx", ".potx"]
+                        .iter()
+                        .any(|extension| name.ends_with(extension));
                     let unit = if slides { "slides" } else { "pages" };
-                    let notice = gtk::Label::new(Some(&format!("LibreOffice layout · {pages} {unit}")));
+                    let notice =
+                        gtk::Label::new(Some(&format!("LibreOffice layout · {pages} {unit}")));
                     notice.add_css_class("preview-note");
                     notice.set_xalign(0.0);
                     self.content.append(&notice);
@@ -737,7 +770,10 @@ impl PreviewState {
                 self.render_pdf_viewer(preview.entry, png, page, pages, text_layer);
             }
             PreviewContent::Spreadsheet { table } => {
-                let view = crate::ui::table_view::build_spreadsheet_view(&table, &preview.entry.display_name);
+                let view = crate::ui::table_view::build_spreadsheet_view(
+                    &table,
+                    &preview.entry.display_name,
+                );
                 self.content.append(&view.widget);
                 self.table.replace(Some(view));
             }
@@ -984,11 +1020,11 @@ impl PreviewState {
                 }
             });
             let request = PreviewRequest {
-                    id: request_id,
-                    entry: entry_for_bind.clone(),
-                    text_byte_limit: TEXT_BYTE_LIMIT,
-                    pdf_page: page_index,
-                };
+                id: request_id,
+                entry: entry_for_bind.clone(),
+                text_byte_limit: TEXT_BYTE_LIMIT,
+                pdf_page: page_index,
+            };
             let load = if workbook_layout {
                 provider.load_layout(request, emit)
             } else {
@@ -1809,7 +1845,11 @@ fn metadata_rating(label: &str) -> (gtk::Box, Vec<gtk::Button>, Vec<gtk::Image>)
         btn.add_css_class("flat");
         let img = crate::assets::text_icon(crate::assets::icons::STAR, 13);
         btn.set_child(Some(&img));
-        btn.set_tooltip_text(Some(&format!("Rate {} star{}", i + 1, if i == 0 { "" } else { "s" })));
+        btn.set_tooltip_text(Some(&format!(
+            "Rate {} star{}",
+            i + 1,
+            if i == 0 { "" } else { "s" }
+        )));
         stars_box.append(&btn);
         buttons.push(btn);
         images.push(img);
@@ -1834,9 +1874,7 @@ fn set_pdf_page_texture(
 }
 
 fn preview_width_for_empty_space(available: i32, occupied: i32) -> i32 {
-    available
-        .saturating_sub(occupied)
-        .max(MIN_WIDTH)
+    available.saturating_sub(occupied).max(MIN_WIDTH)
 }
 
 fn pdf_zoom_after_scroll(current: f64, dy: f64) -> f64 {
@@ -1849,7 +1887,8 @@ fn pdf_scrollbar_at(scroll: &gtk::ScrolledWindow, horizontal: f64, vertical: f64
         .iter()
         .any(|bar| {
             bar.is_mapped()
-                && bar.compute_bounds(scroll)
+                && bar
+                    .compute_bounds(scroll)
                     .is_some_and(|bounds| bounds.contains_point(&point))
         })
 }

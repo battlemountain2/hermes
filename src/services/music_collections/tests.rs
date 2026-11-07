@@ -39,11 +39,18 @@ pub(super) fn temporary(name: &str) -> PathBuf {
 fn favorites_album_paths_are_idempotent_and_removed_only_explicitly() {
     let mut data = Collections::default();
     let tracks = paths();
-    assert!(data.apply(Command::Favorite(tracks.clone(), true)).unwrap());
-    assert!(!data.apply(Command::Favorite(tracks.clone(), true)).unwrap());
+    assert!(
+        data.apply(Command::Favorite(tracks.clone(), true))
+            .expect("expected test value from data.apply(Command::Favorite(tracks.clone(), true))")
+    );
+    assert!(
+        !data
+            .apply(Command::Favorite(tracks.clone(), true))
+            .expect("expected test value from data.apply(Command::Favorite(tracks.clone(), true))")
+    );
     assert!(
         data.apply(Command::Favorite(vec![tracks[1].clone()], false))
-            .unwrap()
+            .expect("expected test value from data.apply(Command::Favorite(vec![tracks[1].clone()], false))")
     );
     assert_eq!(
         data.favorite_paths(),
@@ -57,14 +64,26 @@ fn favorites_album_paths_are_idempotent_and_removed_only_explicitly() {
 fn manual_playlists_create_rename_deduplicate_reorder_remove_and_delete() {
     let mut data = Collections::default();
     let tracks = paths();
-    data.apply(Command::Create("  Evening  ".into())).unwrap();
-    data.apply(Command::Add(1, tracks.clone())).unwrap();
-    assert!(!data.apply(Command::Add(1, tracks.clone())).unwrap());
+    data.apply(Command::Create("  Evening  ".into()))
+        .expect("expected test value from data.apply(Command::Create(\" Evening \".into()))");
+    data.apply(Command::Add(1, tracks.clone()))
+        .expect("expected test value from data.apply(Command::Add(1, tracks.clone()))");
+    assert!(
+        !data
+            .apply(Command::Add(1, tracks.clone()))
+            .expect("expected test value from data.apply(Command::Add(1, tracks.clone()))")
+    );
     data.apply(Command::Rename(1, "Favorites mix".into()))
-        .unwrap();
-    data.apply(Command::Move(1, tracks[2].clone(), -1)).unwrap();
+        .expect(
+            "expected test value from data.apply(Command::Rename(1, \"Favorites mix\".into()))",
+        );
+    data.apply(Command::Move(1, tracks[2].clone(), -1))
+        .expect("expected test value from data.apply(Command::Move(1, tracks[2].clone(), -1))");
     assert_eq!(
-        data.playlist(1).unwrap().tracks[1].native_path(),
+        data.playlist(1)
+            .expect("expected test value from data.playlist(1)")
+            .tracks[1]
+            .native_path(),
         Some(tracks[2].as_path())
     );
     data.apply(Command::MoveBefore(
@@ -73,16 +92,34 @@ fn manual_playlists_create_rename_deduplicate_reorder_remove_and_delete() {
         tracks[1].clone(),
         true,
     ))
-    .unwrap();
+    .expect("expected test value from data.apply(Command::MoveBefore( 1, tracks[0].clone(), tracks[1].clone(), true, ))");
     assert_eq!(
-        data.playlist(1).unwrap().tracks[2].native_path(),
+        data.playlist(1)
+            .expect("expected test value from data.playlist(1)")
+            .tracks[2]
+            .native_path(),
         Some(tracks[0].as_path())
     );
     data.apply(Command::Remove(1, vec![tracks[1].clone()]))
-        .unwrap();
-    assert_eq!(data.playlist(1).unwrap().name, "Favorites mix");
-    assert_eq!(data.playlist(1).unwrap().tracks.len(), 2);
-    assert!(!data.apply(Command::Move(1, tracks[2].clone(), -1)).unwrap());
+        .expect("expected test value from data.apply(Command::Remove(1, vec![tracks[1].clone()]))");
+    assert_eq!(
+        data.playlist(1)
+            .expect("expected test value from data.playlist(1)")
+            .name,
+        "Favorites mix"
+    );
+    assert_eq!(
+        data.playlist(1)
+            .expect("expected test value from data.playlist(1)")
+            .tracks
+            .len(),
+        2
+    );
+    assert!(
+        !data
+            .apply(Command::Move(1, tracks[2].clone(), -1))
+            .expect("expected test value from data.apply(Command::Move(1, tracks[2].clone(), -1))")
+    );
     assert!(
         !data
             .apply(Command::MoveBefore(
@@ -91,10 +128,12 @@ fn manual_playlists_create_rename_deduplicate_reorder_remove_and_delete() {
                 PathBuf::from("/absent.flac"),
                 false
             ))
-            .unwrap()
+            .expect("expected test value from data .apply(Command::MoveBefore( 1, tracks[0].clone(), PathBuf::from(\"/absent.flac\"), false ))")
     );
-    data.apply(Command::Delete(1)).unwrap();
-    data.apply(Command::Create("New".into())).unwrap();
+    data.apply(Command::Delete(1))
+        .expect("expected test value from data.apply(Command::Delete(1))");
+    data.apply(Command::Create("New".into()))
+        .expect("expected test value from data.apply(Command::Create(\"New\".into()))");
     assert_eq!(data.playlists[0].id, 2);
 }
 
@@ -117,7 +156,8 @@ fn invalid_names_paths_ids_and_limits_are_rejected() {
     }
     assert!(data.apply(Command::Rename(99, "Absent".into())).is_err());
     for _ in 0..MAX_PLAYLISTS {
-        data.apply(Command::Create("Mix".into())).unwrap();
+        data.apply(Command::Create("Mix".into()))
+            .expect("expected test value from data.apply(Command::Create(\"Mix\".into()))");
     }
     assert!(data.apply(Command::Create("Overflow".into())).is_err());
     data.playlists[0].id = 0;
@@ -135,17 +175,20 @@ fn first_index_date_is_stable_across_reindex_removal_and_return() {
     let mut data = Collections::default();
     let tracks = paths();
     data.apply(Command::Observe(vec![tracks[0].clone()], 100))
-        .unwrap();
+        .expect(
+            "expected test value from data.apply(Command::Observe(vec![tracks[0].clone()], 100))",
+        );
     data.apply(Command::Observe(
         vec![tracks[0].clone(), tracks[1].clone()],
         200,
     ))
-    .unwrap();
-    data.apply(Command::Observe(vec![], 300)).unwrap();
+    .expect("expected test value from data.apply(Command::Observe( vec![tracks[0].clone(), tracks[1].clone()], 200, ))");
+    data.apply(Command::Observe(vec![], 300))
+        .expect("expected test value from data.apply(Command::Observe(vec![], 300))");
     assert!(
         !data
             .apply(Command::Observe(vec![tracks[0].clone()], 400))
-            .unwrap()
+            .expect("expected test value from data .apply(Command::Observe(vec![tracks[0].clone()], 400))")
     );
     assert_eq!(data.added_dates()[&tracks[0]], 100);
     assert_eq!(data.added_dates()[&tracks[1]], 200);
@@ -158,23 +201,33 @@ fn meaningful_listening_thresholds_exclude_short_skips_and_support_short_tracks(
     assert!(
         !store
             .record_listen(path.clone(), 29_999_999, 240_000_000)
-            .unwrap()
+            .expect("expected test value from store .record_listen(path.clone(), 29_999_999, 240_000_000)")
     );
     assert!(
         !store
             .record_listen(path.clone(), 9_999_999, 20_000_000)
-            .unwrap()
+            .expect(
+                "expected test value from store .record_listen(path.clone(), 9_999_999, 20_000_000)"
+            )
     );
-    assert!(!store.record_listen(path.clone(), 29_999_999, 0).unwrap());
+    assert!(
+        !store
+            .record_listen(path.clone(), 29_999_999, 0)
+            .expect("expected test value from store.record_listen(path.clone(), 29_999_999, 0)")
+    );
     assert!(
         store
             .record_listen(path.clone(), 10_000_000, 20_000_000)
-            .unwrap()
+            .expect("expected test value from store .record_listen(path.clone(), 10_000_000, 20_000_000)")
     );
     wait(&store, |snapshot| {
         snapshot.data.play_counts().get(&path) == Some(&1)
     });
-    assert!(store.record_listen(path.clone(), 30_000_000, 0).unwrap());
+    assert!(
+        store
+            .record_listen(path.clone(), 30_000_000, 0)
+            .expect("expected test value from store.record_listen(path.clone(), 30_000_000, 0)")
+    );
     wait(&store, |snapshot| {
         snapshot.data.play_counts().get(&path) == Some(&2)
     });
@@ -184,40 +237,55 @@ fn meaningful_listening_thresholds_exclude_short_skips_and_support_short_tracks(
 fn byte_safe_atomic_roundtrip_preserves_missing_paths_and_never_writes_audio() {
     use std::os::unix::{ffi::OsStringExt, fs::PermissionsExt};
     let root = temporary("roundtrip");
-    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&root).expect("create generated fixture directory");
     let audio = root.join("existing.flac");
-    fs::write(&audio, b"unchanged generated fixture").unwrap();
+    fs::write(&audio, b"unchanged generated fixture").expect("write generated fixture");
     let missing = root.join(std::ffi::OsString::from_vec(b"missing-\xff.flac".to_vec()));
     let mut data = Collections::default();
-    data.apply(Command::Create("Mix".into())).unwrap();
+    data.apply(Command::Create("Mix".into()))
+        .expect("expected test value from data.apply(Command::Create(\"Mix\".into()))");
     data.apply(Command::Add(1, vec![audio.clone(), missing.clone()]))
-        .unwrap();
+        .expect("expected test value from data.apply(Command::Add(1, vec![audio.clone(), missing.clone()]))");
     data.apply(Command::Favorite(vec![missing.clone()], true))
-        .unwrap();
+        .expect(
+            "expected test value from data.apply(Command::Favorite(vec![missing.clone()], true))",
+        );
     data.apply(Command::Observe(vec![audio.clone()], 100))
-        .unwrap();
-    data.apply(Command::Played(audio.clone())).unwrap();
+        .expect("expected test value from data.apply(Command::Observe(vec![audio.clone()], 100))");
+    data.apply(Command::Played(audio.clone()))
+        .expect("expected test value from data.apply(Command::Played(audio.clone()))");
     let path = root.join("collections.json");
-    write(&path, &data).unwrap();
-    let restored = load(&path).unwrap();
+    write(&path, &data).expect("expected test value from write(&path, &data)");
+    let restored = load(&path).expect("expected test value from load(&path)");
     assert_eq!(
-        restored.playlist(1).unwrap().tracks[1].native_path(),
+        restored
+            .playlist(1)
+            .expect("expected test value from restored.playlist(1)")
+            .tracks[1]
+            .native_path(),
         Some(missing.as_path())
     );
     assert!(restored.favorite_paths().contains(&missing));
     assert_eq!(restored.play_counts()[&audio], 1);
-    assert_eq!(fs::read(&audio).unwrap(), b"unchanged generated fixture");
     assert_eq!(
-        fs::metadata(path).unwrap().permissions().mode() & 0o777,
+        fs::read(&audio).expect("read generated fixture"),
+        b"unchanged generated fixture"
+    );
+    assert_eq!(
+        fs::metadata(path)
+            .expect("expected test value from fs::metadata(path)")
+            .permissions()
+            .mode()
+            & 0o777,
         0o600
     );
-    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).expect("remove generated fixture");
 }
 
 #[test]
 fn worker_preserves_corrupt_or_future_version_data_instead_of_overwriting_it() {
     let root = temporary("corrupt");
-    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&root).expect("create generated fixture directory");
     let path = root.join("collections.json");
     for bytes in [
         b"not json".to_vec(),
@@ -225,9 +293,9 @@ fn worker_preserves_corrupt_or_future_version_data_instead_of_overwriting_it() {
             version: 99,
             ..Default::default()
         })
-        .unwrap(),
+        .expect("serialize generated JSON fixture"),
     ] {
-        fs::write(&path, &bytes).unwrap();
+        fs::write(&path, &bytes).expect("write generated fixture");
         let store = Store::start(Some(path.clone()));
         wait(&store, |snapshot| {
             snapshot.ready && snapshot.error.is_some()
@@ -235,35 +303,45 @@ fn worker_preserves_corrupt_or_future_version_data_instead_of_overwriting_it() {
         let revision = store.snapshot().revision;
         store
             .send(Command::Create("Don't overwrite".into()))
-            .unwrap();
+            .expect(
+                "expected test value from store .send(Command::Create(\"Don't overwrite\".into()))",
+            );
         wait(&store, |snapshot| snapshot.revision > revision);
         drop(store);
         std::thread::sleep(Duration::from_millis(20));
-        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(fs::read(&path).expect("read generated fixture"), bytes);
     }
-    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).expect("remove generated fixture");
 }
 
 #[test]
 fn failed_save_retries_after_storage_recovers_without_another_mutation() {
     let root = temporary("retry");
-    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&root).expect("create generated fixture directory");
     let path = root.join("blocked/collections.json");
     let store = Store::start(Some(path.clone()));
     wait(&store, |snapshot| snapshot.ready);
-    fs::create_dir(&path).unwrap();
-    store.send(Command::Create("Unsaved".into())).unwrap();
+    fs::create_dir(&path).expect("create generated fixture directory");
+    store
+        .send(Command::Create("Unsaved".into()))
+        .expect("expected test value from store.send(Command::Create(\"Unsaved\".into()))");
     let failed = wait(&store, |snapshot| snapshot.error.is_some());
     assert_eq!(failed.data.playlists[0].name, "Unsaved");
     std::thread::sleep(Duration::from_millis(300));
     assert_eq!(store.snapshot().revision, failed.revision);
-    fs::remove_dir(&path).unwrap();
+    fs::remove_dir(&path).expect("remove generated fixture");
     wait(&store, |snapshot| {
         snapshot.revision > failed.revision && snapshot.error.is_none()
     });
-    assert_eq!(load(&path).unwrap().playlists[0].name, "Unsaved");
+    assert_eq!(
+        load(&path)
+            .expect("expected test value from load(&path)")
+            .playlists[0]
+            .name,
+        "Unsaved"
+    );
     drop(store);
-    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).expect("remove generated fixture");
 }
 
 #[test]
@@ -272,8 +350,12 @@ fn disconnect_flushes_accepted_mutations_and_restart_restores_without_audio_read
     let path = root.join("collections.json");
     let store = Store::start(Some(path.clone()));
     wait(&store, |snapshot| snapshot.ready);
-    store.send(Command::Create("Saved".into())).unwrap();
-    store.send(Command::Add(1, paths())).unwrap();
+    store
+        .send(Command::Create("Saved".into()))
+        .expect("expected test value from store.send(Command::Create(\"Saved\".into()))");
+    store
+        .send(Command::Add(1, paths()))
+        .expect("expected test value from store.send(Command::Add(1, paths()))");
     wait(&store, |snapshot| {
         snapshot
             .data
@@ -295,7 +377,7 @@ fn disconnect_flushes_accepted_mutations_and_restart_restores_without_audio_read
                 .is_some_and(|playlist| playlist.tracks.len() == 3)
     });
     drop(restored);
-    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).expect("remove generated fixture");
 }
 
 #[test]
@@ -304,11 +386,21 @@ fn explicit_shutdown_flush_acknowledges_background_save_without_waiting_for_debo
     let path = root.join("collections.json");
     let store = Store::start(Some(path.clone()));
     wait(&store, |snapshot| snapshot.ready);
-    store.send(Command::Favorite(paths(), true)).unwrap();
-    store.flush(Duration::from_secs(2)).unwrap();
-    assert_eq!(load(&path).unwrap().favorite_paths().len(), 3);
+    store
+        .send(Command::Favorite(paths(), true))
+        .expect("expected test value from store.send(Command::Favorite(paths(), true))");
+    store
+        .flush(Duration::from_secs(2))
+        .expect("expected test value from store.flush(Duration::from_secs(2))");
+    assert_eq!(
+        load(&path)
+            .expect("expected test value from load(&path)")
+            .favorite_paths()
+            .len(),
+        3
+    );
     drop(store);
-    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).expect("remove generated fixture");
 }
 
 #[test]
@@ -319,27 +411,38 @@ fn relocate_updates_favorites_playlists_and_history_for_single_file_and_director
     let other = PathBuf::from("/Music/Other/single.mp3");
 
     // Populate favorites, playlist, indexed and played
-    data.apply(Command::Favorite(vec![track1.clone(), other.clone()], true)).unwrap();
-    data.apply(Command::Create("Favorites Mix".into())).unwrap();
-    data.apply(Command::Add(1, vec![track1.clone(), track2.clone()])).unwrap();
-    data.apply(Command::Observe(vec![track1.clone()], 1000)).unwrap();
-    data.apply(Command::Played(track1.clone())).unwrap();
+    data.apply(Command::Favorite(vec![track1.clone(), other.clone()], true)).expect("expected test value from data.apply(Command::Favorite(vec![track1.clone(), other.clone()], true))");
+    data.apply(Command::Create("Favorites Mix".into()))
+        .expect("expected test value from data.apply(Command::Create(\"Favorites Mix\".into()))");
+    data.apply(Command::Add(1, vec![track1.clone(), track2.clone()])).expect("expected test value from data.apply(Command::Add(1, vec![track1.clone(), track2.clone()]))");
+    data.apply(Command::Observe(vec![track1.clone()], 1000))
+        .expect(
+            "expected test value from data.apply(Command::Observe(vec![track1.clone()], 1000))",
+        );
+    data.apply(Command::Played(track1.clone()))
+        .expect("expected test value from data.apply(Command::Played(track1.clone()))");
 
     // 1. Single file rename: track1 -> track1_remastered
     let track1_new = PathBuf::from("/Music/Artist/Album/track1_remastered.flac");
     let changed = data.apply(Command::Relocate {
         from: track1.clone(),
         to: track1_new.clone(),
-    }).unwrap();
+    }).expect("expected test value from data.apply(Command::Relocate { from: track1.clone(), to: track1_new.clone(), })");
     assert!(changed);
 
     assert_eq!(
         data.favorite_paths(),
         [track1_new.clone(), other.clone()].into_iter().collect()
     );
-    let playlist = data.playlist(1).unwrap();
+    let playlist = data
+        .playlist(1)
+        .expect("expected test value from data.playlist(1)");
     assert_eq!(
-        playlist.tracks.iter().filter_map(|l| l.native_path()).collect::<Vec<_>>(),
+        playlist
+            .tracks
+            .iter()
+            .filter_map(|l| l.native_path())
+            .collect::<Vec<_>>(),
         vec![track1_new.as_path(), track2.as_path()]
     );
     assert_eq!(data.added_dates().get(&track1_new), Some(&1000));
@@ -353,7 +456,7 @@ fn relocate_updates_favorites_playlists_and_history_for_single_file_and_director
     let changed = data.apply(Command::Relocate {
         from: old_album,
         to: new_album,
-    }).unwrap();
+    }).expect("expected test value from data.apply(Command::Relocate { from: old_album, to: new_album, })");
     assert!(changed);
 
     let expected_t1 = PathBuf::from("/Archive/Music/Album/track1_remastered.flac");
@@ -363,9 +466,15 @@ fn relocate_updates_favorites_playlists_and_history_for_single_file_and_director
         data.favorite_paths(),
         [expected_t1.clone(), other.clone()].into_iter().collect()
     );
-    let playlist = data.playlist(1).unwrap();
+    let playlist = data
+        .playlist(1)
+        .expect("expected test value from data.playlist(1)");
     assert_eq!(
-        playlist.tracks.iter().filter_map(|l| l.native_path()).collect::<Vec<_>>(),
+        playlist
+            .tracks
+            .iter()
+            .filter_map(|l| l.native_path())
+            .collect::<Vec<_>>(),
         vec![expected_t1.as_path(), expected_t2.as_path()]
     );
     assert_eq!(data.added_dates().get(&expected_t1), Some(&1000));
@@ -377,14 +486,14 @@ fn relocate_deduplicates_when_target_already_in_favorites() {
     let mut data = Collections::default();
     let track1 = PathBuf::from("/Music/track1.flac");
     let track2 = PathBuf::from("/Music/track2.flac");
-    data.apply(Command::Favorite(vec![track1.clone(), track2.clone()], true)).unwrap();
+    data.apply(Command::Favorite(vec![track1.clone(), track2.clone()], true)).expect("expected test value from data.apply(Command::Favorite(vec![track1.clone(), track2.clone()], true))");
     assert_eq!(data.favorite_paths().len(), 2);
 
     // Relocate track1 to track2 -> should deduplicate cleanly
     let changed = data.apply(Command::Relocate {
         from: track1,
         to: track2.clone(),
-    }).unwrap();
+    }).expect("expected test value from data.apply(Command::Relocate { from: track1, to: track2.clone(), })");
     assert!(changed);
     assert_eq!(data.favorite_paths(), [track2].into_iter().collect());
 }
@@ -417,9 +526,11 @@ fn replacing_member_moves_deduplicate_stably_and_allow_edits_after_save_and_relo
         let nested_source = PathBuf::from("/generated/source/nested/other.flac");
         let nested_destination = PathBuf::from("/generated/destination/nested/other.flac");
         let mut data = Collections::default();
-        data.apply(Command::Create("Source first".into())).unwrap();
+        data.apply(Command::Create("Source first".into())).expect(
+            "expected test value from data.apply(Command::Create(\"Source first\".into()))",
+        );
         data.apply(Command::Create("Destination first".into()))
-            .unwrap();
+            .expect("expected test value from data.apply(Command::Create(\"Destination first\".into()))");
         data.apply(Command::Add(
             1,
             vec![
@@ -429,7 +540,7 @@ fn replacing_member_moves_deduplicate_stably_and_allow_edits_after_save_and_relo
                 sibling.clone(),
             ],
         ))
-        .unwrap();
+        .expect("expected test value from data.apply(Command::Add( 1, vec![ source.clone(), middle.clone(), destination.clone(), sibling.clone(), ], ))");
         data.apply(Command::Add(
             2,
             vec![
@@ -439,18 +550,22 @@ fn replacing_member_moves_deduplicate_stably_and_allow_edits_after_save_and_relo
                 sibling.clone(),
             ],
         ))
-        .unwrap();
+        .expect("expected test value from data.apply(Command::Add( 2, vec![ destination.clone(), middle.clone(), source.clone(), sibling.clone(), ], ))");
         data.apply(Command::Favorite(
             vec![source.clone(), destination.clone(), sibling.clone()],
             true,
         ))
-        .unwrap();
+        .expect("expected test value from data.apply(Command::Favorite( vec![source.clone(), destination.clone(), sibling.clone()], true, ))");
         data.apply(Command::Observe(vec![destination.clone()], 200))
-            .unwrap();
+            .expect("expected test value from data.apply(Command::Observe(vec![destination.clone()], 200))");
         data.apply(Command::Observe(vec![source.clone()], 100))
-            .unwrap();
+            .expect(
+                "expected test value from data.apply(Command::Observe(vec![source.clone()], 100))",
+            );
         data.apply(Command::Observe(vec![sibling.clone()], 300))
-            .unwrap();
+            .expect(
+                "expected test value from data.apply(Command::Observe(vec![sibling.clone()], 300))",
+            );
         data.played = vec![
             PlayCount {
                 path: Location::local(source.clone()),
@@ -467,17 +582,17 @@ fn replacing_member_moves_deduplicate_stably_and_allow_edits_after_save_and_relo
                     id,
                     vec![nested_destination.clone(), nested_source.clone()],
                 ))
-                .unwrap();
+                .expect("expected test value from data.apply(Command::Add( id, vec![nested_destination.clone(), nested_source.clone()], ))");
             }
             data.apply(Command::Favorite(
                 vec![nested_source.clone(), nested_destination.clone()],
                 true,
             ))
-            .unwrap();
+            .expect("expected test value from data.apply(Command::Favorite( vec![nested_source.clone(), nested_destination.clone()], true, ))");
             data.apply(Command::Observe(vec![nested_source.clone()], 50))
-                .unwrap();
+                .expect("expected test value from data.apply(Command::Observe(vec![nested_source.clone()], 50))");
             data.apply(Command::Observe(vec![nested_destination.clone()], 75))
-                .unwrap();
+                .expect("expected test value from data.apply(Command::Observe(vec![nested_destination.clone()], 75))");
             data.played.extend([
                 PlayCount {
                     path: Location::local(nested_source.clone()),
@@ -489,8 +604,11 @@ fn replacing_member_moves_deduplicate_stably_and_allow_edits_after_save_and_relo
                 },
             ]);
         }
-        let mut storage = disk::Storage::open(&file).unwrap();
-        storage.save(&data).unwrap();
+        let mut storage = disk::Storage::open(&file)
+            .expect("expected test value from disk::Storage::open(&file)");
+        storage
+            .save(&data)
+            .expect("expected test value from storage.save(&data)");
         drop(storage);
 
         let store = Store::start(Some(file.clone()));
@@ -504,18 +622,26 @@ fn replacing_member_moves_deduplicate_stably_and_allow_edits_after_save_and_relo
         } else {
             (source.clone(), destination.clone())
         };
-        store.relocate(from, to).unwrap();
-        store.flush(Duration::from_secs(2)).unwrap();
+        store
+            .relocate(from, to)
+            .expect("expected test value from store.relocate(from, to)");
+        store
+            .flush(Duration::from_secs(2))
+            .expect("expected test value from store.flush(Duration::from_secs(2))");
         let moved = store.snapshot();
         assert!(moved.error.is_none());
-        validate(&moved.data).unwrap();
+        validate(&moved.data).expect("expected test value from validate(&moved.data)");
         let mut expected = vec![destination.clone(), middle.clone(), sibling.clone()];
         if directory_move {
             expected.push(nested_destination.clone());
         }
         for id in [1, 2] {
             assert_eq!(
-                moved.data.playlist(id).unwrap().tracks,
+                moved
+                    .data
+                    .playlist(id)
+                    .expect("expected test value from moved.data.playlist(id)")
+                    .tracks,
                 expected
                     .iter()
                     .cloned()
@@ -540,8 +666,16 @@ fn replacing_member_moves_deduplicate_stably_and_allow_edits_after_save_and_relo
             assert_eq!(moved.data.play_counts()[&nested_destination], u64::MAX);
         }
         assert_eq!(
-            load(&file).unwrap().playlist(1).unwrap().tracks,
-            moved.data.playlist(1).unwrap().tracks
+            load(&file)
+                .expect("expected test value from load(&file)")
+                .playlist(1)
+                .expect("expected test value from load(&file).unwrap().playlist(1)")
+                .tracks,
+            moved
+                .data
+                .playlist(1)
+                .expect("expected test value from moved.data.playlist(1)")
+                .tracks
         );
         close_persistent_store(store, &file);
 
@@ -549,30 +683,56 @@ fn replacing_member_moves_deduplicate_stably_and_allow_edits_after_save_and_relo
         let initial = wait(&restored, |snapshot| snapshot.ready);
         assert!(initial.error.is_none());
         assert_eq!(
-            initial.data.playlist(1).unwrap().tracks.len(),
+            initial
+                .data
+                .playlist(1)
+                .expect("expected test value from initial.data.playlist(1)")
+                .tracks
+                .len(),
             expected.len()
         );
         restored
             .send(Command::Move(1, destination.clone(), 1))
-            .unwrap();
+            .expect(
+                "expected test value from restored .send(Command::Move(1, destination.clone(), 1))",
+            );
         restored
             .send(Command::Remove(2, vec![destination.clone()]))
-            .unwrap();
+            .expect("expected test value from restored .send(Command::Remove(2, vec![destination.clone()]))");
         restored
             .send(Command::Favorite(vec![destination.clone()], false))
-            .unwrap();
-        restored.send(Command::Played(destination.clone())).unwrap();
-        restored.flush(Duration::from_secs(2)).unwrap();
-        let edited = load(&file).unwrap();
+            .expect("expected test value from restored .send(Command::Favorite(vec![destination.clone()], false))");
+        restored
+            .send(Command::Played(destination.clone()))
+            .expect("expected test value from restored.send(Command::Played(destination.clone()))");
+        restored
+            .flush(Duration::from_secs(2))
+            .expect("expected test value from restored.flush(Duration::from_secs(2))");
+        let edited = load(&file).expect("expected test value from load(&file)");
         assert_eq!(
-            edited.playlist(1).unwrap().tracks[0].native_path(),
+            edited
+                .playlist(1)
+                .expect("expected test value from edited.playlist(1)")
+                .tracks[0]
+                .native_path(),
             Some(middle.as_path())
         );
         assert_eq!(
-            edited.playlist(1).unwrap().tracks[1].native_path(),
+            edited
+                .playlist(1)
+                .expect("expected test value from edited.playlist(1)")
+                .tracks[1]
+                .native_path(),
             Some(destination.as_path())
         );
-        assert_eq!(edited.playlist(2).unwrap().tracks.len(), expected.len() - 1);
+        assert_eq!(
+            edited
+                .playlist(2)
+                .expect("expected test value from edited.playlist(2)")
+                .tracks
+                .len(),
+            expected.len() - 1
+        );
         assert!(!edited.favorite_paths().contains(&destination));
         assert_eq!(edited.play_counts()[&destination], 17);
         assert_eq!(edited.added_dates()[&destination], 100);
@@ -583,11 +743,18 @@ fn replacing_member_moves_deduplicate_stably_and_allow_edits_after_save_and_relo
         let final_snapshot = wait(&final_store, |snapshot| snapshot.ready);
         assert!(final_snapshot.error.is_none());
         assert_eq!(
-            final_snapshot.data.playlist(1).unwrap().tracks,
-            edited.playlist(1).unwrap().tracks
+            final_snapshot
+                .data
+                .playlist(1)
+                .expect("expected test value from final_snapshot.data.playlist(1)")
+                .tracks,
+            edited
+                .playlist(1)
+                .expect("expected test value from edited.playlist(1)")
+                .tracks
         );
         assert_eq!(final_snapshot.data.play_counts()[&destination], 17);
         close_persistent_store(final_store, &file);
-        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(root).expect("remove generated fixture");
     }
 }

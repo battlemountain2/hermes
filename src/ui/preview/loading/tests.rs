@@ -2,7 +2,8 @@ use super::*;
 use crate::model::{EntryKind, FileEntryInner, Location};
 use std::{fs, path::Path};
 
-struct Pending(RefCell<Vec<(PreviewRequest, Rc<dyn Fn(PreviewEvent)>)>>);
+type PendingRequest = (PreviewRequest, Rc<dyn Fn(PreviewEvent)>);
+struct Pending(RefCell<Vec<PendingRequest>>);
 
 impl PreviewProvider for Pending {
     fn load(&self, request: PreviewRequest, emit: Rc<dyn Fn(PreviewEvent)>) -> LoadHandle {
@@ -13,21 +14,33 @@ impl PreviewProvider for Pending {
 
 fn write_image(path: &Path, width: i32, height: i32, red: f64, blue: f64) -> Vec<u8> {
     let image =
-        gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, width, height).unwrap();
-    let drawing = gtk::cairo::Context::new(&image).unwrap();
+        gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, width, height).expect("expected test value from gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, width, height)");
+    let drawing = gtk::cairo::Context::new(&image)
+        .expect("expected test value from gtk::cairo::Context::new(&image)");
     drawing.set_source_rgb(red, 0.0, blue);
-    drawing.paint().unwrap();
+    drawing
+        .paint()
+        .expect("expected test value from drawing.paint()");
     let mut bytes = Vec::new();
-    image.write_to_png(&mut bytes).unwrap();
-    fs::write(path, &bytes).unwrap();
+    image
+        .write_to_png(&mut bytes)
+        .expect("expected test value from image.write_to_png(&mut bytes)");
+    fs::write(path, &bytes).expect("write generated fixture");
     bytes
 }
 
 fn entry(path: &Path) -> FileEntry {
     FileEntry(Rc::new(FileEntryInner {
         location: Location::local(path),
-        native_name: path.file_name().unwrap().to_owned(),
-        display_name: path.file_name().unwrap().to_string_lossy().into_owned(),
+        native_name: path
+            .file_name()
+            .expect("expected test value from path.file_name()")
+            .to_owned(),
+        display_name: path
+            .file_name()
+            .expect("expected test value from path.file_name()")
+            .to_string_lossy()
+            .into_owned(),
         kind: EntryKind::File,
         size: MetadataValue::Unknown,
         modified_unix_seconds: MetadataValue::Unknown,
@@ -66,11 +79,11 @@ fn pump() {
 #[test]
 #[ignore = "Private GTK display; generated cached photos/posters, no user files"]
 fn desktop_cached_photos_upgrade_and_ignore_stale_changed_closed_or_failed_requests() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let root =
         std::env::temp_dir().join(format!("hermes-progressive-photo-{}", std::process::id()));
-    fs::create_dir(&root).unwrap();
+    fs::create_dir(&root).expect("create generated fixture directory");
     let first = root.join("first.png");
     let second = root.join("second.png");
     let bytes = write_image(&first, 64, 32, 1.0, 0.0);
@@ -103,10 +116,10 @@ fn desktop_cached_photos_upgrade_and_ignore_stale_changed_closed_or_failed_reque
         .loading_image
         .borrow()
         .as_ref()
-        .unwrap()
+        .expect("expected test value from drawer .state .loading_image .borrow() .as_ref()")
         .widget
         .first_child()
-        .unwrap()
+        .expect("expected test value from drawer .state .loading_image .borrow() .as_ref() .unwrap() .widget .first_child()")
         .height();
     eprintln!(
         "Cached photo displayed while full decoder is pending: {:?}",
@@ -138,10 +151,10 @@ fn desktop_cached_photos_upgrade_and_ignore_stale_changed_closed_or_failed_reque
             .image
             .borrow()
             .as_ref()
-            .unwrap()
+            .expect("expected test value from drawer .state .image .borrow() .as_ref()")
             .widget
             .first_child()
-            .unwrap()
+            .expect("expected test value from drawer .state .image .borrow() .as_ref() .unwrap() .widget .first_child()")
             .height()
     );
     drawer.show(entry(&second));
@@ -198,42 +211,74 @@ fn desktop_cached_photos_upgrade_and_ignore_stale_changed_closed_or_failed_reque
     );
     drawer.close();
     window.close();
-    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).expect("remove generated fixture");
 }
 
 #[test]
 #[ignore = "Private GTK display; synthetic saved slide poster, canceled/stale requests, no full converter"]
 fn desktop_saved_office_poster_stays_provisional_and_cannot_replace_a_newer_document() {
     use std::io::Write;
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let root = std::env::temp_dir().join(format!("hermes-office-poster-{}", std::process::id()));
-    fs::create_dir(&root).unwrap();
+    fs::create_dir(&root).expect("create generated fixture directory");
     let bytes = write_image(&root.join("cover.png"), 320, 180, 1.0, 0.0);
     for (name, saved) in [("saved.pptx", true), ("next.pptx", false)] {
-        let mut archive = zip::ZipWriter::new(fs::File::create(root.join(name)).unwrap());
-        archive.start_file("ppt/presentation.xml", zip::write::SimpleFileOptions::default()).unwrap();
-        archive.write_all(b"<presentation/>").unwrap();
+        let mut archive = zip::ZipWriter::new(
+            fs::File::create(root.join(name)).expect("create generated fixture file"),
+        );
+        archive
+            .start_file(
+                "ppt/presentation.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .expect("start generated ZIP member");
+        archive
+            .write_all(b"<presentation/>")
+            .expect("write generated ZIP member");
         if saved {
-            archive.start_file("docProps/thumbnail.png", zip::write::SimpleFileOptions::default()).unwrap();
-            archive.write_all(&bytes).unwrap();
+            archive
+                .start_file(
+                    "docProps/thumbnail.png",
+                    zip::write::SimpleFileOptions::default(),
+                )
+                .expect("start generated ZIP member");
+            archive
+                .write_all(&bytes)
+                .expect("write generated ZIP member");
         }
-        archive.finish().unwrap();
+        archive.finish().expect("finish generated ZIP fixture");
     }
     let provider = Rc::new(Pending(RefCell::new(Vec::new())));
     let drawer = PreviewDrawer::new(provider.clone());
-    let window = gtk::Window::builder().child(&drawer.widget()).default_width(500).default_height(500).build();
+    let window = gtk::Window::builder()
+        .child(&drawer.widget())
+        .default_width(500)
+        .default_height(500)
+        .build();
     window.present();
     let started = Instant::now();
     drawer.show(entry(&root.join("saved.pptx")));
     pump_until(|| drawer.state.loading_image.borrow().is_some());
-    eprintln!("Saved slide poster before full conversion: {:?}", started.elapsed());
+    eprintln!(
+        "Saved slide poster before full conversion: {:?}",
+        started.elapsed()
+    );
     assert!(drawer.state.current_request.get().is_some());
     assert!(drawer.state.pdf.borrow().is_none());
     let (request, emit) = provider.0.borrow()[0].clone();
     drawer.show(entry(&root.join("next.pptx")));
     emit(PreviewEvent::Ready(Preview {
-        request_id: request.id, entry: request.entry, content_type: "application/vnd.openxmlformats-officedocument.presentationml.presentation".into(), content: PreviewContent::Pdf { png: bytes, page: 0, pages: 1, text_layer: None },
+        request_id: request.id,
+        entry: request.entry,
+        content_type: "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            .into(),
+        content: PreviewContent::Pdf {
+            png: bytes,
+            page: 0,
+            pages: 1,
+            text_layer: None,
+        },
     }));
     pump();
     assert!(drawer.state.loading_image.borrow().is_none());
@@ -244,5 +289,5 @@ fn desktop_saved_office_poster_stays_provisional_and_cannot_replace_a_newer_docu
     pump();
     assert!(drawer.state.loading_image.borrow().is_none());
     window.close();
-    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).expect("remove generated fixture");
 }

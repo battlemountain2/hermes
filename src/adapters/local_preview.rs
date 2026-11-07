@@ -22,7 +22,9 @@ impl LocalPreviewProvider {
         entry: &FileEntry,
         content_type: Option<&str>,
     ) -> Result<(), String> {
-        PreviewPolicy::current().for_streaming_preview().check_entry(entry, content_type)
+        PreviewPolicy::current()
+            .for_streaming_preview()
+            .check_entry(entry, content_type)
     }
 }
 
@@ -38,11 +40,20 @@ fn preview_family(content_type: &str, name: &std::ffi::OsStr) -> FormatFamily {
 }
 
 impl LocalPreviewProvider {
-    fn load_with_layout(&self, request: PreviewRequest, emit: Rc<dyn Fn(PreviewEvent)>, layout: bool) -> LoadHandle {
+    fn load_with_layout(
+        &self,
+        request: PreviewRequest,
+        emit: Rc<dyn Fn(PreviewEvent)>,
+        layout: bool,
+    ) -> LoadHandle {
         let request_id = request.id;
         let entry = request.entry.clone();
         if let Err(message) = Self::check_policy(&entry, None) {
-            emit(PreviewEvent::Failed { request_id, entry, message });
+            emit(PreviewEvent::Failed {
+                request_id,
+                entry,
+                message,
+            });
             return LoadHandle::new(|| {});
         }
         let cancellation = Cancellation::default();

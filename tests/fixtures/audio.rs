@@ -15,11 +15,11 @@ pub fn sample_wav() -> Vec<u8> {
     // fmt subchunk
     out.extend_from_slice(b"fmt ");
     out.extend_from_slice(&16u32.to_le_bytes()); // subchunk1 size (16 for PCM)
-    out.extend_from_slice(&1u16.to_le_bytes());  // audio format (1 = PCM)
-    out.extend_from_slice(&1u16.to_le_bytes());  // num channels (1 = mono)
+    out.extend_from_slice(&1u16.to_le_bytes()); // audio format (1 = PCM)
+    out.extend_from_slice(&1u16.to_le_bytes()); // num channels (1 = mono)
     out.extend_from_slice(&sample_rate.to_le_bytes()); // sample rate
     out.extend_from_slice(&(sample_rate * 2).to_le_bytes()); // byte rate
-    out.extend_from_slice(&2u16.to_le_bytes());  // block align
+    out.extend_from_slice(&2u16.to_le_bytes()); // block align
     out.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
 
     // data subchunk
@@ -29,7 +29,7 @@ pub fn sample_wav() -> Vec<u8> {
     for i in 0..num_samples {
         // 440 Hz sine wave
         let t = i as f64 / sample_rate as f64;
-        let sample = ( (2.0 * std::f64::consts::PI * 440.0 * t).sin() * 16000.0 ) as i16;
+        let sample = ((2.0 * std::f64::consts::PI * 440.0 * t).sin() * 16000.0) as i16;
         out.extend_from_slice(&sample.to_le_bytes());
     }
 

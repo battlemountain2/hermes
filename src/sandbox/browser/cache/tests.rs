@@ -53,7 +53,11 @@ fn replacements_expiry_and_identity_changes_remove_old_payloads() {
     assert!(cache.get(path, edited, Operation::Image).is_none());
     assert_eq!(cache.bytes, 0);
     cache.insert(path, edited, Operation::Image, vec![0; 3], None);
-    cache.entries.front_mut().unwrap().timestamp = Instant::now() - CACHE_TTL;
+    cache
+        .entries
+        .front_mut()
+        .expect("expected test value from cache.entries.front_mut()")
+        .timestamp = Instant::now() - CACHE_TTL;
     assert!(cache.get(path, edited, Operation::Image).is_none());
     assert_eq!(cache.bytes, 0);
 }
@@ -78,12 +82,17 @@ fn unchanged_previews_survive_a_normal_revisit_without_increasing_cache_budgets(
     let mut cache = Cache::new(8);
     let path = Path::new("photo");
     cache.insert(path, identity(), Operation::PreviewImage, vec![1; 8], None);
-    cache.entries.front_mut().unwrap().timestamp =
-        Instant::now() - std::time::Duration::from_secs(90);
+    cache
+        .entries
+        .front_mut()
+        .expect("expected test value from cache.entries.front_mut()")
+        .timestamp = Instant::now() - std::time::Duration::from_secs(90);
     assert_eq!(
         cache
             .get(path, identity(), Operation::PreviewImage)
-            .unwrap()
+            .expect(
+                "expected test value from cache .get(path, identity(), Operation::PreviewImage)"
+            )
             .0,
         vec![1; 8]
     );
@@ -113,33 +122,34 @@ fn same_size_same_second_edits_and_atomic_replacements_have_distinct_identity() 
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    fs::create_dir(&folder).unwrap();
+    fs::create_dir(&folder).expect("create generated fixture directory");
     let path = folder.join("image");
     let time = std::time::UNIX_EPOCH + std::time::Duration::new(1000, 100);
-    fs::write(&path, b"first").unwrap();
+    fs::write(&path, b"first").expect("write generated fixture");
     File::open(&path)
-        .unwrap()
+        .expect("expected test value from File::open(&path)")
         .set_times(FileTimes::new().set_modified(time))
-        .unwrap();
-    let before = Identity::read(&path).unwrap();
-    fs::write(&path, b"other").unwrap();
+        .expect("expected test value from File::open(&path) .unwrap() .set_times(FileTimes::new().set_modified(time))");
+    let before = Identity::read(&path).expect("expected test value from Identity::read(&path)");
+    fs::write(&path, b"other").expect("write generated fixture");
     File::open(&path)
-        .unwrap()
+        .expect("expected test value from File::open(&path)")
         .set_times(FileTimes::new().set_modified(time + std::time::Duration::from_nanos(100)))
-        .unwrap();
-    let edited = Identity::read(&path).unwrap();
+        .expect("expected test value from File::open(&path) .unwrap() .set_times(FileTimes::new().set_modified(time + std::time::Duration::from_nanos(100)))");
+    let edited = Identity::read(&path).expect("expected test value from Identity::read(&path)");
     assert_eq!(before.size, edited.size);
     assert_eq!(before.modified.0, edited.modified.0);
     assert_ne!(before, edited);
     let replacement = folder.join("replacement");
-    fs::write(&replacement, b"third").unwrap();
+    fs::write(&replacement, b"third").expect("write generated fixture");
     File::open(&replacement)
-        .unwrap()
+        .expect("expected test value from File::open(&replacement)")
         .set_times(FileTimes::new().set_modified(time))
-        .unwrap();
-    fs::rename(replacement, &path).unwrap();
-    let replaced = Identity::read(&path).unwrap();
+        .expect("expected test value from File::open(&replacement) .unwrap() .set_times(FileTimes::new().set_modified(time))");
+    fs::rename(replacement, &path)
+        .expect("expected test value from fs::rename(replacement, &path)");
+    let replaced = Identity::read(&path).expect("expected test value from Identity::read(&path)");
     assert_ne!(before.inode, replaced.inode);
     assert_ne!(before, replaced);
-    fs::remove_dir_all(folder).unwrap();
+    fs::remove_dir_all(folder).expect("remove generated fixture");
 }

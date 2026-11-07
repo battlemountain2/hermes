@@ -47,8 +47,13 @@ fn assert_no_trailing_gap(view: &BrowserView) {
     let scroller = view.state.scroller.borrow();
     let horizontal = scroller.hadjustment();
     let columns = view.state.columns.borrow();
-    let last = columns.last().unwrap();
-    let bounds = last.shell.compute_bounds(&*root).unwrap();
+    let last = columns
+        .last()
+        .expect("generated fixture must provide the expected value");
+    let bounds = last
+        .shell
+        .compute_bounds(&*root)
+        .expect("generated fixture must provide the expected value");
     assert_eq!(
         bounds.x().round() as i32 + bounds.width().round() as i32,
         root.width()
@@ -64,12 +69,13 @@ fn assert_no_trailing_gap(view: &BrowserView) {
 #[test]
 #[ignore = "Private GTK display; generated column/divider/retained-tab geometry"]
 fn desktop_last_column_fills_resized_preview_boundary_without_feedback() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("generated fixture must provide the expected value");
+    crate::assets::prepare().expect("generated fixture must provide the expected value");
     let _theme = crate::ui::theme::ThemeManager::shared();
     let styles = gtk::CssProvider::new();
     styles.load_from_string(include_str!("../../style.css"));
-    let display = gtk::gdk::Display::default().unwrap();
+    let display =
+        gtk::gdk::Display::default().expect("generated fixture must provide the expected value");
     gtk::style_context_add_provider_for_display(
         &display,
         &styles,
@@ -148,7 +154,8 @@ fn desktop_last_column_fills_resized_preview_boundary_without_feedback() {
     pump(&window);
     assert_eq!(view.preview_occupied_width(1200), 410);
     assert_no_trailing_gap(&view);
-    let retained_id = TrailId::new("layout-first").unwrap();
+    let retained_id =
+        TrailId::new("layout-first").expect("generated fixture must provide the expected value");
     view.state.store_presentation(retained_id.clone());
     view.state
         .append_column(0, &Location::local("/generated-layout/Second"));

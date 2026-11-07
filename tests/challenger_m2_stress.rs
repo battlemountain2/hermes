@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#![allow(dead_code, unused_imports, clippy::all)]
-
 //! Empirical Challenger Stress Test Suite for Milestone 2:
 //! - 1. Header sniffing edge cases & malformed inputs (truncated JPEG, invalid IHDR, empty file, BigTIFF variations).
 //! - 2. Decoded frame budget exact boundaries (32MB vs 32MB + 1 pixel, aspect ratios, 134 MP ceiling, saturating arithmetic).
@@ -12,20 +10,16 @@
 
 use std::{
     fs,
-    io::{Read, Write},
-    path::Path,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
 
-use gdk_pixbuf::prelude::*;
-
 mod common;
-use common::*;
 use common::wire_protocol::*;
+use common::*;
 
 // =========================================================================
 // Sniffer Implementation & Oracle Definitions
@@ -226,13 +220,14 @@ pub fn sniff_tiff(bytes: &[u8]) -> Option<SniffedDimensions> {
             } else if tag == 257 {
                 height = val;
             }
-            if let (Some(w), Some(h)) = (width, height) {
-                if w > 0 && h > 0 {
-                    return Some(SniffedDimensions {
-                        width: w,
-                        height: h,
-                    });
-                }
+            if let (Some(w), Some(h)) = (width, height)
+                && w > 0
+                && h > 0
+            {
+                return Some(SniffedDimensions {
+                    width: w,
+                    height: h,
+                });
             }
         }
     } else if magic == 43 {
@@ -280,11 +275,15 @@ pub fn sniff_tiff(bytes: &[u8]) -> Option<SniffedDimensions> {
                 3 => {
                     let v = if is_le {
                         u16::from_le_bytes(
-                            bytes[entry_offset + 12..entry_offset + 14].try_into().ok()?,
+                            bytes[entry_offset + 12..entry_offset + 14]
+                                .try_into()
+                                .ok()?,
                         )
                     } else {
                         u16::from_be_bytes(
-                            bytes[entry_offset + 12..entry_offset + 14].try_into().ok()?,
+                            bytes[entry_offset + 12..entry_offset + 14]
+                                .try_into()
+                                .ok()?,
                         )
                     };
                     Some(v as u32)
@@ -292,11 +291,15 @@ pub fn sniff_tiff(bytes: &[u8]) -> Option<SniffedDimensions> {
                 4 => {
                     let v = if is_le {
                         u32::from_le_bytes(
-                            bytes[entry_offset + 12..entry_offset + 16].try_into().ok()?,
+                            bytes[entry_offset + 12..entry_offset + 16]
+                                .try_into()
+                                .ok()?,
                         )
                     } else {
                         u32::from_be_bytes(
-                            bytes[entry_offset + 12..entry_offset + 16].try_into().ok()?,
+                            bytes[entry_offset + 12..entry_offset + 16]
+                                .try_into()
+                                .ok()?,
                         )
                     };
                     Some(v)
@@ -304,11 +307,15 @@ pub fn sniff_tiff(bytes: &[u8]) -> Option<SniffedDimensions> {
                 16 => {
                     let v = if is_le {
                         u64::from_le_bytes(
-                            bytes[entry_offset + 12..entry_offset + 20].try_into().ok()?,
+                            bytes[entry_offset + 12..entry_offset + 20]
+                                .try_into()
+                                .ok()?,
                         )
                     } else {
                         u64::from_be_bytes(
-                            bytes[entry_offset + 12..entry_offset + 20].try_into().ok()?,
+                            bytes[entry_offset + 12..entry_offset + 20]
+                                .try_into()
+                                .ok()?,
                         )
                     };
                     u32::try_from(v).ok()
@@ -321,13 +328,14 @@ pub fn sniff_tiff(bytes: &[u8]) -> Option<SniffedDimensions> {
             } else if tag == 257 {
                 height = val;
             }
-            if let (Some(w), Some(h)) = (width, height) {
-                if w > 0 && h > 0 {
-                    return Some(SniffedDimensions {
-                        width: w,
-                        height: h,
-                    });
-                }
+            if let (Some(w), Some(h)) = (width, height)
+                && w > 0
+                && h > 0
+            {
+                return Some(SniffedDimensions {
+                    width: w,
+                    height: h,
+                });
             }
         }
     }
@@ -349,14 +357,23 @@ pub fn generate_valid_jpeg(width: i32, height: i32) -> Vec<u8> {
 
 pub fn generate_oversized_jpeg_raw(width: u16, height: u16) -> Vec<u8> {
     vec![
-        0xFF, 0xD8, // SOI
-        0xFF, 0xC0, // SOF0
-        0x00, 0x0B, // Length = 11
-        0x08,       // Precision
-        (height >> 8) as u8, height as u8,
-        (width >> 8) as u8, width as u8,
-        0x03, 0x01, 0x11, 0x00, // 3 components
-        0xFF, 0xD9, // EOI
+        0xFF,
+        0xD8, // SOI
+        0xFF,
+        0xC0, // SOF0
+        0x00,
+        0x0B, // Length = 11
+        0x08, // Precision
+        (height >> 8) as u8,
+        height as u8,
+        (width >> 8) as u8,
+        width as u8,
+        0x03,
+        0x01,
+        0x11,
+        0x00, // 3 components
+        0xFF,
+        0xD9, // EOI
     ]
 }
 
@@ -547,16 +564,20 @@ pub fn generate_bigtiff(is_le: bool, width: u64, height: u64, tag_type: u16) -> 
 #[test]
 fn test_stress_png_edge_cases() {
     assert!(sniff_png(b"").is_none(), "empty PNG slice");
-    assert!(sniff_png(b"\x89PNG\r\n\x1a").is_none(), "7-byte partial signature");
+    assert!(
+        sniff_png(b"\x89PNG\r\n\x1a").is_none(),
+        "7-byte partial signature"
+    );
     assert!(sniff_png(b"\x89PNG\r\n\x1a\n").is_none(), "signature only");
-    assert!(sniff_png(b"\x89PNG\r\n\x1a\n\0\0\0\x0D").is_none(), "signature + length only");
+    assert!(
+        sniff_png(b"\x89PNG\r\n\x1a\n\0\0\0\x0D").is_none(),
+        "signature + length only"
+    );
 
     // Valid IHDR chunk
     let mut valid_png = vec![
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-        0x00, 0x00, 0x00, 0x0D,
-        b'I', b'H', b'D', b'R',
-        0x00, 0x00, 0x04, 0x00, // width: 1024
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, b'I', b'H', b'D',
+        b'R', 0x00, 0x00, 0x04, 0x00, // width: 1024
         0x00, 0x00, 0x03, 0x00, // height: 768
     ];
     let dims = sniff_png(&valid_png).expect("valid png");
@@ -598,7 +619,10 @@ fn test_stress_png_edge_cases() {
 fn test_stress_gif_edge_cases() {
     assert!(sniff_gif(b"").is_none());
     assert!(sniff_gif(b"GIF").is_none());
-    assert!(sniff_gif(b"GIF85a\x10\x00\x10\x00").is_none(), "invalid GIF version");
+    assert!(
+        sniff_gif(b"GIF85a\x10\x00\x10\x00").is_none(),
+        "invalid GIF version"
+    );
 
     let gif87 = b"GIF87a\x20\x01\x10\x02";
     let dims = sniff_gif(gif87).expect("valid GIF87a");
@@ -623,13 +647,18 @@ fn test_stress_jpeg_edge_cases() {
     assert!(sniff_jpeg(b"").is_none());
     assert!(sniff_jpeg(b"\xFF").is_none());
     assert!(sniff_jpeg(b"\xFF\xD8").is_none(), "SOI only");
-    assert!(sniff_jpeg(b"\xFF\xD8\xFF\xD9").is_none(), "SOI followed immediately by EOI");
-    assert!(sniff_jpeg(b"\xFF\xD8\xFF\xDA").is_none(), "SOI followed immediately by SOS");
+    assert!(
+        sniff_jpeg(b"\xFF\xD8\xFF\xD9").is_none(),
+        "SOI followed immediately by EOI"
+    );
+    assert!(
+        sniff_jpeg(b"\xFF\xD8\xFF\xDA").is_none(),
+        "SOI followed immediately by SOS"
+    );
 
     // Multiple 0xFF padding bytes before SOF0
     let padded_jpeg = vec![
-        0xFF, 0xD8,
-        0xFF, 0xFF, 0xFF, 0xFF, 0xC0, // consecutive 0xFF padding
+        0xFF, 0xD8, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, // consecutive 0xFF padding
         0x00, 0x0B, 0x08, 0x01, 0x00, 0x02, 0x00, 0x03, 0x01, 0x11, 0x00,
     ];
     let dims = sniff_jpeg(&padded_jpeg).expect("padded jpeg");
@@ -638,11 +667,9 @@ fn test_stress_jpeg_edge_cases() {
 
     // Standalone markers: RST0 (0xD0) and TEM (0x01) before SOF0
     let rst_jpeg = vec![
-        0xFF, 0xD8,
-        0xFF, 0xD0, // RST0 (no length field)
+        0xFF, 0xD8, 0xFF, 0xD0, // RST0 (no length field)
         0xFF, 0x01, // TEM (no length field)
-        0xFF, 0xC0,
-        0x00, 0x0B, 0x08, 0x00, 0x64, 0x00, 0xC8, 0x03, 0x01, 0x11, 0x00,
+        0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x64, 0x00, 0xC8, 0x03, 0x01, 0x11, 0x00,
     ];
     let dims = sniff_jpeg(&rst_jpeg).expect("standalone marker jpeg");
     assert_eq!(dims.height, 100);
@@ -650,8 +677,7 @@ fn test_stress_jpeg_edge_cases() {
 
     // Progressive SOF2 marker (0xC2)
     let prog_jpeg = vec![
-        0xFF, 0xD8,
-        0xFF, 0xC2, // SOF2 progressive
+        0xFF, 0xD8, 0xFF, 0xC2, // SOF2 progressive
         0x00, 0x0B, 0x08, 0x02, 0x80, 0x03, 0xC0, 0x03, 0x01, 0x11, 0x00,
     ];
     let dims = sniff_jpeg(&prog_jpeg).expect("progressive jpeg");
@@ -785,7 +811,10 @@ fn test_binary_empty_file_handling() {
 
     let res = run_preview_helper("thumbnail-image", &empty_file, &output_png, 256);
     assert!(!res.status.success(), "Empty file must exit non-zero");
-    assert!(!output_png.exists(), "No output file generated for empty file");
+    assert!(
+        !output_png.exists(),
+        "No output file generated for empty file"
+    );
 }
 
 #[test]
@@ -817,7 +846,10 @@ fn test_binary_oversized_image_without_exif_fails_with_guardrail_message() {
         "Must output frame budget guardrail error message in stderr, got: {}",
         res.stderr
     );
-    assert!(!output_png.exists(), "Must not write uncompressed output PNG");
+    assert!(
+        !output_png.exists(),
+        "Must not write uncompressed output PNG"
+    );
 }
 
 #[test]
@@ -874,8 +906,7 @@ fn test_binary_oversized_image_with_out_of_bounds_offset_rejected() {
     let thumb_jpeg = generate_valid_jpeg(16, 16);
 
     // Point offset to 9999999 (far beyond file size)
-    let bad_offset_jpeg =
-        generate_jpeg_with_exif(10000, 10000, &thumb_jpeg, Some(9_999_999), None);
+    let bad_offset_jpeg = generate_jpeg_with_exif(10000, 10000, &thumb_jpeg, Some(9_999_999), None);
     let input_path = env.write_file("bad_offset.jpg", &bad_offset_jpeg);
     let output_png = env.file_path("output.png");
 
@@ -901,12 +932,10 @@ fn test_binary_oversized_image_with_zero_length_thumbnail_rejected() {
 
 #[test]
 fn test_binary_oversized_image_with_non_jpeg_payload_rejected() {
-
     let env = TestEnv::new();
     let non_jpeg_payload = b"NOT_A_JPEG_FILE_HEADER_DATA";
 
-    let bad_payload_jpeg =
-        generate_jpeg_with_exif(10000, 10000, non_jpeg_payload, None, None);
+    let bad_payload_jpeg = generate_jpeg_with_exif(10000, 10000, non_jpeg_payload, None, None);
     let input_path = env.write_file("bad_payload.jpg", &bad_payload_jpeg);
     let output_png = env.file_path("output.png");
 

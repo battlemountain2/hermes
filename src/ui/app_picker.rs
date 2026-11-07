@@ -269,7 +269,7 @@ fn append_section_heading(container: &gtk::Box, text: &str) -> SectionView {
     SectionView { heading }
 }
 
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "keeps application-row assembly centralized"
 )]

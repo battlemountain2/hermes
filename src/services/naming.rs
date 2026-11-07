@@ -45,8 +45,8 @@ pub fn collision_safe_name(basename: &str, exists: &dyn Fn(&str) -> bool) -> Str
 /// - `.bashrc` → (`.bashrc`, ``)
 fn split_stem_extension(name: &str) -> (&str, &str) {
     // Dotfiles with no further extension: .gitignore, .bashrc
-    if name.starts_with('.') {
-        match name[1..].rfind('.') {
+    if let Some(stem) = name.strip_prefix('.') {
+        match stem.rfind('.') {
             Some(pos) => (&name[..pos + 1], &name[pos + 2..]),
             None => (name, ""),
         }

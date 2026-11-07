@@ -31,33 +31,54 @@ fn test_column_name_generation() {
 #[test]
 #[ignore = "Private GTK display; generated wide/long sheets and real scroll adjustments"]
 fn desktop_spreadsheet_scrollbars_reach_both_axes_and_lazy_sheets_keep_position() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let sheet = SheetData {
         name: "Wide sheet".into(),
         headers: (0..40).map(|column| format!("Column {column}")).collect(),
-        rows: (0..200).map(|row| (0..40).map(|column| format!("Row {row} column {column}")).collect()).collect(),
+        rows: (0..200)
+            .map(|row| {
+                (0..40)
+                    .map(|column| format!("Row {row} column {column}"))
+                    .collect()
+            })
+            .collect(),
         total_rows: 201,
         total_cols: 40,
         truncated: false,
     };
     let data = SpreadsheetData {
-        sheets: vec![sheet.clone(), SheetData { name: "Other sheet".into(), ..sheet }],
+        sheets: vec![
+            sheet.clone(),
+            SheetData {
+                name: "Other sheet".into(),
+                ..sheet
+            },
+        ],
         ..SpreadsheetData::default()
     };
     let view = build_spreadsheet_view(&data, "Scroll controls.xlsx");
-    let window = gtk::Window::builder().default_width(420).default_height(360).child(&view.widget).build();
+    let window = gtk::Window::builder()
+        .default_width(420)
+        .default_height(360)
+        .child(&view.widget)
+        .build();
     window.present();
     let root = view.widget.upcast_ref::<gtk::Widget>();
-    let scroll = find_spreadsheet_widget(root, "spreadsheet-grid-scroll").downcast::<gtk::ScrolledWindow>().unwrap();
+    let scroll = find_spreadsheet_widget(root, "spreadsheet-grid-scroll").downcast::<gtk::ScrolledWindow>().expect("expected test value from find_spreadsheet_widget(root, \"spreadsheet-grid-scroll\").downcast::<gtk::ScrolledWindow>()");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         glib::MainContext::default().iteration(false);
-        if scroll.is_mapped() && scroll.hadjustment().upper() > scroll.hadjustment().page_size()
-            && scroll.vadjustment().upper() > scroll.vadjustment().page_size() {
+        if scroll.is_mapped()
+            && scroll.hadjustment().upper() > scroll.hadjustment().page_size()
+            && scroll.vadjustment().upper() > scroll.vadjustment().page_size()
+        {
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "Both axes must overflow the viewport");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Both axes must overflow the viewport"
+        );
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
     assert!(scroll.hscrollbar().is_mapped());
@@ -70,9 +91,20 @@ fn desktop_spreadsheet_scrollbars_reach_both_axes_and_lazy_sheets_keep_position(
     }
     let position = (scroll.hadjustment().value(), scroll.vadjustment().value());
     let bar = find_spreadsheet_widget(root, "spreadsheet-sheet-bar");
-    bar.last_child().unwrap().downcast::<gtk::Button>().unwrap().emit_clicked();
-    bar.first_child().unwrap().downcast::<gtk::Button>().unwrap().emit_clicked();
-    assert_eq!(position, (scroll.hadjustment().value(), scroll.vadjustment().value()));
+    bar.last_child()
+        .expect("expected test value from bar.last_child()")
+        .downcast::<gtk::Button>()
+        .expect("expected test value from bar.last_child().unwrap().downcast::<gtk::Button>()")
+        .emit_clicked();
+    bar.first_child()
+        .expect("expected test value from bar.first_child()")
+        .downcast::<gtk::Button>()
+        .expect("expected test value from bar.first_child().unwrap().downcast::<gtk::Button>()")
+        .emit_clicked();
+    assert_eq!(
+        position,
+        (scroll.hadjustment().value(), scroll.vadjustment().value())
+    );
     window.close();
 }
 

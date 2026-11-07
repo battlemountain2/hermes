@@ -33,10 +33,7 @@ impl Visuals {
         widget.set_visible(false);
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         header.add_css_class("preview-header");
-        let header_icon = crate::assets::primary_icon(
-            crate::assets::icons::DOCUMENTS,
-            18,
-        );
+        let header_icon = crate::assets::primary_icon(crate::assets::icons::DOCUMENTS, 18);
         header.append(&header_icon);
         let name = gtk::Label::new(Some("Preview"));
         name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
@@ -91,11 +88,7 @@ impl Visuals {
             .and_then(|name| name.to_str().map(super::super::browser::icon_for_name))
             .unwrap_or(crate::assets::icons::DOCUMENTS);
         crate::assets::set_primary_icon(&self.header_icon, initial_icon);
-        super::super::thumbnail::show_fallback_icon(
-            &self.image,
-            initial_icon,
-            48,
-        );
+        super::super::thumbnail::show_fallback_icon(&self.image, initial_icon, 48);
         self.name.set_text("Preview");
         self.name.set_tooltip_text(None);
         self.size.set_text("—");
@@ -146,13 +139,7 @@ impl Visuals {
             .check_entry(&entry, info.content_type().as_deref())
             .is_ok()
         {
-            super::super::thumbnail::set_thumbnail_or_icon(
-                &self.image,
-                &entry,
-                fallback,
-                48,
-                256,
-            );
+            super::super::thumbnail::set_thumbnail_or_icon(&self.image, &entry, fallback, 48, 256);
         } else {
             super::super::thumbnail::show_fallback_icon(&self.image, fallback, 48);
         }

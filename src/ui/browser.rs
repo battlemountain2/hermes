@@ -212,6 +212,7 @@ impl Default for PeekBehavior {
 
 type PinHandler = Rc<dyn Fn(Location, String)>;
 type OpenHandler = Rc<dyn Fn(Location) -> bool>;
+type DensityChangeHandler = Rc<dyn Fn(&str)>;
 
 pub(super) struct ViewState {
     open_handler: RefCell<Option<OpenHandler>>,
@@ -252,7 +253,7 @@ pub(super) struct ViewState {
     retained_tabs: RefCell<Vec<(TrailId, retained::Presentation)>>,
     pending_tab_view: Cell<Option<(BrowserMode, BrowserDensity)>>,
     active_context_menu: RefCell<Option<Rc<dyn Fn() -> bool>>>,
-    density_change_handler: RefCell<Option<Rc<dyn Fn(&str)>>>,
+    density_change_handler: RefCell<Option<DensityChangeHandler>>,
 }
 
 #[derive(Clone)]
@@ -276,6 +277,7 @@ impl BrowserView {
             .vexpand(true)
             .build();
         let overlay = gtk::Overlay::new();
+        overlay.add_css_class("density-compact");
 
         let location_entry = gtk::Entry::builder()
             .hexpand(true)
@@ -476,20 +478,21 @@ impl BrowserView {
         let scroll_state = Rc::downgrade(&state);
         scroll_input.connect_scroll(move |controller, _dx, dy| {
             let modifiers = controller.current_event_state();
-            if modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK) && dy.abs() > 0.05 {
-                if let Some(state) = scroll_state.upgrade() {
-                    let direction = if dy < 0.0 { 1 } else { -1 };
-                    state.mode_views.borrow_mut().step_zoom(direction);
-                    let density = state.mode_views.borrow().density();
-                    state.overlay.remove_css_class("density-compact");
-                    state.overlay.remove_css_class("density-airy");
-                    state.overlay.add_css_class(match density {
-                        BrowserDensity::Compact => "density-compact",
-                        BrowserDensity::Airy => "density-airy",
-                    });
-                    state.notify_density_change();
-                    return glib::Propagation::Stop;
-                }
+            if modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK)
+                && dy.abs() > 0.05
+                && let Some(state) = scroll_state.upgrade()
+            {
+                let direction = if dy < 0.0 { 1 } else { -1 };
+                state.mode_views.borrow_mut().step_zoom(direction);
+                let density = state.mode_views.borrow().density();
+                state.overlay.remove_css_class("density-compact");
+                state.overlay.remove_css_class("density-airy");
+                state.overlay.add_css_class(match density {
+                    BrowserDensity::Compact => "density-compact",
+                    BrowserDensity::Airy => "density-airy",
+                });
+                state.notify_density_change();
+                return glib::Propagation::Stop;
             }
             if let Some(state) = scroll_state.upgrade() {
                 state
@@ -682,7 +685,10 @@ impl BrowserView {
         self.state.mode_views.borrow().density()
     }
 
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Thumbnail-size accessor supports folder-view restoration"
+    )]
     pub fn grid_thumbnail_size(&self) -> i32 {
         self.state.mode_views.borrow().grid_thumbnail_size()
     }
@@ -799,10 +805,9 @@ impl BrowserView {
                 .browser
                 .location_at(depth)
                 .map(|location| (depth, location))
-        }) {
-            if let Some(window) = self.state.overlay.root().and_downcast::<gtk::Window>() {
-                show_new_file_dialog(&self.state.browser, &window, location);
-            }
+        }) && let Some(window) = self.state.overlay.root().and_downcast::<gtk::Window>()
+        {
+            show_new_file_dialog(&self.state.browser, &window, location);
         }
     }
 
@@ -888,13 +893,11 @@ impl BrowserView {
                 .hovered_column
                 .get()
                 .or_else(|| self.state.browser.active_depth())
+                && let Some(pos) = self.state.browser.active_child_position(depth)
+                && let Some(entry) = self.state.browser.entry_at(depth, pos)
             {
-                if let Some(pos) = self.state.browser.active_child_position(depth) {
-                    if let Some(entry) = self.state.browser.entry_at(depth, pos) {
-                        copy_locations(&[entry]);
-                        return true;
-                    }
-                }
+                copy_locations(&[entry]);
+                return true;
             }
             return false;
         }
@@ -902,7 +905,10 @@ impl BrowserView {
         true
     }
 
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Copy-name action retained alongside location and file clipboard actions"
+    )]
     pub fn copy_selection_names(&self) -> bool {
         self.state.sync_mode_selection();
         let entries = self.state.browser.selected_entries();
@@ -1427,35 +1433,33 @@ impl ViewState {
             let mut sources = Vec::new();
             let mut external_cut = false;
 
-            if formats.contains_type(gtk::gdk::FileList::static_type()) {
-                if let Ok(value) = clipboard
+            if formats.contains_type(gtk::gdk::FileList::static_type())
+                && let Ok(value) = clipboard
                     .read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT)
                     .await
-                {
-                    if let Ok(files) = value.get::<gtk::gdk::FileList>() {
-                        sources = files
-                            .files()
-                            .into_iter()
-                            .map(|file| {
-                                file.path()
-                                    .map(Location::local)
-                                    .unwrap_or_else(|| Location::uri(file.uri()))
-                            })
-                            .collect();
-                    }
-                }
+                && let Ok(files) = value.get::<gtk::gdk::FileList>()
+            {
+                sources = files
+                    .files()
+                    .into_iter()
+                    .map(|file| {
+                        file.path()
+                            .map(Location::local)
+                            .unwrap_or_else(|| Location::uri(file.uri()))
+                    })
+                    .collect();
             }
 
-            if sources.is_empty() && formats.contain_mime_type("x-special/gnome-copied-files") {
-                if let Some(bytes) =
+            if sources.is_empty()
+                && formats.contain_mime_type("x-special/gnome-copied-files")
+                && let Some(bytes) =
                     read_clipboard_bytes(&clipboard, "x-special/gnome-copied-files").await
-                {
-                    let (is_cut, locs) = parse_gnome_copied_files(&bytes);
-                    if !locs.is_empty() {
-                        sources = locs;
-                        if is_cut {
-                            external_cut = true;
-                        }
+            {
+                let (is_cut, locs) = parse_gnome_copied_files(&bytes);
+                if !locs.is_empty() {
+                    sources = locs;
+                    if is_cut {
+                        external_cut = true;
                     }
                 }
             }
@@ -1469,10 +1473,10 @@ impl ViewState {
                 } else {
                     "application/x-kde4-urilist"
                 };
-                if let Some(bytes) = read_clipboard_bytes(&clipboard, mime).await {
-                    if let Ok(text) = std::str::from_utf8(&bytes) {
-                        sources = parse_uri_list(text);
-                    }
+                if let Some(bytes) = read_clipboard_bytes(&clipboard, mime).await
+                    && let Ok(text) = std::str::from_utf8(&bytes)
+                {
+                    sources = parse_uri_list(text);
                 }
             }
 
@@ -1480,23 +1484,22 @@ impl ViewState {
                 return;
             }
 
-            if !external_cut && formats.contain_mime_type("application/x-kde-cutselection") {
-                if let Some(bytes) =
+            if !external_cut
+                && formats.contain_mime_type("application/x-kde-cutselection")
+                && let Some(bytes) =
                     read_clipboard_bytes(&clipboard, "application/x-kde-cutselection").await
-                {
-                    if bytes.starts_with(b"1") {
-                        external_cut = true;
-                    }
-                }
+                && bytes.starts_with(b"1")
+            {
+                external_cut = true;
             }
-            if !external_cut && formats.contain_mime_type("x-special/gnome-copied-files") {
-                if let Some(bytes) =
+            if !external_cut
+                && formats.contain_mime_type("x-special/gnome-copied-files")
+                && let Some(bytes) =
                     read_clipboard_bytes(&clipboard, "x-special/gnome-copied-files").await
-                {
-                    let (is_cut, _) = parse_gnome_copied_files(&bytes);
-                    if is_cut {
-                        external_cut = true;
-                    }
+            {
+                let (is_cut, _) = parse_gnome_copied_files(&bytes);
+                if is_cut {
+                    external_cut = true;
                 }
             }
 
@@ -3012,12 +3015,12 @@ impl ViewState {
                         if let Ok(entries) = std::fs::read_dir(&native_parent) {
                             let mut dirs = Vec::new();
                             for entry in entries.flatten() {
-                                if let Ok(ft) = entry.file_type() {
-                                    if ft.is_dir() {
-                                        let name = entry.file_name().to_string_lossy().to_string();
-                                        if !name.starts_with('.') {
-                                            dirs.push((name, entry.path()));
-                                        }
+                                if let Ok(ft) = entry.file_type()
+                                    && ft.is_dir()
+                                {
+                                    let name = entry.file_name().to_string_lossy().to_string();
+                                    if !name.starts_with('.') {
+                                        dirs.push((name, entry.path()));
                                     }
                                 }
                             }
@@ -5374,10 +5377,10 @@ pub(super) fn install_item_context_menu(
             popover.popdown();
         }
         let paths = paths_target.borrow().clone();
-        if !paths.is_empty() {
-            if let Err(error) = crate::services::ratings::Store::shared().set_many(paths, None) {
-                tracing::warn!(%error, "failed to clear rating from context menu");
-            }
+        if !paths.is_empty()
+            && let Err(error) = crate::services::ratings::Store::shared().set_many(paths, None)
+        {
+            tracing::warn!(%error, "failed to clear rating from context menu");
         }
     });
 
@@ -6982,10 +6985,10 @@ fn folder_has_audio_or_is_music(entry: &FileEntry) -> bool {
     let Some(path) = entry.location.native_path() else {
         return false;
     };
-    if let Some(music_dir) = glib::user_special_dir(glib::UserDirectory::Music) {
-        if path.starts_with(&music_dir) {
-            return true;
-        }
+    if let Some(music_dir) = glib::user_special_dir(glib::UserDirectory::Music)
+        && path.starts_with(&music_dir)
+    {
+        return true;
     }
     if path.components().any(|c| {
         c.as_os_str()

@@ -10,7 +10,13 @@ struct Request {
 impl Request {
     fn batch(&self, name: &str) {
         let entry = FileEntry(Rc::new(crate::model::FileEntryInner {
-            location: Location::local(self.directory.location.native_path().unwrap().join(name)),
+            location: Location::local(
+                self.directory
+                    .location
+                    .native_path()
+                    .expect("generated fixture must provide the expected value")
+                    .join(name),
+            ),
             native_name: name.into(),
             display_name: name.into(),
             kind: EntryKind::File,
@@ -43,7 +49,11 @@ struct GeneratedSource(RefCell<Vec<Rc<Request>>>);
 
 impl GeneratedSource {
     fn latest(&self) -> Rc<Request> {
-        self.0.borrow().last().unwrap().clone()
+        self.0
+            .borrow()
+            .last()
+            .expect("generated fixture must provide the expected value")
+            .clone()
     }
 }
 
@@ -73,7 +83,9 @@ impl FileSource for GeneratedSource {
 fn probe(view: &BrowserView) -> (gtk::Stack, gtk::Spinner, gtk::StringList, gtk::Label) {
     if view.view_mode() == BrowserMode::Columns {
         let columns = view.state.columns.borrow();
-        let column = columns.last().unwrap();
+        let column = columns
+            .last()
+            .expect("generated fixture must provide the expected value");
         (
             column.presentation.stack.clone(),
             column.spinner.clone(),
@@ -105,8 +117,8 @@ fn assert_page(stack: &gtk::Stack, name: &str) {
 #[test]
 #[ignore = "Requires isolated GTK display; generated folder transitions in all three browser modes"]
 fn desktop_folder_transitions_skip_fast_loading_preserve_errors_and_reject_stale_files() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("generated fixture must provide the expected value");
+    crate::assets::prepare().expect("generated fixture must provide the expected value");
     for mode in [
         BrowserMode::Columns,
         BrowserMode::Grid,

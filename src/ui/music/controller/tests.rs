@@ -15,7 +15,9 @@ fn embedded_fixture_tags() -> crate::model::MusicTags {
 fn metadata_hydration_updates_duplicate_queue_remote_and_session_without_restart() {
     use crate::mpris::Backend;
     let controller = stopped_controller();
-    let duplicate = controller.current_track().unwrap();
+    let duplicate = controller
+        .current_track()
+        .expect("expected test value from controller.current_track()");
     controller.queue.borrow_mut().append(vec![duplicate]);
     controller.update_identities();
     controller.queue.borrow_mut().set_shuffle(true, 42);
@@ -38,19 +40,30 @@ fn metadata_hydration_updates_duplicate_queue_remote_and_session_without_restart
     let observed = calls.clone();
     let weak = Rc::downgrade(&controller);
     let callback: Rc<dyn Fn()> = Rc::new(move || {
-        let controller = weak.upgrade().unwrap();
+        let controller = weak
+            .upgrade()
+            .expect("expected test value from weak.upgrade()");
         assert_eq!(
-            controller.current_track().unwrap().title(),
+            controller
+                .current_track()
+                .expect("expected test value from controller.current_track()")
+                .title(),
             "Embedded title"
         );
         assert_eq!(
-            controller.snapshot().track.unwrap().artist(),
+            controller
+                .snapshot()
+                .track
+                .expect("expected test value from controller.snapshot().track")
+                .artist(),
             "Embedded artist"
         );
         observed.set(observed.get() + 1);
     });
     controller.observe(&callback);
-    let request = controller.begin_metadata_request().unwrap();
+    let request = controller
+        .begin_metadata_request()
+        .expect("expected test value from controller.begin_metadata_request()");
     assert!(controller.begin_metadata_request().is_none());
     assert!(controller.complete_metadata_request(&request, Some(embedded_fixture_tags())));
     assert_eq!(calls.get(), 1);
@@ -91,7 +104,9 @@ fn metadata_hydration_updates_duplicate_queue_remote_and_session_without_restart
 #[test]
 fn metadata_attempts_are_bounded_for_untagged_files_and_failures() {
     let controller = stopped_controller();
-    let request = controller.begin_metadata_request().unwrap();
+    let request = controller
+        .begin_metadata_request()
+        .expect("expected test value from controller.begin_metadata_request()");
     assert!(!controller.complete_metadata_request(&request, None));
     assert!(controller.begin_metadata_request().is_none());
     assert!(!controller.complete_metadata_request(&request, Some(Default::default())));
@@ -105,8 +120,12 @@ fn metadata_attempts_are_bounded_for_untagged_files_and_failures() {
 fn metadata_completion_rejects_navigation_stop_replacement_duplicates_and_shutdown() {
     for action in 0..6 {
         let controller = stopped_controller();
-        let request = controller.begin_metadata_request().unwrap();
-        let duplicate = controller.current_track().unwrap();
+        let request = controller
+            .begin_metadata_request()
+            .expect("expected test value from controller.begin_metadata_request()");
+        let duplicate = controller
+            .current_track()
+            .expect("expected test value from controller.current_track()");
         match action {
             0 => controller.next(),
             1 => controller.stop(),
@@ -136,14 +155,25 @@ fn metadata_completion_rejects_navigation_stop_replacement_duplicates_and_shutdo
 fn metadata_completion_survives_reordering_but_preserves_newer_tag_values() {
     let controller = stopped_controller();
     controller.queue.borrow_mut().select(1);
-    let request = controller.begin_metadata_request().unwrap();
+    let request = controller
+        .begin_metadata_request()
+        .expect("expected test value from controller.begin_metadata_request()");
     controller.queue.borrow_mut().tracks[1].tags.title = Some("Newer title".into());
     controller.move_queue(1, 3);
     controller.remove_queue(0);
     assert!(controller.complete_metadata_request(&request, Some(embedded_fixture_tags())));
-    assert_eq!(controller.current_track().unwrap().title(), "Newer title");
     assert_eq!(
-        controller.current_track().unwrap().artist(),
+        controller
+            .current_track()
+            .expect("expected test value from controller.current_track()")
+            .title(),
+        "Newer title"
+    );
+    assert_eq!(
+        controller
+            .current_track()
+            .expect("expected test value from controller.current_track()")
+            .artist(),
         "Embedded artist"
     );
     assert!(controller.stream().is_none());
@@ -153,10 +183,10 @@ fn metadata_completion_survives_reordering_but_preserves_newer_tag_values() {
 #[ignore = "Requires private GTK display, FFmpeg and built sandbox; generated silent FLAC, no playback"]
 fn desktop_current_track_metadata_hydrates_missing_queued_tags_and_persists_without_playback() {
     use crate::mpris::Backend;
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     let folder =
         std::env::temp_dir().join(format!("hermes-metadata-hydration-{}", std::process::id()));
-    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::create_dir_all(&folder).expect("create generated fixture directory");
     let path = folder.join("02 Filename Is Not Metadata.flac");
     assert!(
         std::process::Command::new("ffmpeg")
@@ -184,7 +214,7 @@ fn desktop_current_track_metadata_hydrates_missing_queued_tags_and_persists_with
             ])
             .arg(&path)
             .status()
-            .unwrap()
+            .expect("expected test value from std::process::Command::new(\"ffmpeg\") .args([ \"-v\", \"error\", \"-nostdin\", \"-y\", \"-f\", \"lavfi\", \"-i\", \"anullsrc=r=8000:cl=mono\", \"...")
             .success()
     );
     let session_path = folder.join("queue.json");
@@ -207,7 +237,10 @@ fn desktop_current_track_metadata_hydrates_missing_queued_tags_and_persists_with
     let identity = controller.track_id();
     let generation = controller.generation.get();
     let deadline = std::time::Instant::now() + Duration::from_secs(15);
-    while controller.current_track().unwrap().needs_metadata()
+    while controller
+        .current_track()
+        .expect("expected test value from controller.current_track()")
+        .needs_metadata()
         && std::time::Instant::now() < deadline
     {
         if !glib::MainContext::default().iteration(false) {
@@ -215,11 +248,18 @@ fn desktop_current_track_metadata_hydrates_missing_queued_tags_and_persists_with
         }
     }
     assert_eq!(
-        controller.current_track().unwrap().tags,
+        controller
+            .current_track()
+            .expect("expected test value from controller.current_track()")
+            .tags,
         embedded_fixture_tags()
     );
     assert_eq!(
-        controller.snapshot().track.unwrap().tags,
+        controller
+            .snapshot()
+            .track
+            .expect("expected test value from controller.snapshot().track")
+            .tags,
         embedded_fixture_tags()
     );
     assert_eq!(
@@ -233,7 +273,9 @@ fn desktop_current_track_metadata_hydrates_missing_queued_tags_and_persists_with
     assert!(!controller.play_intent.get());
     assert!(controller.stream().is_none());
     controller.shutdown();
-    let saved = crate::music::session::load(&session_path).unwrap().unwrap();
+    let saved = crate::music::session::load(&session_path)
+        .expect("expected test value from crate::music::session::load(&session_path)")
+        .expect("expected test value from crate::music::session::load(&session_path).unwrap()");
     assert_eq!(saved.position, 3_000_000);
     let queue = saved.into_queue();
     assert_eq!(queue.tracks[0].tags, embedded_fixture_tags());
@@ -241,7 +283,7 @@ fn desktop_current_track_metadata_hydrates_missing_queued_tags_and_persists_with
     assert_eq!(queue.current, Some(0));
     assert_eq!(queue.repeat, Repeat::All);
     assert!(queue.shuffle);
-    std::fs::remove_dir_all(folder).unwrap();
+    std::fs::remove_dir_all(folder).expect("remove generated fixture");
 }
 
 fn pump(player: &MusicPlayer, predicate: impl Fn() -> bool) {
@@ -258,10 +300,10 @@ fn pump(player: &MusicPlayer, predicate: impl Fn() -> bool) {
 #[ignore = "Requires a private GTK display, FFmpeg and a built worker; generated WAV only"]
 fn desktop_music_seek_controls_follow_stream_and_keep_latest_target() {
     use crate::mpris::{Backend, Command};
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let folder = std::env::temp_dir().join(format!("hermes-music-seek-{}", std::process::id()));
-    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::create_dir_all(&folder).expect("create generated fixture directory");
     let path = folder.join("track.wav");
     assert!(
         std::process::Command::new("ffmpeg")
@@ -279,7 +321,7 @@ fn desktop_music_seek_controls_follow_stream_and_keep_latest_target() {
             ])
             .arg(&path)
             .status()
-            .unwrap()
+            .expect("expected test value from std::process::Command::new(\"ffmpeg\") .args([ \"-v\", \"error\", \"-nostdin\", \"-y\", \"-f\", \"lavfi\", \"-i\", \"sine=frequency=440\", \"-t\", ...")
             .success()
     );
     let controller = Controller::with_session(None);
@@ -296,8 +338,14 @@ fn desktop_music_seek_controls_follow_stream_and_keep_latest_target() {
         0,
     );
     pump(&first, || first.is_playing());
-    controller.command(Command::Pause).unwrap();
-    let stream = controller.stream.borrow().clone().unwrap();
+    controller
+        .command(Command::Pause)
+        .expect("expected test value from controller.command(Command::Pause)");
+    let stream = controller
+        .stream
+        .borrow()
+        .clone()
+        .expect("expected test value from controller.stream.borrow().clone()");
     let revision = controller.seek_revision();
     first.state.seek.set_value(3.0);
     assert!(stream.is_seeking());
@@ -322,17 +370,17 @@ fn desktop_music_seek_controls_follow_stream_and_keep_latest_target() {
     controller.shutdown();
     drop(first);
     drop(second);
-    std::fs::remove_dir_all(folder).unwrap();
+    std::fs::remove_dir_all(folder).expect("remove generated fixture");
 }
 
 #[test]
 #[ignore = "Requires desktop, FFmpeg and a built worker; uses generated media and temporary session state"]
 fn desktop_application_shared_controller_multiview_shutdown_and_restore() {
     use crate::mpris::{Backend, Command};
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let folder = std::env::temp_dir().join(format!("hermes-shared-music-{}", std::process::id()));
-    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::create_dir_all(&folder).expect("create generated fixture directory");
     let session_path = folder.join("queue.json");
     let _removed = std::fs::remove_file(&session_path);
     let tracks: Vec<_> = (0..3)
@@ -354,7 +402,7 @@ fn desktop_application_shared_controller_multiview_shutdown_and_restore() {
                     ])
                     .arg(&path)
                     .status()
-                    .unwrap()
+                    .expect("expected test value from std::process::Command::new(\"ffmpeg\") .args([ \"-v\", \"error\", \"-nostdin\", \"-y\", \"-f\", \"lavfi\", \"-i\", \"sine=frequency=440\", \"-t\", ...")
                     .success()
             );
             Track {
@@ -407,13 +455,13 @@ fn desktop_application_shared_controller_multiview_shutdown_and_restore() {
         pump(&first, || {
             first.is_playing() && second.state.bar.is_visible()
         });
-        let stream = controller.stream.borrow().clone().unwrap();
-        let play_icon = first.state.play.child().unwrap();
-        let speaker_icon = first.state.speaker.child().unwrap();
+        let stream = controller.stream.borrow().clone().expect("expected test value from controller.stream.borrow().clone()");
+        let play_icon = first.state.play.child().expect("expected test value from first.state.play.child()");
+        let speaker_icon = first.state.speaker.child().expect("expected test value from first.state.speaker.child()");
         controller.notify();
         controller.notify();
-        assert_eq!(first.state.play.child().unwrap(), play_icon);
-        assert_eq!(first.state.speaker.child().unwrap(), speaker_icon);
+        assert_eq!(first.state.play.child().expect("expected test value from first.state.play.child()"), play_icon);
+        assert_eq!(first.state.speaker.child().expect("expected test value from first.state.speaker.child()"), speaker_icon);
         assert_eq!(second.state.title.text(), first.state.title.text());
         assert_eq!(second.state.queue_model.n_items(), 3);
         let id = controller.snapshot().track_id;
@@ -423,7 +471,7 @@ fn desktop_application_shared_controller_multiview_shutdown_and_restore() {
         assert_eq!(second.state.repeat.label().as_deref(), Some("Repeat: all"));
         assert!(first.state.move_queue(0, 3));
         assert_eq!(controller.snapshot().track_id, id);
-        assert_eq!(controller.stream.borrow().as_ref().unwrap(), &stream);
+        assert_eq!(controller.stream.borrow().as_ref().expect("expected test value from controller.stream.borrow().as_ref()"), &stream);
         second.state.volume.set_value(0.2);
         pump(&first, || first.state.volume.value() == 0.2);
         assert_eq!(first.state.volume.value(), 0.2);
@@ -438,17 +486,17 @@ fn desktop_application_shared_controller_multiview_shutdown_and_restore() {
         assert!((first.state.seek.value() - second.state.seek.value()).abs() < 0.1);
         controller
             .command(Command::SetPosition("/stale".into(), 25_000_000))
-            .unwrap();
+            .expect("expected test value from controller .command(Command::SetPosition(\"/stale\".into(), 25_000_000))");
         assert!(controller.position() < 15_000_000);
         let revision = controller.seek_revision();
         controller
             .command(Command::SetPosition(id.clone(), controller.duration() + 1))
-            .unwrap();
+            .expect("expected test value from controller .command(Command::SetPosition(id.clone(), controller.duration() + 1))");
         assert!(!stream.is_seeking());
         assert_eq!(controller.seek_revision(), revision);
         controller.set_shuffle(false);
-        controller.command(Command::Pause).unwrap();
-        controller.command(Command::Seek(i64::MAX)).unwrap();
+        controller.command(Command::Pause).expect("expected test value from controller.command(Command::Pause)");
+        controller.command(Command::Seek(i64::MAX)).expect("expected test value from controller.command(Command::Seek(i64::MAX))");
         pump(&second, || {
             controller
                 .stream
@@ -469,7 +517,7 @@ fn desktop_application_shared_controller_multiview_shutdown_and_restore() {
         });
         assert_eq!(controller.queue.borrow().current, Some(0));
         assert_eq!(controller.status(), PlaybackStatus::Paused);
-        let paused = controller.stream.borrow().clone().unwrap();
+        let paused = controller.stream.borrow().clone().expect("expected test value from controller.stream.borrow().clone()");
         let revision = controller.seek_revision();
         second.state.seek.set_value(6.0);
         pump(&second, || {
@@ -486,9 +534,9 @@ fn desktop_application_shared_controller_multiview_shutdown_and_restore() {
                 && controller.position() < 1_000_000
         });
         assert_eq!(controller.track_id(), current_id);
-        assert_eq!(controller.stream.borrow().as_ref().unwrap(), &paused);
+        assert_eq!(controller.stream.borrow().as_ref().expect("expected test value from controller.stream.borrow().as_ref()"), &paused);
         let revision = controller.seek_revision();
-        controller.command(Command::Seek(i64::MIN)).unwrap();
+        controller.command(Command::Seek(i64::MIN)).expect("expected test value from controller.command(Command::Seek(i64::MIN))");
         pump(&second, || {
             !paused.is_seeking()
                 && controller.seek_revision() > revision
@@ -502,14 +550,14 @@ fn desktop_application_shared_controller_multiview_shutdown_and_restore() {
         assert!(!first.state.bar.is_visible() && !second.state.bar.is_visible());
         controller.play();
         pump(&second, || second.is_playing());
-        let live = controller.stream.borrow().clone().unwrap();
+        let live = controller.stream.borrow().clone().expect("expected test value from controller.stream.borrow().clone()");
         let first_state = Rc::downgrade(&first.state);
         first.dispose_view();
         first_window.close();
         drop(first_window);
         drop(first);
         assert!(first_state.upgrade().is_none());
-        assert_eq!(controller.stream.borrow().as_ref().unwrap(), &live);
+        assert_eq!(controller.stream.borrow().as_ref().expect("expected test value from controller.stream.borrow().as_ref()"), &live);
         assert!(live.is_playing());
         let third = MusicPlayer::for_application(app);
         let third_window = gtk::ApplicationWindow::builder()
@@ -545,16 +593,16 @@ fn desktop_application_shared_controller_multiview_shutdown_and_restore() {
         pump(&third, || third.is_playing());
         assert_ne!(controller.track_id(), old_identity);
         controller.pause();
-        let duplicate = controller.stream.borrow().clone().unwrap();
+        let duplicate = controller.stream.borrow().clone().expect("expected test value from controller.stream.borrow().clone()");
         let duplicate_identity = controller.track_id();
         let revision = controller.seek_revision();
         controller
             .command(Command::SetPosition(old_object_path, 20_000_000))
-            .unwrap();
+            .expect("expected test value from controller .command(Command::SetPosition(old_object_path, 20_000_000))");
         assert!(!duplicate.is_seeking());
         assert_eq!(controller.seek_revision(), revision);
         controller.remove_queue(0);
-        assert_eq!(controller.stream.borrow().as_ref().unwrap(), &duplicate);
+        assert_eq!(controller.stream.borrow().as_ref().expect("expected test value from controller.stream.borrow().as_ref()"), &duplicate);
         assert_eq!(controller.track_id(), duplicate_identity);
         let revision = controller.seek_revision();
         third.state.seek.set_value(7.0);
@@ -574,16 +622,31 @@ fn desktop_application_shared_controller_multiview_shutdown_and_restore() {
         app.run_with_args(&["shared-music-fixture"]),
         glib::ExitCode::SUCCESS
     );
-    let controller = final_controller.borrow_mut().take().unwrap();
+    let controller = final_controller
+        .borrow_mut()
+        .take()
+        .expect("expected test value from final_controller.borrow_mut().take()");
     assert!(controller.closed.get());
     assert!(controller.stream.borrow().is_none());
     assert!(controller.session_store.borrow().is_none());
-    let saved = std::fs::read(&session_path).unwrap();
-    let session = crate::music::session::load(&session_path).unwrap().unwrap();
+    let saved = std::fs::read(&session_path).expect("read generated fixture");
+    let session = crate::music::session::load(&session_path)
+        .expect("expected test value from crate::music::session::load(&session_path)")
+        .expect("expected test value from crate::music::session::load(&session_path).unwrap()");
     assert!(session.position >= 7_000_000);
-    assert_eq!(session.into_queue().playing().unwrap().path, tracks[2].path);
+    assert_eq!(
+        session
+            .into_queue()
+            .playing()
+            .expect("expected test value from session.into_queue().playing()")
+            .path,
+        tracks[2].path
+    );
     controller.shutdown();
-    assert_eq!(std::fs::read(&session_path).unwrap(), saved);
+    assert_eq!(
+        std::fs::read(&session_path).expect("read generated fixture"),
+        saved
+    );
     assert!(CONTROLLERS.with(|registry| registry.borrow().is_empty()));
     let restored_app = gtk::Application::builder()
         .application_id("com.strata.SharedMusicRestoreFixture")
@@ -611,8 +674,11 @@ fn desktop_application_shared_controller_multiview_shutdown_and_restore() {
         restored_app.run_with_args(&["shared-music-restore-fixture"]),
         glib::ExitCode::SUCCESS
     );
-    assert_eq!(std::fs::read(&session_path).unwrap(), saved);
-    std::fs::remove_dir_all(folder).unwrap();
+    assert_eq!(
+        std::fs::read(&session_path).expect("read generated fixture"),
+        saved
+    );
+    std::fs::remove_dir_all(folder).expect("remove generated fixture");
 }
 
 fn stopped_controller() -> Rc<Controller> {
@@ -695,7 +761,7 @@ fn controller_settings_and_stale_remote_position_are_validated() {
     assert!(controller.snapshot().shuffle);
     controller
         .command(Command::SetPosition("/stale".into(), 9_000_000))
-        .unwrap();
+        .expect("expected test value from controller .command(Command::SetPosition(\"/stale\".into(), 9_000_000))");
     assert_eq!(controller.position(), 0);
     assert!(controller.stream.borrow().is_none());
 }
@@ -734,7 +800,7 @@ fn debounced_volume_save_and_shutdown_capture_the_newest_value() {
         std::process::id(),
         std::thread::current().id()
     ));
-    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::create_dir_all(&folder).expect("create generated fixture directory");
     let path = folder.join("queue.json");
     let controller = Controller::new(Some(&path));
     controller.set_volume(0.42);
@@ -749,7 +815,9 @@ fn debounced_volume_save_and_shutdown_capture_the_newest_value() {
     if let Some(mut store) = controller.session_store.borrow_mut().take() {
         store.finish();
     }
-    let saved = crate::music::session::load(&path).unwrap().unwrap();
+    let saved = crate::music::session::load(&path)
+        .expect("expected test value from crate::music::session::load(&path)")
+        .expect("expected test value from crate::music::session::load(&path).unwrap()");
     assert_eq!(saved.volume, 0.42);
     controller
         .session_store
@@ -757,24 +825,27 @@ fn debounced_volume_save_and_shutdown_capture_the_newest_value() {
     controller.set_volume(0.17);
     controller.shutdown();
     assert_eq!(
-        crate::music::session::load(&path).unwrap().unwrap().volume,
+        crate::music::session::load(&path)
+            .expect("expected test value from crate::music::session::load(&path)")
+            .expect("expected test value from crate::music::session::load(&path).unwrap()")
+            .volume,
         0.17
     );
     controller.set_volume(0.99);
     assert_eq!(controller.volume(), 0.17);
     assert!(controller.volume_save_pending.get().is_none());
     assert!(!controller.volume_notify_pending.get());
-    std::fs::remove_dir_all(folder).unwrap();
+    std::fs::remove_dir_all(folder).expect("remove generated fixture");
 }
 
 #[test]
 #[ignore = "Requires private GTK display, FFmpeg and a built worker; generated silent WAV only"]
 fn desktop_music_volume_motion_keeps_latest_native_multiview_and_remote_value() {
     use crate::mpris::{Backend, Command};
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let folder = std::env::temp_dir().join(format!("hermes-volume-ui-{}", std::process::id()));
-    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::create_dir_all(&folder).expect("create generated fixture directory");
     let path = folder.join("silent.wav");
     assert!(
         std::process::Command::new("ffmpeg")
@@ -792,7 +863,7 @@ fn desktop_music_volume_motion_keeps_latest_native_multiview_and_remote_value() 
             ])
             .arg(&path)
             .status()
-            .unwrap()
+            .expect("expected test value from std::process::Command::new(\"ffmpeg\") .args([ \"-v\", \"error\", \"-nostdin\", \"-y\", \"-f\", \"lavfi\", \"-i\", \"anullsrc=r=48000:cl=stereo\"...")
             .success()
     );
     let session_path = folder.join("queue.json");
@@ -809,7 +880,11 @@ fn desktop_music_volume_motion_keeps_latest_native_multiview_and_remote_value() 
         }],
         0,
     );
-    let stream = controller.stream.borrow().clone().unwrap();
+    let stream = controller
+        .stream
+        .borrow()
+        .clone()
+        .expect("expected test value from controller.stream.borrow().clone()");
     pump(&first, || stream.is_prepared());
     controller.pause();
     let calls = Rc::new(Cell::new(0));
@@ -826,7 +901,9 @@ fn desktop_music_volume_motion_keeps_latest_native_multiview_and_remote_value() 
     assert_eq!(stream.volume(), 0.31);
     drop(queue);
     stream.set_muted(true);
-    controller.command(Command::SetVolume(0.19)).unwrap();
+    controller
+        .command(Command::SetVolume(0.19))
+        .expect("expected test value from controller.command(Command::SetVolume(0.19))");
     assert_eq!(controller.snapshot().volume, 0.19);
     assert!(stream.is_muted());
     stream.set_muted(false);
@@ -841,15 +918,15 @@ fn desktop_music_volume_motion_keeps_latest_native_multiview_and_remote_value() 
     controller.shutdown();
     assert_eq!(
         crate::music::session::load(&session_path)
-            .unwrap()
-            .unwrap()
+            .expect("expected test value from crate::music::session::load(&session_path)")
+            .expect("expected test value from crate::music::session::load(&session_path) .unwrap()")
             .volume,
         0.11
     );
     window.close();
     first.dispose_view();
     second.dispose_view();
-    std::fs::remove_dir_all(folder).unwrap();
+    std::fs::remove_dir_all(folder).expect("remove generated fixture");
 }
 
 #[test]

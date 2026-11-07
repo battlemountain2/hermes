@@ -5,7 +5,7 @@ use super::*;
 #[test]
 #[ignore = "Requires an isolated GTK display; no real filesystem queries"]
 fn desktop_status_sizes_reformat_cached_values_and_cleared_free_space_stays_empty() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     formatting::configure("iso", "decimal");
     let bar = StatusBar::new();
     bar.update_selection(2, 1_500_000);
@@ -107,10 +107,7 @@ fn edge_case_byte_sizes_for_free_space() {
 #[test]
 #[ignore = "Requires an isolated GTK display; no real filesystem queries"]
 fn test_status_bar_clear_free_space_widget() {
-    if gtk::init().is_err() {
-        eprintln!("GTK init skipped (no display server)");
-        return;
-    }
+    gtk::init().expect("initialize the isolated GTK display");
     let bar = StatusBar::new();
     // Simulate updating free space
     bar.free_space.set_text("500 GB free");

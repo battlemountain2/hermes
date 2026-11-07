@@ -37,8 +37,7 @@ pub(super) fn path(root: &Path) -> PathBuf {
         root.as_os_str().as_bytes(),
     )
     .expect("SHA-256 is available in GLib");
-    crate::paths::search_catalog_cache_dir()
-        .join(format!("general-{digest}.sqlite"))
+    crate::paths::search_catalog_cache_dir().join(format!("general-{digest}.sqlite"))
 }
 
 fn cancelled(cancellation: &Cancellation) -> Result<(), String> {
@@ -294,7 +293,7 @@ fn decode_identity(bytes: &[u8]) -> Result<FileIdentity, String> {
         return Err("Invalid search catalog identity".into());
     }
     let mut words = [[0; 8]; 7];
-    for (word, bytes) in words.iter_mut().zip(bytes.chunks_exact(8)) {
+    for (word, bytes) in words.iter_mut().zip(bytes.as_chunks::<8>().0) {
         word.copy_from_slice(bytes);
     }
     let identity = FileIdentity {
@@ -495,7 +494,10 @@ fn lock_directory(file: &File) -> Result<(), String> {
             Ok(()) => return Ok(()),
             Err(std::fs::TryLockError::WouldBlock) => {
                 if start.elapsed() >= Duration::from_millis(1000) {
-                    return Err("Search catalog: lock acquisition failed because the operation would block".into());
+                    return Err(
+                        "Search catalog: lock acquisition failed because the operation would block"
+                            .into(),
+                    );
                 }
                 std::thread::sleep(backoff);
                 backoff = (backoff * 2).min(Duration::from_millis(50));

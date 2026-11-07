@@ -27,7 +27,9 @@ fn query(text: &str) -> ParsedSearchQuery {
 }
 
 fn matching(candidates: &Candidates, text: &str) -> Vec<usize> {
-    candidates.matching(&query(text), &|| false).unwrap()
+    candidates
+        .matching(&query(text), &|| false)
+        .expect("expected test value from candidates.matching(&query(text), &|| false)")
 }
 
 fn scored_indices(items: &[SearchItem], text: &str) -> Vec<usize> {
@@ -100,7 +102,8 @@ fn every_category_alias_has_exact_candidate_parity_with_the_scorer() {
         items.push(item(name, false));
         items.push(item(name, true));
     }
-    let candidates = Candidates::build(&items, &|| false).unwrap();
+    let candidates = Candidates::build(&items, &|| false)
+        .expect("expected test value from Candidates::build(&items, &|| false)");
     for category in super::CATEGORIES {
         let text = format!("type:{category}");
         assert_eq!(
@@ -120,12 +123,21 @@ fn inferred_filters_do_not_prune_literal_matches_from_candidate_queries() {
         item("videos", true),
         item("other.flac", false),
     ];
-    let candidates = Candidates::build(&items, &|| false).unwrap();
-    for text in ["Video Games", "Video Games ext:flac", "type:folder videos", "Video Games type:video"] {
+    let candidates = Candidates::build(&items, &|| false)
+        .expect("expected test value from Candidates::build(&items, &|| false)");
+    for text in [
+        "Video Games",
+        "Video Games ext:flac",
+        "type:folder videos",
+        "Video Games type:video",
+    ] {
         let retrieved = matching(&candidates, text);
         let scored = scored_indices(&items, text);
         assert!(!scored.is_empty(), "{text}");
-        assert!(scored.iter().all(|position| retrieved.contains(position)), "{text}");
+        assert!(
+            scored.iter().all(|position| retrieved.contains(position)),
+            "{text}"
+        );
     }
     assert_eq!(matching(&candidates, "Video Games ext:flac"), vec![0, 4]);
 }
@@ -151,12 +163,13 @@ fn generated_10k_exact_filter_retrieval_timings() {
         })
         .collect();
     let started = Instant::now();
-    let candidates = Candidates::build(&items, &|| false).unwrap();
+    let candidates = Candidates::build(&items, &|| false)
+        .expect("expected test value from Candidates::build(&items, &|| false)");
     let build_elapsed = started.elapsed();
     let page_count: i64 = candidates
         .connection
         .query_row("PRAGMA page_count", [], |row| row.get(0))
-        .unwrap();
+        .expect("expected test value from candidates .connection .query_row(\"PRAGMA page_count\", [], |row| row.get(0))");
     eprintln!(
         "Generated 10k candidate fixture: profile={}, items={}, build_ms={:.3}, database_bytes={}; warm retrieval only, no end-to-end speedup claim; cancellation is checked at row boundaries, not within SQLite VM steps",
         if cfg!(debug_assertions) {
@@ -181,12 +194,19 @@ fn generated_10k_exact_filter_retrieval_timings() {
     ] {
         let parsed = query(text);
         let expected = scored_indices(&items, text);
-        assert_eq!(candidates.matching(&parsed, &|| false).unwrap(), expected);
+        assert_eq!(
+            candidates
+                .matching(&parsed, &|| false)
+                .expect("expected test value from candidates.matching(&parsed, &|| false)"),
+            expected
+        );
         let mut samples = Vec::with_capacity(21);
         let mut candidate_counts = Vec::with_capacity(21);
         for _sample in 0..21 {
             let started = Instant::now();
-            let retrieved = candidates.matching(&parsed, &|| false).unwrap();
+            let retrieved = candidates
+                .matching(&parsed, &|| false)
+                .expect("expected test value from candidates.matching(&parsed, &|| false)");
             let elapsed = started.elapsed();
             candidate_counts.push(retrieved.len());
             samples.push(elapsed);
@@ -209,7 +229,8 @@ fn exact_fields_use_rust_unicode_lowercasing_not_sqlite_nocase() {
         song("other.ü", "Istanbul", "ΑΘΗΝΑ", "ПЕСНЯ"),
         song("third.flac", "İSTANBUL Live", "ΑΘΗΝΑ", "ПЕСНЯ"),
     ];
-    let candidates = Candidates::build(&items, &|| false).unwrap();
+    let candidates = Candidates::build(&items, &|| false)
+        .expect("expected test value from Candidates::build(&items, &|| false)");
     assert_eq!(
         matching(&candidates, "artist:İSTANBUL album:ΑΘΗΝΑ title:ПЕСНЯ ext:Ü"),
         vec![0]
@@ -232,7 +253,8 @@ fn every_exact_constraint_intersects_and_preserves_input_order() {
         folder,
         song("a.flac", "Artist", "Album", "Title"),
     ];
-    let candidates = Candidates::build(&items, &|| false).unwrap();
+    let candidates = Candidates::build(&items, &|| false)
+        .expect("expected test value from Candidates::build(&items, &|| false)");
     assert_eq!(
         matching(
             &candidates,
@@ -278,7 +300,8 @@ fn category_aliases_match_the_existing_category_predicate() {
     ];
     let mut items: Vec<_> = names.iter().map(|name| item(name, false)).collect();
     items.extend(names.iter().map(|name| item(name, true)));
-    let candidates = Candidates::build(&items, &|| false).unwrap();
+    let candidates = Candidates::build(&items, &|| false)
+        .expect("expected test value from Candidates::build(&items, &|| false)");
     for category in super::CATEGORIES {
         let expected: Vec<_> = items
             .iter()
@@ -297,7 +320,12 @@ fn category_aliases_match_the_existing_category_predicate() {
         category: Some("unknown".into()),
         ..ParsedSearchQuery::default()
     };
-    assert!(candidates.matching(&unknown, &|| false).unwrap().is_empty());
+    assert!(
+        candidates
+            .matching(&unknown, &|| false)
+            .expect("expected test value from candidates.matching(&unknown, &|| false)")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -313,13 +341,19 @@ fn missing_tags_are_not_empty_tags_or_album_artist_fallbacks() {
         song("empty.flac", "", "", ""),
         song("tagged.flac", "Artist", "Album", "Title"),
     ];
-    let candidates = Candidates::build(&items, &|| false).unwrap();
+    let candidates = Candidates::build(&items, &|| false)
+        .expect("expected test value from Candidates::build(&items, &|| false)");
     assert_eq!(matching(&candidates, "artist:Artist"), vec![3]);
     let empty = ParsedSearchQuery {
         artist: Some(String::new()),
         ..ParsedSearchQuery::default()
     };
-    assert_eq!(candidates.matching(&empty, &|| false).unwrap(), vec![2]);
+    assert_eq!(
+        candidates
+            .matching(&empty, &|| false)
+            .expect("expected test value from candidates.matching(&empty, &|| false)"),
+        vec![2]
+    );
 }
 
 #[test]
@@ -329,12 +363,18 @@ fn exact_values_are_bound_as_literals() {
         song("first.flac", literal, "Album", "Title"),
         song("second.flac", "Other", "Album", "Title"),
     ];
-    let candidates = Candidates::build(&items, &|| false).unwrap();
+    let candidates = Candidates::build(&items, &|| false)
+        .expect("expected test value from Candidates::build(&items, &|| false)");
     let parsed = ParsedSearchQuery {
         artist: Some(literal.to_lowercase()),
         ..ParsedSearchQuery::default()
     };
-    assert_eq!(candidates.matching(&parsed, &|| false).unwrap(), vec![0]);
+    assert_eq!(
+        candidates
+            .matching(&parsed, &|| false)
+            .expect("expected test value from candidates.matching(&parsed, &|| false)"),
+        vec![0]
+    );
     assert!(matching(&candidates, "artist:missing").is_empty());
 }
 
@@ -343,7 +383,8 @@ fn no_exact_fields_returns_the_full_set_without_scoring_other_fields() {
     let items: Vec<_> = (0..1200)
         .map(|sequence| item(&format!("{sequence}.flac"), sequence % 2 == 0))
         .collect();
-    let candidates = Candidates::build(&items, &|| false).unwrap();
+    let candidates = Candidates::build(&items, &|| false)
+        .expect("expected test value from Candidates::build(&items, &|| false)");
     let expected: Vec<_> = (0..items.len()).collect();
     assert_eq!(matching(&candidates, ""), expected);
     assert_eq!(
@@ -357,7 +398,12 @@ fn no_exact_fields_returns_the_full_set_without_scoring_other_fields() {
         content: Some("missing content".into()),
         ..ParsedSearchQuery::default()
     };
-    assert_eq!(candidates.matching(&unscored, &|| false).unwrap(), expected);
+    assert_eq!(
+        candidates
+            .matching(&unscored, &|| false)
+            .expect("expected test value from candidates.matching(&unscored, &|| false)"),
+        expected
+    );
     assert_eq!(
         matching(&candidates, "content:missing"),
         (0..items.len())
@@ -378,7 +424,8 @@ fn sql_matches_have_no_result_limit_and_keep_the_last_eligible_item() {
             )
         })
         .collect();
-    let candidates = Candidates::build(&items, &|| false).unwrap();
+    let candidates = Candidates::build(&items, &|| false)
+        .expect("expected test value from Candidates::build(&items, &|| false)");
     assert_eq!(
         matching(
             &candidates,
@@ -390,7 +437,8 @@ fn sql_matches_have_no_result_limit_and_keep_the_last_eligible_item() {
 
 #[test]
 fn empty_input_and_no_matches_are_successful_empty_sets() {
-    let candidates = Candidates::build(&[], &|| false).unwrap();
+    let candidates = Candidates::build(&[], &|| false)
+        .expect("expected test value from Candidates::build(&[], &|| false)");
     assert!(matching(&candidates, "").is_empty());
     assert!(matching(&candidates, "type:audio artist:Artist").is_empty());
 }
@@ -412,7 +460,8 @@ fn cancellation_rejects_builds_and_queries_instead_of_returning_partial_sets() {
         );
         assert!(checks.get() >= threshold);
     }
-    let candidates = Candidates::build(&items, &|| false).unwrap();
+    let candidates = Candidates::build(&items, &|| false)
+        .expect("expected test value from Candidates::build(&items, &|| false)");
     for parsed in [query(""), query("type:audio ext:flac")] {
         assert!(candidates.matching(&parsed, &|| true).is_err());
         let checks = Cell::new(0);
@@ -441,7 +490,11 @@ fn oversized_input_and_normalized_rows_are_rejected_without_truncation() {
         &"a".repeat(4200),
         "Title",
     );
-    assert!(super::item_bytes(&expanding).unwrap() < MAX_ROW_BYTES);
+    assert!(
+        super::item_bytes(&expanding)
+            .expect("expected test value from super::item_bytes(&expanding)")
+            < MAX_ROW_BYTES
+    );
     assert!(Candidates::build(&[expanding], &|| false).is_err());
     let too_many = vec![item("small.flac", false); MAX_ITEMS + 1];
     assert!(Candidates::build(&too_many, &|| false).is_err());
@@ -451,14 +504,16 @@ fn oversized_input_and_normalized_rows_are_rejected_without_truncation() {
 fn aggregate_input_budget_is_rejected_before_building() {
     let mut candidate = item("small.flac", false);
     candidate.search_metadata = "a".repeat(8000);
-    let row_bytes = super::item_bytes(&candidate).unwrap();
+    let row_bytes = super::item_bytes(&candidate)
+        .expect("expected test value from super::item_bytes(&candidate)");
     assert!(row_bytes < MAX_ROW_BYTES);
     let items = vec![candidate; MAX_DATABASE_BYTES / row_bytes + 100];
     assert!(items.len() < MAX_ITEMS);
     assert!(
         items
             .iter()
-            .map(|item| super::item_bytes(item).unwrap())
+            .map(|item| super::item_bytes(item)
+                .expect("expected test value from super::item_bytes(item)"))
             .sum::<usize>()
             > MAX_DATABASE_BYTES
     );
@@ -469,15 +524,15 @@ fn aggregate_input_budget_is_rejected_before_building() {
 fn database_budget_failure_does_not_publish_a_partial_index() {
     let candidate = song("large.flac", &"a".repeat(4096), &"b".repeat(4096), "Title");
     let items = vec![candidate; 3000];
+    assert!(items.iter().all(|item| {
+        super::item_bytes(item).expect("expected test value from super::item_bytes(item)")
+            < MAX_ROW_BYTES
+    }));
     assert!(
         items
             .iter()
-            .all(|item| super::item_bytes(item).unwrap() < MAX_ROW_BYTES)
-    );
-    assert!(
-        items
-            .iter()
-            .map(|item| super::item_bytes(item).unwrap())
+            .map(|item| super::item_bytes(item)
+                .expect("expected test value from super::item_bytes(item)"))
             .sum::<usize>()
             < MAX_DATABASE_BYTES
     );
@@ -486,7 +541,9 @@ fn database_budget_failure_does_not_publish_a_partial_index() {
 
 #[test]
 fn sqlite_is_ephemeral_and_has_bounded_pages_cache_and_values() {
-    let candidates = Candidates::build(&[item("small.flac", false)], &|| false).unwrap();
+    let candidates = Candidates::build(&[item("small.flac", false)], &|| false).expect(
+        "expected test value from Candidates::build(&[item(\"small.flac\", false)], &|| false)",
+    );
     let connection = &candidates.connection;
     for (pragma, expected) in [
         ("page_size", PAGE_SIZE as i64),
@@ -497,17 +554,17 @@ fn sqlite_is_ephemeral_and_has_bounded_pages_cache_and_values() {
     ] {
         let actual: i64 = connection
             .query_row(&format!("PRAGMA {pragma}"), [], |row| row.get(0))
-            .unwrap();
+            .expect("expected test value from connection .query_row(&format!(\"PRAGMA {pragma}\"), [], |row| row.get(0))");
         assert_eq!(actual, expected, "{pragma}");
     }
     let filename: String = connection
         .query_row("PRAGMA database_list", [], |row| row.get(2))
-        .unwrap();
+        .expect("expected test value from connection .query_row(\"PRAGMA database_list\", [], |row| row.get(2))");
     assert!(filename.is_empty());
     assert_eq!(
         connection
             .limit(rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH)
-            .unwrap(),
+            .expect("expected test value from connection .limit(rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH)"),
         MAX_ROW_BYTES as i32
     );
     let oversized = ParsedSearchQuery {
@@ -519,11 +576,13 @@ fn sqlite_is_ephemeral_and_has_bounded_pages_cache_and_values() {
 
 #[test]
 fn sqlite_failure_is_an_error_not_an_empty_candidate_set() {
-    let candidates = Candidates::build(&[item("small.flac", false)], &|| false).unwrap();
+    let candidates = Candidates::build(&[item("small.flac", false)], &|| false).expect(
+        "expected test value from Candidates::build(&[item(\"small.flac\", false)], &|| false)",
+    );
     candidates
         .connection
         .execute_batch("PRAGMA query_only=OFF; DROP TABLE categories;")
-        .unwrap();
+        .expect("expected test value from candidates .connection .execute_batch(\"PRAGMA query_only=OFF; DROP TABLE categories;\")");
     assert!(
         candidates
             .matching(&query("type:audio"), &|| false)

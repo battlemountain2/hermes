@@ -109,7 +109,8 @@ fn visualizer_caps_high_refresh_frames_and_resets_resume_time() {
     }
     assert_eq!(visualizer_frame_delta(Some(100), None, 200), None);
     assert_eq!(visualizer_frame_delta(Some(200), None, 100), None);
-    let (delta, next) = visualizer_frame_delta(Some(100), None, 1_000_100).unwrap();
+    let (delta, next) = visualizer_frame_delta(Some(100), None, 1_000_100)
+        .expect("expected test value from visualizer_frame_delta(Some(100), None, 1_000_100)");
     assert_eq!(delta, 0.1);
     assert!(next > 1_000_100 && next <= 1_016_766);
     assert_eq!(
@@ -154,7 +155,6 @@ fn cancelled_asset_work_returns_without_loading_media() {
     assert!(assets.lyrics.is_none());
 }
 
-
 fn fixture_view() -> ImmersiveView {
     ImmersiveView::new(
         Controller::with_session(None),
@@ -166,14 +166,14 @@ fn fixture_view() -> ImmersiveView {
 #[test]
 #[ignore = "Private GTK display/settings; synthetic lyrics and no audio or network"]
 fn desktop_lyrics_and_visualizer_modes_switch_cleanly_and_keep_empty_layout_stable() {
-    gtk::init().unwrap();
-    assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    assets::prepare().expect("register embedded test assets");
     let manager = ThemeManager::shared();
     manager.set_online_lyrics(false);
     let styles = gtk::CssProvider::new();
     styles.load_from_string(include_str!("../../../style.css"));
     gtk::style_context_add_provider_for_display(
-        &gdk::Display::default().unwrap(),
+        &gdk::Display::default().expect("expected test value from gdk::Display::default()"),
         &styles,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
@@ -191,7 +191,11 @@ fn desktop_lyrics_and_visualizer_modes_switch_cleanly_and_keep_empty_layout_stab
     view.state.lyrics_status.replace(LyricsStatus::LocalMissing);
     view.state.rebuild_lyrics_ui();
     assert!(view.state.lyrics_scroll.is_visible());
-    let empty = view.state.lyrics_box.first_child().unwrap();
+    let empty = view
+        .state
+        .lyrics_box
+        .first_child()
+        .expect("expected test value from view.state.lyrics_box.first_child()");
     for _ in 0..30 {
         view.sync();
         assert_eq!(view.state.lyrics_box.first_child().as_ref(), Some(&empty));
@@ -199,7 +203,7 @@ fn desktop_lyrics_and_visualizer_modes_switch_cleanly_and_keep_empty_layout_stab
     let lyrics = crate::services::lyrics::parse_lrc(
         "[00:00]Synthetic first line\n[00:02]Synthetic second line",
     )
-    .unwrap();
+    .expect("expected test value from crate::services::lyrics::parse_lrc( \"[00:00]Synthetic first line\\n[00:02]Synthetic second line\", )");
     view.state.current_lyrics.replace(Some(lyrics));
     view.state.lyrics_status.replace(LyricsStatus::Local);
     view.state.rebuild_lyrics_ui();
@@ -232,7 +236,10 @@ fn desktop_lyrics_and_visualizer_modes_switch_cleanly_and_keep_empty_layout_stab
         assert!(view.state.lyrics_btn.is_active());
         assert!(view.state.stage_box.is_visible());
         assert!(view.state.lyrics_scroll.is_visible());
-        assert_eq!(view.state.art_stack.visible_child_name().as_deref(), Some("visualizer"));
+        assert_eq!(
+            view.state.art_stack.visible_child_name().as_deref(),
+            Some("visualizer")
+        );
         assert!(!view.state.visualizer_canvas.is_visible());
 
         // 2. Full-stage visualizer mode (lyrics inactive, visualizer active)
@@ -275,8 +282,8 @@ fn desktop_lyrics_and_visualizer_modes_switch_cleanly_and_keep_empty_layout_stab
 #[test]
 #[ignore = "Private GTK/preferences; injected provider results, no source files, decoder or network"]
 fn desktop_online_lyrics_rejects_stale_results_cancels_on_opt_out_and_never_invents_timing() {
-    gtk::init().unwrap();
-    assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    assets::prepare().expect("register embedded test assets");
     let manager = ThemeManager::shared();
     manager.set_online_lyrics(true);
     let view = fixture_view();
@@ -298,7 +305,7 @@ fn desktop_online_lyrics_rejects_stale_results_cancels_on_opt_out_and_never_inve
     let result = || {
         Ok(online::Lookup::Found(
             crate::services::lyrics::parse_plain("Synthetic first line\nSynthetic second line")
-                .unwrap(),
+                .expect("expected test value from crate::services::lyrics::parse_plain(\"Synthetic first line\\nSynthetic second line\")"),
         ))
     };
     view.state
@@ -310,7 +317,15 @@ fn desktop_online_lyrics_rejects_stale_results_cancels_on_opt_out_and_never_inve
     view.state
         .finish_online_lyrics(&current_identity, &track, 1, result());
     assert_eq!(*view.state.lyrics_status.borrow(), LyricsStatus::Online);
-    assert!(!view.state.current_lyrics.borrow().as_ref().unwrap().synced);
+    assert!(
+        !view
+            .state
+            .current_lyrics
+            .borrow()
+            .as_ref()
+            .expect("expected test value from view.state.current_lyrics.borrow().as_ref()")
+            .synced
+    );
     assert!(view.state.active_lyric_index.get().is_none());
     assert!(
         view.state
@@ -363,8 +378,8 @@ fn desktop_online_lyrics_rejects_stale_results_cancels_on_opt_out_and_never_inve
 #[test]
 #[ignore = "Private GTK/preferences; verifies local-first gating with synthetic content, no network"]
 fn desktop_local_lyrics_and_opt_out_prevent_online_requests() {
-    gtk::init().unwrap();
-    assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    assets::prepare().expect("register embedded test assets");
     let manager = ThemeManager::shared();
     manager.set_online_lyrics(true);
     let view = fixture_view();
@@ -436,35 +451,67 @@ fn fixture_assets(text: &str) -> TrackAssets {
 #[test]
 #[ignore = "Requires isolated GTK display; synthetic covers and keyboard focus, no playback"]
 fn desktop_immersive_artwork_palette_survives_theme_sync_and_controls_reveal_without_reflow() {
-    gtk::init().unwrap();
-    gtk::Settings::default().unwrap().set_gtk_enable_animations(false);
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    gtk::Settings::default()
+        .expect("expected test value from gtk::Settings::default()")
+        .set_gtk_enable_animations(false);
+    crate::assets::prepare().expect("register embedded test assets");
     let manager = ThemeManager::shared();
     manager.set_online_lyrics(false);
     let styles = gtk::CssProvider::new();
     styles.connect_parsing_error(|_, _, error| panic!("Immersive CSS: {error}"));
     styles.load_from_string(include_str!("../../../style.css"));
-    gtk::style_context_add_provider_for_display(&gdk::Display::default().unwrap(), &styles, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+    gtk::style_context_add_provider_for_display(
+        &gdk::Display::default().expect("expected test value from gdk::Display::default()"),
+        &styles,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
     let view = fixture_view();
-    let window = gtk::Window::builder().default_width(1200).default_height(900).child(view.widget()).build();
+    let window = gtk::Window::builder()
+        .default_width(1200)
+        .default_height(900)
+        .child(view.widget())
+        .build();
     window.present();
     let track = fixture_track("/generated/cover-colors.flac");
     let identity = arm_asset_request(&view, &track, 7);
-    let pixels = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, 1024, 1024).unwrap();
+    let pixels = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, 1024, 1024).expect("expected test value from gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, 1024, 1024)");
     pixels.fill(0xee8020ff);
-    let bytes = pixels.save_to_bufferv("png", &[]).unwrap();
-    let (backdrop, palette) = artwork::presentation(&bytes).unwrap();
-    view.state.finish_track_assets(&identity, &track, 7, Some(TrackAssets {
-        artwork: Some(bytes), backdrop: Some(backdrop), palette: Some(palette), lyrics: None,
-    }));
-    let loaded = view.state.art_picture.paintable().unwrap().downcast::<gdk::Texture>().unwrap();
+    let bytes = pixels
+        .save_to_bufferv("png", &[])
+        .expect("expected test value from pixels.save_to_bufferv(\"png\", &[])");
+    let (backdrop, palette) = artwork::presentation(&bytes)
+        .expect("expected test value from artwork::presentation(&bytes)");
+    view.state.finish_track_assets(
+        &identity,
+        &track,
+        7,
+        Some(TrackAssets {
+            artwork: Some(bytes),
+            backdrop: Some(backdrop),
+            palette: Some(palette),
+            lyrics: None,
+        }),
+    );
+    let loaded = view.state.art_picture.paintable().expect("expected test value from view.state.art_picture.paintable()").downcast::<gdk::Texture>().expect("expected test value from view.state.art_picture.paintable().unwrap().downcast::<gdk::Texture>()");
     assert_eq!((loaded.width(), loaded.height()), (1024, 1024));
     manager.select_theme("paper");
     view.sync();
     assert_eq!(view.state.artwork_palette.get(), Some(palette));
-    assert_eq!(view.state.palette.get(), visible_artwork_palette(Some(palette)));
-    let deck = view.state.art_box.parent().unwrap();
-    let controls = view.state.play_button.parent().unwrap();
+    assert_eq!(
+        view.state.palette.get(),
+        visible_artwork_palette(Some(palette))
+    );
+    let deck = view
+        .state
+        .art_box
+        .parent()
+        .expect("expected test value from view.state.art_box.parent()");
+    let controls = view
+        .state
+        .play_button
+        .parent()
+        .expect("expected test value from view.state.play_button.parent()");
     let pump = || {
         let until = std::time::Instant::now() + Duration::from_millis(200);
         while std::time::Instant::now() < until {
@@ -474,17 +521,29 @@ fn desktop_immersive_artwork_palette_survives_theme_sync_and_controls_reveal_wit
     };
     view.state.lyrics_btn.grab_focus();
     pump();
-    let bounds = controls.compute_bounds(&deck).unwrap();
+    let bounds = controls
+        .compute_bounds(&deck)
+        .expect("expected test value from controls.compute_bounds(&deck)");
     assert!(!deck.has_css_class("controls-focused"));
     view.state.play_button.grab_focus();
     pump();
     assert!(deck.has_css_class("controls-focused"));
     assert!(view.state.play_button.has_focus());
-    assert_eq!(controls.compute_bounds(&deck).unwrap(), bounds);
+    assert_eq!(
+        controls
+            .compute_bounds(&deck)
+            .expect("expected test value from controls.compute_bounds(&deck)"),
+        bounds
+    );
     view.state.lyrics_btn.grab_focus();
     pump();
     assert!(!deck.has_css_class("controls-focused"));
-    assert_eq!(controls.compute_bounds(&deck).unwrap(), bounds);
+    assert_eq!(
+        controls
+            .compute_bounds(&deck)
+            .expect("expected test value from controls.compute_bounds(&deck)"),
+        bounds
+    );
     view.request_stop();
     assert!(view.state.artwork_palette.get().is_none());
     window.close();
@@ -505,7 +564,7 @@ fn desktop_immersive_rejects_stale_artwork_success_and_failure() {
         .asset_request
         .borrow()
         .as_ref()
-        .unwrap()
+        .expect("expected test value from view .state .asset_request .borrow() .as_ref()")
         .cancellation
         .clone();
     let track = fixture_track("new.flac");
@@ -519,7 +578,13 @@ fn desktop_immersive_rejects_stale_artwork_success_and_failure() {
         .finish_track_assets(&identity, &track, 2, Some(fixture_assets("current")));
     let paintable = view.state.art_picture.paintable().expect("current artwork");
     assert_eq!(
-        view.state.current_lyrics.borrow().as_ref().unwrap().lines[0].text,
+        view.state
+            .current_lyrics
+            .borrow()
+            .as_ref()
+            .expect("expected test value from view.state.current_lyrics.borrow().as_ref()")
+            .lines[0]
+            .text,
         "current"
     );
     assert_eq!(
@@ -548,7 +613,13 @@ fn desktop_immersive_rejects_stale_artwork_success_and_failure() {
         Some(fixture_assets("revisited")),
     );
     assert_eq!(
-        view.state.current_lyrics.borrow().as_ref().unwrap().lines[0].text,
+        view.state
+            .current_lyrics
+            .borrow()
+            .as_ref()
+            .expect("expected test value from view.state.current_lyrics.borrow().as_ref()")
+            .lines[0]
+            .text,
         "revisited"
     );
     view.request_stop();
@@ -585,7 +656,7 @@ fn desktop_immersive_defers_hidden_work_and_cleans_up_requests_and_drop() {
         .asset_request
         .borrow()
         .as_ref()
-        .unwrap()
+        .expect("expected test value from view .state .asset_request .borrow() .as_ref()")
         .cancellation
         .clone();
     let task = glib::MainContext::default().spawn_local(std::future::pending::<()>());
@@ -654,7 +725,7 @@ fn desktop_immersive_tick_motion_pause_stop_and_filled_play_icons() {
                 .child()
                 .expect("play image")
                 .downcast::<gtk::Image>()
-                .unwrap();
+                .expect("expected test value from button .child()  .downcast::<gtk::Image>()");
             assert_eq!(pixels(&image), pixels(&assets::on_accent_icon(name, size)));
         }
     };
@@ -729,7 +800,8 @@ fn lyrics_metadata_prefers_nonblank_artist_tags_without_filename_fallbacks() {
         lyrics_metadata(&track),
         Some(("Synthetic title", "Album artist"))
     );
-    let (title, artist) = lyrics_metadata(&track).unwrap();
+    let (title, artist) =
+        lyrics_metadata(&track).expect("expected test value from lyrics_metadata(&track)");
     assert!(online::Query::new(title, artist, 180.0).is_ok());
     track.tags.artist = Some(" Track artist ".into());
     assert_eq!(
@@ -773,7 +845,7 @@ fn lyrics_request_metadata_ignores_album_and_order_tags_but_not_source_title_or_
 #[test]
 #[ignore = "Private GTK display; synthetic artwork/lyrics, no audio, network or preference writes"]
 fn desktop_metadata_only_refresh_preserves_loaded_artwork_and_lyrics_widgets() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     let view = fixture_view();
     let window = gtk::Window::builder().child(view.widget()).build();
     window.present();
@@ -785,13 +857,21 @@ fn desktop_metadata_only_refresh_preserves_loaded_artwork_and_lyrics_widgets() {
         1,
         Some(fixture_assets("Retained lyrics")),
     );
-    let picture = view.state.art_picture.paintable().unwrap();
+    let picture = view
+        .state
+        .art_picture
+        .paintable()
+        .expect("expected test value from view.state.art_picture.paintable()");
     for status in [LyricsStatus::Local, LyricsStatus::Online] {
         view.state.lyrics_status.replace(status.clone());
         view.state.lyrics_attempted.set(true);
         view.state.rebuild_lyrics_ui();
         let label = view.state.lyric_labels.borrow()[0].clone();
-        let source = view.state.lyrics_box.first_child().unwrap();
+        let source = view
+            .state
+            .lyrics_box
+            .first_child()
+            .expect("expected test value from view.state.lyrics_box.first_child()");
         view.state.visualizer_bands.set([0.3; 32]);
         {
             let mut queue = view.state.controller.queue.borrow_mut();
@@ -823,7 +903,7 @@ fn desktop_metadata_only_refresh_preserves_loaded_artwork_and_lyrics_widgets() {
 #[test]
 #[ignore = "Private GTK display; synthetic pending local assets, no audio, network or preference writes"]
 fn desktop_metadata_hydration_preserves_pending_local_assets_and_accepts_original_completion() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     let view = fixture_view();
     let window = gtk::Window::builder().child(view.widget()).build();
     window.present();
@@ -834,7 +914,7 @@ fn desktop_metadata_hydration_preserves_pending_local_assets_and_accepts_origina
         .asset_request
         .borrow()
         .as_ref()
-        .unwrap()
+        .expect("expected test value from view .state .asset_request .borrow() .as_ref()")
         .cancellation
         .clone();
     view.state.lyrics_status.replace(LyricsStatus::LoadingLocal);
@@ -846,7 +926,7 @@ fn desktop_metadata_hydration_preserves_pending_local_assets_and_accepts_origina
             .asset_request
             .borrow()
             .as_ref()
-            .unwrap()
+            .expect("expected test value from view.state .asset_request .borrow() .as_ref()")
             .accepts(&identity)
     );
     assert!(view.state.asset_task.borrow().is_none());
@@ -865,11 +945,22 @@ fn desktop_metadata_hydration_preserves_pending_local_assets_and_accepts_origina
     assert!(view.state.asset_request.borrow().is_none());
     assert_eq!(*view.state.lyrics_status.borrow(), LyricsStatus::Local);
     assert_eq!(
-        view.state.current_lyrics.borrow().as_ref().unwrap().lines[0].text,
+        view.state
+            .current_lyrics
+            .borrow()
+            .as_ref()
+            .expect("expected test value from view.state.current_lyrics.borrow().as_ref()")
+            .lines[0]
+            .text,
         "Current local lyrics"
     );
     assert_eq!(
-        view.state.current_track.borrow().as_ref().unwrap().tags,
+        view.state
+            .current_track
+            .borrow()
+            .as_ref()
+            .expect("expected test value from view.state.current_track.borrow().as_ref()")
+            .tags,
         tagged_fixture_track().tags
     );
     view.request_stop();
@@ -879,7 +970,7 @@ fn desktop_metadata_hydration_preserves_pending_local_assets_and_accepts_origina
 #[test]
 #[ignore = "Private GTK/preferences; synthetic online completions, no media, audio or real requests"]
 fn desktop_metadata_refresh_preserves_same_query_online_request_and_rearms_changed_query() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     let manager = ThemeManager::shared();
     let previous_online = manager.online_lyrics();
     manager.set_online_lyrics(true);
@@ -907,7 +998,7 @@ fn desktop_metadata_refresh_preserves_same_query_online_request_and_rearms_chang
             .lyrics_request
             .borrow()
             .as_ref()
-            .unwrap()
+            .expect("expected test value from view.state .lyrics_request .borrow() .as_ref()")
             .accepts(&identity)
     );
     assert!(view.state.lyrics_attempted.get());
@@ -917,7 +1008,7 @@ fn desktop_metadata_refresh_preserves_same_query_online_request_and_rearms_chang
     );
     let lyrics = || {
         online::Lookup::Found(
-            crate::services::lyrics::parse_lrc("[00:00]Synthetic online lyrics").unwrap(),
+            crate::services::lyrics::parse_lrc("[00:00]Synthetic online lyrics").expect("expected test value from crate::services::lyrics::parse_lrc(\"[00:00]Synthetic online lyrics\")"),
         )
     };
     view.state
@@ -976,7 +1067,7 @@ fn desktop_metadata_refresh_preserves_same_query_online_request_and_rearms_chang
 #[test]
 #[ignore = "Private GTK display; synthetic assets only, no worker execution, audio or network"]
 fn desktop_metadata_refresh_keeps_source_and_generation_changes_as_full_resets() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     for change_generation in [false, true] {
         let view = fixture_view();
         let window = gtk::Window::builder().child(view.widget()).build();

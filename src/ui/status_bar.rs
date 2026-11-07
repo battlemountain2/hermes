@@ -49,21 +49,30 @@ impl StatusBar {
             .build();
         columns_btn.add_css_class("status-mode-btn");
         columns_btn.add_css_class("active");
-        columns_btn.set_child(Some(&crate::assets::primary_icon(crate::assets::icons::LIST, 14)));
+        columns_btn.set_child(Some(&crate::assets::primary_icon(
+            crate::assets::icons::LIST,
+            14,
+        )));
 
         let grid_btn = gtk::Button::builder()
             .has_frame(false)
             .tooltip_text("Grid view (Ctrl+2)")
             .build();
         grid_btn.add_css_class("status-mode-btn");
-        grid_btn.set_child(Some(&crate::assets::primary_icon(crate::assets::icons::GRID, 14)));
+        grid_btn.set_child(Some(&crate::assets::primary_icon(
+            crate::assets::icons::GRID,
+            14,
+        )));
 
         let list_btn = gtk::Button::builder()
             .has_frame(false)
             .tooltip_text("List view (Ctrl+3)")
             .build();
         list_btn.add_css_class("status-mode-btn");
-        list_btn.set_child(Some(&crate::assets::primary_icon(crate::assets::icons::ROWS, 14)));
+        list_btn.set_child(Some(&crate::assets::primary_icon(
+            crate::assets::icons::ROWS,
+            14,
+        )));
 
         view_switcher.append(&columns_btn);
         view_switcher.append(&grid_btn);
@@ -99,13 +108,17 @@ impl StatusBar {
         }
     }
 
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Count-only update remains available when total bytes are unknown"
+    )]
     pub fn update_item_count(&self, count: usize) {
         self.update_items(count, 0);
     }
 
     pub fn update_items(&self, count: usize, total_bytes: u64) {
-        self.item_count.set_text(&format_item_stats(count, total_bytes));
+        self.item_count
+            .set_text(&format_item_stats(count, total_bytes));
     }
 
     pub fn update_selection(&self, count: usize, total_bytes: u64) {

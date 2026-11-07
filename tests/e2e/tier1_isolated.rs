@@ -2,15 +2,13 @@
 
 //! Tier 1: Happy Path Isolation Tests (>= 5 test cases per feature for F1..F14).
 
+use super::common::{
+    TestEnv, is_op_supported, is_valid_png, run_preview_helper, sniffer::*, status_bar::*,
+    wire_protocol::*,
+};
+use super::fixtures::{archives::*, audio::*, geotiff::*, models::*, pdf::*, spreadsheets::*};
 use std::fs;
 use std::path::Path;
-use super::common::{
-    is_op_supported, is_valid_png, run_preview_helper,
-    sniffer::*, status_bar::*, wire_protocol::*, TestEnv,
-};
-use super::fixtures::{
-    archives::*, audio::*, geotiff::*, models::*, pdf::*, spreadsheets::*,
-};
 
 // =========================================================================
 // Feature F1: GeoTIFF Pyramid Overview Extraction
@@ -62,7 +60,8 @@ fn test_f1_geotiff_single_ifd_fallback_happy() {
 #[test]
 fn test_f1_geotiff_subsampling_within_budget_happy() {
     let data = sample_cog_pyramidal(512, 512, 2);
-    let dims = sniff_tiff_dimensions(&data).unwrap();
+    let dims = sniff_tiff_dimensions(&data)
+        .expect("expected test value from sniff_tiff_dimensions(&data)");
     assert!(!exceeds_decoded_frame_budget(dims.width, dims.height));
 }
 
@@ -82,20 +81,24 @@ fn test_f2_float32_dem_contrast_normalization_happy() {
     let data = sample_dem_float32(256, 256);
     let _input = env.write_file("dem.tif", &data);
     assert!(data.len() > 256 * 256 * 4);
-    let dims = sniff_tiff_dimensions(&data).unwrap();
+    let dims = sniff_tiff_dimensions(&data)
+        .expect("expected test value from sniff_tiff_dimensions(&data)");
     assert_eq!(dims.width, 256);
 }
 
 #[test]
 fn test_f2_dem_nodata_filtering_happy() {
-    let data = GeoTiffBuilder::new(64, 64).float32_dem(Some(-9999.0)).build();
+    let data = GeoTiffBuilder::new(64, 64)
+        .float32_dem(Some(-9999.0))
+        .build();
     assert!(data.len() > 64 * 64 * 4);
 }
 
 #[test]
 fn test_f2_multiband_optical_rgb_mapping_happy() {
     let data = sample_multiband_optical(128, 128);
-    let dims = sniff_tiff_dimensions(&data).unwrap();
+    let dims = sniff_tiff_dimensions(&data)
+        .expect("expected test value from sniff_tiff_dimensions(&data)");
     assert_eq!(dims.width, 128);
     assert_eq!(dims.height, 128);
 }
@@ -197,7 +200,8 @@ fn test_f4_warm_worker_latency_budget_happy() {
     let start = std::time::Instant::now();
     // Simulate fast in-memory framing transaction
     let frame = encode_frame(b"png", b"meta");
-    let _ = read_framed_message(&frame[..]).unwrap();
+    let _ = read_framed_message(&frame[..])
+        .expect("expected test value from read_framed_message(&frame[..])");
     let elapsed = start.elapsed();
     assert!(elapsed < std::time::Duration::from_millis(100));
 }
@@ -353,7 +357,11 @@ fn test_f8_ascii_stl_generation_happy() {
 fn test_f8_binary_stl_generation_happy() {
     let data = sample_binary_stl();
     assert_eq!(data.len(), 84 + 100);
-    let triangles = u32::from_le_bytes(data[80..84].try_into().unwrap());
+    let triangles = u32::from_le_bytes(
+        data[80..84]
+            .try_into()
+            .expect("expected test value from data[80..84].try_into()"),
+    );
     assert_eq!(triangles, 2);
 }
 
@@ -415,7 +423,8 @@ fn test_f9_cbz_archive_listing_via_binary_happy() {
 
     let res = run_preview_helper("preview-archive", &input, &output, 100);
     assert!(res.status.success());
-    let txt = fs::read_to_string(&output).unwrap();
+    let txt =
+        fs::read_to_string(&output).expect("expected test value from fs::read_to_string(&output)");
     assert!(txt.contains("page_001.png"));
 }
 
@@ -428,7 +437,8 @@ fn test_f9_epub_archive_listing_via_binary_happy() {
 
     let res = run_preview_helper("preview-archive", &input, &output, 100);
     assert!(res.status.success());
-    let txt = fs::read_to_string(&output).unwrap();
+    let txt =
+        fs::read_to_string(&output).expect("expected test value from fs::read_to_string(&output)");
     assert!(txt.contains("META-INF/container.xml"));
 }
 
@@ -455,7 +465,10 @@ fn test_f10_xlsx_generation_happy() {
 #[test]
 fn test_f10_xls_ole_signature_happy() {
     let data = sample_xls_spreadsheet();
-    assert_eq!(&data[0..8], &[0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+    assert_eq!(
+        &data[0..8],
+        &[0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]
+    );
 }
 
 #[test]
@@ -467,7 +480,8 @@ fn test_f10_ods_office_text_via_binary_happy() {
 
     let res = run_preview_helper("extract-office-text", &input, &output, 1000);
     assert!(res.status.success());
-    let txt = fs::read_to_string(&output).unwrap();
+    let txt =
+        fs::read_to_string(&output).expect("expected test value from fs::read_to_string(&output)");
     assert!(txt.contains("Engineering"));
 }
 
@@ -480,7 +494,8 @@ fn test_f10_spreadsheet_archive_listing_happy() {
 
     let res = run_preview_helper("preview-archive", &input, &output, 100);
     assert!(res.status.success());
-    let txt = fs::read_to_string(&output).unwrap();
+    let txt =
+        fs::read_to_string(&output).expect("expected test value from fs::read_to_string(&output)");
     assert!(txt.contains("xl/workbook.xml"));
 }
 
@@ -519,7 +534,9 @@ fn test_f11_wav_rms_amplitude_calculation_happy() {
     let wav = sample_wav();
     let pcm_data = &wav[44..]; // Skip 44-byte RIFF header
     let samples: Vec<i16> = pcm_data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| i16::from_le_bytes([c[0], c[1]]))
         .collect();
     let sum_sq: f64 = samples.iter().map(|&s| (s as f64) * (s as f64)).sum();
@@ -540,7 +557,8 @@ fn test_f12_pdf_text_extraction_via_binary_happy() {
 
     let res = run_preview_helper("extract-pdf-text", &input, &output, 100);
     assert!(res.status.success(), "stderr: {}", res.stderr);
-    let txt = fs::read_to_string(&output).unwrap();
+    let txt =
+        fs::read_to_string(&output).expect("expected test value from fs::read_to_string(&output)");
     assert!(txt.contains("Hermes"));
 }
 
@@ -560,7 +578,7 @@ fn test_f12_pdf_page_preview_via_binary_happy() {
 
     let res = run_preview_helper("preview-pdf", &input, &output, 1);
     assert!(res.status.success(), "stderr: {}", res.stderr);
-    let png = fs::read(&output).unwrap();
+    let png = fs::read(&output).expect("read generated fixture");
     assert!(is_valid_png(&png));
 }
 
@@ -573,7 +591,7 @@ fn test_f12_pdf_thumbnail_via_binary_happy() {
 
     let res = run_preview_helper("thumbnail-pdf", &input, &output, 128);
     assert!(res.status.success());
-    let png = fs::read(&output).unwrap();
+    let png = fs::read(&output).expect("read generated fixture");
     assert!(is_valid_png(&png));
 }
 
@@ -582,8 +600,10 @@ fn test_f12_pdf_glyph_selection_bounding_box_intersection_happy() {
     // Selection rectangle [0, 0, 100, 100], glyph rectangle [50, 50, 20, 20]
     let sel = (0.0f64, 0.0f64, 100.0f64, 100.0f64);
     let glyph = (50.0f64, 50.0f64, 20.0f64, 20.0f64);
-    let intersects = !(glyph.0 > sel.0 + sel.2 || glyph.0 + glyph.2 < sel.0 ||
-                       glyph.1 > sel.1 + sel.3 || glyph.1 + glyph.3 < sel.1);
+    let intersects = !(glyph.0 > sel.0 + sel.2
+        || glyph.0 + glyph.2 < sel.0
+        || glyph.1 > sel.1 + sel.3
+        || glyph.1 + glyph.3 < sel.1);
     assert!(intersects);
 }
 
@@ -596,7 +616,7 @@ fn test_f13_gio_free_space_root_query_happy() {
     let root = Path::new("/");
     let free_bytes = query_gio_free_space(root);
     assert!(free_bytes.is_some());
-    assert!(free_bytes.unwrap() > 0);
+    assert!(free_bytes.expect("expected test value from free_bytes") > 0);
 }
 
 #[test]
@@ -604,7 +624,7 @@ fn test_f13_gio_free_space_tmp_query_happy() {
     let tmp = Path::new("/tmp");
     let free_bytes = query_gio_free_space(tmp);
     assert!(free_bytes.is_some());
-    assert!(free_bytes.unwrap() > 0);
+    assert!(free_bytes.expect("expected test value from free_bytes") > 0);
 }
 
 #[test]

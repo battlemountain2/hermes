@@ -47,7 +47,7 @@ fn ranking(items: &[SearchItem]) -> Vec<(i64, usize)> {
 }
 
 fn index(items: &[SearchItem]) -> GroupIndex {
-    GroupIndex::build(items, &ranking(items), &query("type:file"), &|| false).unwrap()
+    GroupIndex::build(items, &ranking(items), &query("type:file"), &|| false).expect("expected test value from GroupIndex::build(items, &ranking(items), &query(\"type:file\"), &|| false)")
 }
 
 fn entity(result: &SearchResult) -> &SearchEntity {
@@ -72,14 +72,25 @@ fn group_keys(results: &[SearchResult], group: SearchGroup) -> Vec<SearchResultK
 #[test]
 fn literal_album_names_survive_type_and_location_interpretation() {
     for album in ["Video Games", "Lost in the Dream", "Photos of You"] {
-        let items = vec![song("01.flac", Some("An Artist"), Some(album), Some("An Artist"))];
+        let items = vec![song(
+            "01.flac",
+            Some("An Artist"),
+            Some(album),
+            Some("An Artist"),
+        )];
         let parsed = query(album);
-        let ranked: Vec<_> = items.iter().enumerate().filter_map(|(position, item)| {
-            crate::services::search::fuzzy_score(item, album, Path::new("/synthetic-groups"))
-                .map(|score| (score, position))
-        }).collect();
+        let ranked: Vec<_> = items
+            .iter()
+            .enumerate()
+            .filter_map(|(position, item)| {
+                crate::services::search::fuzzy_score(item, album, Path::new("/synthetic-groups"))
+                    .map(|score| (score, position))
+            })
+            .collect();
         assert_eq!(ranked.len(), 1, "{album}");
-        let index = GroupIndex::build(&items, &ranked, &parsed, &|| false).unwrap();
+        let index = GroupIndex::build(&items, &ranked, &parsed, &|| false).expect(
+            "expected test value from GroupIndex::build(&items, &ranked, &parsed, &|| false)",
+        );
         assert_eq!(index.counts().songs, 1, "{album}");
         assert_eq!(index.counts().albums, 1, "{album}");
     }
@@ -92,10 +103,11 @@ fn literal_song_titles_do_not_invent_entities_from_reduced_inferred_terms() {
     let items = vec![track];
     let parsed = query("Video Games");
     let ranked = vec![(
-        crate::services::search::fuzzy_score(&items[0], "Video Games", Path::new("/synthetic-groups")).unwrap(),
+        crate::services::search::fuzzy_score(&items[0], "Video Games", Path::new("/synthetic-groups")).expect("expected test value from crate::services::search::fuzzy_score(&items[0], \"Video Games\", Path::new(\"/synthetic-groups\"))"),
         0,
     )];
-    let index = GroupIndex::build(&items, &ranked, &parsed, &|| false).unwrap();
+    let index = GroupIndex::build(&items, &ranked, &parsed, &|| false)
+        .expect("expected test value from GroupIndex::build(&items, &ranked, &parsed, &|| false)");
     assert_eq!(index.counts().songs, 1);
     assert_eq!(index.counts().albums, 0);
     assert_eq!(index.counts().artists, 0);
@@ -103,11 +115,18 @@ fn literal_song_titles_do_not_invent_entities_from_reduced_inferred_terms() {
 
 #[test]
 fn quoted_song_titles_do_not_fuzzy_match_unrelated_entity_labels() {
-    let mut track = song("01.flac", Some("Another Artist"), Some("Games Video"), Some("Another Artist"));
+    let mut track = song(
+        "01.flac",
+        Some("Another Artist"),
+        Some("Games Video"),
+        Some("Another Artist"),
+    );
     track.search_metadata = "video games".into();
     let items = vec![track];
     let parsed = query("\"Video Games\"");
-    let index = GroupIndex::build(&items, &[(0, 0)], &parsed, &|| false).unwrap();
+    let index = GroupIndex::build(&items, &[(0, 0)], &parsed, &|| false).expect(
+        "expected test value from GroupIndex::build(&items, &[(0, 0)], &parsed, &|| false)",
+    );
     assert_eq!(index.counts().songs, 1);
     assert_eq!(index.counts().albums, 0);
     assert_eq!(index.counts().artists, 0);
@@ -250,7 +269,7 @@ fn unicode_lowercase_and_trimmed_identity_merge_without_ascii_transliteration() 
                     album: "début".into(),
                 }
         })
-        .unwrap();
+        .expect("expected test value from albums .iter() .map(entity) .find(|entity| { entity.key == SearchEntityKey::Album { artist: \"björk\".into(), album: \"début\".into...");
     assert_eq!(debut.songs, 2);
     assert_eq!(debut.title, "Début");
     assert_eq!(debut.artist.as_deref(), Some("Björk"));
@@ -267,7 +286,7 @@ fn unicode_lowercase_and_trimmed_identity_merge_without_ascii_transliteration() 
                     album: "i\u{307}".into(),
                 }
         })
-        .unwrap();
+        .expect("expected test value from albums .iter() .map(entity) .find(|entity| { entity.key == SearchEntityKey::Album { artist: \"i\\u{307}\".into(), album: \"i\\u{307}...");
     assert_eq!(expanded.songs, 2);
 }
 
@@ -279,14 +298,22 @@ fn compilation_and_disc_folders_merge_by_album_artist_not_path_or_track_artist()
         Some("Compilation"),
         Some("Various Artists"),
     );
-    first.music_tags.as_mut().unwrap().disc = Some(2);
+    first
+        .music_tags
+        .as_mut()
+        .expect("expected test value from first.music_tags.as_mut()")
+        .disc = Some(2);
     let mut second = song(
         "elsewhere/Disc 1/a.flac",
         Some("Second performer"),
         Some("COMPILATION"),
         Some("VARIOUS ARTISTS"),
     );
-    second.music_tags.as_mut().unwrap().disc = Some(1);
+    second
+        .music_tags
+        .as_mut()
+        .expect("expected test value from second.music_tags.as_mut()")
+        .disc = Some(1);
     let third = song(
         "another-folder/x.flac",
         Some("First performer"),
@@ -388,7 +415,7 @@ fn artist_without_album_and_album_artist_fallback_use_the_same_drilldown_logic()
         .iter()
         .map(entity)
         .find(|entity| entity.title == "Fallback")
-        .unwrap();
+        .expect("expected test value from artists .iter() .map(entity) .find(|entity| entity.title == \"Fallback\")");
     assert_eq!(fallback.songs, 2);
     assert!(!matches_entity(&items[3], &fallback.key));
 }
@@ -419,7 +446,11 @@ fn empty_missing_and_invalid_tags_keep_physical_songs_without_empty_virtual_labe
         None,
     ));
     let mut invalid_title = song("invalid-title.flac", Some("Artist"), Some("Record"), None);
-    invalid_title.music_tags.as_mut().unwrap().title = Some("Bad\rtitle".into());
+    invalid_title
+        .music_tags
+        .as_mut()
+        .expect("expected test value from invalid_title.music_tags.as_mut()")
+        .title = Some("Bad\rtitle".into());
     items.push(invalid_title);
     let grouped = index(&items);
     assert_eq!(
@@ -470,7 +501,9 @@ fn song_title_or_path_matches_do_not_automatically_match_album_or_artist_labels(
         crate::services::search::fuzzy_score(&items[0], "zzzzzz", Path::new("/synthetic-groups"))
             .is_some()
     );
-    let grouped = GroupIndex::build(&items, &[(30_000, 0)], &parsed, &|| false).unwrap();
+    let grouped = GroupIndex::build(&items, &[(30_000, 0)], &parsed, &|| false).expect(
+        "expected test value from GroupIndex::build(&items, &[(30_000, 0)], &parsed, &|| false)",
+    );
     assert_eq!(
         grouped.counts(),
         SearchCounts {
@@ -501,7 +534,7 @@ fn entity_labels_support_substrings_unordered_tokens_and_fuzzy_terms() {
         ("blnd", 1, 0),
         ("blonde impossible", 0, 0),
     ] {
-        let grouped = GroupIndex::build(&items, &ranking(&items), &query(text), &|| false).unwrap();
+        let grouped = GroupIndex::build(&items, &ranking(&items), &query(text), &|| false).expect("expected test value from GroupIndex::build(&items, &ranking(&items), &query(text), &|| false)");
         assert_eq!(grouped.counts().albums, albums, "{text}");
         assert_eq!(grouped.counts().artists, artists, "{text}");
         assert_eq!(grouped.counts().songs, 1);
@@ -516,7 +549,7 @@ fn compilation_album_labels_use_album_artist_not_hidden_track_performer() {
         Some("Record"),
         Some("Various"),
     )];
-    let grouped = GroupIndex::build(&items, &ranking(&items), &query("zzzzz"), &|| false).unwrap();
+    let grouped = GroupIndex::build(&items, &ranking(&items), &query("zzzzz"), &|| false).expect("expected test value from GroupIndex::build(&items, &ranking(&items), &query(\"zzzzz\"), &|| false)");
     assert_eq!(grouped.counts().albums, 0);
     assert_eq!(grouped.counts().artists, 1);
 }
@@ -538,7 +571,7 @@ fn exact_album_labels_rank_before_substring_token_and_fuzzy_labels() {
         ),
         song("exact.flac", Some("Performer"), Some("Blonde"), None),
     ];
-    let grouped = GroupIndex::build(&items, &ranking(&items), &query("blonde"), &|| false).unwrap();
+    let grouped = GroupIndex::build(&items, &ranking(&items), &query("blonde"), &|| false).expect("expected test value from GroupIndex::build(&items, &ranking(&items), &query(\"blonde\"), &|| false)");
     let albums = grouped.page(&items, SearchGroup::Albums, 10);
     assert_eq!(
         albums
@@ -576,7 +609,9 @@ fn structured_and_content_filters_are_already_applied_to_source_pairs() {
     let parsed = query(
         "artist:two album:compilation title:'Unrelated track' content:needle ext:flac in:three",
     );
-    let grouped = GroupIndex::build(&items, &[(8_000, 2)], &parsed, &|| false).unwrap();
+    let grouped = GroupIndex::build(&items, &[(8_000, 2)], &parsed, &|| false).expect(
+        "expected test value from GroupIndex::build(&items, &[(8_000, 2)], &parsed, &|| false)",
+    );
     assert_eq!(
         grouped.counts(),
         SearchCounts {
@@ -608,7 +643,7 @@ fn counts_and_matching_song_totals_cover_all_eligible_pairs_not_the_first_hundre
     }
     items.push(song("excluded.flac", Some("Artist"), Some("Album"), None));
     let ranked = ranking(&items[..305]);
-    let grouped = GroupIndex::build(&items, &ranked, &query("type:audio"), &|| false).unwrap();
+    let grouped = GroupIndex::build(&items, &ranked, &query("type:audio"), &|| false).expect("expected test value from GroupIndex::build(&items, &ranked, &query(\"type:audio\"), &|| false)");
     assert_eq!(
         grouped.counts(),
         SearchCounts {
@@ -636,7 +671,7 @@ fn files_and_songs_preserve_original_ranked_order_without_reranking() {
         item("folder.mp3", true),
     ];
     let ranked = [(1, 3), (2, 4), (3, 2), (4, 1), (5, 0)];
-    let grouped = GroupIndex::build(&items, &ranked, &query("type:file"), &|| false).unwrap();
+    let grouped = GroupIndex::build(&items, &ranked, &query("type:file"), &|| false).expect("expected test value from GroupIndex::build(&items, &ranked, &query(\"type:file\"), &|| false)");
     let files = grouped.page(&items, SearchGroup::Files, 100);
     let songs = grouped.page(&items, SearchGroup::Songs, 100);
     assert_eq!(
@@ -749,7 +784,7 @@ fn entity_ranking_is_label_based_and_deterministic_under_source_and_rank_permuta
         song("fuzzy.flac", Some("Freaking Oceans"), Some("Beyond"), None),
     ];
     let ranked = [(500, 0), (400, 3), (300, 2), (200, 1)];
-    let grouped = GroupIndex::build(&items, &ranked, &query("frank ocean"), &|| false).unwrap();
+    let grouped = GroupIndex::build(&items, &ranked, &query("frank ocean"), &|| false).expect("expected test value from GroupIndex::build(&items, &ranked, &query(\"frank ocean\"), &|| false)");
     let mut reversed = items.clone();
     reversed.reverse();
     let other = GroupIndex::build(
@@ -758,7 +793,7 @@ fn entity_ranking_is_label_based_and_deterministic_under_source_and_rank_permuta
         &query("frank ocean"),
         &|| false,
     )
-    .unwrap();
+    .expect("expected test value from GroupIndex::build( &reversed, &ranking(&reversed), &query(\"frank ocean\"), &|| false, )");
     for group in [SearchGroup::Albums, SearchGroup::Artists] {
         assert_eq!(
             grouped.page(&items, group, 100),
@@ -811,7 +846,12 @@ fn cancellation_is_checked_before_work_per_physical_record_and_before_publicatio
         calls.set(call);
         call == 3
     });
-    assert!(result.err().unwrap().contains("cancelled"));
+    assert!(
+        result
+            .err()
+            .expect("expected test value from result.err()")
+            .contains("cancelled")
+    );
     assert_eq!(calls.get(), 3);
     assert!(GroupIndex::build(&[], &[], &query(""), &|| true).is_err());
     let calls = Cell::new(0);
@@ -841,7 +881,7 @@ fn invalid_rank_positions_fail_without_panicking() {
     assert!(
         GroupIndex::build(&items, &[(0, 1)], &query(""), &|| false)
             .err()
-            .unwrap()
+            .expect("expected test value from GroupIndex::build(&items, &[(0, 1)], &query(\"\"), &|| false) .err()")
             .contains("position")
     );
 }
@@ -862,7 +902,7 @@ fn entity_budget_preserves_every_physical_match_and_updates_retained_summaries()
         MAX_METADATA_BYTES,
         1,
     )
-    .unwrap();
+    .expect("expected test value from GroupIndex::build_with_limits( &items, &ranking(&items), &query(\"type:file\"), &|| false, MAX_METADATA_BYTES, 1, )");
     assert_eq!(
         grouped.counts(),
         SearchCounts {
@@ -872,11 +912,16 @@ fn entity_budget_preserves_every_physical_match_and_updates_retained_summaries()
             artists: 0
         }
     );
-    assert!(grouped.notice().unwrap().contains("partial"));
     assert!(
         grouped
             .notice()
-            .unwrap()
+            .expect("expected test value from grouped.notice()")
+            .contains("partial")
+    );
+    assert!(
+        grouped
+            .notice()
+            .expect("expected test value from grouped .notice()")
             .contains("all matching files and songs")
     );
     let albums = grouped.page(&items, SearchGroup::Albums, 10);
@@ -905,7 +950,7 @@ fn metadata_budget_accounts_normalized_keys_and_never_discards_physical_matches(
         bytes,
         MAX_ENTITIES,
     )
-    .unwrap();
+    .expect("expected test value from GroupIndex::build_with_limits( &items, &ranking(&items), &query(\"\"), &|| false, bytes, MAX_ENTITIES, )");
     assert_eq!(
         fitting.counts(),
         SearchCounts {
@@ -924,7 +969,7 @@ fn metadata_budget_accounts_normalized_keys_and_never_discards_physical_matches(
         bytes - 1,
         MAX_ENTITIES,
     )
-    .unwrap();
+    .expect("expected test value from GroupIndex::build_with_limits( &items, &ranking(&items), &query(\"\"), &|| false, bytes - 1, MAX_ENTITIES, )");
     assert_eq!(
         not_fitting.counts(),
         SearchCounts {
@@ -936,7 +981,7 @@ fn metadata_budget_accounts_normalized_keys_and_never_discards_physical_matches(
     );
     assert!(not_fitting.notice().is_some());
     let zero = GroupIndex::build_with_limits(&items, &ranking(&items), &query(""), &|| false, 0, 0)
-        .unwrap();
+        .expect("expected test value from GroupIndex::build_with_limits(&items, &ranking(&items), &query(\"\"), &|| false, 0, 0)");
     assert_eq!(
         zero.counts(),
         SearchCounts {
@@ -960,7 +1005,7 @@ fn hitting_exactly_the_entity_limit_is_not_partial_until_a_new_entity_is_rejecte
         MAX_METADATA_BYTES,
         2,
     )
-    .unwrap();
+    .expect("expected test value from GroupIndex::build_with_limits( &items, &ranking(&items), &query(\"\"), &|| false, MAX_METADATA_BYTES, 2, )");
     assert!(grouped.notice().is_none());
     assert_eq!(grouped.counts().albums + grouped.counts().artists, 2);
 }
@@ -1030,7 +1075,7 @@ fn forty_thousand_derived_entity_limit_is_shared_between_albums_and_artists() {
         usize::MAX,
         MAX_ENTITIES,
     )
-    .unwrap();
+    .expect("expected test value from GroupIndex::build_with_limits( &items, &ranking(&items), &query(\"\"), &|| false, usize::MAX, MAX_ENTITIES, )");
     assert_eq!(
         grouped.counts().albums + grouped.counts().artists,
         MAX_ENTITIES

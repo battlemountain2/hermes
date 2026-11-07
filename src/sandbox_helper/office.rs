@@ -47,11 +47,14 @@ impl Package {
                 .archive
                 .by_index(index)
                 .map_err(|error| error.to_string())?;
-            let name = member.name();
+            let name = member
+                .name()
+                .map_err(|error| error.to_string())?
+                .into_owned();
             if name.starts_with('/')
                 || name.contains(['\\', ':'])
                 || name.split('/').any(|part| part == "..")
-                || !names.insert(name.to_owned())
+                || !names.insert(name.clone())
                 || member.encrypted()
                 || member.is_symlink()
             {
@@ -59,29 +62,29 @@ impl Package {
             }
             check_expansion(member.size(), member.compressed_size(), &mut expanded)?;
             if name.ends_with(".rels") {
-                relationships.push(name.to_owned());
+                relationships.push(name);
             }
         }
         for name in relationships {
             let xml = package.read(&name)?;
             visit_xml(&xml, |event, decoder| {
-                if let Event::Start(tag) | Event::Empty(tag) = event {
-                    if tag.local_name().as_ref() == b"Relationship" {
-                        let mode = attribute(&tag, b"TargetMode", decoder)?.unwrap_or_default();
-                        let target = attribute(&tag, b"Target", decoder)?.unwrap_or_default();
-                        if mode.eq_ignore_ascii_case("external") || external_target(&target) {
-                            let kind = attribute(&tag, b"Type", decoder)?.unwrap_or_default();
-                            if kind.ends_with("/hyperlink") || kind.ends_with("/image") {
-                                return Ok(());
-                            }
-                            return Err("External Office data references are not supported".into());
+                if let Event::Start(tag) | Event::Empty(tag) = event
+                    && tag.local_name().as_ref() == b"Relationship"
+                {
+                    let mode = attribute(&tag, b"TargetMode", decoder)?.unwrap_or_default();
+                    let target = attribute(&tag, b"Target", decoder)?.unwrap_or_default();
+                    if mode.eq_ignore_ascii_case("external") || external_target(&target) {
+                        let kind = attribute(&tag, b"Type", decoder)?.unwrap_or_default();
+                        if kind.ends_with("/hyperlink") || kind.ends_with("/image") {
+                            return Ok(());
                         }
-                        let base = name
-                            .rsplit_once("/_rels/")
-                            .map(|(base, _)| base)
-                            .unwrap_or("");
-                        package_target(base, &target)?;
+                        return Err("External Office data references are not supported".into());
                     }
+                    let base = name
+                        .rsplit_once("/_rels/")
+                        .map(|(base, _)| base)
+                        .unwrap_or("");
+                    package_target(base, &target)?;
                 }
                 Ok(())
             })?;
@@ -119,8 +122,11 @@ impl Package {
         let names: Vec<_> = self
             .archive
             .file_names()
-            .filter(|name| name.ends_with(".xml") || worksheets.contains(*name))
-            .map(str::to_owned)
+            .map(|name| name.map(std::borrow::Cow::into_owned))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter(|name| name.ends_with(".xml") || worksheets.contains(name))
             .collect();
         for name in names {
             let xml = self.read(&name)?;
@@ -130,21 +136,23 @@ impl Package {
             let mut row = 1u64;
             let mut column = 1u64;
             visit_xml(&xml, |event, decoder| {
-                if let Event::End(tag) = &event {
-                    if worksheet && tag.local_name().as_ref() == b"row" {
-                        row = row.saturating_add(1);
-                        column = 1;
-                    }
+                if let Event::End(tag) = &event
+                    && worksheet
+                    && tag.local_name().as_ref() == b"row"
+                {
+                    row = row.saturating_add(1);
+                    column = 1;
                 }
                 if let Event::Start(tag) | Event::Empty(tag) = event {
                     reject_external_attributes(&tag, decoder)?;
                     worksheet |= tag.local_name().as_ref() == b"worksheet";
-                    if worksheet && tag.local_name().as_ref() == b"row" {
-                        if let Some(reference) = attribute(&tag, b"r", decoder)? {
-                            row = reference.parse().map_err(|_| "Invalid worksheet row")?;
-                            if row == 0 || row > 1_048_576 {
-                                return Err("Worksheet row is outside Excel limits".into());
-                            }
+                    if worksheet
+                        && tag.local_name().as_ref() == b"row"
+                        && let Some(reference) = attribute(&tag, b"r", decoder)?
+                    {
+                        row = reference.parse().map_err(|_| "Invalid worksheet row")?;
+                        if row == 0 || row > 1_048_576 {
+                            return Err("Worksheet row is outside Excel limits".into());
                         }
                     }
                     if tag.local_name().as_ref() == b"sst"
@@ -188,23 +196,24 @@ impl Package {
         let names: Vec<_> = self
             .archive
             .file_names()
+            .map(|name| name.map(std::borrow::Cow::into_owned))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?
+            .into_iter()
             .filter(|name| name.ends_with(".rels"))
-            .map(str::to_owned)
             .collect();
         let mut targets = HashSet::new();
         for name in names {
             let xml = self.read(&name)?;
             let base = name.rsplit_once("/_rels/").map_or("", |(base, _)| base);
             visit_xml(&xml, |event, decoder| {
-                if let Event::Start(tag) | Event::Empty(tag) = event {
-                    if tag.local_name().as_ref() == b"Relationship"
-                        && attribute(&tag, b"Type", decoder)?
-                            .is_some_and(|value| value.ends_with(kind))
-                    {
-                        let target = attribute(&tag, b"Target", decoder)?
-                            .ok_or("Missing Office relationship target")?;
-                        targets.insert(package_target(base, &target)?);
-                    }
+                if let Event::Start(tag) | Event::Empty(tag) = event
+                    && tag.local_name().as_ref() == b"Relationship"
+                    && attribute(&tag, b"Type", decoder)?.is_some_and(|value| value.ends_with(kind))
+                {
+                    let target = attribute(&tag, b"Target", decoder)?
+                        .ok_or("Missing Office relationship target")?;
+                    targets.insert(package_target(base, &target)?);
                 }
                 Ok(())
             })?;
@@ -217,20 +226,19 @@ impl Package {
         if self.contains("_rels/.rels") {
             let xml = self.read("_rels/.rels")?;
             visit_xml(&xml, |event, decoder| {
-                if let Event::Start(tag) | Event::Empty(tag) = event {
-                    if tag.local_name().as_ref() == b"Relationship"
-                        && attribute(&tag, b"Type", decoder)?
-                            .is_some_and(|value| value.ends_with("/officeDocument"))
-                    {
-                        if target.is_some() {
-                            return Err("Ambiguous Office document relationship".into());
-                        }
-                        target = Some(package_target(
-                            "",
-                            &attribute(&tag, b"Target", decoder)?
-                                .ok_or("Missing Office document target")?,
-                        )?);
+                if let Event::Start(tag) | Event::Empty(tag) = event
+                    && tag.local_name().as_ref() == b"Relationship"
+                    && attribute(&tag, b"Type", decoder)?
+                        .is_some_and(|value| value.ends_with("/officeDocument"))
+                {
+                    if target.is_some() {
+                        return Err("Ambiguous Office document relationship".into());
                     }
+                    target = Some(package_target(
+                        "",
+                        &attribute(&tag, b"Target", decoder)?
+                            .ok_or("Missing Office document target")?,
+                    )?);
                 }
                 Ok(())
             })?;
@@ -243,11 +251,11 @@ impl Package {
         let mut workbook = false;
         let mut first = true;
         visit_xml(&xml, |event, _| {
-            if let Event::Start(tag) | Event::Empty(tag) = event {
-                if first {
-                    workbook = tag.local_name().as_ref() == b"workbook";
-                    first = false;
-                }
+            if let Event::Start(tag) | Event::Empty(tag) = event
+                && first
+            {
+                workbook = tag.local_name().as_ref() == b"workbook";
+                first = false;
             }
             Ok(())
         })?;
@@ -513,20 +521,19 @@ fn append_slides(package: &mut Package, text: &mut Text) -> Result<(), String> {
     let relationships = package.read("ppt/_rels/presentation.xml.rels")?;
     let mut targets = HashMap::new();
     visit_xml(&relationships, |event, decoder| {
-        if let Event::Start(tag) | Event::Empty(tag) = event {
-            if tag.local_name().as_ref() == b"Relationship"
-                && attribute(&tag, b"Type", decoder)?.is_some_and(|kind| kind.ends_with("/slide"))
+        if let Event::Start(tag) | Event::Empty(tag) = event
+            && tag.local_name().as_ref() == b"Relationship"
+            && attribute(&tag, b"Type", decoder)?.is_some_and(|kind| kind.ends_with("/slide"))
+        {
+            let id = attribute(&tag, b"Id", decoder)?.ok_or("Missing slide relationship ID")?;
+            let target = attribute(&tag, b"Target", decoder)?.ok_or("Missing slide target")?;
+            if attribute(&tag, b"TargetMode", decoder)?
+                .is_some_and(|mode| mode.eq_ignore_ascii_case("external"))
             {
-                let id = attribute(&tag, b"Id", decoder)?.ok_or("Missing slide relationship ID")?;
-                let target = attribute(&tag, b"Target", decoder)?.ok_or("Missing slide target")?;
-                if attribute(&tag, b"TargetMode", decoder)?
-                    .is_some_and(|mode| mode.eq_ignore_ascii_case("external"))
-                {
-                    return Err("External slide references are not supported".into());
-                }
-                if targets.insert(id, slide_target(&target)?).is_some() {
-                    return Err("Duplicate slide relationship ID".into());
-                }
+                return Err("External slide references are not supported".into());
+            }
+            if targets.insert(id, slide_target(&target)?).is_some() {
+                return Err("Duplicate slide relationship ID".into());
             }
         }
         Ok(())
@@ -535,24 +542,24 @@ fn append_slides(package: &mut Package, text: &mut Text) -> Result<(), String> {
     let mut slides = Vec::new();
     let mut slide_count = 0usize;
     visit_xml(&presentation, |event, decoder| {
-        if let Event::Start(tag) | Event::Empty(tag) = event {
-            if tag.local_name().as_ref() == b"sldId" {
-                let id = tag
-                    .attributes()
-                    .find_map(|attribute| {
-                        attribute
-                            .ok()
-                            .filter(|attribute| attribute.key.as_ref().ends_with(b":id"))
-                    })
-                    .ok_or("Missing presentation slide ID")?
-                    .decoded_and_normalized_value(quick_xml::XmlVersion::Implicit1_0, decoder)
-                    .map_err(|error| error.to_string())?
-                    .into_owned();
-                let target = targets.get(&id).ok_or("Missing slide relationship")?;
-                slide_count += 1;
-                if slides.len() < SLIDE_LIMIT {
-                    slides.push(target.clone());
-                }
+        if let Event::Start(tag) | Event::Empty(tag) = event
+            && tag.local_name().as_ref() == b"sldId"
+        {
+            let id = tag
+                .attributes()
+                .find_map(|attribute| {
+                    attribute
+                        .ok()
+                        .filter(|attribute| attribute.key.as_ref().ends_with(b":id"))
+                })
+                .ok_or("Missing presentation slide ID")?
+                .decoded_and_normalized_value(quick_xml::XmlVersion::Implicit1_0, decoder)
+                .map_err(|error| error.to_string())?
+                .into_owned();
+            let target = targets.get(&id).ok_or("Missing slide relationship")?;
+            slide_count += 1;
+            if slides.len() < SLIDE_LIMIT {
+                slides.push(target.clone());
             }
         }
         Ok(())

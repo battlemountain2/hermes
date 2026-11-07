@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{
-    fs,
-    io::Read,
-    path::Path,
-};
+use std::{fs, io::Read, path::Path};
 
 use gdk_pixbuf::prelude::*;
 
@@ -235,13 +231,14 @@ pub fn sniff_tiff_dimensions(bytes: &[u8]) -> Option<ImageDimensions> {
             } else if tag == 257 {
                 height = val;
             }
-            if let (Some(w), Some(h)) = (width, height) {
-                if w > 0 && h > 0 {
-                    return Some(ImageDimensions {
-                        width: w,
-                        height: h,
-                    });
-                }
+            if let (Some(w), Some(h)) = (width, height)
+                && w > 0
+                && h > 0
+            {
+                return Some(ImageDimensions {
+                    width: w,
+                    height: h,
+                });
             }
         }
     } else if magic == 43 {
@@ -289,11 +286,15 @@ pub fn sniff_tiff_dimensions(bytes: &[u8]) -> Option<ImageDimensions> {
                 3 => {
                     let v = if is_le {
                         u16::from_le_bytes(
-                            bytes[entry_offset + 12..entry_offset + 14].try_into().ok()?,
+                            bytes[entry_offset + 12..entry_offset + 14]
+                                .try_into()
+                                .ok()?,
                         )
                     } else {
                         u16::from_be_bytes(
-                            bytes[entry_offset + 12..entry_offset + 14].try_into().ok()?,
+                            bytes[entry_offset + 12..entry_offset + 14]
+                                .try_into()
+                                .ok()?,
                         )
                     };
                     Some(v as u32)
@@ -301,11 +302,15 @@ pub fn sniff_tiff_dimensions(bytes: &[u8]) -> Option<ImageDimensions> {
                 4 => {
                     let v = if is_le {
                         u32::from_le_bytes(
-                            bytes[entry_offset + 12..entry_offset + 16].try_into().ok()?,
+                            bytes[entry_offset + 12..entry_offset + 16]
+                                .try_into()
+                                .ok()?,
                         )
                     } else {
                         u32::from_be_bytes(
-                            bytes[entry_offset + 12..entry_offset + 16].try_into().ok()?,
+                            bytes[entry_offset + 12..entry_offset + 16]
+                                .try_into()
+                                .ok()?,
                         )
                     };
                     Some(v)
@@ -313,11 +318,15 @@ pub fn sniff_tiff_dimensions(bytes: &[u8]) -> Option<ImageDimensions> {
                 16 => {
                     let v = if is_le {
                         u64::from_le_bytes(
-                            bytes[entry_offset + 12..entry_offset + 20].try_into().ok()?,
+                            bytes[entry_offset + 12..entry_offset + 20]
+                                .try_into()
+                                .ok()?,
                         )
                     } else {
                         u64::from_be_bytes(
-                            bytes[entry_offset + 12..entry_offset + 20].try_into().ok()?,
+                            bytes[entry_offset + 12..entry_offset + 20]
+                                .try_into()
+                                .ok()?,
                         )
                     };
                     u32::try_from(v).ok()
@@ -330,13 +339,14 @@ pub fn sniff_tiff_dimensions(bytes: &[u8]) -> Option<ImageDimensions> {
             } else if tag == 257 {
                 height = val;
             }
-            if let (Some(w), Some(h)) = (width, height) {
-                if w > 0 && h > 0 {
-                    return Some(ImageDimensions {
-                        width: w,
-                        height: h,
-                    });
-                }
+            if let (Some(w), Some(h)) = (width, height)
+                && w > 0
+                && h > 0
+            {
+                return Some(ImageDimensions {
+                    width: w,
+                    height: h,
+                });
             }
         }
     }
@@ -365,16 +375,13 @@ pub fn image_dimensions(path: &Path) -> Option<(u32, u32)> {
     }
 
     // For large TIFFs where IFD0 is at the end of the file, read the whole file if under 2MB
-    if count == 65536 {
-        if let Ok(metadata) = file.metadata() {
-            if metadata.len() <= 2 * 1024 * 1024 {
-                if let Ok(full_data) = fs::read(path) {
-                    if let Some(dim) = sniff_tiff_dimensions(&full_data) {
-                        return Some((dim.width, dim.height));
-                    }
-                }
-            }
-        }
+    if count == 65536
+        && let Ok(metadata) = file.metadata()
+        && metadata.len() <= 2 * 1024 * 1024
+        && let Ok(full_data) = fs::read(path)
+        && let Some(dim) = sniff_tiff_dimensions(&full_data)
+    {
+        return Some((dim.width, dim.height));
     }
 
     None
@@ -425,7 +432,10 @@ pub(super) fn extract_exif_thumbnail_bytes(data: &[u8]) -> Option<&[u8]> {
             }
             let seg_start = i + 2;
             let seg_end = (i + len).min(data.len());
-            if marker == 0xE1 && seg_start + 6 <= seg_end && &data[seg_start..seg_start + 6] == b"Exif\0\0" {
+            if marker == 0xE1
+                && seg_start + 6 <= seg_end
+                && &data[seg_start..seg_start + 6] == b"Exif\0\0"
+            {
                 let tiff_bytes = &data[seg_start + 6..seg_end];
                 return extract_thumbnail_from_tiff_block(tiff_bytes);
             }
@@ -537,10 +547,9 @@ pub fn scale_embedded_thumbnail(data: &[u8], size: i32) -> Result<Vec<u8>, Strin
         .or_else(|| sniff_png_dimensions(data))
         .or_else(|| sniff_gif_dimensions(data))
         .or_else(|| sniff_tiff_dimensions(data))
+        && exceeds_decoded_frame_budget(dim.width, dim.height)
     {
-        if exceeds_decoded_frame_budget(dim.width, dim.height) {
-            return Err("Embedded thumbnail exceeds the decoded frame budget".to_owned());
-        }
+        return Err("Embedded thumbnail exceeds the decoded frame budget".to_owned());
     }
 
     let loader = gdk_pixbuf::PixbufLoader::new();
@@ -562,7 +571,11 @@ pub fn scale_embedded_thumbnail(data: &[u8], size: i32) -> Result<Vec<u8>, Strin
         pixbuf
     } else {
         pixbuf
-            .scale_simple(target_width, target_height, gdk_pixbuf::InterpType::Bilinear)
+            .scale_simple(
+                target_width,
+                target_height,
+                gdk_pixbuf::InterpType::Bilinear,
+            )
             .ok_or_else(|| "Unable to scale embedded thumbnail".to_owned())?
     };
 

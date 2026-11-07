@@ -3,13 +3,16 @@ use super::*;
 #[test]
 #[ignore = "Requires an isolated GTK display; validates preview transport icon contrast"]
 fn desktop_preview_play_pause_icons_use_the_filled_control_palette() {
-    gtk::init().unwrap();
-    assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    assets::prepare().expect("register embedded test assets");
     assets::set_on_accent_icon_color("#182838");
     let button = icon_button(icons::PLAY, "Play");
     button.add_css_class("preview-audio-play-button");
     set_button_icon(&button, icons::PAUSE);
-    let image = button.child().and_downcast::<gtk::Image>().unwrap();
+    let image = button
+        .child()
+        .and_downcast::<gtk::Image>()
+        .expect("expected test value from button.child().and_downcast::<gtk::Image>()");
     let expected = assets::on_accent_icon(icons::PAUSE, 18);
     assert_eq!(image.paintable(), expected.paintable());
     assets::set_primary_icon_color("#abcdef");
@@ -132,7 +135,7 @@ fn micro_segment_bands_match_spectrum_bands() {
 #[test]
 #[ignore = "Requires a private GTK display; no decoder or personal media"]
 fn micro_segment_visualizer_has_valid_dimensions() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     let stream: super::super::stream::PlaybackStream = glib::Object::new();
     let vis = MicroSegmentVisualizer::new(&stream);
     let (_min_w, nat_w, _, _) = vis.widget().measure(gtk::Orientation::Horizontal, -1);
@@ -145,7 +148,7 @@ fn micro_segment_visualizer_has_valid_dimensions() {
 #[test]
 #[ignore = "Private GTK display; verifies preview disposal with an externally retained silent stream"]
 fn desktop_audio_preview_stop_disconnects_refresh_and_releases_widgets() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     let stream: super::super::stream::PlaybackStream = glib::Object::new();
     let payload = Rc::new(Cell::new(0));
     let weak_payload = Rc::downgrade(&payload);
@@ -197,20 +200,21 @@ fn desktop_audio_preview_playback_metadata_artwork_and_cancellation() {
         "Run in a private HOME/XDG, D-Bus and Broadway session"
     );
     use std::time::{Duration, Instant};
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     crate::assets::register_icon_theme();
     let _theme = crate::ui::theme::ThemeManager::shared();
     let styles = gtk::CssProvider::new();
     styles.load_from_string(include_str!("../../../style.css"));
     gtk::style_context_add_provider_for_display(
-        &gtk::gdk::Display::default().unwrap(),
+        &gtk::gdk::Display::default()
+            .expect("expected test value from gtk::gdk::Display::default()"),
         &styles,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
     let directory =
         std::env::temp_dir().join(format!("hermes-audio-preview-{}", std::process::id()));
-    std::fs::create_dir(&directory).unwrap();
+    std::fs::create_dir(&directory).expect("create generated fixture directory");
     let track = directory.join("track.flac");
     let cover = directory.join("cover.png");
     assert!(
@@ -228,7 +232,7 @@ fn desktop_audio_preview_playback_metadata_artwork_and_cancellation() {
             ])
             .arg(&cover)
             .status()
-            .unwrap()
+            .expect("expected test value from std::process::Command::new(\"ffmpeg\") .args([ \"-v\", \"error\", \"-nostdin\", \"-f\", \"lavfi\", \"-i\", \"color=c=blue:s=64x64\", \"-frames:v...")
             .success()
     );
     assert!(
@@ -266,7 +270,7 @@ fn desktop_audio_preview_playback_metadata_artwork_and_cancellation() {
             ])
             .arg(&track)
             .status()
-            .unwrap()
+            .expect("expected test value from std::process::Command::new(\"ffmpeg\") .args([ \"-v\", \"error\", \"-nostdin\", \"-f\", \"lavfi\", \"-i\", \"anullsrc=r=48000:cl=stereo\", \"-t\"...")
             .success()
     );
     let entry = crate::model::FileEntry(Rc::new(crate::model::FileEntryInner {
@@ -283,7 +287,9 @@ fn desktop_audio_preview_playback_metadata_artwork_and_cancellation() {
         .application_id("io.github.hermes.AudioPreviewFixture")
         .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
-    application.register(None::<&gio::Cancellable>).unwrap();
+    application
+        .register(None::<&gio::Cancellable>)
+        .expect("expected test value from application.register(None::<&gio::Cancellable>)");
     let music_player = crate::ui::music::MusicPlayer::for_application(&application);
     let music = music_player.controller();
     music.set_volume(0.0);
@@ -296,7 +302,12 @@ fn desktop_audio_preview_playback_metadata_artwork_and_cancellation() {
         .child(&drawer.widget())
         .build();
     crate::ui::window::install_audio_playback_coordination(&window, &drawer, music.clone());
-    let production_handler = drawer.state.audio_play_handler.borrow().clone().unwrap();
+    let production_handler = drawer
+        .state
+        .audio_play_handler
+        .borrow()
+        .clone()
+        .expect("expected test value from drawer.state.audio_play_handler.borrow().clone()");
     drawer.set_audio_play_handler(Rc::new(move || {
         count.set(count.get() + 1);
         production_handler();
@@ -320,7 +331,14 @@ fn desktop_audio_preview_playback_metadata_artwork_and_cancellation() {
     let music_track = music.current_track();
     drawer.show(entry.clone());
     pump_until(&|| drawer.state.audio.borrow().is_some());
-    let stream = drawer.state.audio.borrow().as_ref().unwrap().stream.clone();
+    let stream = drawer
+        .state
+        .audio
+        .borrow()
+        .as_ref()
+        .expect("expected test value from drawer.state.audio.borrow().as_ref()")
+        .stream
+        .clone();
     pump_until(&|| stream.is_prepared() || stream.error().is_some());
     assert!(stream.error().is_none(), "{:?}", stream.error());
     stream.set_muted(true);
@@ -341,7 +359,7 @@ fn desktop_audio_preview_playback_metadata_artwork_and_cancellation() {
     let extras = widgets
         .iter()
         .find_map(|widget| widget.downcast_ref::<gtk::Expander>())
-        .unwrap();
+        .expect("expected test value from widgets .iter() .find_map(|widget| widget.downcast_ref::<gtk::Expander>())");
     assert!(!extras.is_expanded());
     extras.set_expanded(true);
     pump_until(&|| extras.child().is_some_and(|child| child.is_mapped()));
@@ -371,14 +389,14 @@ fn desktop_audio_preview_playback_metadata_artwork_and_cancellation() {
     let picture = widgets
         .iter()
         .find_map(|widget| widget.downcast_ref::<gtk::Picture>())
-        .unwrap()
+        .expect("expected test value from widgets .iter() .find_map(|widget| widget.downcast_ref::<gtk::Picture>())")
         .clone();
     pump_until(&|| picture.paintable().is_some());
     extras.set_expanded(false);
     if let Some(directory) = std::env::var_os("HERMES_TEST_SCREENSHOT_DIR") {
         use gtk::gsk::prelude::*;
         let directory = std::path::PathBuf::from(directory);
-        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::create_dir_all(&directory).expect("create generated fixture directory");
         let widget = drawer.widget();
         pump_until(&|| widget.is_mapped() && widget.width() > 0 && widget.height() > 0);
         let paintable = gtk::WidgetPaintable::new(Some(&widget));
@@ -406,7 +424,9 @@ fn desktop_audio_preview_playback_metadata_artwork_and_cancellation() {
         };
         if let Some(node) = node {
             let renderer = gtk::gsk::CairoRenderer::new();
-            renderer.realize(None::<&gtk::gdk::Surface>).unwrap();
+            renderer
+                .realize(None::<&gtk::gdk::Surface>)
+                .expect("expected test value from renderer.realize(None::<&gtk::gdk::Surface>)");
             let texture = renderer.render_texture(
                 &node,
                 Some(&gtk::graphene::Rect::new(
@@ -418,7 +438,7 @@ fn desktop_audio_preview_playback_metadata_artwork_and_cancellation() {
             );
             texture
                 .save_to_png(directory.join("audio-preview.png"))
-                .unwrap();
+                .expect("expected test value from texture .save_to_png(directory.join(\"audio-preview.png\"))");
             renderer.unrealize();
         } else {
             eprintln!(
@@ -433,7 +453,7 @@ fn desktop_audio_preview_playback_metadata_artwork_and_cancellation() {
                 .downcast_ref::<gtk::Button>()
                 .filter(|button| button.tooltip_text().as_deref() == Some("Play"))
         })
-        .unwrap()
+        .expect("expected test value from widgets .iter() .find_map(|widget| { widget .downcast_ref::<gtk::Button>() .filter(|button| button.tooltip_text().as_deref() ==...")
         .clone();
     play.emit_clicked();
     pump_until(&|| stream.timestamp() > 100_000);
@@ -442,7 +462,16 @@ fn desktop_audio_preview_playback_metadata_artwork_and_cancellation() {
     assert_eq!(music.track_id(), music_id);
     assert_eq!(music.current_track(), music_track);
     drawer.show(entry.clone());
-    assert_eq!(drawer.state.audio.borrow().as_ref().unwrap().stream, stream);
+    assert_eq!(
+        drawer
+            .state
+            .audio
+            .borrow()
+            .as_ref()
+            .expect("expected test value from drawer.state.audio.borrow().as_ref()")
+            .stream,
+        stream
+    );
     assert!(stream.is_playing());
     assert_eq!(play_count.get(), 1);
     music.play();
@@ -483,11 +512,11 @@ fn desktop_audio_preview_playback_metadata_artwork_and_cancellation() {
             .audio
             .borrow()
             .as_ref()
-            .unwrap()
+            .expect("expected test value from drawer .state .audio .borrow() .as_ref()")
             .stream
             .is_playing()
     );
     drawer.close();
     window.close();
-    std::fs::remove_dir_all(directory).unwrap();
+    std::fs::remove_dir_all(directory).expect("remove generated fixture");
 }

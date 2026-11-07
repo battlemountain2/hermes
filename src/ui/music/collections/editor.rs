@@ -268,10 +268,10 @@ pub(super) fn open(state: &Rc<State>, id: Option<u64>) -> gtk::Window {
 
 impl Editor {
     fn send(&self, command: CollectionCommand) {
-        if let Some(state) = self.state.upgrade() {
-            if let Err(error) = state.collection_store.send(command) {
-                self.status.set_text(&error);
-            }
+        if let Some(state) = self.state.upgrade()
+            && let Err(error) = state.collection_store.send(command)
+        {
+            self.status.set_text(&error);
         }
     }
 

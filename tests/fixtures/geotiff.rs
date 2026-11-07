@@ -91,9 +91,11 @@ impl GeoTiffBuilder {
             entries.push((273u16, 4u16, 1u32, 0u32));
 
             // GeoKeyDirectoryTag (34735) if EPSG is present on IFD0
-            if level == 0 && self.epsg_code.is_some() {
+            if level == 0
+                && let Some(epsg_code) = self.epsg_code
+            {
                 // Placeholder for GeoKey tag
-                entries.push((34735u16, 3u16, 4u32, self.epsg_code.unwrap() as u32));
+                entries.push((34735u16, 3u16, 4u32, u32::from(epsg_code)));
             }
 
             // Sort entries by tag ID as required by TIFF standard
@@ -132,7 +134,11 @@ impl GeoTiffBuilder {
                 for y in 0..current_h {
                     for x in 0..current_w {
                         let val: f32 = if let Some(nodata) = self.nodata {
-                            if x == 0 && y == 0 { nodata } else { 500.0 + (x + y) as f32 * 5.0 }
+                            if x == 0 && y == 0 {
+                                nodata
+                            } else {
+                                500.0 + (x + y) as f32 * 5.0
+                            }
                         } else {
                             500.0 + (x + y) as f32 * 5.0
                         };
@@ -144,7 +150,9 @@ impl GeoTiffBuilder {
                 for y in 0..current_h {
                     for x in 0..current_w {
                         for b in 0..self.bands {
-                            let val = ((x * 255 / current_w.max(1)) + (y * 255 / current_h.max(1)) + (b as u32 * 40)) as u8;
+                            let val = ((x * 255 / current_w.max(1))
+                                + (y * 255 / current_h.max(1))
+                                + (b as u32 * 40)) as u8;
                             out.push(val);
                         }
                     }
@@ -162,7 +170,10 @@ impl GeoTiffBuilder {
 
 /// Convenience functions for common GeoTIFF fixtures
 pub fn sample_dem_float32(w: u32, h: u32) -> Vec<u8> {
-    GeoTiffBuilder::new(w, h).float32_dem(Some(-9999.0)).epsg(4326).build()
+    GeoTiffBuilder::new(w, h)
+        .float32_dem(Some(-9999.0))
+        .epsg(4326)
+        .build()
 }
 
 pub fn sample_multiband_optical(w: u32, h: u32) -> Vec<u8> {
@@ -170,7 +181,11 @@ pub fn sample_multiband_optical(w: u32, h: u32) -> Vec<u8> {
 }
 
 pub fn sample_cog_pyramidal(w: u32, h: u32, levels: usize) -> Vec<u8> {
-    GeoTiffBuilder::new(w, h).bands(3).pyramid_levels(levels).epsg(32632).build()
+    GeoTiffBuilder::new(w, h)
+        .bands(3)
+        .pyramid_levels(levels)
+        .epsg(32632)
+        .build()
 }
 
 pub fn sample_corrupted_geotiff() -> Vec<u8> {

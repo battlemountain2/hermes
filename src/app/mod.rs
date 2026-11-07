@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 mod browser;
-mod navigation;
 pub(crate) mod music_order;
+mod navigation;
 mod peek;
 mod trails;
 

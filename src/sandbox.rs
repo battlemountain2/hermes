@@ -105,7 +105,11 @@ impl ParseOperation {
         }
         if matches!(
             self,
-            Self::MusicTags | Self::MusicWaveform | Self::PreviewAudioMetadata | Self::ImageMetadata | Self::MediaMetadata
+            Self::MusicTags
+                | Self::MusicWaveform
+                | Self::PreviewAudioMetadata
+                | Self::ImageMetadata
+                | Self::MediaMetadata
         ) {
             "result.json"
         } else if self == Self::PreviewAnimation {
@@ -488,7 +492,9 @@ fn sandbox_input_path(input: &Path) -> String {
         Some(extension)
             if !extension.is_empty()
                 && extension.len() <= 16
-                && extension.bytes().all(|character| character.is_ascii_alphanumeric()) =>
+                && extension
+                    .bytes()
+                    .all(|character| character.is_ascii_alphanumeric()) =>
         {
             format!("/input.{}", extension.to_ascii_lowercase())
         }

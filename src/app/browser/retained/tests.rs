@@ -27,7 +27,12 @@ impl Source {
 
 fn entry(location: &Location, name: &str, kind: EntryKind) -> FileEntry {
     FileEntry(Rc::new(FileEntryInner {
-        location: Location::local(location.native_path().unwrap().join(name)),
+        location: Location::local(
+            location
+                .native_path()
+                .expect("expected test value from location.native_path()")
+                .join(name),
+        ),
         native_name: OsString::from(name),
         display_name: name.into(),
         kind,
@@ -76,7 +81,7 @@ impl FileSource for Source {
 
 fn activate(browser: &Rc<Browser>, name: &str) {
     browser.activate_tab(
-        TrailId::new(name).unwrap(),
+        TrailId::new(name).expect("expected test value from TrailId::new(name)"),
         Location::local(format!("/generated/{name}")),
         ViewPreferences::default(),
     );
@@ -92,19 +97,27 @@ fn unchanged_tabs_retain_selection_multicolumn_path_and_history_without_enumerat
     browser.select(1, 1);
     activate(&browser, "second");
     browser.activate_tab(
-        TrailId::new("first").unwrap(),
+        TrailId::new("first").expect("expected test value from TrailId::new(\"first\")"),
         Location::local("/generated/first/child"),
         ViewPreferences::default(),
     );
     assert_eq!(source.requests.borrow().len(), 3);
     assert_eq!(browser.active_depth(), Some(1));
-    assert_eq!(browser.focused_entry().unwrap().display_name, "track.flac");
+    assert_eq!(
+        browser
+            .focused_entry()
+            .expect("expected test value from browser.focused_entry()")
+            .display_name,
+        "track.flac"
+    );
     assert!(browser.can_go_back());
     assert_eq!(
         browser.location_at(0),
         Some(Location::local("/generated/first"))
     );
-    browser.retain_open_tabs(&[TrailId::new("first").unwrap()]);
+    browser.retain_open_tabs(&[
+        TrailId::new("first").expect("expected test value from TrailId::new(\"first\")")
+    ]);
     assert!(browser.retained_tabs.borrow().is_empty());
     assert_eq!(source.guard_count.get(), 0);
 }
@@ -131,7 +144,13 @@ fn invalidation_late_metadata_and_expiry_revalidate_without_routing_to_current_t
     );
     activate(&browser, "first");
     assert_eq!(source.requests.borrow().len(), 3);
-    assert_eq!(browser.focused_entry().unwrap().display_name, "track.flac");
+    assert_eq!(
+        browser
+            .focused_entry()
+            .expect("expected test value from browser.focused_entry()")
+            .display_name,
+        "track.flac"
+    );
     source.guards.borrow()[&Location::local("/generated/second")]();
     activate(&browser, "second");
     assert_eq!(source.requests.borrow().len(), 4);
@@ -145,15 +164,21 @@ fn separate_tabs_at_same_path_do_not_share_selection_and_closed_tabs_release_gua
     let source = Source::ready();
     let browser = Browser::new(source.clone());
     let location = Location::local("/generated/shared");
-    let first = TrailId::new("first").unwrap();
-    let second = TrailId::new("second").unwrap();
+    let first = TrailId::new("first").expect("expected test value from TrailId::new(\"first\")");
+    let second = TrailId::new("second").expect("expected test value from TrailId::new(\"second\")");
     browser.activate_tab(first.clone(), location.clone(), ViewPreferences::default());
     browser.select(0, 0);
     browser.activate_tab(second.clone(), location.clone(), ViewPreferences::default());
     assert!(browser.focused_entry().is_none());
     browser.select(0, 1);
     browser.activate_tab(first.clone(), location, ViewPreferences::default());
-    assert_eq!(browser.focused_entry().unwrap().display_name, "child");
+    assert_eq!(
+        browser
+            .focused_entry()
+            .expect("expected test value from browser.focused_entry()")
+            .display_name,
+        "child"
+    );
     assert_eq!(source.requests.borrow().len(), 2);
     browser.retain_open_tabs(&[first]);
     assert_eq!(source.guard_count.get(), 0);
@@ -175,18 +200,27 @@ fn automatic_album_order_does_not_force_a_reload_for_saved_name_preferences() {
     });
     browser.handle_directory_event(DirectoryEvent::Finished { request_id });
     assert_eq!(
-        browser.column_preferences(0).unwrap().sort_key,
+        browser
+            .column_preferences(0)
+            .expect("expected test value from browser.column_preferences(0)")
+            .sort_key,
         SortKey::Track
     );
     activate(&browser, "second");
     activate(&browser, "first");
     assert_eq!(source.requests.borrow().len(), 2);
     assert_eq!(
-        browser.column_preferences(0).unwrap().sort_key,
+        browser
+            .column_preferences(0)
+            .expect("expected test value from browser.column_preferences(0)")
+            .sort_key,
         SortKey::Track
     );
     assert_eq!(
-        browser.column_entries(0).unwrap()[0].display_name,
+        browser
+            .column_entries(0)
+            .expect("expected test value from browser.column_entries(0)")[0]
+            .display_name,
         "9. First.flac"
     );
 }
@@ -204,23 +238,32 @@ fn changed_preferences_reload_with_new_hidden_policy_and_preserve_selection() {
         ..ViewPreferences::default()
     };
     browser.activate_tab(
-        TrailId::new("first").unwrap(),
+        TrailId::new("first").expect("expected test value from TrailId::new(\"first\")"),
         Location::local("/generated/first"),
         preferences,
     );
     assert_eq!(source.requests.borrow().len(), 3);
-    assert!(source.requests.borrow().last().unwrap().0.include_hidden);
+    assert!(
+        source
+            .requests
+            .borrow()
+            .last()
+            .expect("expected test value from source.requests.borrow().last()")
+            .0
+            .include_hidden
+    );
     assert_eq!(browser.column_preferences(0), Some(preferences));
-    assert_eq!(browser.focused_entry().unwrap().display_name, "track.flac");
+    assert_eq!(
+        browser
+            .focused_entry()
+            .expect("expected test value from browser.focused_entry()")
+            .display_name,
+        "track.flac"
+    );
     browser.state.borrow_mut().columns[0].location = Location::uri("search:///generated");
     activate(&browser, "third");
-    assert!(
-        !browser
-            .retained_tabs
-            .borrow()
-            .iter()
-            .any(|tab| tab.id == TrailId::new("first").unwrap())
-    );
+    assert!(!browser.retained_tabs.borrow().iter().any(|tab| tab.id
+        == TrailId::new("first").expect("expected test value from TrailId::new(\"first\")")));
 }
 
 #[test]
@@ -235,13 +278,8 @@ fn unsupported_incomplete_changed_location_and_memory_limits_fall_back_safely() 
     source.finish.set(false);
     activate(&browser, "first");
     activate(&browser, "third");
-    assert!(
-        !browser
-            .retained_tabs
-            .borrow()
-            .iter()
-            .any(|tab| tab.id == TrailId::new("first").unwrap())
-    );
+    assert!(!browser.retained_tabs.borrow().iter().any(|tab| tab.id
+        == TrailId::new("first").expect("expected test value from TrailId::new(\"first\")")));
     source.finish.set(true);
     for index in 0..10 {
         activate(&browser, &format!("tab-{index}"));
@@ -250,7 +288,7 @@ fn unsupported_incomplete_changed_location_and_memory_limits_fall_back_safely() 
     assert!(source.guard_count.get() <= MAX_RETAINED_TABS);
     let requested = source.requests.borrow().len();
     browser.activate_tab(
-        TrailId::new("tab-8").unwrap(),
+        TrailId::new("tab-8").expect("expected test value from TrailId::new(\"tab-8\")"),
         Location::local("/generated/different"),
         ViewPreferences::default(),
     );
@@ -262,11 +300,6 @@ fn unsupported_incomplete_changed_location_and_memory_limits_fall_back_safely() 
     );
     browser.state.borrow_mut().columns[0].entries = vec![big; MAX_RETAINED_BYTES / 4096 + 1];
     activate(&browser, "final");
-    assert!(
-        !browser
-            .retained_tabs
-            .borrow()
-            .iter()
-            .any(|tab| tab.id == TrailId::new("tab-8").unwrap())
-    );
+    assert!(!browser.retained_tabs.borrow().iter().any(|tab| tab.id
+        == TrailId::new("tab-8").expect("expected test value from TrailId::new(\"tab-8\")")));
 }

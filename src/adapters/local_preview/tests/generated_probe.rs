@@ -21,11 +21,13 @@ fn directory() -> PathBuf {
         std::env::var_os("HERMES_PREVIEW_PROBE")
             .expect("Explicit generated fixture directory required"),
     );
-    let path = path.canonicalize().unwrap();
+    let path = path
+        .canonicalize()
+        .expect("generated fixture must provide the expected value");
     assert_eq!(path.parent(), Some(std::path::Path::new("/tmp")));
     assert!(
         path.file_name()
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .to_string_lossy()
             .starts_with("hermes-preview-audit.")
     );
@@ -45,8 +47,11 @@ fn directory() -> PathBuf {
 }
 
 fn files(directory: &std::path::Path) -> Vec<String> {
-    let mut files: Vec<String> =
-        serde_json::from_slice(&std::fs::read(directory.join("manifest.json")).unwrap()).unwrap();
+    let mut files: Vec<String> = serde_json::from_slice(
+        &std::fs::read(directory.join("manifest.json"))
+            .expect("generated fixture must provide the expected value"),
+    )
+    .expect("generated fixture must provide the expected value");
     if let Ok(filter) = std::env::var("HERMES_PROBE_FILTER") {
         files.retain(|name| name == &filter);
         assert!(!files.is_empty(), "Unknown fixture filter");
@@ -60,10 +65,21 @@ fn files(directory: &std::path::Path) -> Vec<String> {
 fn entry(path: &std::path::Path) -> FileEntry {
     FileEntry(Rc::new(FileEntryInner {
         location: Location::local(path),
-        native_name: path.file_name().unwrap().to_owned(),
-        display_name: path.file_name().unwrap().to_string_lossy().into_owned(),
+        native_name: path
+            .file_name()
+            .expect("generated fixture must provide the expected value")
+            .to_owned(),
+        display_name: path
+            .file_name()
+            .expect("generated fixture must provide the expected value")
+            .to_string_lossy()
+            .into_owned(),
         kind: EntryKind::File,
-        size: MetadataValue::Known(path.metadata().unwrap().len()),
+        size: MetadataValue::Known(
+            path.metadata()
+                .expect("generated fixture must provide the expected value")
+                .len(),
+        ),
         modified_unix_seconds: MetadataValue::Unknown,
         music_tags: None,
     }))
@@ -137,7 +153,9 @@ fn thumbnail_operation(handler: ThumbnailHandler) -> ParseOperation {
 fn generated_previewprobe_matrix() {
     let directory = directory();
     let context = glib::MainContext::default();
-    let _guard = context.acquire().unwrap();
+    let _guard = context
+        .acquire()
+        .expect("generated fixture must provide the expected value");
     let provider = super::super::LocalPreviewProvider;
     let mut rows = Vec::new();
     for name in files(&directory) {
@@ -208,9 +226,10 @@ fn generated_previewprobe_matrix() {
     let label = std::env::var("HERMES_PROBE_FILTER").unwrap_or_else(|_| "matrix".into());
     std::fs::write(
         directory.join(format!("adapter-{label}.json")),
-        serde_json::to_vec_pretty(&rows).unwrap(),
+        serde_json::to_vec_pretty(&rows)
+            .expect("generated fixture must provide the expected value"),
     )
-    .unwrap();
+    .expect("generated fixture must provide the expected value");
 }
 
 #[test]
@@ -225,7 +244,8 @@ fn generated_native_previewprobe_matrix() {
         let path = directory.join("fixtures").join(&name);
         for sample in 0..3 {
             let start = Instant::now();
-            let session = crate::playback::Session::start(&path).unwrap();
+            let session = crate::playback::Session::start(&path)
+                .expect("generated fixture must provide the expected value");
             session.set_volume(true, 0.0);
             let mut frame_ms = None;
             let mut prepared = None;
@@ -256,9 +276,10 @@ fn generated_native_previewprobe_matrix() {
     }
     std::fs::write(
         directory.join("native-matrix.json"),
-        serde_json::to_vec_pretty(&rows).unwrap(),
+        serde_json::to_vec_pretty(&rows)
+            .expect("generated fixture must provide the expected value"),
     )
-    .unwrap();
+    .expect("generated fixture must provide the expected value");
 }
 
 #[test]
@@ -281,7 +302,7 @@ fn generated_previewprobe_cancellation_budgets_and_replacement() {
         assert!(
             crate::sandbox::parse(&fixtures.join("sample.png"), operation, 0, &cancelled)
                 .err()
-                .unwrap()
+                .expect("generated fixture must provide the expected value")
                 .contains("cancelled")
         );
         assert!(start.elapsed() < Duration::from_millis(100));
@@ -299,8 +320,15 @@ fn generated_previewprobe_cancellation_budgets_and_replacement() {
         0,
         &token,
     );
-    thread.join().unwrap();
-    assert!(result.err().unwrap().contains("cancelled"));
+    thread
+        .join()
+        .expect("generated fixture must provide the expected value");
+    assert!(
+        result
+            .err()
+            .expect("generated fixture must provide the expected value")
+            .contains("cancelled")
+    );
     assert!(start.elapsed() < Duration::from_secs(1));
     eprintln!("In-flight animation cancellation: {:?}", start.elapsed());
     for (name, operation) in [
@@ -338,9 +366,16 @@ fn generated_previewprobe_cancellation_budgets_and_replacement() {
         0,
         &Cancellation::default(),
     );
-    assert!(result.err().unwrap().contains("decoded frame budget"));
+    assert!(
+        result
+            .err()
+            .expect("generated fixture must provide the expected value")
+            .contains("decoded frame budget")
+    );
     let context = glib::MainContext::default();
-    let _guard = context.acquire().unwrap();
+    let _guard = context
+        .acquire()
+        .expect("generated fixture must provide the expected value");
     let emitted = Rc::new(RefCell::new(false));
     let capture = emitted.clone();
     let handle = super::super::LocalPreviewProvider.load(
@@ -361,16 +396,18 @@ fn generated_previewprobe_cancellation_budgets_and_replacement() {
     }
     assert!(!*emitted.borrow());
     let replacement = fixtures.join("replacement-test.png");
-    std::fs::copy(fixtures.join("sample.png"), &replacement).unwrap();
+    std::fs::copy(fixtures.join("sample.png"), &replacement)
+        .expect("generated fixture must provide the expected value");
     let valid = crate::sandbox::parse(
         &replacement,
         ParseOperation::PreviewImage,
         0,
         &Cancellation::default(),
     )
-    .unwrap();
+    .expect("generated fixture must provide the expected value");
     assert!(dimensions(&valid.data).is_some());
-    std::fs::write(&replacement, b"corrupt replacement").unwrap();
+    std::fs::write(&replacement, b"corrupt replacement")
+        .expect("generated fixture must provide the expected value");
     assert!(
         crate::sandbox::parse(
             &replacement,
@@ -380,7 +417,7 @@ fn generated_previewprobe_cancellation_budgets_and_replacement() {
         )
         .is_err()
     );
-    std::fs::remove_file(replacement).unwrap();
+    std::fs::remove_file(replacement).expect("generated fixture must provide the expected value");
 }
 
 #[test]
@@ -401,7 +438,7 @@ fn generated_previewprobe_revisit_and_contention() {
             0,
             &Cancellation::default(),
         )
-        .unwrap();
+        .expect("generated fixture must provide the expected value");
         let row = serde_json::json!({"path": "sandbox-selected-image", "label": label, "ms": start.elapsed().as_secs_f64() * 1000.0, "bytes": output.data.len()});
         eprintln!("PROBE {row}");
         rows.push(row);
@@ -418,7 +455,7 @@ fn generated_previewprobe_revisit_and_contention() {
             } else {
                 crate::sandbox_helper::render_image(&path, 1400)
             }
-            .unwrap();
+            .expect("generated fixture must provide the expected value");
             let row = serde_json::json!({"file": name, "path": "direct-renderer-unsandboxed-control-only", "sample": sample, "ms": start.elapsed().as_secs_f64() * 1000.0, "bytes": output.len()});
             eprintln!("PROBE {row}");
             rows.push(row);
@@ -431,7 +468,8 @@ fn generated_previewprobe_revisit_and_contention() {
             let mut threads = Vec::new();
             for index in 0..4 {
                 let copy = fixtures.join(format!("contention-{workers}-{sample}-{index}.jpg"));
-                std::fs::copy(&photo, &copy).unwrap();
+                std::fs::copy(&photo, &copy)
+                    .expect("generated fixture must provide the expected value");
                 let barrier = barrier.clone();
                 threads.push(std::thread::spawn(move || {
                     barrier.wait();
@@ -441,13 +479,18 @@ fn generated_previewprobe_revisit_and_contention() {
                         256,
                         &Cancellation::default(),
                     );
-                    std::fs::remove_file(copy).unwrap();
-                    result.unwrap().data.len()
+                    std::fs::remove_file(copy)
+                        .expect("generated fixture must provide the expected value");
+                    result
+                        .expect("generated fixture must provide the expected value")
+                        .data
+                        .len()
                 }));
             }
             barrier.wait();
             let start = Instant::now();
-            let session = crate::playback::Session::start(&fixtures.join("hevc.mov")).unwrap();
+            let session = crate::playback::Session::start(&fixtures.join("hevc.mov"))
+                .expect("generated fixture must provide the expected value");
             session.set_volume(true, 0.0);
             let mut first_frame = None;
             let mut error = None;
@@ -468,16 +511,22 @@ fn generated_previewprobe_revisit_and_contention() {
             rows.push(row);
             drop(session);
             for thread in threads {
-                assert!(thread.join().unwrap() > 0);
+                assert!(
+                    thread
+                        .join()
+                        .expect("generated fixture must provide the expected value")
+                        > 0
+                );
             }
         }
     }
     crate::sandbox::browser::set_worker_limit(crate::sandbox::browser::default_worker_limit());
     std::fs::write(
         directory.join("revisit-contention.json"),
-        serde_json::to_vec_pretty(&rows).unwrap(),
+        serde_json::to_vec_pretty(&rows)
+            .expect("generated fixture must provide the expected value"),
     )
-    .unwrap();
+    .expect("generated fixture must provide the expected value");
 }
 
 struct PhaseProvider {
@@ -510,13 +559,12 @@ impl PreviewProvider for PhaseProvider {
 
 fn find_native_stream(widget: &gtk::Widget) -> Option<crate::ui::preview::stream::PlaybackStream> {
     use gtk::prelude::*;
-    if let Some(picture) = widget.downcast_ref::<gtk::Picture>() {
-        if let Some(stream) = picture
+    if let Some(picture) = widget.downcast_ref::<gtk::Picture>()
+        && let Some(stream) = picture
             .paintable()
             .and_then(|paintable| paintable.downcast().ok())
-        {
-            return Some(stream);
-        }
+    {
+        return Some(stream);
     }
     let mut child = widget.first_child();
     while let Some(current) = child {
@@ -533,10 +581,12 @@ fn find_native_stream(widget: &gtk::Widget) -> Option<crate::ui::preview::stream
 fn generated_gtk_previewprobe_phases() {
     use gtk::prelude::*;
     let directory = directory();
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("generated fixture must provide the expected value");
+    crate::assets::prepare().expect("generated fixture must provide the expected value");
     let context = glib::MainContext::default();
-    let _guard = context.acquire().unwrap();
+    let _guard = context
+        .acquire()
+        .expect("generated fixture must provide the expected value");
     let start = Rc::new(RefCell::new(Instant::now()));
     let ready = Rc::new(RefCell::new(None));
     let render = Rc::new(RefCell::new(None));
@@ -560,7 +610,9 @@ fn generated_gtk_previewprobe_phases() {
         while context.iteration(false) {}
         std::thread::sleep(Duration::from_millis(1));
     }
-    let clock = window.frame_clock().unwrap();
+    let clock = window
+        .frame_clock()
+        .expect("generated fixture must provide the expected value");
     let measured_widget = widget.clone();
     let measured_ready = ready.clone();
     let measured_frame = first_frame.clone();
@@ -632,7 +684,8 @@ fn generated_gtk_previewprobe_phases() {
     window.close();
     std::fs::write(
         directory.join("gtk-phases.json"),
-        serde_json::to_vec_pretty(&rows).unwrap(),
+        serde_json::to_vec_pretty(&rows)
+            .expect("generated fixture must provide the expected value"),
     )
-    .unwrap();
+    .expect("generated fixture must provide the expected value");
 }

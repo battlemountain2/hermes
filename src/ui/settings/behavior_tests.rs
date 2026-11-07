@@ -4,15 +4,15 @@ use std::cell::Cell;
 #[test]
 #[ignore = "Private GTK/preferences; verifies explicit opt-in without any network or playback"]
 fn desktop_online_lyrics_requires_explicit_opt_in_and_weakly_notifies() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("generated fixture must provide the expected value");
+    crate::assets::prepare().expect("generated fixture must provide the expected value");
     let manager = ThemeManager::shared();
     assert!(!manager.online_lyrics());
     let page = audio_page(manager.clone());
     let toggle = option_control(&page, "Look up missing lyrics online")
-        .unwrap()
+        .expect("generated fixture must provide the expected value")
         .downcast::<gtk::Switch>()
-        .unwrap();
+        .expect("generated fixture must provide the expected value");
     assert!(!toggle.is_active());
     let calls = Rc::new(Cell::new(0));
     let count = calls.clone();
@@ -26,16 +26,16 @@ fn desktop_online_lyrics_requires_explicit_opt_in_and_weakly_notifies() {
     assert_eq!(calls.get(), 1);
     let saved: toml::Value = toml::from_str(
         &std::fs::read_to_string(crate::paths::settings_file())
-            .unwrap(),
+            .expect("generated fixture must provide the expected value"),
     )
-    .unwrap();
+    .expect("generated fixture must provide the expected value");
     assert_eq!(saved["online_lyrics"].as_bool(), Some(true));
     let reopened = audio_page(manager.clone());
     assert!(
         option_control(&reopened, "Look up missing lyrics online")
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .downcast::<gtk::Switch>()
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .is_active()
     );
     drop(callback);
@@ -66,27 +66,33 @@ fn option_control(widget: &gtk::Widget, title: &str) -> Option<gtk::Widget> {
 #[test]
 #[ignore = "Requires isolated GTK display and private HOME/XDG preferences; no decoder"]
 fn desktop_audio_choices_apply_live_persist_and_reopen_without_touching_playback() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("generated fixture must provide the expected value");
+    crate::assets::prepare().expect("generated fixture must provide the expected value");
     let manager = ThemeManager::shared();
     manager.set_audio_spin_animation(true);
     manager.set_audio_spectrum_bands(32);
     manager.set_audio_spectrum_decay("studio");
     let page = audio_page(manager.clone());
     let spin = option_control(&page, "Spinning record in audio previews")
-        .unwrap()
+        .expect("generated fixture must provide the expected value")
         .downcast::<gtk::Switch>()
-        .unwrap();
+        .expect("generated fixture must provide the expected value");
     let columns = option_control(&page, "Preview visualizer columns")
-        .unwrap()
+        .expect("generated fixture must provide the expected value")
         .downcast::<gtk::DropDown>()
-        .unwrap();
+        .expect("generated fixture must provide the expected value");
     let decay = option_control(&page, "Ballistics & meter falloff")
-        .unwrap()
+        .expect("generated fixture must provide the expected value")
         .downcast::<gtk::DropDown>()
-        .unwrap();
+        .expect("generated fixture must provide the expected value");
     assert!(spin.is_sensitive() && columns.is_sensitive() && decay.is_sensitive());
-    assert_eq!(columns.model().unwrap().n_items(), 2);
+    assert_eq!(
+        columns
+            .model()
+            .expect("generated fixture must provide the expected value")
+            .n_items(),
+        2
+    );
     assert!(option_control(&page, "Background playback continuity").is_none());
     let controller = crate::ui::test_music_controller();
     let initial_status = controller.status();
@@ -112,33 +118,33 @@ fn desktop_audio_choices_apply_live_persist_and_reopen_without_touching_playback
     assert_eq!(calls.get(), 3);
     let saved: toml::Value = toml::from_str(
         &std::fs::read_to_string(crate::paths::settings_file())
-            .unwrap(),
+            .expect("generated fixture must provide the expected value"),
     )
-    .unwrap();
+    .expect("generated fixture must provide the expected value");
     assert_eq!(saved["audio_spin_animation"].as_bool(), Some(false));
     assert_eq!(saved["audio_spectrum_bands"].as_integer(), Some(16));
     assert_eq!(saved["audio_spectrum_decay"].as_str(), Some("smooth"));
     let reopened = audio_page(manager.clone());
     assert!(
         !option_control(&reopened, "Spinning record in audio previews")
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .downcast::<gtk::Switch>()
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .is_active()
     );
     assert_eq!(
         option_control(&reopened, "Preview visualizer columns")
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .downcast::<gtk::DropDown>()
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .selected(),
         0
     );
     assert_eq!(
         option_control(&reopened, "Ballistics & meter falloff")
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .downcast::<gtk::DropDown>()
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .selected(),
         2
     );
@@ -154,25 +160,25 @@ fn desktop_audio_choices_apply_live_persist_and_reopen_without_touching_playback
 #[test]
 #[ignore = "Requires isolated GTK display and private HOME/XDG preferences"]
 fn desktop_date_and_size_choices_update_live_labels_and_save_validated_values() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("generated fixture must provide the expected value");
+    crate::assets::prepare().expect("generated fixture must provide the expected value");
     let manager = ThemeManager::shared();
     manager.set_date_format("relative");
     manager.set_size_unit("decimal");
     let browser = BrowserView::new(Rc::new(EmptySource), Default::default());
     let page = view_formats_page(&browser, manager.clone(), Rc::new(|| {}));
     let date = option_control(&page, "Timestamp presentation")
-        .unwrap()
+        .expect("generated fixture must provide the expected value")
         .downcast::<gtk::DropDown>()
-        .unwrap();
+        .expect("generated fixture must provide the expected value");
     let unit = option_control(&page, "Byte unit prefixes")
-        .unwrap()
+        .expect("generated fixture must provide the expected value")
         .downcast::<gtk::DropDown>()
-        .unwrap();
+        .expect("generated fixture must provide the expected value");
     let sample = option_control(&page, "Live file size example")
-        .unwrap()
+        .expect("generated fixture must provide the expected value")
         .downcast::<gtk::Label>()
-        .unwrap();
+        .expect("generated fixture must provide the expected value");
     assert!(date.is_sensitive() && unit.is_sensitive());
     assert_eq!(sample.text(), "1.4 GB");
     let size_label = gtk::Label::new(None);
@@ -193,25 +199,25 @@ fn desktop_date_and_size_choices_update_live_labels_and_save_validated_values() 
     assert_eq!(manager.size_unit(), "binary");
     let saved: toml::Value = toml::from_str(
         &std::fs::read_to_string(crate::paths::settings_file())
-            .unwrap(),
+            .expect("generated fixture must provide the expected value"),
     )
-    .unwrap();
+    .expect("generated fixture must provide the expected value");
     assert_eq!(saved["date_format"].as_str(), Some("iso"));
     assert_eq!(saved["size_unit"].as_str(), Some("binary"));
     let reopened = view_formats_page(&browser, manager.clone(), Rc::new(|| {}));
     assert_eq!(
         option_control(&reopened, "Timestamp presentation")
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .downcast::<gtk::DropDown>()
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .selected(),
         1
     );
     assert_eq!(
         option_control(&reopened, "Byte unit prefixes")
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .downcast::<gtk::DropDown>()
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .selected(),
         1
     );
@@ -250,10 +256,9 @@ fn option_switch(widget: &gtk::Widget, title: &str) -> Option<gtk::Switch> {
         .and_then(|copy| copy.first_child())
         .and_downcast::<gtk::Label>()
         .is_some_and(|label| label.text() == title)
+        && let Some(toggle) = widget.last_child().and_downcast::<gtk::Switch>()
     {
-        if let Some(toggle) = widget.last_child().and_downcast::<gtk::Switch>() {
-            return Some(toggle);
-        }
+        return Some(toggle);
     }
     let mut child = widget.first_child();
     while let Some(current) = child {
@@ -268,18 +273,26 @@ fn option_switch(widget: &gtk::Widget, title: &str) -> Option<gtk::Switch> {
 #[test]
 #[ignore = "Requires isolated GTK display and private HOME/XDG settings"]
 fn desktop_general_preferences_are_live_and_saved_without_changing_tabs() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("generated fixture must provide the expected value");
+    crate::assets::prepare().expect("generated fixture must provide the expected value");
     let manager = ThemeManager::shared();
     let browser = BrowserView::new(Rc::new(EmptySource), Default::default());
     browser
         .browser()
         .navigate(crate::model::Location::local("/generated-settings"));
     let general = general_page(&browser, manager.clone(), Rc::new(|| {}));
-    let startup = general.first_child().unwrap().next_sibling().unwrap();
+    let startup = general
+        .first_child()
+        .expect("generated fixture must provide the expected value")
+        .next_sibling()
+        .expect("generated fixture must provide the expected value");
     let mut button = startup.first_child();
     for location in ["home", "music", "last"] {
-        let current = button.take().unwrap().downcast::<gtk::Button>().unwrap();
+        let current = button
+            .take()
+            .expect("generated fixture must provide the expected value")
+            .downcast::<gtk::Button>()
+            .expect("generated fixture must provide the expected value");
         assert!(current.is_sensitive());
         current.emit_clicked();
         assert_eq!(manager.startup_location(), location);
@@ -295,47 +308,77 @@ fn desktop_general_preferences_are_live_and_saved_without_changing_tabs() {
         browser.browser().active_location(),
         Some(crate::model::Location::local("/generated-settings"))
     );
-    let confirm = option_switch(&general, "Confirm permanent deletion").unwrap();
+    let confirm = option_switch(&general, "Confirm permanent deletion")
+        .expect("generated fixture must provide the expected value");
     confirm.set_active(false);
     assert!(!manager.confirm_permanent_delete());
     confirm.set_active(true);
     assert!(manager.confirm_permanent_delete());
-    let motion = option_switch(&general, "Reduce motion").unwrap();
+    let motion = option_switch(&general, "Reduce motion")
+        .expect("generated fixture must provide the expected value");
     motion.set_active(true);
     assert!(manager.reduce_motion());
     assert!(!super::super::motion::animations_enabled());
     let reopened = general_page(&browser, manager.clone(), Rc::new(|| {}));
     assert!(
         option_switch(&reopened, "Reduce motion")
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .is_active()
     );
     let formats = view_formats_page(&browser, manager.clone(), Rc::new(|| {}));
-    let hidden = option_switch(&formats, "Show hidden files by default").unwrap();
+    let hidden = option_switch(&formats, "Show hidden files by default")
+        .expect("generated fixture must provide the expected value");
     hidden.set_active(true);
     assert!(manager.show_hidden_default());
-    assert!(browser.browser().column_preferences(0).unwrap().show_hidden);
+    assert!(
+        browser
+            .browser()
+            .column_preferences(0)
+            .expect("generated fixture must provide the expected value")
+            .show_hidden
+    );
     let fresh = BrowserView::new(Rc::new(EmptySource), Default::default());
     fresh
         .browser()
         .navigate(crate::model::Location::local("/generated-fresh"));
-    assert!(fresh.browser().column_preferences(0).unwrap().show_hidden);
-    let mut restored = fresh.browser().column_preferences(0).unwrap();
+    assert!(
+        fresh
+            .browser()
+            .column_preferences(0)
+            .expect("generated fixture must provide the expected value")
+            .show_hidden
+    );
+    let mut restored = fresh
+        .browser()
+        .column_preferences(0)
+        .expect("generated fixture must provide the expected value");
     restored.show_hidden = false;
     fresh.browser().set_preferences(restored);
-    assert!(!fresh.browser().column_preferences(0).unwrap().show_hidden);
+    assert!(
+        !fresh
+            .browser()
+            .column_preferences(0)
+            .expect("generated fixture must provide the expected value")
+            .show_hidden
+    );
     assert!(manager.show_hidden_default());
     let saved: toml::Value = toml::from_str(
         &std::fs::read_to_string(crate::paths::settings_file())
-            .unwrap(),
+            .expect("generated fixture must provide the expected value"),
     )
-    .unwrap();
+    .expect("generated fixture must provide the expected value");
     assert_eq!(saved["startup_location"].as_str(), Some("last"));
     assert_eq!(saved["reduce_motion"].as_bool(), Some(true));
     assert_eq!(saved["show_hidden_default"].as_bool(), Some(true));
     assert_eq!(saved["confirm_permanent_delete"].as_bool(), Some(true));
     hidden.set_active(false);
-    assert!(!browser.browser().column_preferences(0).unwrap().show_hidden);
+    assert!(
+        !browser
+            .browser()
+            .column_preferences(0)
+            .expect("generated fixture must provide the expected value")
+            .show_hidden
+    );
     assert!(!manager.show_hidden_default());
     browser.browser().clear_observer();
     fresh.browser().clear_observer();

@@ -82,7 +82,10 @@ pub(super) fn decorate(widget: &gtk::Widget, state: &Rc<State>) {
     images.retain(|image| image.upgrade().is_some());
     images.push(image.downgrade());
     drop(images);
-    for property in [info_property(widget).unwrap(), "icon-size"] {
+    for property in [
+        info_property(widget).expect("Only recognized file-thumbnail widgets are decorated"),
+        "icon-size",
+    ] {
         let weak = image.downgrade();
         widget.connect_notify_local(Some(property), move |widget, _| {
             if let Some(image) = weak.upgrade() {
@@ -107,8 +110,9 @@ fn refresh(widget: &gtk::Widget, image: &gtk::Image) {
     super::super::thumbnail::cancel_thumbnail(image);
     let grid = widget.property::<i32>("icon-size") > 32;
     image.set_size_request(if grid { 96 } else { 20 }, if grid { 88 } else { 20 });
-    let Some(info) = widget.property::<Option<gio::FileInfo>>(info_property(widget).unwrap())
-    else {
+    let Some(info) = widget.property::<Option<gio::FileInfo>>(
+        info_property(widget).expect("Only recognized file-thumbnail widgets are decorated"),
+    ) else {
         image.clear();
         return;
     };

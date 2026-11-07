@@ -62,18 +62,18 @@ fn explicit_hidden_reveals_override_only_the_new_windows_visibility() {
 fn external_hidden_properties_request_opens_the_file_properties_not_parent_properties() {
     use gtk::prelude::*;
     use std::time::{Duration, Instant};
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let directory = crate::sandbox::browser::format_tests::FixtureDirectory::new();
     let target = directory.0.join(".hidden.txt");
-    std::fs::write(&target, b"Generated properties fixture").unwrap();
+    std::fs::write(&target, b"Generated properties fixture").expect("write generated fixture");
     let application = gtk::Application::builder()
         .application_id("io.github.battlemountain2.Hermes.Test")
         .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
         .build();
     application
         .register(None::<&gtk::gio::Cancellable>)
-        .unwrap();
+        .expect("expected test value from application .register(None::<&gtk::gio::Cancellable>)");
     super::super::super::present_reveal(
         &application,
         Request {
@@ -83,7 +83,11 @@ fn external_hidden_properties_request_opens_the_file_properties_not_parent_prope
             startup_id: String::new(),
         },
     );
-    let window = application.windows().into_iter().next().unwrap();
+    let window = application
+        .windows()
+        .into_iter()
+        .next()
+        .expect("expected test value from application.windows().into_iter().next()");
     fn find(widget: &gtk::Widget, class: &str) -> Option<gtk::Label> {
         if widget.has_css_class(class) {
             return widget.clone().downcast::<gtk::Label>().ok();
@@ -103,7 +107,11 @@ fn external_hidden_properties_request_opens_the_file_properties_not_parent_prope
         if let Some(title) = find(window.upcast_ref(), "properties-title") {
             assert_eq!(title.text(), ".hidden.txt");
             assert_eq!(
-                find(window.upcast_ref(), "properties-kind").unwrap().text(),
+                find(window.upcast_ref(), "properties-kind")
+                    .expect(
+                        "expected test value from find(window.upcast_ref(), \"properties-kind\")"
+                    )
+                    .text(),
                 "File"
             );
             break;
@@ -121,14 +129,18 @@ fn external_hidden_properties_request_opens_the_file_properties_not_parent_prope
 #[test]
 #[ignore = "Private GTK display; synthetic delayed folder batches, no desktop connection or documents"]
 fn reveal_waits_for_all_batches_selects_once_and_ignores_departed_folders() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let loads = Rc::new(RefCell::new(Vec::new()));
     let view = BrowserView::new(Rc::new(Pending(loads.clone())), PeekBehavior::default());
     let browser = view.browser();
     browser.navigate(Location::local("/generated"));
     install(&browser, &view, request());
-    let (load, emit) = loads.borrow().last().unwrap().clone();
+    let (load, emit) = loads
+        .borrow()
+        .last()
+        .expect("expected test value from loads.borrow().last()")
+        .clone();
     emit(DirectoryEvent::Batch {
         request_id: load.id,
         entries: vec![entry("first.txt")],
@@ -142,17 +154,33 @@ fn reveal_waits_for_all_batches_selects_once_and_ignores_departed_folders() {
         request_id: load.id,
     });
     assert_eq!(browser.selected_entries().len(), 2);
-    assert_eq!(browser.focused_entry().unwrap().display_name, "second.txt");
+    assert_eq!(
+        browser
+            .focused_entry()
+            .expect("expected test value from browser.focused_entry()")
+            .display_name,
+        "second.txt"
+    );
     browser.select_locations(0, &[Location::local("/generated/first.txt")]);
     emit(DirectoryEvent::Finished {
         request_id: load.id,
     });
     assert_eq!(browser.selected_entries().len(), 1);
-    assert_eq!(browser.focused_entry().unwrap().display_name, "first.txt");
+    assert_eq!(
+        browser
+            .focused_entry()
+            .expect("expected test value from browser.focused_entry()")
+            .display_name,
+        "first.txt"
+    );
 
     browser.navigate(Location::local("/generated"));
     install(&browser, &view, request());
-    let (old, stale) = loads.borrow().last().unwrap().clone();
+    let (old, stale) = loads
+        .borrow()
+        .last()
+        .expect("expected test value from loads.borrow().last()")
+        .clone();
     browser.navigate(Location::local("/elsewhere"));
     stale(DirectoryEvent::Batch {
         request_id: old.id,

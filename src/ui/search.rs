@@ -16,8 +16,13 @@ mod results;
 use crate::services::{
     InferredFilterChip, ScopedSearch, SearchCounts, SearchEntityKey, SearchEvent,
     SearchFilterValues, SearchGroup, SearchGroups, SearchHandle, SearchItem, SearchPage,
-    SearchResult, SearchResultKey, SearchScope, index_tree, search_filter_values, search_filter_terms,
+    SearchResult, SearchResultKey, SearchScope, index_tree, search_filter_terms,
+    search_filter_values,
 };
+
+type ScopeListeners = Rc<RefCell<Vec<Rc<dyn Fn(u32)>>>>;
+type SearchAction<T> = RefCell<Option<Rc<dyn Fn(T)>>>;
+type CommandAction = RefCell<Option<Rc<dyn Fn(&str)>>>;
 
 const SEARCH_HELP: &str = "Type to search Home and mounted local drives";
 const SEARCH_NOTICE_HINT: &str = "Names and metadata · Contents optional";
@@ -62,7 +67,7 @@ pub(crate) struct ScopeSelector {
     container: gtk::Box,
     buttons: Vec<gtk::ToggleButton>,
     selected: Rc<Cell<u32>>,
-    listeners: Rc<RefCell<Vec<Rc<dyn Fn(u32)>>>>,
+    listeners: ScopeListeners,
     updating: Rc<Cell<bool>>,
 }
 
@@ -73,7 +78,7 @@ impl ScopeSelector {
         container.set_valign(gtk::Align::Center);
 
         let selected = Rc::new(Cell::new(1));
-        let listeners: Rc<RefCell<Vec<Rc<dyn Fn(u32)>>>> = Rc::new(RefCell::new(Vec::new()));
+        let listeners: ScopeListeners = Rc::new(RefCell::new(Vec::new()));
         let updating = Rc::new(Cell::new(false));
 
         let mut buttons = Vec::with_capacity(options.len());
@@ -134,7 +139,12 @@ impl ScopeSelector {
     pub(crate) fn set_selected(&self, position: u32) {
         let max_pos = self.buttons.len().saturating_sub(1) as u32;
         let position = position.min(max_pos);
-        if self.selected.get() == position && self.buttons.get(position as usize).is_some_and(|b| b.is_active()) {
+        if self.selected.get() == position
+            && self
+                .buttons
+                .get(position as usize)
+                .is_some_and(|b| b.is_active())
+        {
             return;
         }
         self.updating.set(true);
@@ -290,7 +300,12 @@ impl ChipSelector {
     pub(crate) fn set_selected(&self, position: u32) {
         let max_pos = self.buttons.len().saturating_sub(1) as u32;
         let position = position.min(max_pos);
-        if self.selected.get() == position && self.buttons.get(position as usize).is_some_and(|b| b.is_active()) {
+        if self.selected.get() == position
+            && self
+                .buttons
+                .get(position as usize)
+                .is_some_and(|b| b.is_active())
+        {
             return;
         }
         self.updating.set(true);
@@ -314,7 +329,9 @@ impl ChipSelector {
 
     #[cfg(test)]
     pub(crate) fn model(&self) -> Option<MockModel> {
-        Some(MockModel { count: self.buttons.len() as u32 })
+        Some(MockModel {
+            count: self.buttons.len() as u32,
+        })
     }
 }
 
@@ -346,19 +363,19 @@ struct SearchState {
     notice: gtk::Label,
     notice_slot: gtk::Box,
     truncated_hint: gtk::Box,
-    reveal_handler: RefCell<Option<Rc<dyn Fn(SearchItem)>>>,
+    reveal_handler: SearchAction<SearchItem>,
     root: RefCell<PathBuf>,
     current_folder: RefCell<PathBuf>,
     scope: ScopeSelector,
     scope_label: gtk::Label,
     refresh: gtk::Button,
     save_button: gtk::Button,
-    save_search: RefCell<Option<Rc<dyn Fn(String)>>>,
+    save_search: SearchAction<String>,
     selected_key: RefCell<Option<SearchResultKey>>,
     rendering: Cell<bool>,
     visible_results: RefCell<Vec<SearchResult>>,
     visible_commands: RefCell<Vec<OmnibarCommand>>,
-    command_handler: RefCell<Option<Rc<dyn Fn(&str)>>>,
+    command_handler: CommandAction,
     group: Cell<SearchGroup>,
     entity_scope: RefCell<Option<EntityScope>>,
     grouped_headers: Cell<bool>,
@@ -371,7 +388,7 @@ struct SearchState {
     activate: Rc<dyn Fn(SearchItem)>,
     dismiss: Rc<dyn Fn()>,
     open_results_button: gtk::Button,
-    open_results: RefCell<Option<Rc<dyn Fn(String)>>>,
+    open_results: SearchAction<String>,
     filters: SearchFilterPanel,
     categories: Vec<gtk::ToggleButton>,
     scope_bar: gtk::Box,
@@ -1029,27 +1046,27 @@ impl SearchDialog {
             }
         });
         state.scope.connect_selected_notify(move |_| {
-            if let Some(state) = scoped.upgrade() {
-                if state.layer.is_visible() {
-                    restart_search(&state);
-                }
+            if let Some(state) = scoped.upgrade()
+                && state.layer.is_visible()
+            {
+                restart_search(&state);
             }
         });
         let selected = Rc::downgrade(&state);
         state.list.connect_row_selected(move |_, row| {
-            if let Some(state) = selected.upgrade() {
-                if !state.rendering.get() {
-                    let key = row
-                        .and_then(|row| usize::try_from(row.index()).ok())
-                        .and_then(|position| {
-                            state
-                                .visible_results
-                                .borrow()
-                                .get(position)
-                                .map(SearchResult::key)
-                        });
-                    state.selected_key.replace(key);
-                }
+            if let Some(state) = selected.upgrade()
+                && !state.rendering.get()
+            {
+                let key = row
+                    .and_then(|row| usize::try_from(row.index()).ok())
+                    .and_then(|position| {
+                        state
+                            .visible_results
+                            .borrow()
+                            .get(position)
+                            .map(SearchResult::key)
+                    });
+                state.selected_key.replace(key);
             }
         });
         let activated = Rc::downgrade(&state);
@@ -1092,11 +1109,10 @@ impl SearchDialog {
             }
             if modifiers.contains(gdk::ModifierType::ALT_MASK)
                 && matches!(key, gdk::Key::Return | gdk::Key::KP_Enter)
+                && let Some(row) = state.list.selected_row()
             {
-                if let Some(row) = state.list.selected_row() {
-                    reveal_position(&state, row.index());
-                    return glib::Propagation::Stop;
-                }
+                reveal_position(&state, row.index());
+                return glib::Propagation::Stop;
             }
             if modifiers.intersects(
                 gdk::ModifierType::CONTROL_MASK
@@ -1272,13 +1288,8 @@ impl SearchFilterPanel {
         append_filter_control(&content, "Title", &track_title);
 
         append_filter_section_heading(&content, "CONTENTS");
-        let modified = ChipSelector::new(&[
-            "Any time",
-            "Today",
-            "Yesterday",
-            "Last week",
-            "Past 7 days",
-        ]);
+        let modified =
+            ChipSelector::new(&["Any time", "Today", "Yesterday", "Last week", "Past 7 days"]);
         append_filter_control(&content, "Modified", modified.widget());
         let content_options = gtk::Box::new(gtk::Orientation::Vertical, 5);
         let content_enabled = gtk::CheckButton::with_label("Search for any text inside files");
@@ -1465,10 +1476,7 @@ fn append_filter_control(container: &gtk::Box, label: &str, control: &impl IsA<g
     container.append(&row);
 }
 
-fn render_inferred_chips(
-    state: &Rc<SearchState>,
-    inferred: &[InferredFilterChip],
-) {
+fn render_inferred_chips(state: &Rc<SearchState>, inferred: &[InferredFilterChip]) {
     let has_chips = !inferred.is_empty();
     state.notice_slot.set_visible(has_chips);
     state.interpretation_slot.set_visible(has_chips);
@@ -1490,7 +1498,10 @@ fn render_inferred_chips(
         label.set_hexpand(true);
         pill.append(&label);
         let remove = gtk::Button::builder()
-            .tooltip_text(format!("Dismiss filter and search for \"{}\"", &chip.token_text))
+            .tooltip_text(format!(
+                "Dismiss filter and search for \"{}\"",
+                chip.token_text
+            ))
             .build();
         remove.add_css_class("search-inferred-chip-remove");
         remove.set_child(Some(&crate::assets::primary_icon(
@@ -1560,7 +1571,8 @@ fn update_group_controls(state: &SearchState) {
         SearchGroup::Albums | SearchGroup::Artists
     );
     state.open_results_button.set_sensitive(exportable);
-    let show_save = state.save_search.borrow().is_some() && crate::ui::theme::ThemeManager::shared().show_smart_folders();
+    let show_save = state.save_search.borrow().is_some()
+        && crate::ui::theme::ThemeManager::shared().show_smart_folders();
     state.save_button.set_visible(show_save);
     state
         .save_button

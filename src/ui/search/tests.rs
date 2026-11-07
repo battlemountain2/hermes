@@ -10,13 +10,13 @@ fn desktop_search_geometry_and_rows_stay_stable_during_updates() {
             std::thread::sleep(Duration::from_millis(2));
         }
     }
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let _theme = crate::ui::theme::ThemeManager::shared();
     let styles = gtk::CssProvider::new();
     styles.load_from_string(include_str!("../../style.css"));
     gtk::style_context_add_provider_for_display(
-        &gdk::Display::default().unwrap(),
+        &gdk::Display::default().expect("expected test value from gdk::Display::default()"),
         &styles,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
@@ -35,10 +35,14 @@ fn desktop_search_geometry_and_rows_stay_stable_during_updates() {
         .state
         .field
         .ancestor(gtk::Box::static_type())
-        .unwrap()
+        .expect("expected test value from dialog .state .field .ancestor(gtk::Box::static_type())")
         .parent()
-        .unwrap();
-    let bounds = || panel.compute_bounds(&window).unwrap();
+        .expect("expected test value from dialog .state .field .ancestor(gtk::Box::static_type()) .unwrap() .parent()");
+    let bounds = || {
+        panel
+            .compute_bounds(&window)
+            .expect("expected test value from panel.compute_bounds(&window)")
+    };
     let initial = bounds();
     dialog
         .state
@@ -58,8 +62,17 @@ fn desktop_search_geometry_and_rows_stay_stable_during_updates() {
     render_results(&dialog.state, items.clone(), true, Some("Partial index"));
     settle();
     assert_eq!(bounds(), initial);
-    let retained_row = dialog.state.list.row_at_index(0).unwrap();
-    let audio_height = dialog.state.list.row_at_index(1).unwrap().height();
+    let retained_row = dialog
+        .state
+        .list
+        .row_at_index(0)
+        .expect("expected test value from dialog.state.list.row_at_index(0)");
+    let audio_height = dialog
+        .state
+        .list
+        .row_at_index(1)
+        .expect("expected test value from dialog.state.list.row_at_index(1)")
+        .height();
     items[1].music_tags = Some(crate::model::MusicTags {
         title: Some("A long song title".repeat(12)),
         artist: Some("An artist".repeat(12)),
@@ -74,19 +87,49 @@ fn desktop_search_geometry_and_rows_stay_stable_during_updates() {
     );
     settle();
     assert_eq!(bounds(), initial);
-    assert_eq!(dialog.state.list.row_at_index(0).unwrap(), retained_row);
     assert_eq!(
-        dialog.state.list.row_at_index(1).unwrap().height(),
+        dialog
+            .state
+            .list
+            .row_at_index(0)
+            .expect("expected test value from dialog.state.list.row_at_index(0)"),
+        retained_row
+    );
+    assert_eq!(
+        dialog
+            .state
+            .list
+            .row_at_index(1)
+            .expect("expected test value from dialog.state.list.row_at_index(1)")
+            .height(),
         audio_height
     );
-    let changed_row = dialog.state.list.row_at_index(1).unwrap();
+    let changed_row = dialog
+        .state
+        .list
+        .row_at_index(1)
+        .expect("expected test value from dialog.state.list.row_at_index(1)");
     items.swap(0, 1);
     items.extend((3..100).map(item));
     render_results(&dialog.state, items, false, None);
     settle();
     assert_eq!(bounds(), initial);
-    assert_eq!(dialog.state.list.row_at_index(0).unwrap(), changed_row);
-    assert_eq!(dialog.state.list.row_at_index(1).unwrap(), retained_row);
+    assert_eq!(
+        dialog
+            .state
+            .list
+            .row_at_index(0)
+            .expect("expected test value from dialog.state.list.row_at_index(0)"),
+        changed_row
+    );
+    assert_eq!(
+        dialog
+            .state
+            .list
+            .row_at_index(1)
+            .expect("expected test value from dialog.state.list.row_at_index(1)"),
+        retained_row
+    );
     begin_query(&dialog.state, "another query");
     settle();
     assert_eq!(bounds(), initial);
@@ -107,13 +150,13 @@ fn desktop_smart_search_chips_and_notices_keep_geometry_at_supported_fonts() {
             std::thread::sleep(Duration::from_millis(2));
         }
     }
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let theme = crate::ui::theme::ThemeManager::shared();
     let styles = gtk::CssProvider::new();
     styles.load_from_string(include_str!("../../style.css"));
     gtk::style_context_add_provider_for_display(
-        &gdk::Display::default().unwrap(),
+        &gdk::Display::default().expect("expected test value from gdk::Display::default()"),
         &styles,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
@@ -127,16 +170,33 @@ fn desktop_smart_search_chips_and_notices_keep_geometry_at_supported_fonts() {
         .child(&dialog.widget())
         .build();
     window.present();
-    let panel = dialog.state.notice_slot.parent().unwrap();
-    let footer = dialog.state.more_button.parent().unwrap();
-    let bounds = || {
-        (
-            panel.compute_bounds(&window).unwrap(),
-            dialog.state.notice_slot.compute_bounds(&window).unwrap(),
-            dialog.state.results.compute_bounds(&window).unwrap(),
-            footer.compute_bounds(&window).unwrap(),
-        )
-    };
+    let panel = dialog
+        .state
+        .notice_slot
+        .parent()
+        .expect("expected test value from dialog.state.notice_slot.parent()");
+    let footer = dialog
+        .state
+        .more_button
+        .parent()
+        .expect("expected test value from dialog.state.more_button.parent()");
+    let bounds =
+        || {
+            (
+                panel
+                    .compute_bounds(&window)
+                    .expect("expected test value from panel.compute_bounds(&window)"),
+                dialog.state.notice_slot.compute_bounds(&window).expect(
+                    "expected test value from dialog.state.notice_slot.compute_bounds(&window)",
+                ),
+                dialog.state.results.compute_bounds(&window).expect(
+                    "expected test value from dialog.state.results.compute_bounds(&window)",
+                ),
+                footer
+                    .compute_bounds(&window)
+                    .expect("expected test value from footer.compute_bounds(&window)"),
+            )
+        };
     let long_query = format!(
         "FLAC songs by {} in Downloads from last week",
         "An Artist ".repeat(24)
@@ -154,10 +214,14 @@ fn desktop_smart_search_chips_and_notices_keep_geometry_at_supported_fonts() {
             dialog.state.field.set_text(query);
             settle();
             assert_eq!(
-                bounds(), baseline,
+                bounds(),
+                baseline,
                 "Query changed geometry: {font} {size}, {query}"
             );
-            dialog.state.scope_label.set_text(&"/a long path/".repeat(80));
+            dialog
+                .state
+                .scope_label
+                .set_text(&"/a long path/".repeat(80));
             settle();
             assert_eq!(bounds(), baseline, "Scope changed geometry: {font} {size}");
             let item = SearchItem::from_path(
@@ -185,16 +249,22 @@ fn desktop_smart_search_chips_and_notices_keep_geometry_at_supported_fonts() {
                 );
                 let node = snapshot.to_node().expect("Mapped search render node");
                 let renderer = gtk::gsk::CairoRenderer::new();
-                renderer.realize(window.surface().as_ref()).unwrap();
+                renderer
+                    .realize(window.surface().as_ref())
+                    .expect("expected test value from renderer.realize(window.surface().as_ref())");
                 let texture = renderer.render_texture(&node, None);
                 texture
                     .save_to_png(Path::new(&directory).join(format!("search-{font}-{size}.png")))
-                    .unwrap();
+                    .expect("expected test value from texture .save_to_png(Path::new(&directory).join(format!(\"search-{font}-{size}.png\")))");
                 renderer.unrealize();
             }
             render_results(&dialog.state, Vec::new(), false, None);
             settle();
-            assert_eq!(bounds(), baseline, "Empty state changed geometry: {font} {size}");
+            assert_eq!(
+                bounds(),
+                baseline,
+                "Empty state changed geometry: {font} {size}"
+            );
             assert_eq!(dialog.state.notice.text(), SEARCH_NOTICE_HINT);
             if query == long_query {
                 let mut chip = dialog.state.interpretation_slot.first_child();
@@ -202,14 +272,20 @@ fn desktop_smart_search_chips_and_notices_keep_geometry_at_supported_fonts() {
                 while let Some(current) = chip {
                     chip = current.next_sibling();
                     assert!(current.tooltip_text().is_some());
-                    let remove = current.last_child().unwrap().downcast::<gtk::Button>().unwrap();
+                    let remove = current.last_child().expect("expected test value from current.last_child()").downcast::<gtk::Button>().expect("expected test value from current.last_child().unwrap().downcast::<gtk::Button>()");
                     assert!(remove.grab_focus());
                     settle();
-                    let button_bounds = remove.compute_bounds(&dialog.state.interpretation_view).unwrap();
+                    let button_bounds = remove.compute_bounds(&dialog.state.interpretation_view).expect("expected test value from remove.compute_bounds(&dialog.state.interpretation_view)");
                     assert!(button_bounds.x() >= 0.0);
-                    assert!(button_bounds.x() + button_bounds.width()
-                        <= dialog.state.interpretation_view.width() as f32);
-                    assert_eq!(bounds(), baseline, "Chip focus changed geometry: {font} {size}");
+                    assert!(
+                        button_bounds.x() + button_bounds.width()
+                            <= dialog.state.interpretation_view.width() as f32
+                    );
+                    assert_eq!(
+                        bounds(),
+                        baseline,
+                        "Chip focus changed geometry: {font} {size}"
+                    );
                     chip_count += 1;
                 }
                 assert_eq!(chip_count, 5);
@@ -230,13 +306,13 @@ fn desktop_search_pages_preserve_rows_selection_and_footer() {
             std::thread::sleep(Duration::from_millis(2));
         }
     }
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let _theme = crate::ui::theme::ThemeManager::shared();
     let styles = gtk::CssProvider::new();
     styles.load_from_string(include_str!("../../style.css"));
     gtk::style_context_add_provider_for_display(
-        &gdk::Display::default().unwrap(),
+        &gdk::Display::default().expect("expected test value from gdk::Display::default()"),
         &styles,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
@@ -257,17 +333,32 @@ fn desktop_search_pages_preserve_rows_selection_and_footer() {
         .build();
     window.present();
     settle();
-    let footer = dialog.state.more_button.parent().unwrap();
-    let panel = footer.parent().unwrap();
+    let footer = dialog
+        .state
+        .more_button
+        .parent()
+        .expect("expected test value from dialog.state.more_button.parent()");
+    let panel = footer
+        .parent()
+        .expect("expected test value from footer.parent()");
     let bounds = || {
         (
-            panel.compute_bounds(&window).unwrap(),
-            footer.compute_bounds(&window).unwrap(),
-            dialog.state.more_button.compute_bounds(&window).unwrap(),
+            panel
+                .compute_bounds(&window)
+                .expect("expected test value from panel.compute_bounds(&window)"),
+            footer
+                .compute_bounds(&window)
+                .expect("expected test value from footer.compute_bounds(&window)"),
+            dialog.state.more_button.compute_bounds(&window).expect(
+                "expected test value from dialog.state.more_button.compute_bounds(&window)",
+            ),
         )
     };
     let initial = bounds();
-    assert_eq!(dialog.state.more_button.label().as_deref(), Some("Load more"));
+    assert_eq!(
+        dialog.state.more_button.label().as_deref(),
+        Some("Load more")
+    );
     assert_eq!(
         dialog.state.more_button.tooltip_text().as_deref(),
         Some("Load the next page of search results (up to 100)")
@@ -310,7 +401,13 @@ fn desktop_search_pages_preserve_rows_selection_and_footer() {
     assert!(dialog.state.more_button.is_sensitive());
     assert!(dialog.state.list.row_at_index(100).is_none());
     let retained: Vec<_> = (0..100)
-        .map(|position| dialog.state.list.row_at_index(position).unwrap())
+        .map(|position| {
+            dialog
+                .state
+                .list
+                .row_at_index(position)
+                .expect("expected test value from dialog.state.list.row_at_index(position)")
+        })
         .collect();
     dialog.state.list.select_row(Some(&retained[42]));
     dialog.state.more_button.emit_clicked();
@@ -322,7 +419,9 @@ fn desktop_search_pages_preserve_rows_selection_and_footer() {
     assert!(!dialog.state.notice.text().contains("Stale notice"));
     let mut mismatched = event(4, 205, false, None);
     let SearchEvent::Results { page, .. } = &mut mismatched;
-    page.as_mut().unwrap().generation += 1;
+    page.as_mut()
+        .expect("expected test value from page.as_mut()")
+        .generation += 1;
     apply_search_event(&dialog.state, 7, mismatched);
     assert_eq!(dialog.state.visible_results.borrow().len(), 100);
     apply_search_event(&dialog.state, 7, event(3, 200, false, None));
@@ -358,7 +457,15 @@ fn desktop_search_pages_preserve_rows_selection_and_footer() {
     assert!(dialog.state.more_button.is_sensitive());
     apply_search_event(&dialog.state, 7, event(3, 205, false, None));
     assert_eq!(dialog.state.visible_results.borrow().len(), 100);
-    assert_eq!(dialog.state.page.get().unwrap().revision, 4);
+    assert_eq!(
+        dialog
+            .state
+            .page
+            .get()
+            .expect("expected test value from dialog.state.page.get()")
+            .revision,
+        4
+    );
     assert_eq!(
         dialog.state.list.selected_row().as_ref(),
         Some(&retained[42])
@@ -458,7 +565,10 @@ fn artist_and_album_detail_is_separate_from_paths_and_uses_album_artist_fallback
         ..Default::default()
     });
     assert_eq!(results::music_detail(&item), "Cameron Winter · Heavy Metal");
-    item.music_tags.as_mut().unwrap().artist = None;
+    item.music_tags
+        .as_mut()
+        .expect("expected test value from item.music_tags.as_mut()")
+        .artist = None;
     assert_eq!(results::music_detail(&item), "Fallback · Heavy Metal");
     assert_eq!(item.file_entry().music_tags, item.music_tags);
 }
@@ -466,10 +576,10 @@ fn artist_and_album_detail_is_separate_from_paths_and_uses_album_artist_fallback
 #[test]
 #[ignore = "Requires GTK desktop; verifies lazy launcher icons without running applications"]
 fn desktop_search_artwork_loads_only_visible_rows_and_never_launches_games() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let folder = std::env::temp_dir().join(format!("hermes-search-visuals-{}", std::process::id()));
-    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::create_dir_all(&folder).expect("create generated fixture directory");
     let sentinel = folder.join("must-not-exist");
     let first = folder.join("first.desktop");
     let last = folder.join("last.desktop");
@@ -477,8 +587,8 @@ fn desktop_search_artwork_loads_only_visible_rows_and_never_launches_games() {
         "[Desktop Entry]\nType=Application\nName=Fixture game\nExec=/bin/touch {}\nIcon=folder\n",
         sentinel.display()
     );
-    std::fs::write(&first, &launcher).unwrap();
-    std::fs::write(&last, &launcher).unwrap();
+    std::fs::write(&first, &launcher).expect("write generated fixture");
+    std::fs::write(&last, &launcher).expect("write generated fixture");
     let dialog = SearchDialog::new(Rc::new(|_| {}), Rc::new(|| {}));
     dialog.state.root.replace(folder.clone());
     let mut items = vec![SearchItem::from_path(first, &folder, false, None)];
@@ -497,13 +607,13 @@ fn desktop_search_artwork_loads_only_visible_rows_and_never_launches_games() {
             .state
             .list
             .row_at_index(index)
-            .unwrap()
+            .expect("expected test value from dialog .state .list .row_at_index(index)")
             .child()
-            .unwrap()
+            .expect("expected test value from dialog .state .list .row_at_index(index) .unwrap() .child()")
             .first_child()
-            .unwrap()
+            .expect("expected test value from dialog .state .list .row_at_index(index) .unwrap() .child() .unwrap() .first_child()")
             .downcast::<gtk::Image>()
-            .unwrap()
+            .expect("expected test value from dialog .state .list .row_at_index(index) .unwrap() .child() .unwrap() .first_child() .unwrap() .downcast::<gtk::Image>()")
     };
     let first_image = image(0);
     let last_image = image(36);
@@ -528,35 +638,35 @@ fn desktop_search_artwork_loads_only_visible_rows_and_never_launches_games() {
     assert!(
         crate::assets::has_primary_icon(&last_image),
         "Offscreen rows must not load artwork yet: last={:?}, scroll height={}, upper={}, page={}",
-        dialog.state.list.row_at_index(36).unwrap().compute_bounds(
+        dialog.state.list.row_at_index(36).expect("expected test value from dialog.state.list.row_at_index(36)").compute_bounds(
             &dialog
                 .state
                 .list
                 .ancestor(gtk::ScrolledWindow::static_type())
-                .unwrap()
+                .expect("expected test value from dialog .state .list .ancestor(gtk::ScrolledWindow::static_type())")
         ),
         dialog
             .state
             .list
             .ancestor(gtk::ScrolledWindow::static_type())
-            .unwrap()
+            .expect("expected test value from dialog .state .list .ancestor(gtk::ScrolledWindow::static_type())")
             .height(),
         dialog
             .state
             .list
             .ancestor(gtk::ScrolledWindow::static_type())
-            .unwrap()
+            .expect("expected test value from dialog .state .list .ancestor(gtk::ScrolledWindow::static_type())")
             .downcast::<gtk::ScrolledWindow>()
-            .unwrap()
+            .expect("expected test value from dialog .state .list .ancestor(gtk::ScrolledWindow::static_type()) .unwrap() .downcast::<gtk::ScrolledWindow>()")
             .vadjustment()
             .upper(),
         dialog
             .state
             .list
             .ancestor(gtk::ScrolledWindow::static_type())
-            .unwrap()
+            .expect("expected test value from dialog .state .list .ancestor(gtk::ScrolledWindow::static_type())")
             .downcast::<gtk::ScrolledWindow>()
-            .unwrap()
+            .expect("expected test value from dialog .state .list .ancestor(gtk::ScrolledWindow::static_type()) .unwrap() .downcast::<gtk::ScrolledWindow>()")
             .vadjustment()
             .page_size()
     );
@@ -564,9 +674,9 @@ fn desktop_search_artwork_loads_only_visible_rows_and_never_launches_games() {
         .state
         .list
         .ancestor(gtk::ScrolledWindow::static_type())
-        .unwrap()
+        .expect("expected test value from dialog .state .list .ancestor(gtk::ScrolledWindow::static_type())")
         .downcast::<gtk::ScrolledWindow>()
-        .unwrap();
+        .expect("expected test value from dialog .state .list .ancestor(gtk::ScrolledWindow::static_type()) .unwrap() .downcast::<gtk::ScrolledWindow>()");
     let adjustment = scroll.vadjustment();
     adjustment.set_value(adjustment.upper() - adjustment.page_size());
     pump(&|| !crate::assets::has_primary_icon(&last_image));
@@ -576,7 +686,7 @@ fn desktop_search_artwork_loads_only_visible_rows_and_never_launches_games() {
     );
     dialog.hide();
     window.close();
-    std::fs::remove_dir_all(folder).unwrap();
+    std::fs::remove_dir_all(folder).expect("remove generated fixture");
 }
 
 #[test]
@@ -653,16 +763,34 @@ fn session_generation_rejects_previous_sessions_even_if_query_ids_repeat() {
 #[test]
 #[ignore = "Requires isolated GTK display; verifies friendly music filters and query round-trips"]
 fn desktop_music_filters_survive_unrelated_changes_and_round_trip() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let dialog = SearchDialog::new(Rc::new(|_| {}), Rc::new(|| {}));
     let query = r#"needle artist:"Sinéad O'Connor" album:"A \"quote\" \\ path" title:"Nothing Compares 2 U" in:Music modified:today"#;
     dialog.state.field.set_text(query);
     let (_, original) = search_filter_values(query);
     let panel = &dialog.state.filters;
-    assert_eq!(panel.artist.text(), original.artist.as_deref().unwrap());
-    assert_eq!(panel.album.text(), original.album.as_deref().unwrap());
-    assert_eq!(panel.title.text(), original.title.as_deref().unwrap());
+    assert_eq!(
+        panel.artist.text(),
+        original
+            .artist
+            .as_deref()
+            .expect("expected test value from original.artist.as_deref()")
+    );
+    assert_eq!(
+        panel.album.text(),
+        original
+            .album
+            .as_deref()
+            .expect("expected test value from original.album.as_deref()")
+    );
+    assert_eq!(
+        panel.title.text(),
+        original
+            .title
+            .as_deref()
+            .expect("expected test value from original.title.as_deref()")
+    );
     assert!(!panel.content_enabled.is_active());
     assert!(!panel.content.is_sensitive());
     panel.extension.set_text("flac");
@@ -679,7 +807,8 @@ fn desktop_music_filters_survive_unrelated_changes_and_round_trip() {
             ..original.clone()
         }
     );
-    let request = ScopedSearch::from_uri(&dialog.search_uri()).unwrap();
+    let request = ScopedSearch::from_uri(&dialog.search_uri())
+        .expect("expected test value from ScopedSearch::from_uri(&dialog.search_uri())");
     assert_eq!(search_filter_values(&request.query), (terms, values));
     panel.artist.set_text("Björk");
     panel.album.set_text("Debut");
@@ -717,8 +846,8 @@ fn desktop_music_filters_survive_unrelated_changes_and_round_trip() {
 #[test]
 #[ignore = "Requires isolated GTK display; verifies stale results and notices cannot repaint the dialog"]
 fn desktop_search_rejects_old_query_and_session_results() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let dialog = SearchDialog::new(Rc::new(|_| {}), Rc::new(|| {}));
     dialog.state.field.set_text("needle");
     dialog.state.layer.set_visible(true);
@@ -768,8 +897,8 @@ fn desktop_search_rejects_old_query_and_session_results() {
 #[test]
 #[ignore = "Requires isolated GTK display; primary groups remain independent of type filters"]
 fn desktop_search_groups_preserve_terms_and_file_filters() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let dialog = SearchDialog::new(Rc::new(|_| {}), Rc::new(|| {}));
     assert_eq!(dialog.state.scope.selected(), 1);
     assert_eq!(dialog.state.categories.len(), 5);
@@ -877,13 +1006,13 @@ fn desktop_grouped_search_pages_entities_and_back_preserve_context() {
             std::thread::sleep(Duration::from_millis(2));
         }
     }
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let _theme = crate::ui::theme::ThemeManager::shared();
     let styles = gtk::CssProvider::new();
     styles.load_from_string(include_str!("../../style.css"));
     gtk::style_context_add_provider_for_display(
-        &gdk::Display::default().unwrap(),
+        &gdk::Display::default().expect("expected test value from gdk::Display::default()"),
         &styles,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
@@ -928,21 +1057,27 @@ fn desktop_grouped_search_pages_entities_and_back_preserve_context() {
         .build();
     window.present();
     settle();
-    let footer = dialog.state.more_button.parent().unwrap();
-    let panel = footer.parent().unwrap();
+    let footer = dialog
+        .state
+        .more_button
+        .parent()
+        .expect("expected test value from dialog.state.more_button.parent()");
+    let panel = footer
+        .parent()
+        .expect("expected test value from footer.parent()");
     let geometry = || {
         (
-            panel.compute_bounds(&window).unwrap(),
-            footer.compute_bounds(&window).unwrap(),
-            dialog.state.more_button.compute_bounds(&window).unwrap(),
-            dialog.state.back_button.compute_bounds(&window).unwrap(),
+            panel.compute_bounds(&window).expect("expected test value from panel.compute_bounds(&window)"),
+            footer.compute_bounds(&window).expect("expected test value from footer.compute_bounds(&window)"),
+            dialog.state.more_button.compute_bounds(&window).expect("expected test value from dialog.state.more_button.compute_bounds(&window)"),
+            dialog.state.back_button.compute_bounds(&window).expect("expected test value from dialog.state.back_button.compute_bounds(&window)"),
             dialog
                 .state
                 .notice
                 .parent()
-                .unwrap()
+                .expect("expected test value from dialog .state .notice .parent()")
                 .compute_bounds(&window)
-                .unwrap(),
+                .expect("expected test value from dialog .state .notice .parent() .unwrap() .compute_bounds(&window)"),
         )
     };
     let initial = geometry();
@@ -958,7 +1093,10 @@ fn desktop_grouped_search_pages_entities_and_back_preserve_context() {
     };
     let files: Vec<_> = (0..100).map(|number| physical(number, "txt")).collect();
     let songs: Vec<_> = (0..100).map(|number| physical(number, "flac")).collect();
-    let representative = songs[0].file().unwrap().clone();
+    let representative = songs[0]
+        .file()
+        .expect("expected test value from songs[0].file()")
+        .clone();
     let albums: Vec<_> = (0..3)
         .map(|number| {
             SearchResult::Album(crate::services::SearchEntity {
@@ -1045,7 +1183,9 @@ fn desktop_grouped_search_pages_entities_and_back_preserve_context() {
     let headers = || {
         (0..dialog.state.visible_results.borrow().len())
             .filter_map(|position| {
-                let row = dialog.state.list.row_at_index(position as i32).unwrap();
+                let row = dialog.state.list.row_at_index(position as i32).expect(
+                    "expected test value from dialog.state.list.row_at_index(position as i32)",
+                );
                 row.header()
                     .and_downcast::<gtk::Label>()
                     .map(|header| (position, header.text().to_string()))
@@ -1070,7 +1210,9 @@ fn desktop_grouped_search_pages_entities_and_back_preserve_context() {
         .map(|(position, result)| {
             (
                 result.key(),
-                dialog.state.list.row_at_index(position as i32).unwrap(),
+                dialog.state.list.row_at_index(position as i32).expect(
+                    "expected test value from dialog.state.list.row_at_index(position as i32)",
+                ),
             )
         })
         .collect();
@@ -1078,16 +1220,29 @@ fn desktop_grouped_search_pages_entities_and_back_preserve_context() {
     assert!(
         album_row
             .tooltip_text()
-            .unwrap()
+            .expect("expected test value from album_row .tooltip_text()")
             .contains("100 matching songs")
     );
-    assert!(!album_row.tooltip_text().unwrap().contains("/synthetic"));
+    assert!(
+        !album_row
+            .tooltip_text()
+            .expect("expected test value from album_row.tooltip_text()")
+            .contains("/synthetic")
+    );
     dialog
         .state
         .list
         .select_row(dialog.state.list.row_at_index(47).as_ref());
     move_selection(&dialog.state, 1);
-    assert_eq!(dialog.state.list.selected_row().unwrap().index(), 48);
+    assert_eq!(
+        dialog
+            .state
+            .list
+            .selected_row()
+            .expect("expected test value from dialog.state.list.selected_row()")
+            .index(),
+        48
+    );
     dialog
         .state
         .list
@@ -1136,7 +1291,11 @@ fn desktop_grouped_search_pages_entities_and_back_preserve_context() {
         ]
     );
     activate_position(&dialog.state, album_row.index());
-    let drilled_generation = dialog.state.expected_query_generation.get().unwrap();
+    let drilled_generation = dialog
+        .state
+        .expected_query_generation
+        .get()
+        .expect("expected test value from dialog.state.expected_query_generation.get()");
     assert!(drilled_generation > generation);
     assert_eq!(dialog.state.group.get(), SearchGroup::Songs);
     assert_eq!(dialog.state.field.text(), query);
@@ -1148,7 +1307,8 @@ fn desktop_grouped_search_pages_entities_and_back_preserve_context() {
     assert!(dialog.state.back_button.is_sensitive());
     assert!(dialog.state.scope_label.text().contains("Album: album 0"));
     assert!(dialog.state.open_results_button.is_sensitive());
-    let drilled = ScopedSearch::from_uri(&dialog.search_uri()).unwrap();
+    let drilled = ScopedSearch::from_uri(&dialog.search_uri())
+        .expect("expected test value from ScopedSearch::from_uri(&dialog.search_uri())");
     assert_eq!(drilled.group, SearchGroup::Songs);
     assert_eq!(
         drilled.entity,
@@ -1183,7 +1343,11 @@ fn desktop_grouped_search_pages_entities_and_back_preserve_context() {
     settle();
     assert_eq!(geometry(), initial);
     assert!(headers().is_empty());
-    let songs_row = dialog.state.list.row_at_index(0).unwrap();
+    let songs_row = dialog
+        .state
+        .list
+        .row_at_index(0)
+        .expect("expected test value from dialog.state.list.row_at_index(0)");
     apply_search_event(
         &dialog.state,
         7,
@@ -1208,7 +1372,11 @@ fn desktop_grouped_search_pages_entities_and_back_preserve_context() {
     );
     assert_eq!(dialog.state.list.row_at_index(0).as_ref(), Some(&songs_row));
     dialog.state.back_button.emit_clicked();
-    let back_generation = dialog.state.expected_query_generation.get().unwrap();
+    let back_generation = dialog
+        .state
+        .expected_query_generation
+        .get()
+        .expect("expected test value from dialog.state.expected_query_generation.get()");
     assert!(back_generation > drilled_generation);
     assert_eq!(dialog.state.group.get(), SearchGroup::All);
     assert!(dialog.state.entity_scope.borrow().is_none());
@@ -1216,7 +1384,9 @@ fn desktop_grouped_search_pages_entities_and_back_preserve_context() {
     assert!(!dialog.state.back_button.is_sensitive());
     assert!(!dialog.state.scope_label.text().contains("Album:"));
     assert_eq!(
-        ScopedSearch::from_uri(&dialog.search_uri()).unwrap().entity,
+        ScopedSearch::from_uri(&dialog.search_uri())
+            .expect("expected test value from ScopedSearch::from_uri(&dialog.search_uri())")
+            .entity,
         None
     );
     apply_search_event(
@@ -1262,11 +1432,17 @@ fn desktop_grouped_search_pages_entities_and_back_preserve_context() {
     dialog.state.categories[1].emit_clicked();
     assert!(dialog.state.open_results_button.is_sensitive());
     assert_eq!(
-        ScopedSearch::from_uri(&dialog.search_uri()).unwrap().group,
+        ScopedSearch::from_uri(&dialog.search_uri())
+            .expect("expected test value from ScopedSearch::from_uri(&dialog.search_uri())")
+            .group,
         SearchGroup::Files
     );
     dialog.state.categories[0].emit_clicked();
-    let final_generation = dialog.state.expected_query_generation.get().unwrap();
+    let final_generation = dialog
+        .state
+        .expected_query_generation
+        .get()
+        .expect("expected test value from dialog.state.expected_query_generation.get()");
     apply_search_event(
         &dialog.state,
         7,
@@ -1290,8 +1466,8 @@ fn desktop_grouped_search_pages_entities_and_back_preserve_context() {
 #[test]
 #[ignore = "Requires isolated GTK display; verifies guarded physical exports and album/artist song exports"]
 fn desktop_search_tab_exports_preserve_groups_and_entity_keys() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let activated = Rc::new(Cell::new(0));
     let activations = activated.clone();
     let dialog = SearchDialog::new(
@@ -1314,8 +1490,13 @@ fn desktop_search_tab_exports_preserve_groups_and_entity_keys() {
         dialog.state.categories[position].emit_clicked();
         assert!(dialog.state.open_results_button.is_sensitive());
         dialog.state.open_results_button.emit_clicked();
-        let uri = exported.borrow().last().unwrap().clone();
-        let request = ScopedSearch::from_uri(&uri).unwrap();
+        let uri = exported
+            .borrow()
+            .last()
+            .expect("expected test value from exported.borrow().last()")
+            .clone();
+        let request = ScopedSearch::from_uri(&uri)
+            .expect("expected test value from ScopedSearch::from_uri(&uri)");
         assert_eq!(request.group, SEARCH_GROUPS[position]);
         assert_eq!(request.entity, None);
         assert_eq!(request.scope, SearchScope::ThisFolder);
@@ -1356,7 +1537,9 @@ fn desktop_search_tab_exports_preserve_groups_and_entity_keys() {
                 .state
                 .open_results_button
                 .tooltip_text()
-                .unwrap()
+                .expect(
+                    "expected test value from dialog .state .open_results_button .tooltip_text()"
+                )
                 .contains("Open an album or artist first")
         );
         dialog.state.open_results_button.emit_clicked();
@@ -1375,22 +1558,40 @@ fn desktop_search_tab_exports_preserve_groups_and_entity_keys() {
             SearchResult::Artist(entity)
         };
         render_search_results(&dialog.state, vec![result.clone()], false, None, None);
-        let row = dialog.state.list.row_at_index(0).unwrap();
+        let row = dialog
+            .state
+            .list
+            .row_at_index(0)
+            .expect("expected test value from dialog.state.list.row_at_index(0)");
         let image = row
             .child()
-            .unwrap()
+            .expect("expected test value from row .child()")
             .first_child()
-            .unwrap()
+            .expect("expected test value from row .child() .unwrap() .first_child()")
             .downcast::<gtk::Image>()
-            .unwrap();
+            .expect("expected test value from row .child() .unwrap() .first_child() .unwrap() .downcast::<gtk::Image>()");
         assert!(crate::assets::has_primary_icon(&image));
-        assert!(row.tooltip_text().unwrap().contains("12 matching songs"));
-        assert!(!row.tooltip_text().unwrap().contains("/synthetic"));
+        assert!(
+            row.tooltip_text()
+                .expect("expected test value from row.tooltip_text()")
+                .contains("12 matching songs")
+        );
+        assert!(
+            !row.tooltip_text()
+                .expect("expected test value from row.tooltip_text()")
+                .contains("/synthetic")
+        );
         activate_position(&dialog.state, 0);
         assert!(dialog.state.open_results_button.is_sensitive());
         assert_eq!(dialog.state.group.get(), SearchGroup::Songs);
         assert_eq!(
-            dialog.state.entity_scope.borrow().as_ref().unwrap().key,
+            dialog
+                .state
+                .entity_scope
+                .borrow()
+                .as_ref()
+                .expect("expected test value from dialog.state.entity_scope.borrow().as_ref()")
+                .key,
             key
         );
         assert_eq!(activated.get(), 0);
@@ -1402,8 +1603,13 @@ fn desktop_search_tab_exports_preserve_groups_and_entity_keys() {
         activate_position(&dialog.state, 0);
         dialog.state.open_results_button.emit_clicked();
         assert_eq!(exported.borrow().len(), before + 1);
-        let uri = exported.borrow().last().unwrap().clone();
-        let request = ScopedSearch::from_uri(&uri).unwrap();
+        let uri = exported
+            .borrow()
+            .last()
+            .expect("expected test value from exported.borrow().last()")
+            .clone();
+        let request = ScopedSearch::from_uri(&uri)
+            .expect("expected test value from ScopedSearch::from_uri(&uri)");
         assert_eq!(request.group, SearchGroup::Songs);
         assert_eq!(request.entity, Some(key));
         assert_eq!(request.root, PathBuf::from("/synthetic"));
@@ -1434,7 +1640,9 @@ fn desktop_scope_selection_and_reentrant_rendering() {
     );
     dialog.state.scope.set_selected(1);
     assert_eq!(
-        ScopedSearch::from_uri(&dialog.search_uri()).unwrap().scope,
+        ScopedSearch::from_uri(&dialog.search_uri())
+            .expect("expected test value from ScopedSearch::from_uri(&dialog.search_uri())")
+            .scope,
         SearchScope::Home
     );
 
@@ -1469,15 +1677,31 @@ fn desktop_scope_selection_and_reentrant_rendering() {
         .list
         .select_row(dialog.state.list.row_at_index(1).as_ref());
     render_results(&dialog.state, vec![second.clone(), first], true, None);
-    let row = dialog.state.list.row_at_index(0).unwrap();
+    let row = dialog
+        .state
+        .list
+        .row_at_index(0)
+        .expect("expected test value from dialog.state.list.row_at_index(0)");
     let same = dialog.state.visible_results.borrow().clone();
     render_search_results(&dialog.state, same, false, None, None);
     assert_eq!(
-        dialog.state.list.row_at_index(0).unwrap(),
+        dialog
+            .state
+            .list
+            .row_at_index(0)
+            .expect("expected test value from dialog.state.list.row_at_index(0)"),
         row,
         "Unchanged results must not rebuild rows"
     );
-    assert_eq!(dialog.state.list.selected_row().unwrap().index(), 0);
+    assert_eq!(
+        dialog
+            .state
+            .list
+            .selected_row()
+            .expect("expected test value from dialog.state.list.selected_row()")
+            .index(),
+        0
+    );
     assert_eq!(
         dialog.state.selected_key.borrow().as_ref(),
         Some(&SearchResultKey::File(second.path.clone()))
@@ -1513,17 +1737,20 @@ fn desktop_scope_selection_and_reentrant_rendering() {
         .clone()
         .expect("Results action sends a scoped URI");
     assert_eq!(
-        ScopedSearch::from_uri(&uri).unwrap().scope,
+        ScopedSearch::from_uri(&uri)
+            .expect("expected test value from ScopedSearch::from_uri(&uri)")
+            .scope,
         SearchScope::Home
     );
 
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("expected test value from std::time::SystemTime::now() .duration_since(std::time::UNIX_EPOCH)")
         .as_nanos();
     let root = std::env::temp_dir().join(format!("hermes-search-refresh-{nonce}"));
-    std::fs::create_dir(&root).unwrap();
-    std::fs::write(root.join("needle-old.txt"), "generated fixture").unwrap();
+    std::fs::create_dir(&root).expect("create generated fixture directory");
+    std::fs::write(root.join("needle-old.txt"), "generated fixture")
+        .expect("write generated fixture");
     dialog.show_scoped(root.clone(), "needle", 0);
     let pump = |expected: &str| {
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
@@ -1554,22 +1781,46 @@ fn desktop_scope_selection_and_reentrant_rendering() {
     };
     pump("needle-old.txt");
     let session = dialog.state.session_generation.get();
-    let initial_query = dialog.state.expected_query_generation.get().unwrap();
+    let initial_query = dialog
+        .state
+        .expected_query_generation
+        .get()
+        .expect("expected test value from dialog.state.expected_query_generation.get()");
     begin_query(&dialog.state, "needle");
-    let repeated_query = dialog.state.expected_query_generation.get().unwrap();
+    let repeated_query = dialog
+        .state
+        .expected_query_generation
+        .get()
+        .expect("expected test value from dialog.state.expected_query_generation.get()");
     assert!(repeated_query > initial_query);
     dialog.state.field.set_text("another query");
-    let other_query = dialog.state.expected_query_generation.get().unwrap();
+    let other_query = dialog
+        .state
+        .expected_query_generation
+        .get()
+        .expect("expected test value from dialog.state.expected_query_generation.get()");
     assert!(other_query > repeated_query);
     dialog.state.field.set_text("");
-    let empty_query = dialog.state.expected_query_generation.get().unwrap();
+    let empty_query = dialog
+        .state
+        .expected_query_generation
+        .get()
+        .expect("expected test value from dialog.state.expected_query_generation.get()");
     assert!(empty_query > other_query);
     dialog.state.field.set_text("needle");
-    assert!(dialog.state.expected_query_generation.get().unwrap() > empty_query);
+    assert!(
+        dialog
+            .state
+            .expected_query_generation
+            .get()
+            .expect("expected test value from dialog.state.expected_query_generation.get()")
+            > empty_query
+    );
     assert_eq!(dialog.state.session_generation.get(), session);
     pump("needle-old.txt");
-    std::fs::remove_file(root.join("needle-old.txt")).unwrap();
-    std::fs::write(root.join("needle-new.txt"), "generated fixture").unwrap();
+    std::fs::remove_file(root.join("needle-old.txt")).expect("remove generated fixture");
+    std::fs::write(root.join("needle-new.txt"), "generated fixture")
+        .expect("write generated fixture");
     let generation = dialog.state.session_generation.get();
     dialog.state.refresh.emit_clicked();
     assert_eq!(
@@ -1588,23 +1839,38 @@ fn desktop_scope_selection_and_reentrant_rendering() {
             .any(|item| item.name == "needle-old.txt")
     );
     dialog.hide();
-    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(root).expect("remove generated fixture");
 }
 
 #[test]
 #[ignore = "Requires isolated GTK display; verifies interpretation slot chips, dismiss action, and filter panel sections"]
 fn desktop_interpretation_slot_and_filter_sections() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let dialog = SearchDialog::new(Rc::new(|_| {}), Rc::new(|| {}));
 
-    assert_eq!(dialog.state.filters.modified.model().unwrap().n_items(), 5);
+    assert_eq!(
+        dialog
+            .state
+            .filters
+            .modified
+            .model()
+            .expect("expected test value from dialog.state.filters.modified.model()")
+            .n_items(),
+        5
+    );
     dialog.state.filters.set_values(&SearchFilterValues {
         modified: Some("last-week".into()),
         ..SearchFilterValues::default()
     });
     assert_eq!(dialog.state.filters.modified.selected(), 3);
-    assert!(dialog.state.filters.query("").contains("modified:last-week"));
+    assert!(
+        dialog
+            .state
+            .filters
+            .query("")
+            .contains("modified:last-week")
+    );
 
     dialog.state.filters.set_values(&SearchFilterValues {
         modified: Some("past-7-days".into()),
@@ -1621,8 +1887,18 @@ fn desktop_interpretation_slot_and_filter_sections() {
     assert!(dialog.state.interpretation_slot.is_visible());
     assert!(dialog.state.interpretation_slot.first_child().is_some());
 
-    let chip_box = dialog.state.interpretation_slot.first_child().unwrap();
-    let remove_btn = chip_box.last_child().unwrap().downcast::<gtk::Button>().unwrap();
+    let chip_box = dialog
+        .state
+        .interpretation_slot
+        .first_child()
+        .expect("expected test value from dialog.state.interpretation_slot.first_child()");
+    let remove_btn = chip_box
+        .last_child()
+        .expect("expected test value from chip_box.last_child()")
+        .downcast::<gtk::Button>()
+        .expect(
+            "expected test value from chip_box.last_child().unwrap().downcast::<gtk::Button>()",
+        );
     remove_btn.emit_clicked();
 
     assert!(dialog.state.field.text().contains("\"songs\""));
@@ -1637,14 +1913,27 @@ fn desktop_interpretation_slot_and_filter_sections() {
         ("songsong songs", "songsong \"songs\""),
     ] {
         dialog.state.field.set_text(query);
-        let chip = dialog.state.interpretation_slot.first_child().unwrap();
-        let remove = chip.last_child().unwrap().downcast::<gtk::Button>().unwrap();
+        let chip = dialog
+            .state
+            .interpretation_slot
+            .first_child()
+            .expect("expected test value from dialog.state.interpretation_slot.first_child()");
+        let remove = chip
+            .last_child()
+            .expect("expected test value from chip.last_child()")
+            .downcast::<gtk::Button>()
+            .expect(
+                "expected test value from chip.last_child().unwrap().downcast::<gtk::Button>()",
+            );
         remove.emit_clicked();
         assert_eq!(dialog.state.field.text(), expected);
         assert!(!dialog.state.interpretation_slot.is_visible());
     }
     dialog.state.field.set_text("\"Video Games\" type:audio");
-    assert_eq!(dialog.state.filters.query(&dialog.state.field.text()), "\"Video Games\" type:audio");
+    assert_eq!(
+        dialog.state.filters.query(&dialog.state.field.text()),
+        "\"Video Games\" type:audio"
+    );
     dialog.state.filters.clear.emit_clicked();
     assert_eq!(dialog.state.field.text(), "\"Video Games\"");
     assert!(!dialog.state.interpretation_slot.is_visible());
@@ -1687,8 +1976,8 @@ fn test_omnibar_commands_listing_and_filtering() {
 #[test]
 #[ignore = "Requires isolated GTK display; verifies Alt+Enter reveal handler triggers on search results"]
 fn test_reveal_handler_triggers_on_reveal_position() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let revealed = Rc::new(Cell::new(false));
     let revealed_clone = revealed.clone();
     let dialog = SearchDialog::new(Rc::new(|_| {}), Rc::new(|| {}));
@@ -1702,7 +1991,10 @@ fn test_reveal_handler_triggers_on_reveal_position() {
         false,
         None,
     );
-    dialog.state.visible_results.replace(vec![SearchResult::File(item)]);
+    dialog
+        .state
+        .visible_results
+        .replace(vec![SearchResult::File(item)]);
     reveal_position(&dialog.state, 0);
     assert!(revealed.get());
 }

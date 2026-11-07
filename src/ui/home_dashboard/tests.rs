@@ -76,8 +76,8 @@ fn quick_access_has_unique_folders_without_a_duplicate_personal_folder_card() {
 fn private_home_shortcuts_have_two_balanced_rows_and_a_personal_folder_action() {
     use gtk::prelude::*;
     use std::time::{Duration, Instant};
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     crate::ui::window::load_styles();
     let theme = crate::ui::theme::ThemeManager::shared();
     theme.select_theme("graphite");
@@ -107,7 +107,7 @@ fn private_home_shortcuts_have_two_balanced_rows_and_a_personal_folder_action() 
                 &dashboard.state.quick_access_flow,
                 &gtk::graphene::Point::zero(),
             )
-            .unwrap();
+            .expect("expected test value from card .compute_point( &dashboard.state.quick_access_flow, &gtk::graphene::Point::zero(), )");
         *rows.entry(position.y().round() as i32).or_insert(0) += 1;
         assert!(card.width() > 0);
     }
@@ -120,13 +120,19 @@ fn private_home_shortcuts_have_two_balanced_rows_and_a_personal_folder_action() 
         let paintable = gtk::WidgetPaintable::new(Some(&window));
         let snapshot = gtk::Snapshot::new();
         paintable.snapshot(&snapshot, window.width() as f64, window.height() as f64);
-        let node = snapshot.to_node().unwrap();
+        let node = snapshot
+            .to_node()
+            .expect("expected test value from snapshot.to_node()");
         let renderer = gtk::gsk::CairoRenderer::new();
-        renderer.realize(None::<&gtk::gdk::Surface>).unwrap();
+        renderer
+            .realize(None::<&gtk::gdk::Surface>)
+            .expect("expected test value from renderer.realize(None::<&gtk::gdk::Surface>)");
         renderer
             .render_texture(&node, None)
             .save_to_png(path)
-            .unwrap();
+            .expect(
+                "expected test value from renderer .render_texture(&node, None) .save_to_png(path)",
+            );
         renderer.unrealize();
     }
     browser.browser().clear_observer();

@@ -14,8 +14,8 @@ use crate::{
     adapters::{LocalOperationProvider, LocalPreviewProvider, LocalTrailStore, RoutedFileSource},
     app::{Browser, BrowserEvent, Trails},
     model::{
-        Location, SortDirection, SortKey, Trail, TrailBrowserDensity,
-        TrailBrowserMode, TrailViewState,
+        Location, SortDirection, SortKey, Trail, TrailBrowserDensity, TrailBrowserMode,
+        TrailViewState,
     },
 };
 
@@ -34,9 +34,9 @@ const SIDEBAR_WIDTH: i32 = 208;
 const MIN_SIDEBAR_WIDTH: i32 = 176;
 const SIDEBAR_TRANSITION: Duration = Duration::from_millis(300);
 
+mod reveal;
 mod saved_searches;
 mod startup;
-mod reveal;
 
 pub fn present(application: &gtk::Application) {
     present_location(application, None);
@@ -46,7 +46,10 @@ pub fn present_location(application: &gtk::Application, location: Option<PathBuf
     present_target(application, location.map(Location::local), None);
 }
 
-pub(crate) fn present_reveal(application: &gtk::Application, request: crate::file_manager::Request) {
+pub(crate) fn present_reveal(
+    application: &gtk::Application,
+    request: crate::file_manager::Request,
+) {
     present_target(application, Some(request.directory.clone()), Some(request));
 }
 
@@ -104,8 +107,12 @@ fn present_target(
     let activated_music = music_player.clone();
     let activated_music_preview = preview.clone();
     browser.set_open_handler(Rc::new(move |location| {
-        let Some(path) = location.native_path() else { return false; };
-        if crate::services::classify_by_name(path.as_os_str()) != crate::services::FormatFamily::Audio {
+        let Some(path) = location.native_path() else {
+            return false;
+        };
+        if crate::services::classify_by_name(path.as_os_str())
+            != crate::services::FormatFamily::Audio
+        {
             return false;
         }
         activated_music_preview.close();
@@ -121,8 +128,12 @@ fn present_target(
     let activated_music_right = music_player.clone();
     let activated_music_preview_right = preview.clone();
     browser_right.set_open_handler(Rc::new(move |location| {
-        let Some(path) = location.native_path() else { return false; };
-        if crate::services::classify_by_name(path.as_os_str()) != crate::services::FormatFamily::Audio {
+        let Some(path) = location.native_path() else {
+            return false;
+        };
+        if crate::services::classify_by_name(path.as_os_str())
+            != crate::services::FormatFamily::Audio
+        {
             return false;
         }
         activated_music_preview_right.close();
@@ -152,7 +163,8 @@ fn present_target(
     let observed_startup = startup_restore.clone();
     let observed_applying_startup = applying_startup.clone();
     controller.observe(move |event| match event {
-        BrowserEvent::ColumnAdded { .. } | BrowserEvent::ColumnsTruncated { .. }
+        BrowserEvent::ColumnAdded { .. }
+        | BrowserEvent::ColumnsTruncated { .. }
         | BrowserEvent::TabRestored { .. } => {
             let Some(browser) = weak_controller.upgrade() else {
                 return;
@@ -161,10 +173,9 @@ fn present_target(
                 return;
             };
             if observed_applying_startup.get()
-                || observed_startup.borrow_mut().preserves(
-                    observed_trails.active_id().as_ref(),
-                    Some(&active_location),
-                )
+                || observed_startup
+                    .borrow_mut()
+                    .preserves(observed_trails.active_id().as_ref(), Some(&active_location))
             {
                 return;
             }
@@ -194,11 +205,7 @@ fn present_target(
                 }
             }
         }
-        BrowserEvent::SelectionSetChanged {
-            depth,
-            focused,
-            ..
-        } => {
+        BrowserEvent::SelectionSetChanged { depth, focused, .. } => {
             if let Some(entry) = weak_controller
                 .upgrade()
                 .and_then(|browser| browser.entry_at(depth, focused))
@@ -239,11 +246,7 @@ fn present_target(
                 }
             }
         }
-        BrowserEvent::SelectionSetChanged {
-            depth,
-            focused,
-            ..
-        } => {
+        BrowserEvent::SelectionSetChanged { depth, focused, .. } => {
             if let Some(entry) = weak_controller_right
                 .upgrade()
                 .and_then(|browser| browser.entry_at(depth, focused))
@@ -315,10 +318,11 @@ fn present_target(
             mode_preferences.set_browser_mode(mode);
         }
         action.set_state(&mode.action_name().to_variant());
-        if mode_preferences.remember_folder_views() {
-            if let Some(loc) = mode_controller.active_location() {
-                crate::services::FolderViewStore::shared().set_mode(&loc.display_path(), trail_browser_mode(mode));
-            }
+        if mode_preferences.remember_folder_views()
+            && let Some(loc) = mode_controller.active_location()
+        {
+            crate::services::FolderViewStore::shared()
+                .set_mode(&loc.display_path(), trail_browser_mode(mode));
         }
         if let Err(error) = mode_trails.update_active_view(mode_capture()) {
             tracing::warn!(%error, "unable to save Trail view mode");
@@ -350,7 +354,11 @@ fn present_target(
     let context_view = capture_view.clone();
     let context_tab_bar = tab_bar.clone();
     let status_bar = Rc::new(super::status_bar::StatusBar::new());
-    if let Some(path) = startup.trail.active_location().and_then(Location::native_path) {
+    if let Some(path) = startup
+        .trail
+        .active_location()
+        .and_then(Location::native_path)
+    {
         status_bar.update_free_space(path);
     }
     let mode_action_for_status = mode_action.clone();
@@ -377,11 +385,11 @@ fn present_target(
     let status_bar_for_mode = status_bar.clone();
     let browser_for_mode = browser.clone();
     mode_action.connect_state_notify(move |action| {
-        if let Some(state_str) = action.state().and_then(|v| v.str().map(|s| s.to_string())) {
-            if let Some(mode) = BrowserMode::from_action_name(&state_str) {
-                status_bar_for_mode.update_view_mode(mode);
-                status_bar_for_mode.update_density(&browser_for_mode.density_label());
-            }
+        if let Some(state_str) = action.state().and_then(|v| v.str().map(|s| s.to_string()))
+            && let Some(mode) = BrowserMode::from_action_name(&state_str)
+        {
+            status_bar_for_mode.update_view_mode(mode);
+            status_bar_for_mode.update_density(&browser_for_mode.density_label());
         }
     });
     let status_bar_for_density = status_bar.clone();
@@ -434,7 +442,11 @@ fn present_target(
         status_for_active_pane.update_selection(selected_items, selected_bytes);
         status_for_active_pane.update_view_mode(active_b.view_mode());
         status_for_active_pane.update_density(&active_b.density_label());
-        if let Some(path) = active_c.active_location().as_ref().and_then(|l| l.native_path()) {
+        if let Some(path) = active_c
+            .active_location()
+            .as_ref()
+            .and_then(|l| l.native_path())
+        {
             status_for_active_pane.update_free_space(path);
         } else {
             status_for_active_pane.clear_free_space();
@@ -490,26 +502,24 @@ fn present_target(
                     context_trails.active_id().as_ref(),
                     context_controller.active_location().as_ref(),
                 )
+                && let Err(error) = context_trails.update_active_view(context_view())
             {
-                if let Err(error) = context_trails.update_active_view(context_view()) {
-                    tracing::warn!(%error, "unable to save Trail view state");
-                }
+                tracing::warn!(%error, "unable to save Trail view state");
             }
             context_tab_bar.refresh();
         }
 
-        if let BrowserEvent::SortingFinished { depth } = event {
-            if !context_applying_startup.get() && context_preferences.remember_folder_views() {
-                if let Some(prefs) = context_controller.column_preferences(depth) {
-                    if let Some(loc) = context_controller.column_location(depth) {
-                        crate::services::FolderViewStore::shared().set_sort(
-                            &loc.display_path(),
-                            prefs.sort_key,
-                            prefs.sort_direction,
-                        );
-                    }
-                }
-            }
+        if let BrowserEvent::SortingFinished { depth } = event
+            && !context_applying_startup.get()
+            && context_preferences.remember_folder_views()
+            && let Some(prefs) = context_controller.column_preferences(depth)
+            && let Some(loc) = context_controller.column_location(depth)
+        {
+            crate::services::FolderViewStore::shared().set_sort(
+                &loc.display_path(),
+                prefs.sort_key,
+                prefs.sort_direction,
+            );
         }
 
         if matches!(
@@ -518,16 +528,15 @@ fn present_target(
                 | BrowserEvent::TabRestored { .. }
                 | BrowserEvent::FocusChanged { .. }
                 | BrowserEvent::ColumnsTruncated { .. }
-        ) {
-            if let Some(loc) = context_controller.active_location() {
-                if loc.is_home_dashboard() {
-                    if context_content_stack.visible_child_name().as_deref() != Some("home") {
-                        context_content_stack.set_visible_child_name("home");
-                        context_home_dashboard.refresh();
-                    }
-                } else if context_content_stack.visible_child_name().as_deref() != Some("browser") {
-                    context_content_stack.set_visible_child_name("browser");
+        ) && let Some(loc) = context_controller.active_location()
+        {
+            if loc.is_home_dashboard() {
+                if context_content_stack.visible_child_name().as_deref() != Some("home") {
+                    context_content_stack.set_visible_child_name("home");
+                    context_home_dashboard.refresh();
                 }
+            } else if context_content_stack.visible_child_name().as_deref() != Some("browser") {
+                context_content_stack.set_visible_child_name("browser");
             }
         }
 
@@ -536,53 +545,59 @@ fn present_target(
             BrowserEvent::ColumnAdded { .. }
                 | BrowserEvent::FocusChanged { .. }
                 | BrowserEvent::ColumnsTruncated { .. }
-        ) {
-            if !context_applying_startup.get() && context_preferences.remember_folder_views() {
-                if let Some(loc) = context_controller.active_location() {
-                    let changed = context_folder_views_loc.borrow().as_ref() != Some(&loc);
-                    if changed {
-                        context_folder_views_loc.replace(Some(loc.clone()));
-                        let path_str = loc.display_path();
-                        let saved = crate::services::FolderViewStore::shared().get(&path_str);
-                        let heuristic = loc.native_path().and_then(crate::services::folder_views::folder_heuristics);
+        ) && !context_applying_startup.get()
+            && context_preferences.remember_folder_views()
+            && let Some(loc) = context_controller.active_location()
+        {
+            let changed = context_folder_views_loc.borrow().as_ref() != Some(&loc);
+            if changed {
+                context_folder_views_loc.replace(Some(loc.clone()));
+                let path_str = loc.display_path();
+                let saved = crate::services::FolderViewStore::shared().get(&path_str);
+                let heuristic = loc
+                    .native_path()
+                    .and_then(crate::services::folder_views::folder_heuristics);
 
-                        let target_mode = saved
-                            .and_then(|s| s.mode.map(browser_mode))
-                            .or_else(|| heuristic.as_ref().and_then(|h| h.mode.map(browser_mode)))
-                            .unwrap_or_else(|| context_preferences.browser_mode());
+                let target_mode = saved
+                    .and_then(|s| s.mode.map(browser_mode))
+                    .or_else(|| heuristic.as_ref().and_then(|h| h.mode.map(browser_mode)))
+                    .unwrap_or_else(|| context_preferences.browser_mode());
 
-                        if context_browser.view_mode() != target_mode {
-                            context_browser.set_view_mode(target_mode);
-                        }
-                        context_mode_action.set_state(&target_mode.action_name().to_variant());
+                if context_browser.view_mode() != target_mode {
+                    context_browser.set_view_mode(target_mode);
+                }
+                context_mode_action.set_state(&target_mode.action_name().to_variant());
 
-                        let target_density = saved
-                            .and_then(|s| s.density.map(browser_density))
-                            .or_else(|| heuristic.as_ref().and_then(|h| h.density.map(browser_density)))
-                            .unwrap_or_else(|| context_preferences.browser_density());
+                let target_density = saved
+                    .and_then(|s| s.density.map(browser_density))
+                    .or_else(|| {
+                        heuristic
+                            .as_ref()
+                            .and_then(|h| h.density.map(browser_density))
+                    })
+                    .unwrap_or_else(|| context_preferences.browser_density());
 
-                        if context_browser.density() != target_density {
-                            context_browser.set_density(target_density);
-                        }
+                if context_browser.density() != target_density {
+                    context_browser.set_density(target_density);
+                }
 
-                        let target_sort_key = saved
-                            .and_then(|s| s.sort_key)
-                            .or_else(|| heuristic.as_ref().and_then(|h| h.sort_key))
-                            .unwrap_or(SortKey::Name);
+                let target_sort_key = saved
+                    .and_then(|s| s.sort_key)
+                    .or_else(|| heuristic.as_ref().and_then(|h| h.sort_key))
+                    .unwrap_or(SortKey::Name);
 
-                        let target_sort_dir = saved
-                            .and_then(|s| s.sort_direction)
-                            .or_else(|| heuristic.as_ref().and_then(|h| h.sort_direction))
-                            .unwrap_or(SortDirection::Ascending);
+                let target_sort_dir = saved
+                    .and_then(|s| s.sort_direction)
+                    .or_else(|| heuristic.as_ref().and_then(|h| h.sort_direction))
+                    .unwrap_or(SortDirection::Ascending);
 
-                        if let Some(current_depth) = context_controller.active_depth() {
-                            if let Some(current_prefs) = context_controller.column_preferences(current_depth) {
-                                if current_prefs.sort_key != target_sort_key || current_prefs.sort_direction != target_sort_dir {
-                                    context_controller.set_sort(current_depth, target_sort_key, target_sort_dir);
-                                }
-                            }
-                        }
-                    }
+                if let Some(current_depth) = context_controller.active_depth()
+                    && let Some(current_prefs) =
+                        context_controller.column_preferences(current_depth)
+                    && (current_prefs.sort_key != target_sort_key
+                        || current_prefs.sort_direction != target_sort_dir)
+                {
+                    context_controller.set_sort(current_depth, target_sort_key, target_sort_dir);
                 }
             }
         }
@@ -603,7 +618,7 @@ fn present_target(
             let mut total_bytes = 0;
             let mut selected_items = 0;
             let mut selected_bytes = 0;
-            
+
             if let Some(depth) = context_controller.active_depth() {
                 if let Some(entries) = context_controller.column_entries(depth) {
                     total_items = entries.len();
@@ -648,11 +663,9 @@ fn present_target(
     location_stack.add_named(&browser_right.location_widget(), Some("right"));
     location_stack.set_visible_child_name("left");
     let loc_stack_pane = location_stack.clone();
-    split_view.connect_active_pane_changed(move |pane| {
-        match pane {
-            super::split_view::ActivePane::Left => loc_stack_pane.set_visible_child_name("left"),
-            super::split_view::ActivePane::Right => loc_stack_pane.set_visible_child_name("right"),
-        }
+    split_view.connect_active_pane_changed(move |pane| match pane {
+        super::split_view::ActivePane::Left => loc_stack_pane.set_visible_child_name("left"),
+        super::split_view::ActivePane::Right => loc_stack_pane.set_visible_child_name("right"),
     });
     header.pack_start(&location_stack);
     let search_button = gtk::Button::builder()
@@ -771,10 +784,10 @@ fn present_target(
             &sidebar_animating,
             toggle.is_active(),
         );
-        if !sidebar_applying_startup.get() {
-            if let Err(error) = sidebar_trails.update_active_view(sidebar_view()) {
-                tracing::warn!(%error, "unable to save Trail sidebar state");
-            }
+        if !sidebar_applying_startup.get()
+            && let Err(error) = sidebar_trails.update_active_view(sidebar_view())
+        {
+            tracing::warn!(%error, "unable to save Trail sidebar state");
         }
     });
     let preview_split = gtk::Paned::new(gtk::Orientation::Horizontal);
@@ -927,12 +940,13 @@ fn present_target(
         if entries.iter().any(crate::app::music_order::is_audio) {
             selected_preview.close();
             selected_music.play_files(entries);
-        } else if entries.len() == 1 && entries[0].is_directory() {
-            if let Some(path) = entries[0].location.native_path() {
-                selected_preview.close();
-                selected_music.play_folder(path.to_path_buf());
-                selected_music_toggle.set_active(true);
-            }
+        } else if entries.len() == 1
+            && entries[0].is_directory()
+            && let Some(path) = entries[0].location.native_path()
+        {
+            selected_preview.close();
+            selected_music.play_folder(path.to_path_buf());
+            selected_music_toggle.set_active(true);
         }
     });
     window.add_action(&play_music);
@@ -940,7 +954,9 @@ fn present_target(
     let queue_music = gio::SimpleAction::new("queue-music-selection", None);
     let queued_music = music_player.clone();
     let queued_controller = controller.clone();
-    queue_music.connect_activate(move |_, _| queued_music.queue_files(queued_controller.selected_entries()));
+    queue_music.connect_activate(move |_, _| {
+        queued_music.queue_files(queued_controller.selected_entries())
+    });
     window.add_action(&queue_music);
 
     let window_overlay = gtk::Overlay::new();
@@ -992,7 +1008,8 @@ fn present_target(
         }
     }));
     window_overlay.add_overlay(&search_dialog.widget());
-    let saved_search_layer = saved_searches::install(&window_overlay, &blurred_root, &search_dialog, &sidebar);
+    let saved_search_layer =
+        saved_searches::install(&window_overlay, &blurred_root, &search_dialog, &sidebar);
     let shown_search = search_dialog.clone();
     let search_browser = controller.clone();
     let search_blurred_root = blurred_root.clone();
@@ -1123,76 +1140,74 @@ fn present_target(
     let cmd_blurred_root = blurred_root.clone();
     let cmd_theme = theme_for_cmd.clone();
 
-    search_dialog.set_command_handler(Rc::new(move |command_id| {
-        match command_id {
-            "home" => cmd_browser.navigate_location(Location::uri("home:///")),
-            "settings" => {
-                show_settings(&cmd_settings_layer, &cmd_settings_btn, &cmd_blurred_root);
-            }
-            "view_columns" | "view_compact" => {
-                cmd_mode_action.activate(Some(&"columns".to_variant()));
-            }
-            "view_explorer" | "view_gallery" => {
-                cmd_mode_action.activate(Some(&"explorer".to_variant()));
-            }
-            "view_grid" | "view_large" => {
-                cmd_mode_action.activate(Some(&"grid".to_variant()));
-            }
-            "view_list" | "view_details" => {
-                cmd_mode_action.activate(Some(&"list".to_variant()));
-            }
-            "density_compact" => {
-                cmd_theme.set_browser_density(BrowserDensity::Compact);
-                cmd_browser.set_density(BrowserDensity::Compact);
-            }
-            "density_comfortable" | "density_spacious" => {
-                cmd_theme.set_browser_density(BrowserDensity::Airy);
-                cmd_browser.set_density(BrowserDensity::Airy);
-            }
-            "toggle_hidden" => {
-                cmd_controller.toggle_hidden();
-            }
-            "toggle_sidebar" => {
-                cmd_sidebar_toggle.set_active(!cmd_sidebar_toggle.is_active());
-            }
-            "toggle_folder_tree" => {
-                cmd_folder_tree.set_visible(!cmd_folder_tree.is_visible());
-            }
-            "music_player" => {
-                cmd_music_toggle.set_active(!cmd_music_toggle.is_active());
-            }
-            "new_tab" => {
-                cmd_tab_bar.new_tab();
-            }
-            "close_tab" => {
-                cmd_tab_bar.close_active();
-            }
-            "reopen_tab" | "restore_tab" => {
-                cmd_tab_bar.reopen_closed_tab();
-            }
-            "empty_trash" => {
-                cmd_sidebar.view.confirm_empty_trash();
-            }
-            "open_terminal" | "terminal" => {
-                cmd_browser.open_terminal();
-            }
-            "split_view" | "split" | "dual_pane" => {
-                cmd_split_view.toggle_split();
-            }
-            "quick_look" | "preview" => {
-                let active = cmd_split_view.active_browser().browser();
-                let entry = active
-                    .selected_entries()
-                    .first()
-                    .cloned()
-                    .or_else(|| active.focused_item().map(|(_, _, entry)| entry));
-                cmd_quick_look.toggle(entry, &cmd_window);
-            }
-            "shortcuts" | "help" => {
-                super::shortcuts::show_shortcuts_window(&cmd_window);
-            }
-            _ => {}
+    search_dialog.set_command_handler(Rc::new(move |command_id| match command_id {
+        "home" => cmd_browser.navigate_location(Location::uri("home:///")),
+        "settings" => {
+            show_settings(&cmd_settings_layer, &cmd_settings_btn, &cmd_blurred_root);
         }
+        "view_columns" | "view_compact" => {
+            cmd_mode_action.activate(Some(&"columns".to_variant()));
+        }
+        "view_explorer" | "view_gallery" => {
+            cmd_mode_action.activate(Some(&"explorer".to_variant()));
+        }
+        "view_grid" | "view_large" => {
+            cmd_mode_action.activate(Some(&"grid".to_variant()));
+        }
+        "view_list" | "view_details" => {
+            cmd_mode_action.activate(Some(&"list".to_variant()));
+        }
+        "density_compact" => {
+            cmd_theme.set_browser_density(BrowserDensity::Compact);
+            cmd_browser.set_density(BrowserDensity::Compact);
+        }
+        "density_comfortable" | "density_spacious" => {
+            cmd_theme.set_browser_density(BrowserDensity::Airy);
+            cmd_browser.set_density(BrowserDensity::Airy);
+        }
+        "toggle_hidden" => {
+            cmd_controller.toggle_hidden();
+        }
+        "toggle_sidebar" => {
+            cmd_sidebar_toggle.set_active(!cmd_sidebar_toggle.is_active());
+        }
+        "toggle_folder_tree" => {
+            cmd_folder_tree.set_visible(!cmd_folder_tree.is_visible());
+        }
+        "music_player" => {
+            cmd_music_toggle.set_active(!cmd_music_toggle.is_active());
+        }
+        "new_tab" => {
+            cmd_tab_bar.new_tab();
+        }
+        "close_tab" => {
+            cmd_tab_bar.close_active();
+        }
+        "reopen_tab" | "restore_tab" => {
+            cmd_tab_bar.reopen_closed_tab();
+        }
+        "empty_trash" => {
+            cmd_sidebar.view.confirm_empty_trash();
+        }
+        "open_terminal" | "terminal" => {
+            cmd_browser.open_terminal();
+        }
+        "split_view" | "split" | "dual_pane" => {
+            cmd_split_view.toggle_split();
+        }
+        "quick_look" | "preview" => {
+            let active = cmd_split_view.active_browser().browser();
+            let entry = active
+                .selected_entries()
+                .first()
+                .cloned()
+                .or_else(|| active.focused_item().map(|(_, _, entry)| entry));
+            cmd_quick_look.toggle(entry, &cmd_window);
+        }
+        "shortcuts" | "help" => {
+            super::shortcuts::show_shortcuts_window(&cmd_window);
+        }
+        _ => {}
     }));
     let tab_shortcut = gtk::EventControllerKey::new();
     let shortcut_tabs = tab_bar.clone();
@@ -1298,9 +1313,12 @@ pub(crate) fn install_audio_playback_coordination(
     let paused_audio_preview = preview.clone();
     let resumed_music_controller = Rc::downgrade(&music_controller);
     let observer: Rc<dyn Fn()> = Rc::new(move || {
-        if resumed_music_controller.upgrade().is_some_and(|controller| {
-            controller.status() == super::music::controller::PlaybackStatus::Playing
-        }) {
+        if resumed_music_controller
+            .upgrade()
+            .is_some_and(|controller| {
+                controller.status() == super::music::controller::PlaybackStatus::Playing
+            })
+        {
             paused_audio_preview.pause_audio_preview();
         }
     });
@@ -1423,6 +1441,10 @@ fn animate_sidebar(
     });
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Window shortcuts route to independent browser, preview and music components"
+)]
 fn install_keyboard_navigation(
     window: &gtk::ApplicationWindow,
     sidebar_toggle: &gtk::ToggleButton,
@@ -1472,10 +1494,15 @@ fn install_keyboard_navigation(
             split_view.toggle_split();
             return glib::Propagation::Stop;
         }
-        if (key == gtk::gdk::Key::Tab || key == gtk::gdk::Key::ISO_Left_Tab) && split_view.is_split() {
-            let text_focused = gtk::prelude::RootExt::focus(&dialog_parent).is_some_and(|focused| {
-                focused.is::<gtk::Text>() || focused.is::<gtk::TextView>() || focused.is::<gtk::Entry>()
-            });
+        if (key == gtk::gdk::Key::Tab || key == gtk::gdk::Key::ISO_Left_Tab)
+            && split_view.is_split()
+        {
+            let text_focused =
+                gtk::prelude::RootExt::focus(&dialog_parent).is_some_and(|focused| {
+                    focused.is::<gtk::Text>()
+                        || focused.is::<gtk::TextView>()
+                        || focused.is::<gtk::Entry>()
+                });
             if !text_focused
                 && !view.location_has_focus()
                 && !view.filter_has_focus()
@@ -1486,20 +1513,22 @@ fn install_keyboard_navigation(
                 return glib::Propagation::Stop;
             }
         }
-        if key == gtk::gdk::Key::F5 && split_view.is_split() {
-            if split_view.copy_to_opposite_pane() {
-                return glib::Propagation::Stop;
-            }
+        if key == gtk::gdk::Key::F5 && split_view.is_split() && split_view.copy_to_opposite_pane() {
+            return glib::Propagation::Stop;
         }
-        if key == gtk::gdk::Key::F6 && split_view.is_split() {
-            if split_view.move_to_opposite_pane() {
-                return glib::Propagation::Stop;
-            }
+        if key == gtk::gdk::Key::F6 && split_view.is_split() && split_view.move_to_opposite_pane() {
+            return glib::Propagation::Stop;
         }
         if control && matches!(key, gtk::gdk::Key::k | gtk::gdk::Key::K) {
-            if let Err(error) =
-                gtk::prelude::WidgetExt::activate_action(&dialog_parent, if shift { "win.search-music" } else { "win.search" }, None)
-            {
+            if let Err(error) = gtk::prelude::WidgetExt::activate_action(
+                &dialog_parent,
+                if shift {
+                    "win.search-music"
+                } else {
+                    "win.search"
+                },
+                None,
+            ) {
                 tracing::warn!(%error, "unable to activate global search shortcut");
             }
             return glib::Propagation::Stop;
@@ -1516,7 +1545,9 @@ fn install_keyboard_navigation(
         if key == gtk::gdk::Key::Escape && view.cancel_rename() {
             return glib::Propagation::Stop;
         }
-        if (key == gtk::gdk::Key::Tab || key == gtk::gdk::Key::ISO_Left_Tab) && view.rename_is_active() {
+        if (key == gtk::gdk::Key::Tab || key == gtk::gdk::Key::ISO_Left_Tab)
+            && view.rename_is_active()
+        {
             let direction = if shift { -1 } else { 1 };
             if view.advance_rename(direction) {
                 return glib::Propagation::Stop;
@@ -1530,13 +1561,13 @@ fn install_keyboard_navigation(
             return glib::Propagation::Proceed;
         }
         if !control && !alt && !shift && key == gtk::gdk::Key::space {
-            let text_focused = gtk::prelude::RootExt::focus(&dialog_parent).is_some_and(|focused| {
-                focused.is::<gtk::Text>() || focused.is::<gtk::TextView>() || focused.is::<gtk::Entry>()
-            });
-            if !text_focused
-                && !view.location_has_focus()
-                && !view.filter_has_focus()
-            {
+            let text_focused =
+                gtk::prelude::RootExt::focus(&dialog_parent).is_some_and(|focused| {
+                    focused.is::<gtk::Text>()
+                        || focused.is::<gtk::TextView>()
+                        || focused.is::<gtk::Entry>()
+                });
+            if !text_focused && !view.location_has_focus() && !view.filter_has_focus() {
                 let entry = browser
                     .selected_entries()
                     .first()
@@ -1654,19 +1685,23 @@ fn install_keyboard_navigation(
             return glib::Propagation::Stop;
         }
         let is_f4 = key == gtk::gdk::Key::F4 && !control && !alt && !shift;
-        let is_ctrl_alt_t = control && alt && !shift && matches!(key, gtk::gdk::Key::t | gtk::gdk::Key::T);
+        let is_ctrl_alt_t =
+            control && alt && !shift && matches!(key, gtk::gdk::Key::t | gtk::gdk::Key::T);
         if (is_f4 || is_ctrl_alt_t) && !view.filter_has_focus() {
             view.open_terminal();
             return glib::Propagation::Stop;
         }
-        let is_menu_key = key == gtk::gdk::Key::Menu
-            || (key == gtk::gdk::Key::F10 && shift && !control && !alt);
-        if is_menu_key && !view.filter_has_focus() {
-            if view.show_context_menu() {
-                return glib::Propagation::Stop;
-            }
+        let is_menu_key =
+            key == gtk::gdk::Key::Menu || (key == gtk::gdk::Key::F10 && shift && !control && !alt);
+        if is_menu_key && !view.filter_has_focus() && view.show_context_menu() {
+            return glib::Propagation::Stop;
         }
-        if control && !alt && (key == gtk::gdk::Key::plus || key == gtk::gdk::Key::equal || key == gtk::gdk::Key::KP_Add) {
+        if control
+            && !alt
+            && (key == gtk::gdk::Key::plus
+                || key == gtk::gdk::Key::equal
+                || key == gtk::gdk::Key::KP_Add)
+        {
             view.step_density(1);
             if let Err(error) = trails.update_active_view(capture_view()) {
                 tracing::warn!(%error, "unable to save Trail density state");
@@ -1704,10 +1739,12 @@ fn install_keyboard_navigation(
         if view.filter_has_focus() && !control && !alt {
             return glib::Propagation::Proceed;
         }
-        if !control && !alt && !modifiers.contains(gtk::gdk::ModifierType::SUPER_MASK)
+        if !control
+            && !alt
+            && !modifiers.contains(gtk::gdk::ModifierType::SUPER_MASK)
             && matches!(key, gtk::gdk::Key::f | gtk::gdk::Key::F)
-            && !gtk::prelude::RootExt::focus(&dialog_parent).is_some_and(|focus|
-                focus.is::<gtk::Editable>() || focus.is::<gtk::TextView>())
+            && !gtk::prelude::RootExt::focus(&dialog_parent)
+                .is_some_and(|focus| focus.is::<gtk::Editable>() || focus.is::<gtk::TextView>())
             && preview.open_fullscreen()
         {
             return glib::Propagation::Stop;
@@ -1760,9 +1797,11 @@ fn install_keyboard_navigation(
                 | gtk::gdk::Key::KP_Enter,
                 false,
             ) => {
-                if key == gtk::gdk::Key::Return || key == gtk::gdk::Key::KP_Enter {
-                    view.activate_focused()
-                } else if view.view_mode() == BrowserMode::Columns || key == gtk::gdk::Key::l {
+                if key == gtk::gdk::Key::Return
+                    || key == gtk::gdk::Key::KP_Enter
+                    || view.view_mode() == BrowserMode::Columns
+                    || key == gtk::gdk::Key::l
+                {
                     view.activate_focused()
                 } else {
                     return glib::Propagation::Proceed;
@@ -1851,10 +1890,11 @@ fn build_appearance_menu(
             list_check.set_visible(mode == BrowserMode::Columns);
             grid_check.set_visible(mode == BrowserMode::Grid);
             explorer_check.set_visible(mode == BrowserMode::Explorer);
-            if preferences.remember_folder_views() {
-                if let Some(loc) = controller_for_mode.active_location() {
-                    crate::services::FolderViewStore::shared().set_mode(&loc.display_path(), trail_browser_mode(mode));
-                }
+            if preferences.remember_folder_views()
+                && let Some(loc) = controller_for_mode.active_location()
+            {
+                crate::services::FolderViewStore::shared()
+                    .set_mode(&loc.display_path(), trail_browser_mode(mode));
             }
             if let Err(error) = trails.update_active_view(capture_view()) {
                 tracing::warn!(%error, "unable to save Trail view mode");
@@ -1895,10 +1935,11 @@ fn build_appearance_menu(
             }
             compact_check.set_visible(true);
             airy_check.set_visible(false);
-            if preferences.remember_folder_views() {
-                if let Some(loc) = controller_for_compact.active_location() {
-                    crate::services::FolderViewStore::shared().set_density(&loc.display_path(), TrailBrowserDensity::Compact);
-                }
+            if preferences.remember_folder_views()
+                && let Some(loc) = controller_for_compact.active_location()
+            {
+                crate::services::FolderViewStore::shared()
+                    .set_density(&loc.display_path(), TrailBrowserDensity::Compact);
             }
             if let Err(error) = trails.update_active_view(capture_view()) {
                 tracing::warn!(%error, "unable to save Trail density");
@@ -1918,10 +1959,11 @@ fn build_appearance_menu(
             }
             compact_check.set_visible(false);
             airy_check.set_visible(true);
-            if preferences.remember_folder_views() {
-                if let Some(loc) = controller_for_airy.active_location() {
-                    crate::services::FolderViewStore::shared().set_density(&loc.display_path(), TrailBrowserDensity::Airy);
-                }
+            if preferences.remember_folder_views()
+                && let Some(loc) = controller_for_airy.active_location()
+            {
+                crate::services::FolderViewStore::shared()
+                    .set_density(&loc.display_path(), TrailBrowserDensity::Airy);
             }
             if let Err(error) = trails.update_active_view(capture_view()) {
                 tracing::warn!(%error, "unable to save Trail density");
@@ -2588,7 +2630,11 @@ impl SidebarState {
                     .has_frame(false)
                     .valign(gtk::Align::Center)
                     .halign(gtk::Align::End)
-                    .tooltip_text(if can_eject { "Eject drive" } else { "Unmount drive" })
+                    .tooltip_text(if can_eject {
+                        "Eject drive"
+                    } else {
+                        "Unmount drive"
+                    })
                     .build();
                 eject_btn.set_cursor_from_name(Some("pointer"));
                 eject_btn.add_css_class("sidebar-eject-btn");
@@ -2789,7 +2835,9 @@ impl SidebarState {
             .unwrap_or_else(|| gio::File::for_uri(location.uri_value().unwrap_or_default()))
             .uri();
         drag.connect_prepare(move |_, _, _| {
-            Some(gtk::gdk::ContentProvider::for_value(&format!("hermes-pin:{uri}").to_value()))
+            Some(gtk::gdk::ContentProvider::for_value(
+                &format!("hermes-pin:{uri}").to_value(),
+            ))
         });
         row.add_controller(drag);
         let menu = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -3215,7 +3263,11 @@ fn navigate_to_gio_file(browser: &Rc<Browser>, file: &gio::File) {
 }
 
 fn build_sidebar(view: BrowserView, theme_manager: Rc<ThemeManager>) -> SidebarView {
-    build_sidebar_with_searches(view, theme_manager, crate::services::saved_searches::Store::shared())
+    build_sidebar_with_searches(
+        view,
+        theme_manager,
+        crate::services::saved_searches::Store::shared(),
+    )
 }
 
 fn build_sidebar_with_searches(

@@ -27,8 +27,19 @@ fn gif_animation_detection_keeps_image_thumbnail_classification() {
 
 #[test]
 fn office_thumbnails_are_available_for_layout_supported_packages() {
-    for name in ["document.DOCX", "document.odt", "slides.PPTX", "show.ppsx", "template.potx", "budget.xlsx", "budget.ODS"] {
-        assert_eq!(capabilities_by_name(OsStr::new(name)).thumbnail, Some(ThumbnailHandler::Office));
+    for name in [
+        "document.DOCX",
+        "document.odt",
+        "slides.PPTX",
+        "show.ppsx",
+        "template.potx",
+        "budget.xlsx",
+        "budget.ODS",
+    ] {
+        assert_eq!(
+            capabilities_by_name(OsStr::new(name)).thumbnail,
+            Some(ThumbnailHandler::Office)
+        );
     }
     assert_eq!(thumbnail_handler_for_name(OsStr::new("legacy.xls")), None);
 }

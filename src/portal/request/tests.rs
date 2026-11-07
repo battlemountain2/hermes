@@ -7,7 +7,8 @@ fn parse(method: &str, options: Options) -> Result<Request, String> {
 
 #[test]
 fn defaults_and_typed_options_follow_the_chooser_contract() {
-    let request = parse("OpenFile", Options::new()).unwrap();
+    let request = parse("OpenFile", Options::new())
+        .expect("expected test value from parse(\"OpenFile\", Options::new())");
     assert_eq!(
         request.kind,
         Kind::Open {
@@ -24,7 +25,8 @@ fn defaults_and_typed_options_follow_the_chooser_contract() {
         ("accept_label".into(), "Pick these".to_variant()),
         ("future_option".into(), 1_u32.to_variant()),
     ]);
-    let request = parse("OpenFile", options).unwrap();
+    let request =
+        parse("OpenFile", options).expect("expected test value from parse(\"OpenFile\", options)");
     assert_eq!(
         request.kind,
         Kind::Open {
@@ -53,9 +55,13 @@ fn native_paths_preserve_bytes_and_reject_relative_unterminated_or_embedded_nul(
             b"/tmp/byte\xff\0".to_vec().to_variant(),
         )]),
     )
-    .unwrap();
+    .expect("expected test value from parse( \"SaveFile\", Options::from([( \"current_folder\".into(), b\"/tmp/byte\\xff\\0\".to_vec().to_variant(), )]), )");
     assert_eq!(
-        request.folder.unwrap().as_os_str().as_encoded_bytes(),
+        request
+            .folder
+            .expect("expected test value from request.folder")
+            .as_os_str()
+            .as_encoded_bytes(),
         b"/tmp/byte\xff"
     );
     for bytes in [
@@ -106,7 +112,7 @@ fn save_files_requires_bounded_plain_names_and_preserves_non_utf8() {
             vec![b"byte\xff.txt\0".to_vec()].to_variant(),
         )]),
     )
-    .unwrap();
+    .expect("expected test value from parse( \"SaveFiles\", Options::from([( \"files\".into(), vec![b\"byte\\xff.txt\\0\".to_vec()].to_variant(), )]), )");
     assert_eq!(
         request.kind,
         Kind::SaveFiles(vec![OsString::from_vec(b"byte\xff.txt".to_vec())])
@@ -126,8 +132,8 @@ fn filters_roundtrip_but_invalid_or_unbounded_rules_are_rejected() {
             ("current_filter".into(), filter.clone().to_variant()),
         ]),
     )
-    .unwrap();
-    assert_eq!(request.filters, [filter.clone()]);
+    .expect("expected test value from parse( \"OpenFile\", Options::from([ (\"filters\".into(), vec![filter.clone()].to_variant()), (\"current_filter\".into(), filter.clon...");
+    assert_eq!(request.filters.as_slice(), std::slice::from_ref(&filter));
     assert_eq!(request.current_filter, Some(filter));
     for rules in [
         vec![(2, "*.png".into())],
@@ -161,7 +167,7 @@ fn choice_ids_values_and_defaults_are_unique_valid_and_bounded() {
             "OpenFile",
             Options::from([("choices".into(), valid.to_variant())])
         )
-        .unwrap()
+        .expect("expected test value from parse( \"OpenFile\", Options::from([(\"choices\".into(), valid.to_variant())]) )")
         .choices,
         valid
     );

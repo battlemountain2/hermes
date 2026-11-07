@@ -141,7 +141,10 @@ impl TabBar {
             return;
         };
         let view_state = reopened.view.clone();
-        match self.trails.create(reopened.name.clone(), location, view_state) {
+        match self
+            .trails
+            .create(reopened.name.clone(), location, view_state)
+        {
             Ok(id) => {
                 if let Some(tab) = self.trails.all().into_iter().find(|tab| tab.id == id) {
                     (self.activate_tab)(tab);
@@ -164,7 +167,8 @@ impl TabBar {
     pub fn refresh(self: &Rc<Self>) {
         let started = std::time::Instant::now();
         let tabs = self.trails.all();
-        self.browser.retain_open_tabs(&tabs.iter().map(|tab| tab.id.clone()).collect::<Vec<_>>());
+        self.browser
+            .retain_open_tabs(&tabs.iter().map(|tab| tab.id.clone()).collect::<Vec<_>>());
         let active = self.trails.active_id();
         let active_changed = self.rendered_active.replace(active.clone()) != active;
         let mut previous = self.rendered.take();
@@ -173,7 +177,11 @@ impl TabBar {
         let mut rebuilt = 0usize;
         self.root.set_visible(!tabs.is_empty());
         for tab in &tabs {
-            let existing = previous.iter().position(|(old, _)| old.id == tab.id && old.name == tab.name && old.location.as_ref() == tab.active_location());
+            let existing = previous.iter().position(|(old, _)| {
+                old.id == tab.id
+                    && old.name == tab.name
+                    && old.location.as_ref() == tab.active_location()
+            });
             let item = if let Some(position) = existing {
                 previous.remove(position).1
             } else {
@@ -226,13 +234,21 @@ impl TabBar {
                     gtk::glib::ControlFlow::Break
                 });
             }
-            rendered.push((TabPresentation {
-                id: tab.id.clone(),
-                name: tab.name.clone(),
-                location: tab.active_location().cloned(),
-            }, item));
+            rendered.push((
+                TabPresentation {
+                    id: tab.id.clone(),
+                    name: tab.name.clone(),
+                    location: tab.active_location().cloned(),
+                },
+                item,
+            ));
         }
-        if old_order.len() != rendered.len() || old_order.iter().zip(&rendered).any(|(old, (_, item))| old != item) {
+        if old_order.len() != rendered.len()
+            || old_order
+                .iter()
+                .zip(&rendered)
+                .any(|(old, (_, item))| old != item)
+        {
             while let Some(child) = self.tabs.first_child() {
                 self.tabs.remove(&child);
             }
@@ -242,7 +258,12 @@ impl TabBar {
             self.tabs.append(&self.tab_new_button);
         }
         self.rendered.replace(rendered);
-        tracing::debug!(tabs = tabs.len(), rebuilt, refresh_micros = started.elapsed().as_micros() as u64, "tab strip refreshed");
+        tracing::debug!(
+            tabs = tabs.len(),
+            rebuilt,
+            refresh_micros = started.elapsed().as_micros() as u64,
+            "tab strip refreshed"
+        );
     }
 
     fn tab(self: &Rc<Self>, tab: &Trail, count: usize, active: Option<&TrailId>) -> gtk::Box {

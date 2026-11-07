@@ -34,7 +34,9 @@ fn data(commands: Vec<CollectionCommand>) -> Collections {
     }
     for command in commands {
         let revision = store.snapshot().revision;
-        store.send(command).unwrap();
+        store
+            .send(command)
+            .expect("expected test value from store.send(command)");
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
         while store.snapshot().revision <= revision || !store.snapshot().ready {
             assert!(std::time::Instant::now() < deadline);
@@ -60,7 +62,7 @@ fn pending_final_observation_retries_without_advancing_or_losing_first_seen_time
                 accepted.extend(batch);
                 Ok(())
             })
-            .unwrap()
+            .expect("expected test value from pending .try_submit(|batch, timestamp| { assert_eq!(timestamp, 123); accepted.extend(batch); Ok(()) })")
     );
     assert_eq!(pending.next, 512);
     assert!(
@@ -76,7 +78,7 @@ fn pending_final_observation_retries_without_advancing_or_losing_first_seen_time
                 accepted.extend(batch);
                 Ok(())
             })
-            .unwrap()
+            .expect("expected test value from pending .try_submit(|batch, timestamp| { assert_eq!(timestamp, 123); accepted.extend(batch); Ok(()) })")
     );
     assert!(
         pending
@@ -85,7 +87,7 @@ fn pending_final_observation_retries_without_advancing_or_losing_first_seen_time
                 accepted.extend(batch);
                 Ok(())
             })
-            .unwrap()
+            .expect("expected test value from pending .try_submit(|batch, timestamp| { assert_eq!(timestamp, 123); accepted.extend(batch); Ok(()) })")
     );
     assert_eq!(accepted, paths);
 }
@@ -107,7 +109,7 @@ fn pending_latest_snapshot_coalesces_and_each_submission_is_bounded() {
                 );
                 Ok(())
             })
-            .unwrap()
+            .expect("expected test value from pending .try_submit(|paths, timestamp| { assert_eq!(paths.len(), 512); assert_eq!(timestamp, 200); assert!( paths .iter() .all(...")
     );
     assert_eq!(pending.next, 512);
 }
@@ -125,7 +127,7 @@ fn coalescing_preserves_earliest_unsubmitted_dates_and_dates_new_paths_independe
                 assert_eq!(timestamp, 100);
                 Ok(())
             })
-            .unwrap()
+            .expect("expected test value from pending .try_submit(|paths, timestamp| { assert_eq!(paths, vec![old]); assert_eq!(timestamp, 100); Ok(()) })")
     );
     assert!(
         pending
@@ -134,7 +136,7 @@ fn coalescing_preserves_earliest_unsubmitted_dates_and_dates_new_paths_independe
                 assert_eq!(timestamp, 200);
                 Ok(())
             })
-            .unwrap()
+            .expect("expected test value from pending .try_submit(|paths, timestamp| { assert_eq!(paths, vec![newest]); assert_eq!(timestamp, 200); Ok(()) })")
     );
 }
 
@@ -250,7 +252,14 @@ fn playlist_order_and_unavailable_placeholders_survive_search_and_catalog_remova
         .len(),
         3
     );
-    assert_eq!(collections.playlist(1).unwrap().tracks.len(), 3);
+    assert_eq!(
+        collections
+            .playlist(1)
+            .expect("expected test value from collections.playlist(1)")
+            .tracks
+            .len(),
+        3
+    );
 }
 
 #[test]
@@ -290,8 +299,8 @@ fn smart_collections_rank_dates_and_positive_counts_with_stable_path_ties() {
 #[test]
 #[ignore = "Requires isolated GTK display; generated catalog only, no personal library or collection data"]
 fn desktop_navigation_favorites_separate_editor_drag_and_missing_memberships() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let _theme = super::super::super::theme::ThemeManager::shared();
     let player = MusicPlayer::with_session(None);
     let state = &player.state;
@@ -335,14 +344,17 @@ fn desktop_navigation_favorites_separate_editor_drag_and_missing_memberships() {
     }
     state.navigation[2].1.set_active(true);
     pump(&|| !state.favorite_buttons.borrow().is_empty());
-    let heart = state.favorite_buttons.borrow()[0].0.upgrade().unwrap();
+    let heart = state.favorite_buttons.borrow()[0]
+        .0
+        .upgrade()
+        .expect("expected test value from state.favorite_buttons.borrow()[0].0.upgrade()");
     let heart_path = state.favorite_buttons.borrow()[0].1.clone();
     assert!(!heart.is_active());
     assert!(
         heart
             .child()
             .and_downcast::<gtk::Image>()
-            .unwrap()
+            .expect("expected test value from heart .child() .and_downcast::<gtk::Image>()")
             .paintable()
             .is_some()
     );
@@ -392,7 +404,7 @@ fn desktop_navigation_favorites_separate_editor_drag_and_missing_memberships() {
         .borrow()
         .iter()
         .position(|group| *group == Group::Playlist(1))
-        .unwrap();
+        .expect("expected test value from state .groups .borrow() .iter() .position(|group| *group == Group::Playlist(1))");
     state.group_selection.set_selected(position as u32);
     assert_eq!(state.tracks.borrow().len(), 4);
     let playback = state.track_playback(&tracks[1].path);
@@ -409,15 +421,17 @@ fn desktop_navigation_favorites_separate_editor_drag_and_missing_memberships() {
     let rows = rows();
     let source = rows[0]
         .first_child()
-        .unwrap()
+        .expect("expected test value from rows[0] .first_child()")
         .observe_controllers()
         .item(0)
         .and_downcast::<gtk::DragSource>()
-        .unwrap();
+        .expect("expected test value from rows[0] .first_child() .unwrap() .observe_controllers() .item(0) .and_downcast::<gtk::DragSource>()");
     let provider = source
         .emit_by_name::<Option<gtk::gdk::ContentProvider>>("prepare", &[&0.0_f64, &0.0_f64])
-        .unwrap();
-    let value = provider.value(String::static_type()).unwrap();
+        .expect("expected test value from source .emit_by_name::<Option<gtk::gdk::ContentProvider>>(\"prepare\", &[&0.0_f64, &0.0_f64])");
+    let value = provider
+        .value(String::static_type())
+        .expect("expected test value from provider.value(String::static_type())");
     let changed = Rc::new(Cell::new(0));
     let changed_groups = changed.clone();
     state
@@ -456,7 +470,7 @@ fn desktop_navigation_favorites_separate_editor_drag_and_missing_memberships() {
         .observe_controllers()
         .item(0)
         .and_downcast::<gtk::DropTarget>()
-        .unwrap();
+        .expect("expected test value from rows[2] .observe_controllers() .item(0) .and_downcast::<gtk::DropTarget>()");
     assert!(target.emit_by_name::<bool>(
         "drop",
         &[
@@ -471,7 +485,9 @@ fn desktop_navigation_favorites_separate_editor_drag_and_missing_memberships() {
             .borrow()
             .data
             .playlist(1)
-            .unwrap()
+            .expect(
+                "expected test value from state .collection_snapshot .borrow() .data .playlist(1)",
+            )
             .tracks[2]
             .native_path()
             == Some(tracks[0].path.as_path())
@@ -487,14 +503,14 @@ fn desktop_navigation_favorites_separate_editor_drag_and_missing_memberships() {
         .into_iter()
         .filter_map(|widget| widget.downcast::<gtk::Entry>().ok())
         .find(|entry| entry.placeholder_text().as_deref() == Some("Playlist name"))
-        .unwrap();
+        .expect("expected test value from descendants(dialog.upcast_ref()) .into_iter() .filter_map(|widget| widget.downcast::<gtk::Entry>().ok()) .find(|entry| entry.pl...");
     entry.set_text("Renamed fixture");
     let control = |label: &str| {
         descendants(dialog.upcast_ref())
             .into_iter()
             .filter_map(|widget| widget.downcast::<gtk::Button>().ok())
             .find(|button| button.label().as_deref() == Some(label))
-            .unwrap()
+            .expect("expected test value from descendants(dialog.upcast_ref()) .into_iter() .filter_map(|widget| widget.downcast::<gtk::Button>().ok()) .find(|button| button...")
     };
     control("Rename").emit_clicked();
     pump(&|| {
@@ -503,7 +519,9 @@ fn desktop_navigation_favorites_separate_editor_drag_and_missing_memberships() {
             .borrow()
             .data
             .playlist(1)
-            .unwrap()
+            .expect(
+                "expected test value from state .collection_snapshot .borrow() .data .playlist(1)",
+            )
             .name
             == "Renamed fixture"
     });
@@ -515,7 +533,7 @@ fn desktop_navigation_favorites_separate_editor_drag_and_missing_memberships() {
                 .tooltip_text()
                 .is_some_and(|tooltip| tooltip.starts_with("Remove membership"))
         })
-        .unwrap();
+        .expect("expected test value from descendants(dialog.upcast_ref()) .into_iter() .filter_map(|widget| widget.downcast::<gtk::Button>().ok()) .find(|button| { butt...");
     remove.emit_clicked();
     pump(&|| {
         state
@@ -523,7 +541,9 @@ fn desktop_navigation_favorites_separate_editor_drag_and_missing_memberships() {
             .borrow()
             .data
             .playlist(1)
-            .unwrap()
+            .expect(
+                "expected test value from state .collection_snapshot .borrow() .data .playlist(1)",
+            )
             .tracks
             .len()
             == 3
@@ -536,7 +556,7 @@ fn desktop_navigation_favorites_separate_editor_drag_and_missing_memberships() {
                 .tooltip_text()
                 .is_some_and(|tooltip| tooltip.starts_with("Add selected library song"))
         })
-        .unwrap();
+        .expect("expected test value from descendants(dialog.upcast_ref()) .into_iter() .filter_map(|widget| widget.downcast::<gtk::Button>().ok()) .find(|button| { butt...");
     add.emit_clicked();
     pump(&|| {
         state
@@ -544,7 +564,9 @@ fn desktop_navigation_favorites_separate_editor_drag_and_missing_memberships() {
             .borrow()
             .data
             .playlist(1)
-            .unwrap()
+            .expect(
+                "expected test value from state .collection_snapshot .borrow() .data .playlist(1)",
+            )
             .tracks
             .len()
             == 4

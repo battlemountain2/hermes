@@ -13,9 +13,9 @@ use crate::{
     ui::seek::SeekControl,
 };
 
+mod layout;
 mod vinyl;
 mod visualizer;
-mod layout;
 
 #[cfg(test)]
 mod tests;
@@ -240,21 +240,21 @@ impl AudioPreview {
 
         let weak_stream = stream.downgrade();
         prev_button.connect_clicked(move |_| {
-            if let Some(stream) = weak_stream.upgrade() {
-                if stream.is_seekable() {
-                    stream.seek(0);
-                }
+            if let Some(stream) = weak_stream.upgrade()
+                && stream.is_seekable()
+            {
+                stream.seek(0);
             }
         });
 
         let weak_stream = stream.downgrade();
         next_button.connect_clicked(move |_| {
-            if let Some(stream) = weak_stream.upgrade() {
-                if stream.is_seekable() {
-                    let dur = stream.duration();
-                    if dur > 0 {
-                        stream.seek(dur);
-                    }
+            if let Some(stream) = weak_stream.upgrade()
+                && stream.is_seekable()
+            {
+                let dur = stream.duration();
+                if dur > 0 {
+                    stream.seek(dur);
                 }
             }
         });
@@ -279,7 +279,11 @@ impl AudioPreview {
         let stream_ref_for_target = stream.downgrade();
         let seek_control = SeekControl::new(
             &seek,
-            move || stream_ref_for_seek.upgrade().map(|s| s.upcast::<gtk::MediaStream>()),
+            move || {
+                stream_ref_for_seek
+                    .upgrade()
+                    .map(|s| s.upcast::<gtk::MediaStream>())
+            },
             move |target_time| {
                 if let Some(stream) = stream_ref_for_target.upgrade() {
                     stream.seek(target_time);
@@ -321,16 +325,21 @@ impl AudioPreview {
             }
 
             // Sync visualizer tick loop
-            if is_playing {
-                if let Some(vis) = weak_visualizer.upgrade() {
-                    vis.ensure_tick_running();
-                }
+            if is_playing && let Some(vis) = weak_visualizer.upgrade() {
+                vis.ensure_tick_running();
             }
 
             // Update Play/Pause button
             if let Some(play_btn) = weak_play_btn.upgrade() {
                 if prev_playing_icon.replace(Some(is_playing)) != Some(is_playing) {
-                    set_button_icon(&play_btn, if is_playing { icons::PAUSE } else { icons::PLAY });
+                    set_button_icon(
+                        &play_btn,
+                        if is_playing {
+                            icons::PAUSE
+                        } else {
+                            icons::PLAY
+                        },
+                    );
                 }
                 play_btn.set_tooltip_text(Some(if is_playing {
                     "Pause"
@@ -345,9 +354,20 @@ impl AudioPreview {
             let is_muted = stream.is_muted();
             if let Some(mute_btn) = weak_mute_btn.upgrade() {
                 if prev_muted_icon.replace(Some(is_muted)) != Some(is_muted) {
-                    set_button_icon(&mute_btn, if is_muted { icons::MUTED } else { icons::VOLUME });
+                    set_button_icon(
+                        &mute_btn,
+                        if is_muted {
+                            icons::MUTED
+                        } else {
+                            icons::VOLUME
+                        },
+                    );
                 }
-                mute_btn.set_tooltip_text(Some(if is_muted { "Unmute audio" } else { "Mute audio" }));
+                mute_btn.set_tooltip_text(Some(if is_muted {
+                    "Unmute audio"
+                } else {
+                    "Mute audio"
+                }));
             }
 
             // Update Volume Slider
@@ -468,7 +488,11 @@ impl Drop for AudioPreview {
 }
 
 fn format_track_number(metadata: &AudioMetadata) -> Option<String> {
-    if let Some(track) = metadata.embedded_tags.get("track").or_else(|| metadata.embedded_tags.get("tracknumber")) {
+    if let Some(track) = metadata
+        .embedded_tags
+        .get("track")
+        .or_else(|| metadata.embedded_tags.get("tracknumber"))
+    {
         return Some(format!("Track {track}"));
     }
     if let Some(track) = metadata.tags.track {

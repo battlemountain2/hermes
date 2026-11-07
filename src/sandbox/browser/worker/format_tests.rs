@@ -51,12 +51,18 @@ fn pdf_worker_renders_a_thumbnail_not_a_full_page_or_text_layer() {
     let directory = FixtureDirectory::new();
     let path = directory.0.join("opaque.fd");
     crate::sandbox::browser::format_tests::write_pdf(&path);
-    let descriptor = OwnedFd::from(File::open(&path).unwrap());
-    let result = render_job(Operation::Pdf, &descriptor).unwrap();
+    let descriptor = OwnedFd::from(
+        File::open(&path).expect("generated fixture must provide the expected value"),
+    );
+    let result = render_job(Operation::Pdf, &descriptor)
+        .expect("generated fixture must provide the expected value");
     let loader = gtk::gdk_pixbuf::PixbufLoader::new();
-    gtk::prelude::PixbufLoaderExt::write(&loader, &result.png).unwrap();
-    gtk::prelude::PixbufLoaderExt::close(&loader).unwrap();
-    let pixels = gtk::prelude::PixbufLoaderExt::pixbuf(&loader).unwrap();
+    gtk::prelude::PixbufLoaderExt::write(&loader, &result.png)
+        .expect("generated fixture must provide the expected value");
+    gtk::prelude::PixbufLoaderExt::close(&loader)
+        .expect("generated fixture must provide the expected value");
+    let pixels = gtk::prelude::PixbufLoaderExt::pixbuf(&loader)
+        .expect("generated fixture must provide the expected value");
     assert_eq!((pixels.width(), pixels.height()), (256, 256));
     assert!(result.metadata.is_empty());
 }
