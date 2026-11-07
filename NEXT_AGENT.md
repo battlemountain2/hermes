@@ -19,6 +19,11 @@ This is a follow-up to draft PR #7, not permission to merge or publish.
   models alive. Handlers now travel with retained presentations. The regression
   verifies restoration and release across Columns, Grid and Explorer. Compact
   density CSS is now initialized before the first zoom action.
+- Search keeps a compact status/filter row at a steady height and bounds long
+  inferred-chip scrolling. Its geometry regression exercises 10/13/22px fonts.
+  Fixture updates follow combined lyrics mode, asynchronous first-launch gating
+  and controls moved into the Filters popover. Generated thumbnail/hover probes
+  receive private roots explicitly.
 - Publication controls bind a manual channel/version/SHA decision, exact-commit
   CI and human environment approval; no main/version rewrite or tag movement.
   No real release dispatch or repository protection change has been performed.
