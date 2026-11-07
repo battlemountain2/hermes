@@ -3,10 +3,10 @@
 use std::path::Path;
 
 use super::{
-    dropped_folder_bookmarks, insert_pinned_places, is_standard_place_location, mouse_navigation_delta,
-    parse_pinned_places, preferred_pin_drop_action, preferred_sidebar_drop_action,
-    remove_pinned_place, reorder_places,
-    should_show_standard_place, sidebar_reorder_formats,
+    dropped_folder_bookmarks, insert_pinned_places, is_standard_place_location,
+    mouse_navigation_delta, parse_pinned_places, preferred_pin_drop_action,
+    preferred_sidebar_drop_action, remove_pinned_place, reorder_places, should_show_standard_place,
+    sidebar_reorder_formats,
 };
 
 #[test]
@@ -16,12 +16,28 @@ fn pins_can_be_inserted_and_reordered_without_duplicates() {
     let second = (Location::local("/test/second"), "Second".into());
     let third = (Location::local("/test/third"), "Third".into());
     let mut places = vec![first.clone(), third.clone()];
-    assert!(insert_pinned_places(&mut places, vec![second.clone()], Some(&third.0)));
+    assert!(insert_pinned_places(
+        &mut places,
+        vec![second.clone()],
+        Some(&third.0)
+    ));
     assert_eq!(places, vec![first.clone(), second.clone(), third.clone()]);
-    assert!(insert_pinned_places(&mut places, vec![third.clone()], Some(&first.0)));
+    assert!(insert_pinned_places(
+        &mut places,
+        vec![third.clone()],
+        Some(&first.0)
+    ));
     assert_eq!(places, vec![third.clone(), first.clone(), second.clone()]);
-    assert!(!insert_pinned_places(&mut places, vec![first.clone()], Some(&first.0)));
-    assert!(insert_pinned_places(&mut places, vec![third.clone(), third.clone()], None));
+    assert!(!insert_pinned_places(
+        &mut places,
+        vec![first.clone()],
+        Some(&first.0)
+    ));
+    assert!(insert_pinned_places(
+        &mut places,
+        vec![third.clone(), third.clone()],
+        None
+    ));
     assert_eq!(places, vec![first, second, third]);
     assert!(!insert_pinned_places(&mut places, Vec::new(), None));
 }
@@ -29,8 +45,15 @@ fn pins_can_be_inserted_and_reordered_without_duplicates() {
 #[test]
 fn view_mode_action_names_round_trip_and_reject_unknown_values() {
     use crate::ui::browser_modes::BrowserMode;
-    for mode in [BrowserMode::Columns, BrowserMode::Grid, BrowserMode::Explorer] {
-        assert_eq!(BrowserMode::from_action_name(mode.action_name()), Some(mode));
+    for mode in [
+        BrowserMode::Columns,
+        BrowserMode::Grid,
+        BrowserMode::Explorer,
+    ] {
+        assert_eq!(
+            BrowserMode::from_action_name(mode.action_name()),
+            Some(mode)
+        );
     }
     assert_eq!(BrowserMode::from_action_name("unknown"), None);
 }
@@ -42,9 +65,18 @@ fn pin_drops_negotiate_copy_without_moving_the_source() {
         preferred_pin_drop_action(DragAction::COPY | DragAction::MOVE, true),
         DragAction::COPY
     );
-    assert_eq!(preferred_pin_drop_action(DragAction::COPY, false), DragAction::COPY);
-    assert_eq!(preferred_pin_drop_action(DragAction::MOVE, true), DragAction::MOVE);
-    assert_eq!(preferred_pin_drop_action(DragAction::MOVE, false), DragAction::empty());
+    assert_eq!(
+        preferred_pin_drop_action(DragAction::COPY, false),
+        DragAction::COPY
+    );
+    assert_eq!(
+        preferred_pin_drop_action(DragAction::MOVE, true),
+        DragAction::MOVE
+    );
+    assert_eq!(
+        preferred_pin_drop_action(DragAction::MOVE, false),
+        DragAction::empty()
+    );
     assert_eq!(
         preferred_pin_drop_action(DragAction::empty(), true),
         DragAction::empty()
@@ -64,9 +96,9 @@ fn sidebar_file_drops_cannot_be_consumed_by_place_reordering() {
         .add_mime_type("text/uri-list")
         .build();
     assert!(!sidebar_reorder_formats(&formats));
-    assert!(sidebar_reorder_formats(&gtk::gdk::ContentFormats::for_type(
-        String::static_type()
-    )));
+    assert!(sidebar_reorder_formats(
+        &gtk::gdk::ContentFormats::for_type(String::static_type())
+    ));
 }
 
 #[test]
@@ -120,7 +152,8 @@ fn sidebar_trash_drops_only_accept_move() {
 #[test]
 fn sidebar_pinning_filters_files_missing_paths_and_duplicates()
 -> Result<(), Box<dyn std::error::Error>> {
-    let directory = std::env::temp_dir().join(format!("hermes-sidebar-pins-{}", std::process::id()));
+    let directory =
+        std::env::temp_dir().join(format!("hermes-sidebar-pins-{}", std::process::id()));
     std::fs::create_dir_all(directory.join("Folder"))?;
     std::fs::write(directory.join("file.txt"), "fixture")?;
     let folder = crate::model::Location::local(directory.join("Folder"));

@@ -37,7 +37,7 @@ impl Fixture {
         let store = Store::start(self.path());
         self.workers
             .lock()
-            .unwrap()
+            .expect("expected test value from self.workers .lock()")
             .push(Arc::downgrade(&store.0.snapshot));
         store
     }
@@ -47,9 +47,9 @@ impl Fixture {
             .recursive(true)
             .mode(0o700)
             .create(&self.root)
-            .unwrap();
-        fs::write(self.path(), bytes).unwrap();
-        fs::set_permissions(self.path(), fs::Permissions::from_mode(0o600)).unwrap();
+            .expect("expected test value from fs::DirBuilder::new() .recursive(true) .mode(0o700) .create(&self.root)");
+        fs::write(self.path(), bytes).expect("write generated fixture");
+        fs::set_permissions(self.path(), fs::Permissions::from_mode(0o600)).expect("expected test value from fs::set_permissions(self.path(), fs::Permissions::from_mode(0o600))");
     }
 }
 
@@ -59,7 +59,7 @@ impl Drop for Fixture {
         while self
             .workers
             .lock()
-            .unwrap()
+            .expect("expected test value from self .workers .lock()")
             .iter()
             .any(|worker| worker.strong_count() != 0)
             && Instant::now() < deadline
@@ -114,7 +114,9 @@ fn create(name: &str) -> Command {
 }
 
 fn send_ok(store: &Store, command: Command) -> Snapshot {
-    store.send(command).unwrap();
+    store
+        .send(command)
+        .expect("expected test value from store.send(command)");
     assert!(store.flush(TIMEOUT), "{:?}", store.snapshot().error);
     let snapshot = store.snapshot();
     assert!(snapshot.ready);
@@ -123,7 +125,9 @@ fn send_ok(store: &Store, command: Command) -> Snapshot {
 }
 
 fn send_error(store: &Store, command: Command) -> Snapshot {
-    store.send(command).unwrap();
+    store
+        .send(command)
+        .expect("expected test value from store.send(command)");
     assert!(!store.flush(TIMEOUT));
     let snapshot = store.snapshot();
     assert!(snapshot.ready);
@@ -180,25 +184,39 @@ fn round_trip_canonicalizes_physical_scopes_and_preserves_song_membership() {
         assert_eq!(entry.id, position as u64 + 1);
         assert_eq!(entry.name, format!("Query {position}"));
         assert_eq!(entry.uri, search.to_uri());
-        assert_eq!(ScopedSearch::from_uri(&entry.uri).unwrap(), *search);
+        assert_eq!(
+            ScopedSearch::from_uri(&entry.uri)
+                .expect("expected test value from ScopedSearch::from_uri(&entry.uri)"),
+            *search
+        );
     }
-    let document: Document = serde_json::from_slice(&fs::read(fixture.path()).unwrap()).unwrap();
+    let document: Document =
+        serde_json::from_slice(&fs::read(fixture.path()).expect("read generated fixture"))
+            .expect("read generated fixture");
     assert_eq!(document.entries, entries);
     retire(store);
     let restarted = fixture.store();
     assert!(restarted.flush(TIMEOUT));
     assert_eq!(restarted.snapshot().entries, entries);
     assert_eq!(
-        fs::metadata(&fixture.root).unwrap().permissions().mode() & 0o777,
+        fs::metadata(&fixture.root)
+            .expect("expected test value from fs::metadata(&fixture.root)")
+            .permissions()
+            .mode()
+            & 0o777,
         0o700
     );
     assert_eq!(
-        fs::metadata(fixture.path()).unwrap().permissions().mode() & 0o777,
+        fs::metadata(fixture.path())
+            .expect("expected test value from fs::metadata(fixture.path())")
+            .permissions()
+            .mode()
+            & 0o777,
         0o600
     );
     assert_eq!(
         fs::metadata(fixture.path().with_extension("json.lock"))
-            .unwrap()
+            .expect("expected test value from fs::metadata(fixture.path().with_extension(\"json.lock\"))")
             .permissions()
             .mode()
             & 0o777,
@@ -209,14 +227,17 @@ fn round_trip_canonicalizes_physical_scopes_and_preserves_song_membership() {
 #[test]
 fn unicode_names_casefold_trim_and_reject_controls_and_duplicates() {
     let mut data = Document::default();
-    data.apply(create("  Straße  ")).unwrap();
+    data.apply(create("  Straße  "))
+        .expect("expected test value from data.apply(create(\" Straße \"))");
     assert_eq!(data.entries[0].name, "Straße");
     for duplicate in ["STRASSE", " strasse ", "straße"] {
         assert!(data.apply(create(duplicate)).is_err());
     }
-    data.apply(create("Σ")).unwrap();
+    data.apply(create("Σ"))
+        .expect("expected test value from data.apply(create(\"Σ\"))");
     assert!(data.apply(create("ς")).is_err());
-    data.apply(create(&"音".repeat(80))).unwrap();
+    data.apply(create(&"音".repeat(80)))
+        .expect("expected test value from data.apply(create(&\"音\".repeat(80)))");
     for name in [
         "",
         "   ",
@@ -311,7 +332,8 @@ fn edit_delete_use_exact_preconditions_and_never_reuse_identifiers() {
 fn entry_id_and_location_limits_reject_without_unbounded_snapshots() {
     let mut data = Document::default();
     for position in 0..MAX_ENTRIES {
-        data.apply(create(&format!("Query {position}"))).unwrap();
+        data.apply(create(&format!("Query {position}")))
+            .expect("expected test value from data.apply(create(&format!(\"Query {position}\")))");
     }
     assert!(data.apply(create("Overflow")).is_err());
     assert!(data.validate().is_ok());
@@ -346,13 +368,15 @@ fn entry_id_and_location_limits_reject_without_unbounded_snapshots() {
 #[test]
 fn corrupt_future_and_invalid_documents_preserve_bytes_until_explicit_reload() {
     let mut duplicate = Document::default();
-    duplicate.apply(create("One")).unwrap();
+    duplicate
+        .apply(create("One"))
+        .expect("expected test value from duplicate.apply(create(\"One\"))");
     duplicate.entries.push(duplicate.entries[0].clone());
     for bytes in [
         b"{not-json".to_vec(),
         br#"{"version":2,"next_id":1,"entries":[]}"#.to_vec(),
         br#"{"version":1,"next_id":0,"entries":[]}"#.to_vec(),
-        serde_json::to_vec(&duplicate).unwrap(),
+        serde_json::to_vec(&duplicate).expect("serialize generated JSON fixture"),
         vec![b' '; MAX_FILE_BYTES as usize + 1],
     ] {
         let fixture = Fixture::new();
@@ -363,15 +387,22 @@ fn corrupt_future_and_invalid_documents_preserve_bytes_until_explicit_reload() {
         let revision = store.revision();
         assert!(send_error(&store, create("Blocked")).entries.is_empty());
         assert_eq!(store.revision(), revision + 1);
-        assert_eq!(fs::read(fixture.path()).unwrap(), bytes);
-        let repaired = serde_json::to_vec(&Document::default()).unwrap();
+        assert_eq!(
+            fs::read(fixture.path()).expect("read generated fixture"),
+            bytes
+        );
+        let repaired =
+            serde_json::to_vec(&Document::default()).expect("serialize generated JSON fixture");
         fixture.write(&repaired);
         assert!(
             send_error(&store, create("Still blocked"))
                 .entries
                 .is_empty()
         );
-        assert_eq!(fs::read(fixture.path()).unwrap(), repaired);
+        assert_eq!(
+            fs::read(fixture.path()).expect("read generated fixture"),
+            repaired
+        );
         send_ok(&store, Command::Reload);
         assert_eq!(send_ok(&store, create("Recovered")).entries.len(), 1);
     }
@@ -383,23 +414,31 @@ fn external_edits_and_deletions_are_never_overwritten_and_reload_recovers() {
     let store = fixture.store();
     let original = send_ok(&store, create("Original")).entries;
     let mut external = Document::default();
-    external.apply(create("External")).unwrap();
-    let bytes = serde_json::to_vec_pretty(&external).unwrap();
+    external
+        .apply(create("External"))
+        .expect("expected test value from external.apply(create(\"External\"))");
+    let bytes = serde_json::to_vec_pretty(&external).expect("serialize generated JSON fixture");
     fixture.write(&bytes);
     assert_eq!(
         send_error(&store, create("Do not overwrite")).entries,
         original
     );
-    assert_eq!(fs::read(fixture.path()).unwrap(), bytes);
+    assert_eq!(
+        fs::read(fixture.path()).expect("read generated fixture"),
+        bytes
+    );
     assert_eq!(
         send_error(&store, Command::Delete(original[0].clone())).entries,
         original
     );
-    assert_eq!(fs::read(fixture.path()).unwrap(), bytes);
+    assert_eq!(
+        fs::read(fixture.path()).expect("read generated fixture"),
+        bytes
+    );
     let restored = send_ok(&store, Command::Reload);
     assert_eq!(restored.entries, external.entries);
     send_ok(&store, create("After reload"));
-    fs::remove_file(fixture.path()).unwrap();
+    fs::remove_file(fixture.path()).expect("remove generated fixture");
     assert_eq!(
         send_error(&store, create("Do not recreate")).entries.len(),
         2
@@ -416,18 +455,24 @@ fn external_creation_and_format_only_edits_require_reload_even_for_noop_updates(
     let store = fixture.store();
     assert!(store.flush(TIMEOUT));
     assert!(!fixture.path().exists());
-    let bytes = serde_json::to_vec(&Document::default()).unwrap();
+    let bytes = serde_json::to_vec(&Document::default()).expect("serialize generated JSON fixture");
     fixture.write(&bytes);
     assert!(
         send_error(&store, create("External creation"))
             .entries
             .is_empty()
     );
-    assert_eq!(fs::read(fixture.path()).unwrap(), bytes);
+    assert_eq!(
+        fs::read(fixture.path()).expect("read generated fixture"),
+        bytes
+    );
     send_ok(&store, Command::Reload);
     let previous = send_ok(&store, create("One")).entries.remove(0);
-    let document: Document = serde_json::from_slice(&fs::read(fixture.path()).unwrap()).unwrap();
-    let reformatted = serde_json::to_vec_pretty(&document).unwrap();
+    let document: Document =
+        serde_json::from_slice(&fs::read(fixture.path()).expect("read generated fixture"))
+            .expect("read generated fixture");
+    let reformatted =
+        serde_json::to_vec_pretty(&document).expect("serialize generated JSON fixture");
     fixture.write(&reformatted);
     let failed = send_error(
         &store,
@@ -438,7 +483,10 @@ fn external_creation_and_format_only_edits_require_reload_even_for_noop_updates(
         },
     );
     assert_eq!(failed.entries, vec![previous.clone()]);
-    assert_eq!(fs::read(fixture.path()).unwrap(), reformatted);
+    assert_eq!(
+        fs::read(fixture.path()).expect("read generated fixture"),
+        reformatted
+    );
     send_ok(&store, Command::Reload);
     send_ok(
         &store,
@@ -448,7 +496,10 @@ fn external_creation_and_format_only_edits_require_reload_even_for_noop_updates(
             uri: previous.uri.clone(),
         },
     );
-    assert_eq!(fs::read(fixture.path()).unwrap(), reformatted);
+    assert_eq!(
+        fs::read(fixture.path()).expect("read generated fixture"),
+        reformatted
+    );
 }
 
 #[test]
@@ -456,11 +507,14 @@ fn privacy_permission_changes_never_publish_uncommitted_changes() {
     let fixture = Fixture::new();
     let store = fixture.store();
     let entries = send_ok(&store, create("Committed")).entries;
-    let bytes = fs::read(fixture.path()).unwrap();
-    fs::set_permissions(&fixture.root, fs::Permissions::from_mode(0o500)).unwrap();
+    let bytes = fs::read(fixture.path()).expect("read generated fixture");
+    fs::set_permissions(&fixture.root, fs::Permissions::from_mode(0o500)).expect("expected test value from fs::set_permissions(&fixture.root, fs::Permissions::from_mode(0o500))");
     assert_eq!(send_error(&store, create("Not committed")).entries, entries);
-    assert_eq!(fs::read(fixture.path()).unwrap(), bytes);
-    fs::set_permissions(&fixture.root, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(
+        fs::read(fixture.path()).expect("read generated fixture"),
+        bytes
+    );
+    fs::set_permissions(&fixture.root, fs::Permissions::from_mode(0o700)).expect("expected test value from fs::set_permissions(&fixture.root, fs::Permissions::from_mode(0o700))");
     send_error(&store, create("Still requires reload"));
     send_ok(&store, Command::Reload);
     assert_eq!(send_ok(&store, create("Recovered")).entries.len(), 2);
@@ -473,7 +527,13 @@ fn independent_store_ownership_is_exclusive_and_reload_retries_after_release() {
     let original = send_ok(&owner, create("Owned")).entries;
     let follower = fixture.store();
     assert!(!follower.flush(TIMEOUT));
-    assert!(follower.snapshot().error.unwrap().contains("owner"));
+    assert!(
+        follower
+            .snapshot()
+            .error
+            .expect("expected test value from follower.snapshot().error")
+            .contains("owner")
+    );
     assert!(
         send_error(&follower, create("Cannot write"))
             .entries
@@ -495,7 +555,9 @@ fn last_store_drop_drains_pending_commands_without_a_worker_reference_cycle() {
     let store = fixture.store();
     assert!(store.flush(TIMEOUT));
     for position in 0..QUEUE_CAPACITY {
-        store.send(create(&format!("Pending {position}"))).unwrap();
+        store.send(create(&format!("Pending {position}"))).expect(
+            "expected test value from store.send(create(&format!(\"Pending {position}\")))",
+        );
     }
     retire(store);
     let restarted = fixture.store();
@@ -505,7 +567,7 @@ fn last_store_drop_drains_pending_commands_without_a_worker_reference_cycle() {
         send_ok(&restarted, create("After draining"))
             .entries
             .last()
-            .unwrap()
+            .expect("expected test value from send_ok(&restarted, create(\"After draining\")) .entries .last()")
             .id,
         9
     );
@@ -578,7 +640,9 @@ fn bounded_queue_send_and_barrier_never_wait_indefinitely() {
             .is_err()
     );
     for position in 0..QUEUE_CAPACITY {
-        store.send(create(&format!("Queued {position}"))).unwrap();
+        store
+            .send(create(&format!("Queued {position}")))
+            .expect("expected test value from store.send(create(&format!(\"Queued {position}\")))");
     }
     assert!(store.send(Command::Reload).is_err());
     assert!(!store.flush(Duration::ZERO));
@@ -603,14 +667,15 @@ fn file_byte_limit_fails_before_publishing_or_replacing_the_committed_document()
                 name: format!("Large {position}"),
                 uri: uri.clone(),
             })
-            .unwrap();
+            .expect("expected test value from store .send(Command::Create { name: format!(\"Large {position}\"), uri: uri.clone(), })");
         let flushed = store.flush(TIMEOUT);
         let snapshot = store.snapshot();
-        let bytes = fs::read(fixture.path()).unwrap();
+        let bytes = fs::read(fixture.path()).expect("read generated fixture");
         assert!(bytes.len() as u64 <= MAX_FILE_BYTES);
         if !flushed {
             assert_eq!(bytes, previous);
-            let committed: Document = serde_json::from_slice(&bytes).unwrap();
+            let committed: Document =
+                serde_json::from_slice(&bytes).expect("decode generated JSON fixture");
             assert_eq!(snapshot.entries, committed.entries);
             rejected = true;
             break;
@@ -627,42 +692,66 @@ fn file_byte_limit_fails_before_publishing_or_replacing_the_committed_document()
 fn symlinks_hardlinks_insecure_paths_and_replaced_locks_are_not_followed_or_overwritten() {
     let fixture = Fixture::new();
     let target = Fixture::new();
-    let bytes = serde_json::to_vec(&Document::default()).unwrap();
+    let bytes = serde_json::to_vec(&Document::default()).expect("serialize generated JSON fixture");
     target.write(&bytes);
     fs::DirBuilder::new()
         .mode(0o700)
         .create(&fixture.root)
-        .unwrap();
-    symlink(target.path(), fixture.path()).unwrap();
+        .expect(
+            "expected test value from fs::DirBuilder::new() .mode(0o700) .create(&fixture.root)",
+        );
+    symlink(target.path(), fixture.path())
+        .expect("expected test value from symlink(target.path(), fixture.path())");
     let store = fixture.store();
     assert!(send_error(&store, create("Symlink")).entries.is_empty());
-    assert_eq!(fs::read(target.path()).unwrap(), bytes);
-    fs::remove_file(fixture.path()).unwrap();
-    fs::hard_link(target.path(), fixture.path()).unwrap();
+    assert_eq!(
+        fs::read(target.path()).expect("read generated fixture"),
+        bytes
+    );
+    fs::remove_file(fixture.path()).expect("remove generated fixture");
+    fs::hard_link(target.path(), fixture.path())
+        .expect("expected test value from fs::hard_link(target.path(), fixture.path())");
     send_error(&store, Command::Reload);
-    assert_eq!(fs::read(target.path()).unwrap(), bytes);
-    fs::remove_file(fixture.path()).unwrap();
+    assert_eq!(
+        fs::read(target.path()).expect("read generated fixture"),
+        bytes
+    );
+    fs::remove_file(fixture.path()).expect("remove generated fixture");
     send_ok(&store, Command::Reload);
     send_ok(&store, create("Safe"));
     let lock_path = fixture.path().with_extension("json.lock");
-    fs::remove_file(&lock_path).unwrap();
-    symlink(target.path(), &lock_path).unwrap();
-    let committed = fs::read(fixture.path()).unwrap();
+    fs::remove_file(&lock_path).expect("remove generated fixture");
+    symlink(target.path(), &lock_path)
+        .expect("expected test value from symlink(target.path(), &lock_path)");
+    let committed = fs::read(fixture.path()).expect("read generated fixture");
     send_error(&store, create("Replaced lock"));
-    assert_eq!(fs::read(fixture.path()).unwrap(), committed);
-    assert_eq!(fs::read(target.path()).unwrap(), bytes);
+    assert_eq!(
+        fs::read(fixture.path()).expect("read generated fixture"),
+        committed
+    );
+    assert_eq!(
+        fs::read(target.path()).expect("read generated fixture"),
+        bytes
+    );
     send_error(&store, Command::Reload);
-    fs::remove_file(lock_path).unwrap();
+    fs::remove_file(lock_path).expect("remove generated fixture");
     send_ok(&store, Command::Reload);
     send_ok(&store, create("Recovered lock"));
-    let private_bytes = fs::read(fixture.path()).unwrap();
+    let private_bytes = fs::read(fixture.path()).expect("read generated fixture");
     retire(store);
-    fs::set_permissions(&fixture.root, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::set_permissions(&fixture.root, fs::Permissions::from_mode(0o755)).expect("expected test value from fs::set_permissions(&fixture.root, fs::Permissions::from_mode(0o755))");
     let insecure = fixture.store();
     assert!(!insecure.flush(TIMEOUT));
     assert_eq!(
-        fs::metadata(&fixture.root).unwrap().permissions().mode() & 0o777,
+        fs::metadata(&fixture.root)
+            .expect("expected test value from fs::metadata(&fixture.root)")
+            .permissions()
+            .mode()
+            & 0o777,
         0o755
     );
-    assert_eq!(fs::read(fixture.path()).unwrap(), private_bytes);
+    assert_eq!(
+        fs::read(fixture.path()).expect("read generated fixture"),
+        private_bytes
+    );
 }

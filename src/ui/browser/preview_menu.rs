@@ -208,11 +208,7 @@ fn show(
     }
     crate::ui::context_menu::tidy_separators(&content);
     menu.set_child(Some(&content));
-    menu.connect_closed(|menu| {
-        if menu.parent().is_some() {
-            menu.unparent();
-        }
-    });
+    crate::ui::context_menu::release_ephemeral_on_close(&menu, anchor);
     menu.popup();
     menu
 }

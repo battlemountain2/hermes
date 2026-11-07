@@ -84,5 +84,8 @@ fn split_dotfile_with_ext() {
 
 #[test]
 fn split_double_ext() {
-    assert_eq!(split_stem_extension("archive.tar.gz"), ("archive.tar", "gz"));
+    assert_eq!(
+        split_stem_extension("archive.tar.gz"),
+        ("archive.tar", "gz")
+    );
 }

@@ -90,7 +90,11 @@ impl Location {
                 if parent_sub.is_empty() {
                     Some(Self::uri(format!("archive://{}/", archive_file.display())))
                 } else {
-                    Some(Self::uri(format!("archive://{}/{}/", archive_file.display(), parent_sub)))
+                    Some(Self::uri(format!(
+                        "archive://{}/{}/",
+                        archive_file.display(),
+                        parent_sub
+                    )))
                 }
             }
         } else {
@@ -220,8 +224,8 @@ pub fn parse_archive_uri(uri_str: &str) -> Option<(std::path::PathBuf, String)> 
     }
     let mut current = Some(path);
     while let Some(candidate) = current {
-        if let Some(ext) = candidate.extension().and_then(|e| e.to_str()) {
-            if matches!(
+        if let Some(ext) = candidate.extension().and_then(|e| e.to_str())
+            && matches!(
                 ext.to_ascii_lowercase().as_str(),
                 "zip"
                     | "tar"
@@ -239,15 +243,15 @@ pub fn parse_archive_uri(uri_str: &str) -> Option<(std::path::PathBuf, String)> 
                     | "jar"
                     | "cbz"
                     | "cbr"
-            ) {
-                let relative = path
-                    .strip_prefix(candidate)
-                    .ok()?
-                    .to_string_lossy()
-                    .trim_matches('/')
-                    .to_string();
-                return Some((candidate.to_path_buf(), relative));
-            }
+            )
+        {
+            let relative = path
+                .strip_prefix(candidate)
+                .ok()?
+                .to_string_lossy()
+                .trim_matches('/')
+                .to_string();
+            return Some((candidate.to_path_buf(), relative));
         }
         current = candidate.parent();
     }

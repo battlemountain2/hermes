@@ -7,7 +7,20 @@ extend-exclude = [
 ]
 
 [default.extend-words]
+# OpenDocument/EPUB formats, XML namespace and existing GTK/transport terms.
+ODF = "ODF"
+OPF = "OPF"
+fo = "fo"
+controllen = "controllen"
+criticals = "criticals"
+seeked = "seeked"
+unparented = "unparented"
 Omarchy = "Omarchy"
 Hyprland = "Hyprland"
 JetBrains = "JetBrains"
 Strata = "Strata"
+
+[default]
+extend-ignore-identifiers-re = ["[a-f0-9]{7,40}", "PNGs[0-9]*"]
+# Deliberately truncated test text and the combined bsdtar create/auto/file flag.
+extend-ignore-re = ['>Hel<', '"-caf"']

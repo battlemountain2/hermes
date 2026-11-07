@@ -16,18 +16,23 @@ impl Drop for TempZip {
 
 fn create_sample_zip() -> TempZip {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let path = std::env::temp_dir().join(format!("hermes-zip-test-{}-{}.zip", std::process::id(), id));
+    let path =
+        std::env::temp_dir().join(format!("hermes-zip-test-{}-{}.zip", std::process::id(), id));
     let file = std::fs::File::create(&path).expect("create temp zip");
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default();
 
-    zip.start_file("Root Document.txt", options).unwrap();
-    zip.write_all(b"Hello from root").unwrap();
+    zip.start_file("Root Document.txt", options)
+        .expect("expected test value from zip.start_file(\"Root Document.txt\", options)");
+    zip.write_all(b"Hello from root")
+        .expect("expected test value from zip.write_all(b\"Hello from root\")");
 
-    zip.start_file("Subdir/Inner File.txt", options).unwrap();
-    zip.write_all(b"Hello from inside").unwrap();
+    zip.start_file("Subdir/Inner File.txt", options)
+        .expect("expected test value from zip.start_file(\"Subdir/Inner File.txt\", options)");
+    zip.write_all(b"Hello from inside")
+        .expect("expected test value from zip.write_all(b\"Hello from inside\")");
 
-    zip.finish().unwrap();
+    zip.finish().expect("expected test value from zip.finish()");
     TempZip(path)
 }
 
@@ -40,14 +45,17 @@ fn test_archive_index_parsing_and_subpaths() {
     let root_children = index.children.get("").expect("root children exist");
     assert_eq!(root_children.len(), 2);
 
-    let subdir_node = root_children.iter().find(|n| n.name == "Subdir").unwrap();
+    let subdir_node = root_children
+        .iter()
+        .find(|n| n.name == "Subdir")
+        .expect("expected test value from root_children.iter().find(|n| n.name == \"Subdir\")");
     assert!(subdir_node.is_dir);
     assert_eq!(subdir_node.relative_path, "Subdir");
 
     let doc_node = root_children
         .iter()
         .find(|n| n.name == "Root Document.txt")
-        .unwrap();
+        .expect("expected test value from root_children .iter() .find(|n| n.name == \"Root Document.txt\")");
     assert!(!doc_node.is_dir);
     assert_eq!(doc_node.size, 15);
 

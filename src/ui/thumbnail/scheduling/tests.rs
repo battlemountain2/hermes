@@ -53,11 +53,26 @@ fn visible_work_overtakes_prefetch_and_never_starts_hidden_work() {
     queue.enqueue(1, subscriber(None), false);
     queue.enqueue(2, subscriber(Some(1)), false);
     queue.enqueue(3, subscriber(Some(0)), false);
-    assert_eq!(start(&mut queue, 4).unwrap().1, 3);
-    assert_eq!(start(&mut queue, 4).unwrap().1, 2);
+    assert_eq!(
+        start(&mut queue, 4)
+            .expect("expected test value from start(&mut queue, 4)")
+            .1,
+        3
+    );
+    assert_eq!(
+        start(&mut queue, 4)
+            .expect("expected test value from start(&mut queue, 4)")
+            .1,
+        2
+    );
     assert!(start(&mut queue, 4).is_none());
     queue.waiting[0].targets[0].priority = Some(0);
-    assert_eq!(start(&mut queue, 4).unwrap().1, 1);
+    assert_eq!(
+        start(&mut queue, 4)
+            .expect("expected test value from start(&mut queue, 4)")
+            .1,
+        1
+    );
 }
 
 #[test]
@@ -66,7 +81,7 @@ fn worker_admission_stays_bounded_until_cancelled_workers_really_finish() {
     for work in 0..1000 {
         queue.enqueue(work, subscriber(Some(0)), false);
     }
-    let first = start(&mut queue, 4).unwrap();
+    let first = start(&mut queue, 4).expect("expected test value from start(&mut queue, 4)");
     for _ in 0..3 {
         assert!(start(&mut queue, 4).is_some());
     }
@@ -75,7 +90,9 @@ fn worker_admission_stays_bounded_until_cancelled_workers_really_finish() {
     queue.maintain(|target| target.alive, |target| target.priority);
     assert!(first.2.is_cancelled());
     assert!(start(&mut queue, 4).is_none());
-    queue.finish(first.0).unwrap();
+    queue
+        .finish(first.0)
+        .expect("expected test value from queue.finish(first.0)");
     assert!(start(&mut queue, 4).is_some());
     assert_eq!(queue.running.len(), 4);
 }
@@ -84,14 +101,16 @@ fn worker_admission_stays_bounded_until_cancelled_workers_really_finish() {
 fn duplicate_waiters_share_work_and_one_cancellation_does_not_cancel_the_other() {
     let mut queue = Queue::default();
     queue.enqueue(7, subscriber(Some(0)), true);
-    let job = start(&mut queue, 4).unwrap();
+    let job = start(&mut queue, 4).expect("expected test value from start(&mut queue, 4)");
     queue.enqueue(7, subscriber(Some(0)), true);
     assert!(queue.waiting.is_empty());
     assert_eq!(queue.running.len(), 1);
     queue.running[0].job.targets[0].alive = false;
     queue.maintain(|target| target.alive, |target| target.priority);
     assert!(!job.2.is_cancelled());
-    let completed = queue.finish(job.0).unwrap();
+    let completed = queue
+        .finish(job.0)
+        .expect("expected test value from queue.finish(job.0)");
     assert_eq!(completed.job.targets.len(), 1);
     assert!(queue.finish(job.0).is_none());
 }
@@ -100,7 +119,7 @@ fn duplicate_waiters_share_work_and_one_cancellation_does_not_cancel_the_other()
 fn a_cancelled_flight_is_never_joined_and_dead_pending_requests_are_removed() {
     let mut queue = Queue::default();
     queue.enqueue(7, subscriber(Some(0)), true);
-    let job = start(&mut queue, 4).unwrap();
+    let job = start(&mut queue, 4).expect("expected test value from start(&mut queue, 4)");
     job.2.cancel();
     queue.enqueue(7, subscriber(Some(0)), true);
     assert_eq!(queue.waiting.len(), 1);
@@ -113,7 +132,7 @@ fn a_cancelled_flight_is_never_joined_and_dead_pending_requests_are_removed() {
 fn unresolved_running_work_is_not_shared_without_fresh_identity_checks() {
     let mut queue = Queue::default();
     queue.enqueue(7, subscriber(Some(0)), false);
-    let _first = start(&mut queue, 4).unwrap();
+    let _first = start(&mut queue, 4).expect("expected test value from start(&mut queue, 4)");
     queue.enqueue(7, subscriber(Some(0)), false);
     assert_eq!(queue.waiting.len(), 1);
     assert_eq!(queue.running[0].job.targets.len(), 1);
@@ -143,7 +162,7 @@ fn changed_source_or_artwork_identity_and_size_never_share_a_render() {
     queue.enqueue(original.clone(), subscriber(Some(0)), true);
     let _started = queue
         .start(4, |target| target.priority, Work::render)
-        .unwrap();
+        .expect("expected test value from queue .start(4, |target| target.priority, Work::render)");
     queue.enqueue(original, subscriber(Some(0)), true);
     for variant in 0..4 {
         let mut changed = source.clone();
@@ -171,7 +190,7 @@ fn already_resolved_visible_work_finishes_before_another_visible_metadata_lookup
     assert_eq!(
         queue
             .start(4, |target| target.priority, |work| *work == 2)
-            .unwrap()
+            .expect("expected test value from queue .start(4, |target| target.priority, |work| *work == 2)")
             .1,
         2
     );
@@ -180,17 +199,32 @@ fn already_resolved_visible_work_finishes_before_another_visible_metadata_lookup
 #[test]
 #[ignore = "Private GTK display/cache and built helper; generated shared render only"]
 fn desktop_rebound_shared_thumbnail_does_not_cancel_or_overwrite_its_peer() {
-    let root = PathBuf::from(std::env::var_os("HERMES_PREVIEW_PROBE").unwrap());
+    let root = PathBuf::from(
+        std::env::var_os("HERMES_PREVIEW_PROBE")
+            .expect("expected test value from std::env::var_os(\"HERMES_PREVIEW_PROBE\")"),
+    );
     assert!(root.starts_with("/tmp"));
-    assert!(PathBuf::from(std::env::var_os("XDG_CACHE_HOME").unwrap()).starts_with(&root));
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    assert!(
+        PathBuf::from(
+            std::env::var_os("XDG_CACHE_HOME")
+                .expect("expected test value from std::env::var_os(\"XDG_CACHE_HOME\")")
+        )
+        .starts_with(&root)
+    );
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let fixture = crate::sandbox::browser::format_tests::FixtureDirectory::new();
     let pixels =
-        gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 256, 128).unwrap();
+        gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 256, 128).expect("expected test value from gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 256, 128)");
     pixels.fill(0x2060c0ff);
     let path = fixture.0.join("shared.png");
-    std::fs::write(&path, pixels.save_to_bufferv("png", &[]).unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        pixels
+            .save_to_bufferv("png", &[])
+            .expect("expected test value from pixels.save_to_bufferv(\"png\", &[])"),
+    )
+    .expect("write generated fixture");
     let first = gtk::Image::new();
     let peer = gtk::Image::new();
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -237,7 +271,7 @@ fn desktop_rebound_shared_thumbnail_does_not_cancel_or_overwrite_its_peer() {
         None,
         folder_album_art,
     )
-    .unwrap();
+    .expect("expected test value from thumbnail_source( &path, ThumbnailKind::Sandboxed(ParseOperation::ThumbnailImage), 64, None, folder_album_art, )");
     QUEUE.with(|queue| {
         let mut queue = queue.borrow_mut();
         for target in targets {
@@ -278,22 +312,36 @@ fn desktop_rebound_shared_thumbnail_does_not_cancel_or_overwrite_its_peer() {
 #[test]
 #[ignore = "Private GTK display/cache and built helper; generated images only"]
 fn desktop_visible_thumbnails_share_decoding_and_hidden_tabs_wait_until_shown() {
-    let root = PathBuf::from(std::env::var_os("HERMES_PREVIEW_PROBE").unwrap());
+    let root = PathBuf::from(
+        std::env::var_os("HERMES_PREVIEW_PROBE")
+            .expect("expected test value from std::env::var_os(\"HERMES_PREVIEW_PROBE\")"),
+    );
     assert!(root.starts_with("/tmp"));
-    assert!(PathBuf::from(std::env::var_os("XDG_CACHE_HOME").unwrap()).starts_with(&root));
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    assert!(
+        PathBuf::from(
+            std::env::var_os("XDG_CACHE_HOME")
+                .expect("expected test value from std::env::var_os(\"XDG_CACHE_HOME\")")
+        )
+        .starts_with(&root)
+    );
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let fixture = crate::sandbox::browser::format_tests::FixtureDirectory::new();
     let pixels =
-        gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 256, 128).unwrap();
+        gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 256, 128).expect("expected test value from gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 256, 128)");
     pixels.fill(0x2060c0ff);
-    let png = pixels.save_to_bufferv("png", &[]).unwrap();
+    let png = pixels
+        .save_to_bufferv("png", &[])
+        .expect("expected test value from pixels.save_to_bufferv(\"png\", &[])");
     let entry = |name: &str| {
         let path = fixture.0.join(name);
-        std::fs::write(&path, &png).unwrap();
+        std::fs::write(&path, &png).expect("write generated fixture");
         crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner {
             location: crate::model::Location::local(&path),
-            native_name: path.file_name().unwrap().to_owned(),
+            native_name: path
+                .file_name()
+                .expect("expected test value from path.file_name()")
+                .to_owned(),
             display_name: name.into(),
             kind: crate::model::EntryKind::File,
             size: crate::model::MetadataValue::Unknown,

@@ -8,27 +8,42 @@ fn desktop_permanent_delete_preference_preserves_trash_and_empty_trash_safety() 
     struct EmptySource;
 
     impl FileSource for EmptySource {
-        fn validate_location(&self, _: &Location) -> Result<(), crate::services::LocationValidationError> {
+        fn validate_location(
+            &self,
+            _: &Location,
+        ) -> Result<(), crate::services::LocationValidationError> {
             Ok(())
         }
 
-        fn enumerate(&self, _: crate::services::DirectoryRequest, _: Rc<dyn Fn(crate::services::DirectoryEvent)>) -> crate::services::LoadHandle {
+        fn enumerate(
+            &self,
+            _: crate::services::DirectoryRequest,
+            _: Rc<dyn Fn(crate::services::DirectoryEvent)>,
+        ) -> crate::services::LoadHandle {
             crate::services::LoadHandle::new(|| {})
         }
     }
 
     fn cancel_modal(overlay: &gtk::Overlay) {
-        let layer = overlay.last_child().unwrap();
+        let layer = overlay
+            .last_child()
+            .expect("expected test value from overlay.last_child()");
         assert!(layer.has_css_class("app-modal-layer"));
-        let content = layer.first_child().unwrap().next_sibling().unwrap();
-        let actions = content.last_child().unwrap();
-        let cancel = actions.first_child().unwrap().next_sibling().unwrap().downcast::<gtk::Button>().unwrap();
+        let content = layer
+            .first_child()
+            .expect("expected test value from layer.first_child()")
+            .next_sibling()
+            .expect("expected test value from layer.first_child().unwrap().next_sibling()");
+        let actions = content
+            .last_child()
+            .expect("expected test value from content.last_child()");
+        let cancel = actions.first_child().expect("expected test value from actions.first_child()").next_sibling().expect("expected test value from actions.first_child().unwrap().next_sibling()").downcast::<gtk::Button>().expect("expected test value from actions.first_child().unwrap().next_sibling().unwrap().downcast::<gtk::Button>()");
         assert_eq!(cancel.label().as_deref(), Some("Cancel"));
         cancel.emit_clicked();
     }
 
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let manager = super::super::theme::ThemeManager::shared();
     let view = BrowserView::new(Rc::new(EmptySource), Default::default());
     let operations = Rc::new(TransferFixtureOperations::default());
@@ -36,7 +51,11 @@ fn desktop_permanent_delete_preference_preserves_trash_and_empty_trash_safety() 
     let overlay = gtk::Overlay::new();
     overlay.set_child(Some(&view.widget()));
     let window = gtk::Window::builder().child(&overlay).build();
-    let entries = vec![crate::app::music_order::tests::entry("generated.flac", None, None)];
+    let entries = vec![crate::app::music_order::tests::entry(
+        "generated.flac",
+        None,
+        None,
+    )];
     manager.set_confirm_permanent_delete(true);
     view.state.show_delete_confirmation(entries.clone(), true);
     assert!(operations.deletions.borrow().is_empty());
@@ -46,7 +65,11 @@ fn desktop_permanent_delete_preference_preserves_trash_and_empty_trash_safety() 
     view.state.show_delete_confirmation(entries.clone(), false);
     assert!(operations.deletions.borrow().is_empty());
     cancel_modal(&overlay);
-    view.state.show_empty_trash_confirmation(TrashSummary { entries: entries.clone(), item_count: 1, total_size: 0 });
+    view.state.show_empty_trash_confirmation(TrashSummary {
+        entries: entries.clone(),
+        item_count: 1,
+        total_size: 0,
+    });
     assert!(operations.deletions.borrow().is_empty());
     cancel_modal(&overlay);
     view.state.show_delete_confirmation(Vec::new(), true);
@@ -65,31 +88,63 @@ fn desktop_clipboard_feedback_is_compact_explicit_and_clears_on_replacement() {
     use crate::services::{DirectoryEvent, DirectoryRequest, LoadHandle};
     struct EmptySource;
     impl FileSource for EmptySource {
-        fn validate_location(&self, _: &Location) -> Result<(), crate::services::LocationValidationError> { Ok(()) }
-        fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
-            emit(DirectoryEvent::Finished { request_id: request.id });
+        fn validate_location(
+            &self,
+            _: &Location,
+        ) -> Result<(), crate::services::LocationValidationError> {
+            Ok(())
+        }
+        fn enumerate(
+            &self,
+            request: DirectoryRequest,
+            emit: Rc<dyn Fn(DirectoryEvent)>,
+        ) -> LoadHandle {
+            emit(DirectoryEvent::Finished {
+                request_id: request.id,
+            });
             LoadHandle::new(|| {})
         }
     }
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let view = BrowserView::new(Rc::new(EmptySource), PeekBehavior::default());
-    let window = gtk::Window::builder().child(&view.widget()).default_width(600).default_height(400).build();
+    let window = gtk::Window::builder()
+        .child(&view.widget())
+        .default_width(600)
+        .default_height(400)
+        .build();
     window.present();
     let entry = FileEntry(Rc::new(crate::model::FileEntryInner {
         location: Location::local("/generated-clipboard/a-very-long-song-name-for-feedback.mp3"),
         native_name: "a-very-long-song-name-for-feedback.mp3".into(),
-        display_name: "a-very-long-song-name-for-feedback.mp3".into(), kind: EntryKind::File,
-        size: crate::model::MetadataValue::Unknown, modified_unix_seconds: crate::model::MetadataValue::Unknown, music_tags: None,
+        display_name: "a-very-long-song-name-for-feedback.mp3".into(),
+        kind: EntryKind::File,
+        size: crate::model::MetadataValue::Unknown,
+        modified_unix_seconds: crate::model::MetadataValue::Unknown,
+        music_tags: None,
     }));
     view.state.copy_entries(std::slice::from_ref(&entry));
-    assert_eq!(view.state.clipboard_indicator.label().as_deref(), Some("Copied · 1"));
-    assert!(!view.state.clipboard_indicator.tooltip_text().unwrap().contains(&entry.display_name));
+    assert_eq!(
+        view.state.clipboard_indicator.label().as_deref(),
+        Some("Copied · 1")
+    );
+    assert!(
+        !view
+            .state
+            .clipboard_indicator
+            .tooltip_text()
+            .expect("expected test value from view.state.clipboard_indicator.tooltip_text()")
+            .contains(&entry.display_name)
+    );
     assert!(view.state.clipboard_indicator.get_visible());
     assert!(!view.state.clipboard_popover.get_visible());
     let controllers = view.state.clipboard_indicator.observe_controllers();
     for index in 0..controllers.n_items() {
-        if let Ok(motion) = controllers.item(index).unwrap().downcast::<gtk::EventControllerMotion>() {
+        if let Ok(motion) = controllers
+            .item(index)
+            .expect("expected test value from controllers.item(index)")
+            .downcast::<gtk::EventControllerMotion>()
+        {
             motion.emit_by_name::<()>("enter", &[&0.0_f64, &0.0_f64]);
         }
     }
@@ -98,10 +153,13 @@ fn desktop_clipboard_feedback_is_compact_explicit_and_clears_on_replacement() {
     assert!(view.state.clipboard_popover.get_visible());
     view.state.clipboard_indicator.emit_clicked();
     assert!(!view.state.clipboard_popover.get_visible());
-    let item = view.state.clipboard_list.first_child().unwrap().downcast::<gtk::Label>().unwrap();
+    let item = view.state.clipboard_list.first_child().expect("expected test value from view.state.clipboard_list.first_child()").downcast::<gtk::Label>().expect("expected test value from view.state.clipboard_list.first_child().unwrap().downcast::<gtk::Label>()");
     assert_eq!(item.text(), entry.display_name);
     assert_eq!(item.max_width_chars(), 30);
-    gtk::gdk::Display::default().unwrap().clipboard().set_text("External clipboard replacement");
+    gtk::gdk::Display::default()
+        .expect("expected test value from gtk::gdk::Display::default()")
+        .clipboard()
+        .set_text("External clipboard replacement");
     assert!(!view.state.clipboard_indicator.get_visible());
     assert!(!view.state.clipboard_popover.get_visible());
     assert!(view.state.indicated_clipboard.borrow().is_none());
@@ -113,42 +171,80 @@ fn desktop_clipboard_feedback_is_compact_explicit_and_clears_on_replacement() {
 fn desktop_context_menu_copies_single_and_multiple_files_to_clipboard() {
     use crate::services::{DirectoryEvent, DirectoryRequest, LoadHandle};
     let actions = crate::services::actions_path();
-    assert!(actions.starts_with(std::env::temp_dir()) && !actions.exists(), "Use a private, empty XDG config directory for this fixture");
+    assert!(
+        actions.starts_with(std::env::temp_dir()) && !actions.exists(),
+        "Use a private, empty XDG config directory for this fixture"
+    );
     struct GeneratedSource;
     impl FileSource for GeneratedSource {
-        fn validate_location(&self, _: &Location) -> Result<(), crate::services::LocationValidationError> { Ok(()) }
-        fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
-            let entries = ["first.bin", "second.bin"].into_iter().map(|name| FileEntry(Rc::new(crate::model::FileEntryInner {
-                location: Location::local(format!("/generated-menu/{name}")), native_name: name.into(), display_name: name.into(), kind: EntryKind::File,
-                size: crate::model::MetadataValue::Unknown, modified_unix_seconds: crate::model::MetadataValue::Unknown, music_tags: None,
-            }))).collect();
-            emit(DirectoryEvent::Batch { request_id: request.id, entries });
-            emit(DirectoryEvent::Finished { request_id: request.id });
+        fn validate_location(
+            &self,
+            _: &Location,
+        ) -> Result<(), crate::services::LocationValidationError> {
+            Ok(())
+        }
+        fn enumerate(
+            &self,
+            request: DirectoryRequest,
+            emit: Rc<dyn Fn(DirectoryEvent)>,
+        ) -> LoadHandle {
+            let entries = ["first.bin", "second.bin"]
+                .into_iter()
+                .map(|name| {
+                    FileEntry(Rc::new(crate::model::FileEntryInner {
+                        location: Location::local(format!("/generated-menu/{name}")),
+                        native_name: name.into(),
+                        display_name: name.into(),
+                        kind: EntryKind::File,
+                        size: crate::model::MetadataValue::Unknown,
+                        modified_unix_seconds: crate::model::MetadataValue::Unknown,
+                        music_tags: None,
+                    }))
+                })
+                .collect();
+            emit(DirectoryEvent::Batch {
+                request_id: request.id,
+                entries,
+            });
+            emit(DirectoryEvent::Finished {
+                request_id: request.id,
+            });
             LoadHandle::new(|| {})
         }
     }
     fn pump() {
         let deadline = Instant::now() + Duration::from_millis(180);
         while Instant::now() < deadline {
-            for _ in 0..64 { if !glib::MainContext::default().iteration(false) { break; } }
+            for _ in 0..64 {
+                if !glib::MainContext::default().iteration(false) {
+                    break;
+                }
+            }
             std::thread::sleep(Duration::from_millis(2));
         }
     }
     fn menu_button(widget: &gtk::Widget, label: &str) -> Option<gtk::Button> {
         if let Some(button) = widget.downcast_ref::<gtk::Button>()
-            && button.child().and_then(|row| row.first_child())
-                .and_then(|icon| icon.next_sibling()).and_downcast::<gtk::Label>()
+            && button
+                .child()
+                .and_then(|row| row.first_child())
+                .and_then(|icon| icon.next_sibling())
+                .and_downcast::<gtk::Label>()
                 .is_some_and(|title| title.text() == label)
-        { return Some(button.clone()); }
+        {
+            return Some(button.clone());
+        }
         let mut child = widget.first_child();
         while let Some(current) = child {
             child = current.next_sibling();
-            if let Some(button) = menu_button(&current, label) { return Some(button); }
+            if let Some(button) = menu_button(&current, label) {
+                return Some(button);
+            }
         }
         None
     }
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let manager = super::super::theme::ThemeManager::shared();
     manager.set_context_menu_options(super::super::context_menu::Options::default());
     let view = BrowserView::new(Rc::new(GeneratedSource), PeekBehavior::default());
@@ -158,30 +254,57 @@ fn desktop_context_menu_copies_single_and_multiple_files_to_clipboard() {
     parent.append(&gtk::Label::new(Some("Generated file target")));
     let model = gtk::StringList::new(&["first.bin", "second.bin"]);
     let selection = gtk::MultiSelection::new(Some(model));
-    install_item_context_menu(&view.state, parent.upcast_ref(), &selection, Rc::new(|_| Some(0)), Rc::new(|position| Some(position as usize)), 0);
-    let window = gtk::Window::builder().default_width(500).default_height(300).child(&parent).build();
+    install_item_context_menu(
+        &view.state,
+        parent.upcast_ref(),
+        &selection,
+        Rc::new(|_| Some(0)),
+        Rc::new(|position| Some(position as usize)),
+        0,
+    );
+    let window = gtk::Window::builder()
+        .default_width(500)
+        .default_height(300)
+        .child(&parent)
+        .build();
     window.present();
     pump();
     let controllers = parent.observe_controllers();
-    let click = (0..controllers.n_items()).filter_map(|position| controllers.item(position).and_downcast::<gtk::GestureClick>()).next().unwrap();
+    let click = (0..controllers.n_items()).filter_map(|position| controllers.item(position).and_downcast::<gtk::GestureClick>()).next().expect("expected test value from (0..controllers.n_items()).filter_map(|position| controllers.item(position).and_downcast::<gtk::GestureClick>()).next()");
     click.emit_by_name::<()>("pressed", &[&1i32, &12.0f64, &12.0f64]);
     pump();
     let copy = menu_button(parent.upcast_ref(), "Copy").expect("Clipboard Copy action");
     assert!(copy.is_visible());
-    assert!(!menu_button(parent.upcast_ref(), "Copy to…").unwrap().is_visible());
+    assert!(
+        !menu_button(parent.upcast_ref(), "Copy to…")
+            .expect("expected test value from menu_button(parent.upcast_ref(), \"Copy to…\")")
+            .is_visible()
+    );
     copy.emit_clicked();
-    let clipboard = gtk::gdk::Display::default().unwrap().clipboard();
-    let files = glib::MainContext::default().block_on(clipboard.read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT)).unwrap().get::<gtk::gdk::FileList>().unwrap().files();
+    let clipboard = gtk::gdk::Display::default()
+        .expect("expected test value from gtk::gdk::Display::default()")
+        .clipboard();
+    let files = glib::MainContext::default().block_on(clipboard.read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT)).expect("expected test value from glib::MainContext::default().block_on(clipboard.read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT))").get::<gtk::gdk::FileList>().expect("expected test value from glib::MainContext::default().block_on(clipboard.read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT))....").files();
     assert_eq!(files.len(), 1);
-    assert_eq!(files[0].path().unwrap(), PathBuf::from("/generated-menu/first.bin"));
-    let (stream, mime) = glib::MainContext::default().block_on(clipboard.read_future(&["text/uri-list"], glib::Priority::DEFAULT)).unwrap();
+    assert_eq!(
+        files[0]
+            .path()
+            .expect("expected test value from files[0].path()"),
+        PathBuf::from("/generated-menu/first.bin")
+    );
+    let (stream, mime) = glib::MainContext::default().block_on(clipboard.read_future(&["text/uri-list"], glib::Priority::DEFAULT)).expect("expected test value from glib::MainContext::default().block_on(clipboard.read_future(&[\"text/uri-list\"], glib::Priority::DEFAULT))");
     assert_eq!(mime, "text/uri-list");
-    let encoded = glib::MainContext::default().block_on(stream.read_bytes_future(4096, glib::Priority::DEFAULT)).unwrap();
+    let encoded = glib::MainContext::default().block_on(stream.read_bytes_future(4096, glib::Priority::DEFAULT)).expect("expected test value from glib::MainContext::default().block_on(stream.read_bytes_future(4096, glib::Priority::DEFAULT))");
     assert!(String::from_utf8_lossy(&encoded).contains("file:///generated-menu/first.bin"));
-    clipboard.set_content(Some(&gtk::gdk::ContentProvider::for_bytes("text/uri-list", &glib::Bytes::from_static(b"file:///generated-menu/from-another-app.bin\r\n")))).unwrap();
+    clipboard.set_content(Some(&gtk::gdk::ContentProvider::for_bytes("text/uri-list", &glib::Bytes::from_static(b"file:///generated-menu/from-another-app.bin\r\n")))).expect("expected test value from clipboard.set_content(Some(&gtk::gdk::ContentProvider::for_bytes(\"text/uri-list\", &glib::Bytes::from_static(b\"file:///generated...");
     assert!(clipboard_has_files());
-    let external = glib::MainContext::default().block_on(clipboard.read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT)).unwrap().get::<gtk::gdk::FileList>().unwrap().files();
-    assert_eq!(external[0].path().unwrap(), PathBuf::from("/generated-menu/from-another-app.bin"));
+    let external = glib::MainContext::default().block_on(clipboard.read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT)).expect("expected test value from glib::MainContext::default().block_on(clipboard.read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT))").get::<gtk::gdk::FileList>().expect("expected test value from glib::MainContext::default().block_on(clipboard.read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT))....").files();
+    assert_eq!(
+        external[0]
+            .path()
+            .expect("expected test value from external[0].path()"),
+        PathBuf::from("/generated-menu/from-another-app.bin")
+    );
     selection.select_all();
     click.emit_by_name::<()>("pressed", &[&1i32, &12.0f64, &12.0f64]);
     pump();
@@ -190,29 +313,42 @@ fn desktop_context_menu_copies_single_and_multiple_files_to_clipboard() {
     while let Some(widget) = child {
         child = widget.next_sibling();
         if let Some(menu) = widget.downcast_ref::<gtk::Popover>() {
-            let content = menu.child().unwrap();
+            let content = menu.child().expect("expected test value from menu.child()");
             let mut section = content.first_child();
             while let Some(widget) = section {
                 section = widget.next_sibling();
-                if widget.is_visible() && let Some(button) = menu_button(&widget, "Copy") {
+                if widget.is_visible()
+                    && let Some(button) = menu_button(&widget, "Copy")
+                {
                     visible_copy = Some(button);
                 }
             }
         }
     }
-    visible_copy.unwrap().emit_clicked();
-    let files = glib::MainContext::default().block_on(clipboard.read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT)).unwrap().get::<gtk::gdk::FileList>().unwrap().files();
+    visible_copy
+        .expect("expected test value from visible_copy")
+        .emit_clicked();
+    let files = glib::MainContext::default().block_on(clipboard.read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT)).expect("expected test value from glib::MainContext::default().block_on(clipboard.read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT))").get::<gtk::gdk::FileList>().expect("expected test value from glib::MainContext::default().block_on(clipboard.read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT))....").files();
     assert_eq!(files.len(), 2);
     assert!(view.state.cut_locations.borrow().is_empty());
-    std::fs::create_dir_all(actions.parent().unwrap()).unwrap();
-    std::fs::write(&actions, "[[actions]]\nname = 'Generated context action'\ncommand = ['/bin/false']\nextensions = ['bin']\n").unwrap();
+    std::fs::create_dir_all(
+        actions
+            .parent()
+            .expect("expected test value from actions.parent()"),
+    )
+    .expect("create generated fixture directory");
+    std::fs::write(&actions, "[[actions]]\nname = 'Generated context action'\ncommand = ['/bin/false']\nextensions = ['bin']\n").expect("write generated fixture");
     let mut options = manager.context_menu_options();
     options.transfer_destinations = true;
     manager.set_context_menu_options(options);
     selection.select_item(0, true);
     click.emit_by_name::<()>("pressed", &[&1i32, &12.0f64, &12.0f64]);
     pump();
-    assert!(menu_button(parent.upcast_ref(), "Copy to…").unwrap().get_visible());
+    assert!(
+        menu_button(parent.upcast_ref(), "Copy to…")
+            .expect("expected test value from menu_button(parent.upcast_ref(), \"Copy to…\")")
+            .get_visible()
+    );
     assert!(menu_button(parent.upcast_ref(), "Generated context action").is_some());
     let mut options = manager.context_menu_options();
     options.custom_actions = false;
@@ -220,7 +356,7 @@ fn desktop_context_menu_copies_single_and_multiple_files_to_clipboard() {
     click.emit_by_name::<()>("pressed", &[&1i32, &12.0f64, &12.0f64]);
     pump();
     assert!(menu_button(parent.upcast_ref(), "Generated context action").is_none());
-    std::fs::remove_file(actions).unwrap();
+    std::fs::remove_file(actions).expect("remove generated fixture");
     manager.set_context_menu_options(super::super::context_menu::Options::default());
     window.close();
 }
@@ -245,7 +381,10 @@ fn desktop_navigation_releases_discarded_presentations() {
             glib::MainContext::default().iteration(false);
             std::thread::sleep(Duration::from_millis(1));
         }
-        assert!(condition(), "Generated lifecycle fixture timed out: {context}");
+        assert!(
+            condition(),
+            "Generated lifecycle fixture timed out: {context}"
+        );
     }
 
     fn capture(view: &BrowserView) -> LifecycleProbes {
@@ -288,7 +427,10 @@ fn desktop_navigation_releases_discarded_presentations() {
             .filter(|(_, object)| object.upgrade().is_some())
             .map(|(label, _)| label.as_str())
             .collect();
-        assert!(retained.is_empty(), "Discarded objects retained: {retained:?}");
+        assert!(
+            retained.is_empty(),
+            "Discarded objects retained: {retained:?}"
+        );
     }
 
     gtk::init().expect("Isolated GTK display available");
@@ -298,18 +440,22 @@ fn desktop_navigation_releases_discarded_presentations() {
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("expected test value from std::time::SystemTime::now() .duration_since(std::time::UNIX_EPOCH)")
             .as_nanos(),
     )));
     let first = root.0.join("first");
     let second = root.0.join("second");
     for folder in [&first, &second] {
-        std::fs::create_dir_all(folder).unwrap();
+        std::fs::create_dir_all(folder).expect("create generated fixture directory");
         for index in 0..1_000 {
-            std::fs::write(folder.join(format!("entry-{index:04}.txt")), b"fixture").unwrap();
+            std::fs::write(folder.join(format!("entry-{index:04}.txt")), b"fixture")
+                .expect("write generated fixture");
         }
     }
-    let view = BrowserView::new(Rc::new(crate::adapters::LocalFileSource), PeekBehavior::default());
+    let view = BrowserView::new(
+        Rc::new(crate::adapters::LocalFileSource),
+        PeekBehavior::default(),
+    );
     let browser = view.browser();
     let window = gtk::Window::builder()
         .default_width(1_000)
@@ -339,18 +485,44 @@ fn desktop_navigation_releases_discarded_presentations() {
         for folder in folders {
             finished.set(false);
             browser.navigate(Location::local(folder));
-            pump_until(&format!("load {presentation}: {}", folder.display()), || finished.get());
-            assert_eq!(browser.column_entries(0).unwrap().len(), 1_000);
+            pump_until(
+                &format!("load {presentation}: {}", folder.display()),
+                || finished.get(),
+            );
+            assert_eq!(
+                browser
+                    .column_entries(0)
+                    .expect("expected test value from browser.column_entries(0)")
+                    .len(),
+                1_000
+            );
             assert_released(&previous);
-            pump_until(&format!("bound {presentation} items: {}", folder.display()), || {
-                capture(&view)
-                    .iter()
-                    .any(|(label, _)| label == &format!("{presentation} item"))
-            });
+            pump_until(
+                &format!("bound {presentation} items: {}", folder.display()),
+                || {
+                    capture(&view)
+                        .iter()
+                        .any(|(label, _)| label == &format!("{presentation} item"))
+                },
+            );
             previous = capture(&view);
-            assert!(previous.iter().any(|(label, _)| label == "columns GtkStringList"));
-            assert_eq!(previous.iter().any(|(label, _)| label == "grid GtkStringList"), mode == BrowserMode::Grid);
-            assert_eq!(previous.iter().any(|(label, _)| label == "explorer GtkStringList"), mode == BrowserMode::Explorer);
+            assert!(
+                previous
+                    .iter()
+                    .any(|(label, _)| label == "columns GtkStringList")
+            );
+            assert_eq!(
+                previous
+                    .iter()
+                    .any(|(label, _)| label == "grid GtkStringList"),
+                mode == BrowserMode::Grid
+            );
+            assert_eq!(
+                previous
+                    .iter()
+                    .any(|(label, _)| label == "explorer GtkStringList"),
+                mode == BrowserMode::Explorer
+            );
         }
     }
     let state = Rc::downgrade(&view.state);
@@ -360,18 +532,29 @@ fn desktop_navigation_releases_discarded_presentations() {
     window.set_child(gtk::Widget::NONE);
     drop((view, browser, window));
     assert_released(&previous);
-    pump_until("browser and view destruction", || state.upgrade().is_none() && weak_browser.upgrade().is_none());
+    pump_until("browser and view destruction", || {
+        state.upgrade().is_none() && weak_browser.upgrade().is_none()
+    });
 }
+
+type OperationCallback = (
+    crate::services::OperationRequestId,
+    Rc<dyn Fn(crate::services::OperationEvent)>,
+);
 
 #[derive(Default)]
 struct TransferFixtureOperations {
-    requests: RefCell<Vec<(crate::services::OperationRequestId, Rc<dyn Fn(crate::services::OperationEvent)>)>>,
+    requests: RefCell<Vec<OperationCallback>>,
     deletions: RefCell<Vec<bool>>,
     cancellations: Rc<Cell<usize>>,
 }
 
 impl TransferFixtureOperations {
-    fn start(&self, id: crate::services::OperationRequestId, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+    fn start(
+        &self,
+        id: crate::services::OperationRequestId,
+        emit: Rc<dyn Fn(crate::services::OperationEvent)>,
+    ) -> crate::services::LoadHandle {
         self.requests.borrow_mut().push((id, emit));
         let cancellations = self.cancellations.clone();
         crate::services::LoadHandle::new(move || cancellations.set(cancellations.get() + 1))
@@ -379,29 +562,61 @@ impl TransferFixtureOperations {
 }
 
 impl OperationProvider for TransferFixtureOperations {
-    fn rename(&self, request: crate::services::RenameRequest, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+    fn rename(
+        &self,
+        request: crate::services::RenameRequest,
+        emit: Rc<dyn Fn(crate::services::OperationEvent)>,
+    ) -> crate::services::LoadHandle {
         self.start(request.id, emit)
     }
-    fn create_directory(&self, request: crate::services::CreateDirectoryRequest, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+    fn create_directory(
+        &self,
+        request: crate::services::CreateDirectoryRequest,
+        emit: Rc<dyn Fn(crate::services::OperationEvent)>,
+    ) -> crate::services::LoadHandle {
         self.start(request.id, emit)
     }
-    fn create_file(&self, request: crate::services::CreateFileRequest, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+    fn create_file(
+        &self,
+        request: crate::services::CreateFileRequest,
+        emit: Rc<dyn Fn(crate::services::OperationEvent)>,
+    ) -> crate::services::LoadHandle {
         self.start(request.id, emit)
     }
-    fn paste(&self, request: crate::services::PasteRequest, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+    fn paste(
+        &self,
+        request: crate::services::PasteRequest,
+        emit: Rc<dyn Fn(crate::services::OperationEvent)>,
+    ) -> crate::services::LoadHandle {
         self.start(request.id, emit)
     }
-    fn delete(&self, request: crate::services::DeleteRequest, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+    fn delete(
+        &self,
+        request: crate::services::DeleteRequest,
+        emit: Rc<dyn Fn(crate::services::OperationEvent)>,
+    ) -> crate::services::LoadHandle {
         self.deletions.borrow_mut().push(request.permanent);
         self.start(request.id, emit)
     }
-    fn restore(&self, request: crate::services::RestoreRequest, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+    fn restore(
+        &self,
+        request: crate::services::RestoreRequest,
+        emit: Rc<dyn Fn(crate::services::OperationEvent)>,
+    ) -> crate::services::LoadHandle {
         self.start(request.id, emit)
     }
-    fn extract_archive(&self, request: crate::services::ExtractArchiveRequest, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+    fn extract_archive(
+        &self,
+        request: crate::services::ExtractArchiveRequest,
+        emit: Rc<dyn Fn(crate::services::OperationEvent)>,
+    ) -> crate::services::LoadHandle {
         self.start(request.id, emit)
     }
-    fn compress_archive(&self, request: crate::services::CompressArchiveRequest, emit: Rc<dyn Fn(crate::services::OperationEvent)>) -> crate::services::LoadHandle {
+    fn compress_archive(
+        &self,
+        request: crate::services::CompressArchiveRequest,
+        emit: Rc<dyn Fn(crate::services::OperationEvent)>,
+    ) -> crate::services::LoadHandle {
         self.start(request.id, emit)
     }
 }
@@ -412,11 +627,20 @@ fn desktop_transfer_outcomes_preserve_cut_clipboard() {
     use crate::services::{DirectoryEvent, DirectoryRequest, LoadHandle, OperationEvent};
     struct GeneratedSource;
     impl FileSource for GeneratedSource {
-        fn validate_location(&self, _: &Location) -> Result<(), crate::services::LocationValidationError> {
+        fn validate_location(
+            &self,
+            _: &Location,
+        ) -> Result<(), crate::services::LocationValidationError> {
             Ok(())
         }
-        fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
-            emit(DirectoryEvent::Finished { request_id: request.id });
+        fn enumerate(
+            &self,
+            request: DirectoryRequest,
+            emit: Rc<dyn Fn(DirectoryEvent)>,
+        ) -> LoadHandle {
+            emit(DirectoryEvent::Finished {
+                request_id: request.id,
+            });
             LoadHandle::new(|| {})
         }
     }
@@ -426,44 +650,101 @@ fn desktop_transfer_outcomes_preserve_cut_clipboard() {
     let window = gtk::Window::builder().child(&view.state.overlay).build();
     let provider = Rc::new(TransferFixtureOperations::default());
     view.set_operation_provider(provider.clone());
-    let entry = |name: &str| FileEntry(Rc::new(crate::model::FileEntryInner {
-        location: Location::local(format!("/generated-transfer-fixture/{name}")),
-        native_name: name.into(), display_name: name.into(), kind: EntryKind::File,
-        size: crate::model::MetadataValue::Unknown,
-        modified_unix_seconds: crate::model::MetadataValue::Unknown, music_tags: None,
-    }));
+    let entry = |name: &str| {
+        FileEntry(Rc::new(crate::model::FileEntryInner {
+            location: Location::local(format!("/generated-transfer-fixture/{name}")),
+            native_name: name.into(),
+            display_name: name.into(),
+            kind: EntryKind::File,
+            size: crate::model::MetadataValue::Unknown,
+            modified_unix_seconds: crate::model::MetadataValue::Unknown,
+            music_tags: None,
+        }))
+    };
     let first = entry("first");
     let second = entry("second");
     let unrelated = entry("unrelated");
     let destination = Location::local("/generated-transfer-fixture/destination");
-    let clipboard = gtk::gdk::Display::default().unwrap().clipboard();
+    let clipboard = gtk::gdk::Display::default()
+        .expect("expected test value from gtk::gdk::Display::default()")
+        .clipboard();
     let start = |sources: &[FileEntry], move_sources| {
-        view.state.start_transfer(destination.clone(), sources.iter().map(|entry| entry.location.clone()).collect(), move_sources);
-        provider.requests.borrow().last().unwrap().clone()
+        view.state.start_transfer(
+            destination.clone(),
+            sources.iter().map(|entry| entry.location.clone()).collect(),
+            move_sources,
+        );
+        provider
+            .requests
+            .borrow()
+            .last()
+            .expect("expected test value from provider.requests.borrow().last()")
+            .clone()
     };
-    let complete = |request_id, emit: &Rc<dyn Fn(OperationEvent)>, source: &FileEntry, move_source| {
-        emit(OperationEvent::TransferItemCompleted { request_id, source: source.location.clone(), move_source });
-    };
+    let complete =
+        |request_id, emit: &Rc<dyn Fn(OperationEvent)>, source: &FileEntry, move_source| {
+            emit(OperationEvent::TransferItemCompleted {
+                request_id,
+                source: source.location.clone(),
+                move_source,
+            });
+        };
 
     view.state.cut_entries(&[first.clone(), second.clone()]);
     let original = clipboard.content();
     let (request_id, emit) = start(&[first.clone(), second.clone()], true);
     assert_eq!(clipboard.content(), original);
     assert_eq!(view.state.cut_locations.borrow().len(), 2);
-    let progress = view.state.delete_progress.borrow().as_ref().unwrap().layer.clone();
-    view.state.browser.create_directory(destination.clone(), "overlap".into());
+    let progress = view
+        .state
+        .delete_progress
+        .borrow()
+        .as_ref()
+        .expect("expected test value from view.state.delete_progress.borrow().as_ref()")
+        .layer
+        .clone();
+    view.state
+        .browser
+        .create_directory(destination.clone(), "overlap".into());
     assert_eq!(provider.requests.borrow().len(), 1);
     assert_eq!(provider.cancellations.get(), 0);
-    assert_eq!(view.state.delete_progress.borrow().as_ref().unwrap().layer, progress);
+    assert_eq!(
+        view.state
+            .delete_progress
+            .borrow()
+            .as_ref()
+            .expect("expected test value from view.state.delete_progress.borrow().as_ref()")
+            .layer,
+        progress
+    );
     complete(request_id, &emit, &first, false);
     assert_eq!(view.state.cut_locations.borrow().len(), 2);
     complete(request_id, &emit, &first, true);
-    assert_eq!(*view.state.cut_locations.borrow(), vec![second.location.clone()]);
-    assert_eq!(view.state.clipboard_indicator.label().as_deref(), Some("Cut · 1"));
-    assert_eq!(view.state.clipboard_list.first_child().unwrap().downcast::<gtk::Label>().unwrap().text(), "second");
-    assert!(view.state.clipboard_list.first_child().unwrap().next_sibling().is_none());
-    emit(OperationEvent::TransferCompletedWithErrors { request_id, message: "second failed".into() });
-    assert_eq!(*view.state.cut_locations.borrow(), vec![second.location.clone()]);
+    assert_eq!(
+        *view.state.cut_locations.borrow(),
+        vec![second.location.clone()]
+    );
+    assert_eq!(
+        view.state.clipboard_indicator.label().as_deref(),
+        Some("Cut · 1")
+    );
+    assert_eq!(view.state.clipboard_list.first_child().expect("expected test value from view.state.clipboard_list.first_child()").downcast::<gtk::Label>().expect("expected test value from view.state.clipboard_list.first_child().unwrap().downcast::<gtk::Label>()").text(), "second");
+    assert!(
+        view.state
+            .clipboard_list
+            .first_child()
+            .expect("expected test value from view.state.clipboard_list.first_child()")
+            .next_sibling()
+            .is_none()
+    );
+    emit(OperationEvent::TransferCompletedWithErrors {
+        request_id,
+        message: "second failed".into(),
+    });
+    assert_eq!(
+        *view.state.cut_locations.borrow(),
+        vec![second.location.clone()]
+    );
     assert!(view.state.delete_progress.borrow().is_none());
     let (request_id, emit) = start(std::slice::from_ref(&second), true);
     complete(request_id, &emit, &second, true);
@@ -478,7 +759,10 @@ fn desktop_transfer_outcomes_preserve_cut_clipboard() {
     let remaining_content = clipboard.content();
     view.state.browser.cancel_file_operation();
     complete(request_id, &emit, &second, true);
-    assert_eq!(*view.state.cut_locations.borrow(), vec![second.location.clone()]);
+    assert_eq!(
+        *view.state.cut_locations.borrow(),
+        vec![second.location.clone()]
+    );
     assert_eq!(clipboard.content(), remaining_content);
 
     view.state.cut_entries(std::slice::from_ref(&first));
@@ -488,7 +772,10 @@ fn desktop_transfer_outcomes_preserve_cut_clipboard() {
     complete(request_id, &emit, &first, true);
     emit(OperationEvent::Pasted { request_id });
     assert_eq!(clipboard.content(), copied);
-    assert_eq!(view.state.clipboard_indicator.label().as_deref(), Some("Copied · 1"));
+    assert_eq!(
+        view.state.clipboard_indicator.label().as_deref(),
+        Some("Copied · 1")
+    );
 
     view.state.cut_entries(std::slice::from_ref(&first));
     let (request_id, emit) = start(std::slice::from_ref(&first), true);
@@ -496,7 +783,10 @@ fn desktop_transfer_outcomes_preserve_cut_clipboard() {
     let recut = clipboard.content();
     complete(request_id, &emit, &first, true);
     emit(OperationEvent::Pasted { request_id });
-    assert_eq!(*view.state.cut_locations.borrow(), vec![first.location.clone()]);
+    assert_eq!(
+        *view.state.cut_locations.borrow(),
+        vec![first.location.clone()]
+    );
     assert_eq!(clipboard.content(), recut);
 
     let (request_id, emit) = start(std::slice::from_ref(&first), true);
@@ -511,14 +801,23 @@ fn desktop_transfer_outcomes_preserve_cut_clipboard() {
     let (request_id, emit) = start(std::slice::from_ref(&first), false);
     complete(request_id, &emit, &first, false);
     emit(OperationEvent::Pasted { request_id });
-    assert_eq!(*view.state.cut_locations.borrow(), vec![first.location.clone()]);
+    assert_eq!(
+        *view.state.cut_locations.borrow(),
+        vec![first.location.clone()]
+    );
     assert_eq!(clipboard.content(), cut);
 
     view.state.cut_entries(std::slice::from_ref(&first));
     let (request_id, emit) = start(std::slice::from_ref(&first), true);
     let unchanged = clipboard.content();
-    emit(OperationEvent::Failed { request_id, message: "failed before moving".into() });
-    assert_eq!(*view.state.cut_locations.borrow(), vec![first.location.clone()]);
+    emit(OperationEvent::Failed {
+        request_id,
+        message: "failed before moving".into(),
+    });
+    assert_eq!(
+        *view.state.cut_locations.borrow(),
+        vec![first.location.clone()]
+    );
     assert_eq!(clipboard.content(), unchanged);
 
     struct GeneratedDirectory(PathBuf);
@@ -529,10 +828,12 @@ fn desktop_transfer_outcomes_preserve_cut_clipboard() {
     }
     let root = GeneratedDirectory(std::env::temp_dir().join(format!(
         "hermes-transfer-outcomes-{}-{}", std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("expected test value from std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)").as_nanos(),
     )));
-    std::fs::create_dir_all(root.0.join("destination")).unwrap();
-    std::fs::write(root.0.join("moved.txt"), b"Generated transfer fixture").unwrap();
+    std::fs::create_dir_all(root.0.join("destination"))
+        .expect("create generated fixture directory");
+    std::fs::write(root.0.join("moved.txt"), b"Generated transfer fixture")
+        .expect("write generated fixture");
     let generated_entry = |name: &str| {
         let mut generated = entry(name);
         Rc::make_mut(&mut generated.0).location = Location::local(root.0.join(name));
@@ -554,8 +855,11 @@ fn desktop_transfer_outcomes_preserve_cut_clipboard() {
             observed_error.set(true);
         }
     });
-    view.state.start_transfer(Location::local(root.0.join("destination")),
-        vec![moved.location.clone(), missing.location.clone()], true);
+    view.state.start_transfer(
+        Location::local(root.0.join("destination")),
+        vec![moved.location.clone(), missing.location.clone()],
+        true,
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     while !finished.get() && Instant::now() < deadline {
         for _ in 0..128 {
@@ -567,11 +871,23 @@ fn desktop_transfer_outcomes_preserve_cut_clipboard() {
         std::thread::sleep(Duration::from_millis(1));
     }
     assert!(finished.get(), "Generated provider transfer finishes");
-    assert!(partial_error.get(), "Missing generated source reports partial error");
+    assert!(
+        partial_error.get(),
+        "Missing generated source reports partial error"
+    );
     assert!(!root.0.join("moved.txt").exists());
-    assert_eq!(std::fs::read(root.0.join("destination/moved.txt")).unwrap(), b"Generated transfer fixture");
-    assert_eq!(*view.state.cut_locations.borrow(), vec![missing.location.clone()]);
-    assert_eq!(view.state.clipboard_indicator.label().as_deref(), Some("Cut · 1"));
+    assert_eq!(
+        std::fs::read(root.0.join("destination/moved.txt")).expect("read generated fixture"),
+        b"Generated transfer fixture"
+    );
+    assert_eq!(
+        *view.state.cut_locations.borrow(),
+        vec![missing.location.clone()]
+    );
+    assert_eq!(
+        view.state.clipboard_indicator.label().as_deref(),
+        Some("Cut · 1")
+    );
     window.close();
     view.browser().clear_observer();
 }
@@ -593,63 +909,140 @@ fn desktop_search_snapshots_preserve_selection_in_every_view() {
         }
         None
     }
+    type DirectoryCallback = Rc<RefCell<Option<Rc<dyn Fn(DirectoryEvent)>>>>;
     struct SnapshotSource {
-        emit: Rc<RefCell<Option<Rc<dyn Fn(DirectoryEvent)>>>>,
+        emit: DirectoryCallback,
         request: Rc<Cell<RequestId>>,
     }
     impl FileSource for SnapshotSource {
-        fn validate_location(&self, _: &Location) -> Result<(), crate::services::LocationValidationError> { Ok(()) }
-        fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
+        fn validate_location(
+            &self,
+            _: &Location,
+        ) -> Result<(), crate::services::LocationValidationError> {
+            Ok(())
+        }
+        fn enumerate(
+            &self,
+            request: DirectoryRequest,
+            emit: Rc<dyn Fn(DirectoryEvent)>,
+        ) -> LoadHandle {
             self.request.set(request.id);
             self.emit.replace(Some(emit));
             LoadHandle::new(|| {})
         }
     }
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let captured = Rc::new(RefCell::new(None));
     let request = Rc::new(Cell::new(RequestId(0)));
-    let view = BrowserView::new(Rc::new(SnapshotSource { emit: captured.clone(), request: request.clone() }), PeekBehavior::default());
-    let window = gtk::Window::builder().default_width(900).default_height(500).child(&view.widget()).build();
+    let view = BrowserView::new(
+        Rc::new(SnapshotSource {
+            emit: captured.clone(),
+            request: request.clone(),
+        }),
+        PeekBehavior::default(),
+    );
+    let window = gtk::Window::builder()
+        .default_width(900)
+        .default_height(500)
+        .child(&view.widget())
+        .build();
     window.present();
-    let entry = |name: &str| FileEntry(Rc::new(crate::model::FileEntryInner {
-        location: Location::local(format!("/fixture/{name}")),
-        native_name: name.into(), display_name: name.into(), kind: EntryKind::File,
-        size: crate::model::MetadataValue::Unknown, modified_unix_seconds: crate::model::MetadataValue::Unknown, music_tags: None,
-    }));
-    for mode in [BrowserMode::Columns, BrowserMode::Explorer, BrowserMode::Grid] {
+    let entry = |name: &str| {
+        FileEntry(Rc::new(crate::model::FileEntryInner {
+            location: Location::local(format!("/fixture/{name}")),
+            native_name: name.into(),
+            display_name: name.into(),
+            kind: EntryKind::File,
+            size: crate::model::MetadataValue::Unknown,
+            modified_unix_seconds: crate::model::MetadataValue::Unknown,
+            music_tags: None,
+        }))
+    };
+    for mode in [
+        BrowserMode::Columns,
+        BrowserMode::Explorer,
+        BrowserMode::Grid,
+    ] {
         view.set_view_mode(mode);
         view.browser().navigate(Location::local("/fixture"));
-        let emit = captured.borrow().as_ref().unwrap().clone();
-        emit(DirectoryEvent::Snapshot { request_id: request.get(), entries: vec![entry("a.txt"), entry("b.txt"), entry("c.txt")] });
+        let emit = captured
+            .borrow()
+            .as_ref()
+            .expect("expected test value from captured.borrow().as_ref()")
+            .clone();
+        emit(DirectoryEvent::Snapshot {
+            request_id: request.get(),
+            entries: vec![entry("a.txt"), entry("b.txt"), entry("c.txt")],
+        });
         view.browser().set_selection(0, &[0, 1], Some(1));
-        emit(DirectoryEvent::Snapshot { request_id: request.get(), entries: vec![entry("b.txt"), entry("d.txt")] });
+        emit(DirectoryEvent::Snapshot {
+            request_id: request.get(),
+            entries: vec![entry("b.txt"), entry("d.txt")],
+        });
         let selected = view.browser().selected_entries();
         assert_eq!(selected.len(), 1, "{mode:?}");
         assert_eq!(selected[0].display_name, "b.txt", "{mode:?}");
-        assert_eq!(view.browser().column_snapshot(0).unwrap().selected_positions, vec![0], "{mode:?}");
-        emit(DirectoryEvent::Finished { request_id: request.get() });
-        emit(DirectoryEvent::Notice { request_id: request.get(), message: Some("Partial search coverage".into()) });
+        assert_eq!(
+            view.browser()
+                .column_snapshot(0)
+                .expect("expected test value from view.browser().column_snapshot(0)")
+                .selected_positions,
+            vec![0],
+            "{mode:?}"
+        );
+        emit(DirectoryEvent::Finished {
+            request_id: request.get(),
+        });
+        emit(DirectoryEvent::Notice {
+            request_id: request.get(),
+            message: Some("Partial search coverage".into()),
+        });
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        while mapped_notice(&view.widget().upcast()).is_none() && std::time::Instant::now() < deadline {
+        while mapped_notice(&view.widget().upcast()).is_none()
+            && std::time::Instant::now() < deadline
+        {
             glib::MainContext::default().iteration(false);
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        let notice = mapped_notice(&view.widget().upcast()).expect("Active view displays search notice");
+        let notice =
+            mapped_notice(&view.widget().upcast()).expect("Active view displays search notice");
         assert_eq!(notice.text(), "Partial search coverage", "{mode:?}");
-        assert!(view.browser().column_snapshot(0).unwrap().notice.is_some());
+        assert!(
+            view.browser()
+                .column_snapshot(0)
+                .expect("expected test value from view.browser().column_snapshot(0)")
+                .notice
+                .is_some()
+        );
         assert_eq!(view.browser().selected_entries()[0].display_name, "b.txt");
-        for switched_mode in [BrowserMode::Columns, BrowserMode::Grid, BrowserMode::Explorer] {
+        for switched_mode in [
+            BrowserMode::Columns,
+            BrowserMode::Grid,
+            BrowserMode::Explorer,
+        ] {
             view.set_view_mode(switched_mode);
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-            while mapped_notice(&view.widget().upcast()).is_none() && std::time::Instant::now() < deadline {
+            while mapped_notice(&view.widget().upcast()).is_none()
+                && std::time::Instant::now() < deadline
+            {
                 glib::MainContext::default().iteration(false);
                 std::thread::sleep(std::time::Duration::from_millis(2));
             }
-            assert_eq!(mapped_notice(&view.widget().upcast()).unwrap().text(), "Partial search coverage", "{switched_mode:?}");
+            assert_eq!(
+                mapped_notice(&view.widget().upcast())
+                    .expect("expected test value from mapped_notice(&view.widget().upcast())")
+                    .text(),
+                "Partial search coverage",
+                "{switched_mode:?}"
+            );
         }
-        let notice = mapped_notice(&view.widget().upcast()).unwrap();
-        emit(DirectoryEvent::Notice { request_id: request.get(), message: None });
+        let notice = mapped_notice(&view.widget().upcast())
+            .expect("expected test value from mapped_notice(&view.widget().upcast())");
+        emit(DirectoryEvent::Notice {
+            request_id: request.get(),
+            message: None,
+        });
         assert!(!notice.is_visible(), "{mode:?}");
     }
     window.close();
@@ -662,30 +1055,57 @@ fn desktop_search_snapshots_preserve_selection_in_every_view() {
 fn desktop_song_activation_uses_the_registered_music_handler() {
     struct SongSource;
     impl FileSource for SongSource {
-        fn validate_location(&self, _: &Location) -> Result<(), crate::services::LocationValidationError> { Ok(()) }
-        fn enumerate(&self, request: crate::services::DirectoryRequest, emit: Rc<dyn Fn(crate::services::DirectoryEvent)>) -> crate::services::LoadHandle {
+        fn validate_location(
+            &self,
+            _: &Location,
+        ) -> Result<(), crate::services::LocationValidationError> {
+            Ok(())
+        }
+        fn enumerate(
+            &self,
+            request: crate::services::DirectoryRequest,
+            emit: Rc<dyn Fn(crate::services::DirectoryEvent)>,
+        ) -> crate::services::LoadHandle {
             let entry = FileEntry(Rc::new(crate::model::FileEntryInner {
                 location: Location::local("/fixture/03.flac"),
-                native_name: "03.flac".into(), display_name: "03.flac".into(), kind: EntryKind::File,
-                size: crate::model::MetadataValue::Unknown, modified_unix_seconds: crate::model::MetadataValue::Unknown, music_tags: None,
+                native_name: "03.flac".into(),
+                display_name: "03.flac".into(),
+                kind: EntryKind::File,
+                size: crate::model::MetadataValue::Unknown,
+                modified_unix_seconds: crate::model::MetadataValue::Unknown,
+                music_tags: None,
             }));
-            emit(crate::services::DirectoryEvent::Batch { request_id: request.id, entries: vec![entry] });
-            emit(crate::services::DirectoryEvent::Finished { request_id: request.id });
+            emit(crate::services::DirectoryEvent::Batch {
+                request_id: request.id,
+                entries: vec![entry],
+            });
+            emit(crate::services::DirectoryEvent::Finished {
+                request_id: request.id,
+            });
             crate::services::LoadHandle::new(|| {})
         }
     }
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let view = BrowserView::new(Rc::new(SongSource), PeekBehavior::default());
     let opened = Rc::new(RefCell::new(Vec::new()));
     let captured = opened.clone();
-    view.set_open_handler(Rc::new(move |location| { captured.borrow_mut().push(location); true }));
+    view.set_open_handler(Rc::new(move |location| {
+        captured.borrow_mut().push(location);
+        true
+    }));
     view.browser().navigate(Location::local("/fixture"));
     view.browser().preview(0, 0);
-    assert!(opened.borrow().is_empty(), "Single-click preview must not play a song");
+    assert!(
+        opened.borrow().is_empty(),
+        "Single-click preview must not play a song"
+    );
     view.browser().activate(0, 0);
     view.browser().activate_focused();
-    assert_eq!(*opened.borrow(), vec![Location::local("/fixture/03.flac"); 2]);
+    assert_eq!(
+        *opened.borrow(),
+        vec![Location::local("/fixture/03.flac"); 2]
+    );
     view.browser().clear_observer();
 }
 
@@ -707,14 +1127,18 @@ fn inline_rename_selects_the_stem_but_keeps_the_extension() {
 
 #[test]
 fn delete_confirmation_labels_distinguish_files_and_folders() {
-    let file = crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location: Location::local("/fixture/file.txt"),
+    let file = crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner {
+        music_tags: None,
+        location: Location::local("/fixture/file.txt"),
         native_name: "file.txt".into(),
         display_name: "file.txt".into(),
         kind: crate::model::EntryKind::File,
         size: crate::model::MetadataValue::Known(10),
         modified_unix_seconds: crate::model::MetadataValue::Unknown,
     }));
-    let folder = crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location: Location::local("/fixture/folder"),
+    let folder = crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner {
+        music_tags: None,
+        location: Location::local("/fixture/folder"),
         native_name: "folder".into(),
         display_name: "folder".into(),
         kind: crate::model::EntryKind::Directory,
@@ -726,7 +1150,10 @@ fn delete_confirmation_labels_distinguish_files_and_folders() {
     assert_eq!(item_count_label(2), "2 items");
     assert_eq!(entry_kind_summary(std::slice::from_ref(&file)), "1 file");
     assert_eq!(entry_kind_summary(&[file.clone(), file.clone()]), "2 files");
-    assert_eq!(entry_kind_summary(&[folder.clone()]), "1 folder");
+    assert_eq!(
+        entry_kind_summary(std::slice::from_ref(&folder)),
+        "1 folder"
+    );
     assert_eq!(entry_kind_summary(&[file, folder]), "2 items");
 }
 
@@ -741,13 +1168,17 @@ fn only_the_trash_root_uses_the_aggregate_properties_size() {
 
 #[test]
 fn quick_preview_is_offered_only_for_supported_files() {
-    let entry = |name: &str, kind| crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location: Location::local(format!("/fixture/{name}")),
-        native_name: name.into(),
-        display_name: name.into(),
-        kind,
-        size: crate::model::MetadataValue::Unknown,
-        modified_unix_seconds: crate::model::MetadataValue::Unknown,
-    }));
+    let entry = |name: &str, kind| {
+        crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner {
+            music_tags: None,
+            location: Location::local(format!("/fixture/{name}")),
+            native_name: name.into(),
+            display_name: name.into(),
+            kind,
+            size: crate::model::MetadataValue::Unknown,
+            modified_unix_seconds: crate::model::MetadataValue::Unknown,
+        }))
+    };
 
     assert!(entry_supports_quick_preview(&entry(
         "photo.png",
@@ -816,13 +1247,17 @@ fn local_file_drops_prefer_move_while_external_drops_prefer_copy() {
 
 #[test]
 fn multi_selection_summary_lists_at_most_three_names() {
-    let entry = |name: &str| crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location: Location::local(format!("/fixture/{name}")),
-        native_name: name.into(),
-        display_name: name.into(),
-        kind: crate::model::EntryKind::File,
-        size: crate::model::MetadataValue::Unknown,
-        modified_unix_seconds: crate::model::MetadataValue::Unknown,
-    }));
+    let entry = |name: &str| {
+        crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner {
+            music_tags: None,
+            location: Location::local(format!("/fixture/{name}")),
+            native_name: name.into(),
+            display_name: name.into(),
+            kind: crate::model::EntryKind::File,
+            size: crate::model::MetadataValue::Unknown,
+            modified_unix_seconds: crate::model::MetadataValue::Unknown,
+        }))
+    };
 
     assert_eq!(
         selected_items_summary(&[entry("one"), entry("two"), entry("three")]),
@@ -998,22 +1433,30 @@ fn single_pane_modes_reserve_half_for_preview_sizing() {
 
 #[test]
 fn music_context_actions_require_an_audio_only_selection() {
-    let entry = |name: &str, kind| FileEntry(Rc::new(crate::model::FileEntryInner {
-        location: Location::local(format!("/fixture/{name}")),
-        native_name: name.into(),
-        display_name: name.into(),
-        kind,
-        size: crate::model::MetadataValue::Unknown,
-        modified_unix_seconds: crate::model::MetadataValue::Unknown,
-        music_tags: None,
-    }));
+    let entry = |name: &str, kind| {
+        FileEntry(Rc::new(crate::model::FileEntryInner {
+            location: Location::local(format!("/fixture/{name}")),
+            native_name: name.into(),
+            display_name: name.into(),
+            kind,
+            size: crate::model::MetadataValue::Unknown,
+            modified_unix_seconds: crate::model::MetadataValue::Unknown,
+            music_tags: None,
+        }))
+    };
     let track = entry("track.flac", EntryKind::File);
     let second = entry("song.mp3", EntryKind::FileSymbolicLink);
     assert!(audio_context_actions_visible(std::slice::from_ref(&track)));
     assert!(audio_context_actions_visible(&[track.clone(), second]));
     assert!(!audio_context_actions_visible(&[]));
-    assert!(!audio_context_actions_visible(&[entry("album.flac", EntryKind::Directory)]));
-    assert!(!audio_context_actions_visible(&[track, entry("cover.jpg", EntryKind::File)]));
+    assert!(!audio_context_actions_visible(&[entry(
+        "album.flac",
+        EntryKind::Directory
+    )]));
+    assert!(!audio_context_actions_visible(&[
+        track,
+        entry("cover.jpg", EntryKind::File)
+    ]));
 }
 
 #[test]
@@ -1061,19 +1504,35 @@ fn desktop_hover_peek_lifecycle() {
             Ok(())
         }
 
-        fn enumerate(&self, request: DirectoryRequest, emit: Rc<dyn Fn(DirectoryEvent)>) -> LoadHandle {
+        fn enumerate(
+            &self,
+            request: DirectoryRequest,
+            emit: Rc<dyn Fn(DirectoryEvent)>,
+        ) -> LoadHandle {
             self.requests.borrow_mut().push(request.location.clone());
-            let entries = (0..3).map(|index| FileEntry(Rc::new(crate::model::FileEntryInner {
-                location: Location::local(format!("{}/folder-{index}", request.location.display_path())),
-                native_name: format!("folder-{index}").into(),
-                display_name: format!("folder-{index}"),
-                kind: EntryKind::Directory,
-                size: crate::model::MetadataValue::Unknown,
-                modified_unix_seconds: crate::model::MetadataValue::Unknown,
-                music_tags: None,
-            }))).collect();
-            emit(DirectoryEvent::Batch { request_id: request.id, entries });
-            emit(DirectoryEvent::Finished { request_id: request.id });
+            let entries = (0..3)
+                .map(|index| {
+                    FileEntry(Rc::new(crate::model::FileEntryInner {
+                        location: Location::local(format!(
+                            "{}/folder-{index}",
+                            request.location.display_path()
+                        )),
+                        native_name: format!("folder-{index}").into(),
+                        display_name: format!("folder-{index}"),
+                        kind: EntryKind::Directory,
+                        size: crate::model::MetadataValue::Unknown,
+                        modified_unix_seconds: crate::model::MetadataValue::Unknown,
+                        music_tags: None,
+                    }))
+                })
+                .collect();
+            emit(DirectoryEvent::Batch {
+                request_id: request.id,
+                entries,
+            });
+            emit(DirectoryEvent::Finished {
+                request_id: request.id,
+            });
             let cancellations = self.cancellations.clone();
             LoadHandle::new(move || cancellations.set(cancellations.get() + 1))
         }
@@ -1083,17 +1542,23 @@ fn desktop_hover_peek_lifecycle() {
     crate::assets::prepare().expect("Icons load");
     let requests = Rc::new(RefCell::new(Vec::new()));
     let cancellations = Rc::new(Cell::new(0));
-    let view = BrowserView::new(Rc::new(GeneratedSource {
-        requests: requests.clone(),
-        cancellations: cancellations.clone(),
-    }), PeekBehavior {
-        open_delay: Duration::from_millis(5),
-        close_delay: Duration::from_millis(5),
-        fade_duration: Duration::ZERO,
-        item_limit: 2,
-    });
-    let window = gtk::Window::builder().default_width(900).default_height(500)
-        .child(&view.state.overlay).build();
+    let view = BrowserView::new(
+        Rc::new(GeneratedSource {
+            requests: requests.clone(),
+            cancellations: cancellations.clone(),
+        }),
+        PeekBehavior {
+            open_delay: Duration::from_millis(5),
+            close_delay: Duration::from_millis(5),
+            fade_duration: Duration::ZERO,
+            item_limit: 2,
+        },
+    );
+    let window = gtk::Window::builder()
+        .default_width(900)
+        .default_height(500)
+        .child(&view.state.overlay)
+        .build();
     view.state.browser.navigate(Location::local("/generated"));
     window.present();
     let drain = || {
@@ -1110,14 +1575,23 @@ fn desktop_hover_peek_lifecycle() {
     let first = Location::local("/generated/folder-0");
     let second = Location::local("/generated/folder-1");
     view.state.browser.begin_peek(0, first.clone());
-    assert_eq!(requests.borrow().len(), 1, "Missing anchors must not start a load");
+    assert_eq!(
+        requests.borrow().len(),
+        1,
+        "Missing anchors must not start a load"
+    );
 
     view.state.schedule_peek(0, first.clone(), anchor.clone());
     view.state.schedule_peek(0, second.clone(), anchor.clone());
     drain();
     assert_eq!(requests.borrow().len(), 2, "Only the newest timer opens");
     assert_eq!(requests.borrow().last(), Some(&second));
-    let peek = view.state.peek.borrow().clone().expect("Valid anchor opens peek");
+    let peek = view
+        .state
+        .peek
+        .borrow()
+        .clone()
+        .expect("Valid anchor opens peek");
     assert_eq!(peek.model.n_items(), 2);
     assert_eq!(peek.entry_count.get(), 2);
     assert!(view.state.pending_peek.borrow().is_none());
@@ -1144,35 +1618,69 @@ fn desktop_hover_peek_lifecycle() {
     view.state.schedule_peek(0, first.clone(), anchor.clone());
     view.set_view_mode(BrowserMode::Grid);
     drain();
-    assert_eq!(requests.borrow().len(), 2, "Mode changes invalidate pending anchors");
+    assert_eq!(
+        requests.borrow().len(),
+        2,
+        "Mode changes invalidate pending anchors"
+    );
     view.set_view_mode(BrowserMode::Columns);
     drain();
 
     let column = view.state.columns.borrow()[0].clone();
-    let row = column.bound_rows.borrow().iter().find_map(|bound| {
-        let item = bound.item.upgrade()?;
-        (item.position() == 0).then(|| bound.row.upgrade()).flatten()
-    }).expect("Generated first row is bound");
+    let row = column
+        .bound_rows
+        .borrow()
+        .iter()
+        .find_map(|bound| {
+            let item = bound.item.upgrade()?;
+            (item.position() == 0)
+                .then(|| bound.row.upgrade())
+                .flatten()
+        })
+        .expect("Generated first row is bound");
     view.state.schedule_peek(0, first.clone(), row.upcast());
-    let replacement = entry_model_value(&view.state.browser.entry_at(0, 1).unwrap());
+    let replacement = entry_model_value(
+        &view
+            .state
+            .browser
+            .entry_at(0, 1)
+            .expect("expected test value from view.state.browser.entry_at(0, 1)"),
+    );
     column.model.splice(0, 1, &[&replacement]);
     drain();
-    assert_eq!(requests.borrow().len(), 2, "Recycled rows cannot open their old folder");
+    assert_eq!(
+        requests.borrow().len(),
+        2,
+        "Recycled rows cannot open their old folder"
+    );
     view.state.handle(BrowserEvent::EntriesReplaced {
         depth: 0,
-        entries: view.state.browser.column_entries(0).unwrap(),
+        entries: view
+            .state
+            .browser
+            .column_entries(0)
+            .expect("expected test value from view.state.browser.column_entries(0)"),
     });
     drain();
 
     view.state.schedule_peek(0, first.clone(), anchor.clone());
     view.state.browser.navigate(Location::local("/replacement"));
     drain();
-    assert_eq!(requests.borrow().len(), 3, "Navigation cancels the old hover timer");
+    assert_eq!(
+        requests.borrow().len(),
+        3,
+        "Navigation cancels the old hover timer"
+    );
     assert!(view.state.peek.borrow().is_none());
     assert!(view.state.peek_anchor.borrow().is_none());
-    view.state.schedule_peek(0, Location::local("/replacement/folder-0"), anchor);
+    view.state
+        .schedule_peek(0, Location::local("/replacement/folder-0"), anchor);
     drain();
-    assert_eq!(requests.borrow().len(), 3, "Detached anchors cannot reopen a peek");
+    assert_eq!(
+        requests.borrow().len(),
+        3,
+        "Detached anchors cannot reopen a peek"
+    );
     view.state.browser.navigate(Location::local("/generated"));
     drain();
     let anchor: gtk::Widget = view.state.columns.borrow()[0].shell.clone().upcast();
@@ -1187,37 +1695,76 @@ fn desktop_hover_peek_lifecycle() {
 
     view.state.schedule_peek(0, first.clone(), anchor.clone());
     drain();
-    let finished = view.state.peek.borrow().clone().unwrap();
+    let finished = view
+        .state
+        .peek
+        .borrow()
+        .clone()
+        .expect("expected test value from view.state.peek.borrow().clone()");
     finished.spinner.start();
     let weak = Rc::downgrade(&view.state);
-    finished.spinner.connect_notify_local(Some("spinning"), move |_, _| {
-        weak.upgrade().unwrap().browser.close_peek();
-    });
+    finished
+        .spinner
+        .connect_notify_local(Some("spinning"), move |_, _| {
+            weak.upgrade()
+                .expect("expected test value from weak.upgrade()")
+                .browser
+                .close_peek();
+        });
     view.state.handle(BrowserEvent::PeekFinished);
-    assert!(view.state.peek.borrow().is_none(), "Finishing may close synchronously");
+    assert!(
+        view.state.peek.borrow().is_none(),
+        "Finishing may close synchronously"
+    );
     drain();
 
     view.state.schedule_peek(0, first.clone(), anchor.clone());
     drain();
-    let failed = view.state.peek.borrow().clone().unwrap();
+    let failed = view
+        .state
+        .peek
+        .borrow()
+        .clone()
+        .expect("expected test value from view.state.peek.borrow().clone()");
     let weak = Rc::downgrade(&view.state);
-    failed.presentation.message.connect_notify_local(Some("label"), move |_, _| {
-        weak.upgrade().unwrap().browser.close_peek();
+    failed
+        .presentation
+        .message
+        .connect_notify_local(Some("label"), move |_, _| {
+            weak.upgrade()
+                .expect("expected test value from weak.upgrade()")
+                .browser
+                .close_peek();
+        });
+    view.state.handle(BrowserEvent::PeekFailed {
+        message: "Generated failure".into(),
     });
-    view.state.handle(BrowserEvent::PeekFailed { message: "Generated failure".into() });
-    assert!(view.state.peek.borrow().is_none(), "Errors may close synchronously");
+    assert!(
+        view.state.peek.borrow().is_none(),
+        "Errors may close synchronously"
+    );
     drain();
 
     let children = view.state.overlay.observe_children();
     let weak = Rc::downgrade(&view.state);
     let handler = children.connect_items_changed(move |_, _, _, _| {
-        weak.upgrade().unwrap().browser.close_peek();
+        weak.upgrade()
+            .expect("expected test value from weak.upgrade()")
+            .browser
+            .close_peek();
     });
     let before = requests.borrow().len();
     view.state.schedule_peek(0, first.clone(), anchor.clone());
     drain();
-    assert!(view.state.peek.borrow().is_none(), "Reentrant overlay closure stays closed");
-    assert_eq!(requests.borrow().len(), before, "Closed overlays must not start loading");
+    assert!(
+        view.state.peek.borrow().is_none(),
+        "Reentrant overlay closure stays closed"
+    );
+    assert_eq!(
+        requests.borrow().len(),
+        before,
+        "Closed overlays must not start loading"
+    );
     children.disconnect(handler);
 
     let connected = Rc::new(Cell::new(false));
@@ -1225,18 +1772,33 @@ fn desktop_hover_peek_lifecycle() {
     let weak = Rc::downgrade(&view.state);
     view.state.browser.observe(move |event| {
         if matches!(event, BrowserEvent::PeekStarted { .. }) {
-            let state = weak.upgrade().unwrap();
-            let model = state.peek.borrow().as_ref().expect("Peek attached").model.clone();
+            let state = weak
+                .upgrade()
+                .expect("expected test value from weak.upgrade()");
+            let model = state
+                .peek
+                .borrow()
+                .as_ref()
+                .expect("Peek attached")
+                .model
+                .clone();
             let weak = Rc::downgrade(&state);
             model.connect_items_changed(move |_, _, _, _| {
-                weak.upgrade().unwrap().browser.close_peek();
+                weak.upgrade()
+                    .expect("expected test value from weak.upgrade()")
+                    .browser
+                    .close_peek();
             });
             observed.set(true);
         }
     });
-    view.state.schedule_peek(0, Location::local("/generated/folder-0"), anchor);
+    view.state
+        .schedule_peek(0, Location::local("/generated/folder-0"), anchor);
     drain();
-    assert!(connected.get(), "Timer opened peek before synchronous enumeration");
+    assert!(
+        connected.get(),
+        "Timer opened peek before synchronous enumeration"
+    );
     assert!(view.state.peek.borrow().is_none());
     drain();
     view.state.browser.clear_observer();
@@ -1247,7 +1809,9 @@ fn desktop_hover_peek_lifecycle() {
 fn test_preferred_terminal_and_path_resolution() {
     assert!(super::is_executable_in_path("sh"));
     assert!(!super::is_executable_in_path("non_existent_binary_xyz_123"));
-    assert!(!super::open_terminal_at(Path::new("/non/existent/path/for/testing")));
+    assert!(!super::open_terminal_at(Path::new(
+        "/non/existent/path/for/testing"
+    )));
 }
 
 #[test]
@@ -1255,11 +1819,13 @@ fn test_executable_permission_toggling() {
     use std::os::unix::fs::PermissionsExt;
     let temp_dir = std::env::temp_dir().join(format!("hermes-perm-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp_dir);
-    std::fs::create_dir_all(&temp_dir).unwrap();
+    std::fs::create_dir_all(&temp_dir).expect("create generated fixture directory");
     let file_path = temp_dir.join("script.sh");
-    std::fs::write(&file_path, "#!/bin/sh\necho hello\n").unwrap();
+    std::fs::write(&file_path, "#!/bin/sh\necho hello\n").expect("write generated fixture");
 
-    let initial_perms = std::fs::metadata(&file_path).unwrap().permissions();
+    let initial_perms = std::fs::metadata(&file_path)
+        .expect("expected test value from std::fs::metadata(&file_path)")
+        .permissions();
     let initial_mode = initial_perms.mode();
     assert_eq!(initial_mode & 0o111, 0);
 
@@ -1267,16 +1833,24 @@ fn test_executable_permission_toggling() {
     let new_mode = initial_mode | 0o111;
     let mut perms = initial_perms.clone();
     perms.set_mode(new_mode);
-    std::fs::set_permissions(&file_path, perms).unwrap();
-    let current_mode = std::fs::metadata(&file_path).unwrap().permissions().mode();
+    std::fs::set_permissions(&file_path, perms)
+        .expect("expected test value from std::fs::set_permissions(&file_path, perms)");
+    let current_mode = std::fs::metadata(&file_path)
+        .expect("expected test value from std::fs::metadata(&file_path)")
+        .permissions()
+        .mode();
     assert_ne!(current_mode & 0o111, 0);
 
     // Toggle off (chmod -x)
     let cleared_mode = current_mode & !0o111;
     let mut perms = initial_perms;
     perms.set_mode(cleared_mode);
-    std::fs::set_permissions(&file_path, perms).unwrap();
-    let final_mode = std::fs::metadata(&file_path).unwrap().permissions().mode();
+    std::fs::set_permissions(&file_path, perms)
+        .expect("expected test value from std::fs::set_permissions(&file_path, perms)");
+    let final_mode = std::fs::metadata(&file_path)
+        .expect("expected test value from std::fs::metadata(&file_path)")
+        .permissions()
+        .mode();
     assert_eq!(final_mode & 0o111, 0);
 
     let _ = std::fs::remove_dir_all(&temp_dir);
@@ -1286,16 +1860,16 @@ fn test_executable_permission_toggling() {
 fn test_duplicate_collision_safe_naming() {
     let temp_dir = std::env::temp_dir().join(format!("hermes-dup-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp_dir);
-    std::fs::create_dir_all(&temp_dir).unwrap();
+    std::fs::create_dir_all(&temp_dir).expect("create generated fixture directory");
     let parent = &temp_dir;
     let original = parent.join("notes.txt");
-    std::fs::write(&original, "content").unwrap();
+    std::fs::write(&original, "content").expect("write generated fixture");
 
     let copy1_name = crate::services::naming::collision_safe_name("notes.txt", &|name| {
         parent.join(name).exists()
     });
     assert_eq!(copy1_name, "notes (copy).txt");
-    std::fs::write(parent.join(&copy1_name), "copy 1").unwrap();
+    std::fs::write(parent.join(&copy1_name), "copy 1").expect("write generated fixture");
 
     let copy2_name = crate::services::naming::collision_safe_name("notes.txt", &|name| {
         parent.join(name).exists()
@@ -1308,9 +1882,7 @@ fn test_duplicate_collision_safe_naming() {
 #[test]
 #[ignore = "Requires an isolated GTK display; exercises BrowserView density CSS"]
 fn test_step_density_and_reset_density_updates_overlay_css() {
-    if gtk::init().is_err() {
-        return;
-    }
+    gtk::init().expect("initialize the isolated GTK display");
     let view = BrowserView::new(
         Rc::new(crate::adapters::LocalFileSource),
         PeekBehavior::default(),
@@ -1341,9 +1913,7 @@ fn test_step_density_and_reset_density_updates_overlay_css() {
 #[test]
 #[ignore = "Requires an isolated GTK display; exercises BrowserView context menu trigger"]
 fn test_show_context_menu_registered_trigger() {
-    if gtk::init().is_err() {
-        return;
-    }
+    gtk::init().expect("initialize the isolated GTK display");
     let view = BrowserView::new(
         Rc::new(crate::adapters::LocalFileSource),
         PeekBehavior::default(),

@@ -3,10 +3,10 @@ use super::*;
 #[test]
 #[ignore = "Requires isolated GTK display, audio backend and FFmpeg; generated silent audio only"]
 fn desktop_main_listening_seek_skip_queue_continuation_pause_and_preview_exclusion() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("generated fixture must provide the expected value");
+    crate::assets::prepare().expect("generated fixture must provide the expected value");
     let root = std::env::temp_dir().join(format!("hermes-listen-native-{}", std::process::id()));
-    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&root).expect("generated fixture must provide the expected value");
     let mut tracks = Vec::new();
     for name in ["one", "two"] {
         let path = root.join(format!("{name}.flac"));
@@ -25,7 +25,7 @@ fn desktop_main_listening_seek_skip_queue_continuation_pause_and_preview_exclusi
                 ])
                 .arg(&path)
                 .status()
-                .unwrap()
+                .expect("generated fixture must provide the expected value")
                 .success()
         );
         tracks.push(Track {
@@ -95,5 +95,5 @@ fn desktop_main_listening_seek_skip_queue_continuation_pause_and_preview_exclusi
         Some(&1)
     );
     controller.shutdown();
-    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(root).expect("generated fixture must provide the expected value");
 }

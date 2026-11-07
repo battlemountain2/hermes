@@ -3,14 +3,14 @@ use super::*;
 #[test]
 #[ignore = "Private GTK display; verifies saved-query scope, filters, entity guards and stable layout"]
 fn desktop_save_search_preserves_physical_queries_without_resizing() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("generated fixture must provide the expected value");
+    crate::assets::prepare().expect("generated fixture must provide the expected value");
     let theme = crate::ui::theme::ThemeManager::shared();
     theme.set_show_smart_folders(true);
     let styles = gtk::CssProvider::new();
     styles.load_from_string(include_str!("../../style.css"));
     gtk::style_context_add_provider_for_display(
-        &gdk::Display::default().unwrap(),
+        &gdk::Display::default().expect("generated fixture must provide the expected value"),
         &styles,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
@@ -50,9 +50,17 @@ fn desktop_save_search_preserves_physical_queries_without_resizing() {
         }
     };
     settle();
-    let panel = dialog.state.field.parent().unwrap().parent().unwrap();
+    let panel = dialog
+        .state
+        .field
+        .parent()
+        .expect("generated fixture must provide the expected value")
+        .parent()
+        .expect("generated fixture must provide the expected value");
     let bounds = (panel.width(), panel.height());
     for (position, group) in SEARCH_GROUPS.iter().enumerate() {
+        // Categories and Save search now live in the contextual Filters popover.
+        dialog.state.filters.show(query);
         dialog.state.categories[position].emit_clicked();
         settle();
         assert_eq!((panel.width(), panel.height()), bounds);
@@ -64,7 +72,13 @@ fn desktop_save_search_preserves_physical_queries_without_resizing() {
         assert_eq!(saved.borrow().len(), previous + usize::from(exportable));
         if exportable {
             assert!(!dialog.is_visible());
-            let request = ScopedSearch::from_uri(saved.borrow().last().unwrap()).unwrap();
+            let request = ScopedSearch::from_uri(
+                saved
+                    .borrow()
+                    .last()
+                    .expect("generated fixture must provide the expected value"),
+            )
+            .expect("generated fixture must provide the expected value");
             assert_eq!(request.scope, SearchScope::ThisFolder);
             assert_eq!(request.root, PathBuf::from("/synthetic/photos"));
             assert_eq!(request.group, *group);
@@ -84,7 +98,13 @@ fn desktop_save_search_preserves_physical_queries_without_resizing() {
     }));
     update_group_controls(&dialog.state);
     dialog.state.save_button.emit_clicked();
-    let request = ScopedSearch::from_uri(saved.borrow().last().unwrap()).unwrap();
+    let request = ScopedSearch::from_uri(
+        saved
+            .borrow()
+            .last()
+            .expect("generated fixture must provide the expected value"),
+    )
+    .expect("generated fixture must provide the expected value");
     assert_eq!(request.entity, Some(key));
     assert_eq!(request.group, SearchGroup::Songs);
     assert_eq!(dismissed.get(), 4);

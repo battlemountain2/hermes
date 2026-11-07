@@ -13,12 +13,21 @@ fn search_relevance_survives_snapshots_hydration_and_preserves_selection() {
     let first = track_entry("z exact.flac", Some(1), Some(1));
     let second = track_entry("a fuzzy.flac", Some(1), Some(2));
     state.apply_snapshot(request_id, vec![first.clone(), second.clone()]);
-    assert_eq!(state.columns[0].entries, vec![first.clone(), second.clone()]);
+    assert_eq!(
+        state.columns[0].entries,
+        vec![first.clone(), second.clone()]
+    );
     state.select(0, 0);
     state.apply_snapshot(request_id, vec![second.clone(), first.clone()]);
     assert_eq!(state.columns[0].selected, Some(1));
     let mut enriched = first.clone();
-    std::rc::Rc::make_mut(&mut enriched.0).music_tags.as_mut().unwrap().title = Some("Updated".into());
+    std::rc::Rc::make_mut(&mut enriched.0)
+        .music_tags
+        .as_mut()
+        .expect(
+            "expected test value from std::rc::Rc::make_mut(&mut enriched.0).music_tags.as_mut()",
+        )
+        .title = Some("Updated".into());
     state.apply_music_metadata(request_id, &[enriched.clone()]);
     assert_eq!(state.columns[0].entries, vec![second, enriched]);
     assert_eq!(state.columns[0].selected, Some(1));
@@ -32,7 +41,10 @@ fn explicit_search_sort_is_preserved_across_new_snapshots() {
     let first = track_entry("z exact.flac", Some(1), Some(1));
     let second = track_entry("a fuzzy.flac", Some(1), Some(2));
     state.apply_snapshot(request_id, vec![first.clone(), second.clone()]);
-    let preferences = ViewPreferences { sort_key: SortKey::Name, ..ViewPreferences::default() };
+    let preferences = ViewPreferences {
+        sort_key: SortKey::Name,
+        ..ViewPreferences::default()
+    };
     state.set_column_preferences(0, preferences);
     state.apply_snapshot(request_id, vec![first.clone(), second.clone()]);
     assert_eq!(state.columns[0].entries, vec![second, first]);
@@ -45,7 +57,10 @@ fn search_notices_are_independent_of_ready_results_and_clear_on_reload() {
     state.navigate(Location::uri("search://song"), request_id);
     state.apply_snapshot(request_id, vec![track_entry("song.flac", Some(1), Some(1))]);
     assert_eq!(state.set_notice(RequestId(100), Some("stale".into())), None);
-    assert_eq!(state.set_notice(request_id, Some("Partial index".into())), Some(0));
+    assert_eq!(
+        state.set_notice(request_id, Some("Partial index".into())),
+        Some(0)
+    );
     state.finish(request_id);
     assert_eq!(state.columns[0].load_state, LoadState::Ready);
     assert_eq!(state.columns[0].notice.as_deref(), Some("Partial index"));
@@ -92,8 +107,15 @@ fn restarting_a_peek_discards_partial_cached_entries_and_rejects_stale_ids() {
     assert_eq!(state.peek_entries().len(), 1);
     assert!(state.restart_peek(RequestId(102)));
     assert!(state.peek_entries().is_empty());
-    assert_eq!(state.peek.as_ref().unwrap().load_state, LoadState::Loading);
-    state.apply_peek_batch(RequestId(102), &[second.clone()]);
+    assert_eq!(
+        state
+            .peek
+            .as_ref()
+            .expect("expected test value from state.peek.as_ref()")
+            .load_state,
+        LoadState::Loading
+    );
+    state.apply_peek_batch(RequestId(102), std::slice::from_ref(&second));
     state.finish_peek(RequestId(102));
     assert_eq!(state.peek_entries(), vec![second]);
 }
@@ -110,24 +132,52 @@ fn album_hydration_preserves_selection_and_manual_sorting() {
     std::rc::Rc::make_mut(&mut initial_second.0).music_tags = None;
     state.apply_batch(RequestId(101), vec![initial_first, initial_second]);
     state.select(0, 0);
-    assert_eq!(state.apply_music_metadata(RequestId(100), &[first.clone()]), None);
-    assert_eq!(state.apply_music_metadata(RequestId(101), &[first.clone(), second.clone()]), Some(0));
+    assert_eq!(
+        state.apply_music_metadata(RequestId(100), std::slice::from_ref(&first)),
+        None
+    );
+    assert_eq!(
+        state.apply_music_metadata(RequestId(101), &[first.clone(), second.clone()]),
+        Some(0)
+    );
     assert_eq!(state.columns[0].entries[0].location, first.location);
     assert_eq!(state.columns[0].selected, Some(1));
     assert_eq!(state.selected_positions(0), vec![1]);
-    assert_eq!(state.column_preferences(0).unwrap().sort_key, SortKey::Track);
-    let mut preferences = state.column_preferences(0).unwrap();
+    assert_eq!(
+        state
+            .column_preferences(0)
+            .expect("expected test value from state.column_preferences(0)")
+            .sort_key,
+        SortKey::Track
+    );
+    let mut preferences = state
+        .column_preferences(0)
+        .expect("expected test value from state.column_preferences(0)");
     preferences.sort_key = SortKey::Name;
     state.set_column_preferences(0, preferences);
     state.apply_music_metadata(RequestId(101), &[]);
     assert_eq!(state.columns[0].entries[0].location, second.location);
-    assert_eq!(state.column_preferences(0).unwrap().sort_key, SortKey::Name);
+    assert_eq!(
+        state
+            .column_preferences(0)
+            .expect("expected test value from state.column_preferences(0)")
+            .sort_key,
+        SortKey::Name
+    );
 }
 
 #[test]
 fn descending_album_order_keeps_artwork_after_tracks() {
-    let preferences = ViewPreferences { sort_key: SortKey::Track, sort_direction: SortDirection::Descending, ..ViewPreferences::default() };
-    let mut entries = vec![track_entry("cover.jpg", None, None), track_entry("first.flac", Some(1), Some(1)), track_entry("second.flac", Some(1), Some(2))];
+    let preferences = ViewPreferences {
+        sort_key: SortKey::Track,
+        sort_direction: SortDirection::Descending,
+        ..ViewPreferences::default()
+    };
+    let mut entries = [
+        track_entry("cover.jpg", None, None),
+        track_entry("first.flac", Some(1), Some(1)),
+        track_entry("second.flac", Some(1), Some(2)),
+    ];
     entries.sort_by(|left, right| compare_entries(left, right, preferences));
     assert_eq!(entries[0].display_name, "second.flac");
     assert_eq!(entries[2].display_name, "cover.jpg");
@@ -147,7 +197,7 @@ fn peeks_and_columns_share_metadata_order_across_batches() {
     state.apply_peek_batch(RequestId(2), &[initial_second]);
     state.apply_peek_batch(RequestId(2), &[initial_first]);
     assert_eq!(state.peek_entries()[0].location, second.location);
-    assert!(!state.apply_peek_music_metadata(RequestId(3), &[first.clone()]));
+    assert!(!state.apply_peek_music_metadata(RequestId(3), std::slice::from_ref(&first)));
     assert!(state.apply_peek_music_metadata(RequestId(2), &[first.clone(), second]));
     assert_eq!(state.peek_entries()[0].location, first.location);
 }
@@ -160,12 +210,34 @@ fn album_auto_sort_is_local_and_reverts_for_conflicting_albums() {
     let mut second = track_entry("second.flac", Some(1), Some(2));
     state.apply_batch(RequestId(1), vec![first, second.clone()]);
     assert_eq!(state.apply_music_metadata(RequestId(1), &[]), Some(0));
-    assert_eq!(state.column_preferences(0).unwrap().sort_key, SortKey::Track);
-    std::rc::Rc::make_mut(&mut second.0).music_tags.as_mut().unwrap().album = Some("Other".into());
+    assert_eq!(
+        state
+            .column_preferences(0)
+            .expect("expected test value from state.column_preferences(0)")
+            .sort_key,
+        SortKey::Track
+    );
+    std::rc::Rc::make_mut(&mut second.0)
+        .music_tags
+        .as_mut()
+        .expect("expected test value from std::rc::Rc::make_mut(&mut second.0).music_tags.as_mut()")
+        .album = Some("Other".into());
     state.apply_music_metadata(RequestId(1), &[second]);
-    assert_eq!(state.column_preferences(0).unwrap().sort_key, SortKey::Name);
+    assert_eq!(
+        state
+            .column_preferences(0)
+            .expect("expected test value from state.column_preferences(0)")
+            .sort_key,
+        SortKey::Name
+    );
     state.navigate(location("/documents"), RequestId(2));
-    assert_eq!(state.column_preferences(0).unwrap().sort_key, SortKey::Name);
+    assert_eq!(
+        state
+            .column_preferences(0)
+            .expect("expected test value from state.column_preferences(0)")
+            .sort_key,
+        SortKey::Name
+    );
 }
 
 #[test]
@@ -177,7 +249,10 @@ fn metadata_does_not_overwrite_changed_or_removed_entries() {
     std::rc::Rc::make_mut(&mut changed.0).music_tags = None;
     std::rc::Rc::make_mut(&mut changed.0).size = MetadataValue::Known(2);
     state.apply_batch(RequestId(1), vec![changed]);
-    state.apply_music_metadata(RequestId(1), &[original, track_entry("removed.flac", None, Some(2))]);
+    state.apply_music_metadata(
+        RequestId(1),
+        &[original, track_entry("removed.flac", None, Some(2))],
+    );
     assert_eq!(state.columns[0].entries.len(), 1);
     assert!(state.columns[0].entries[0].music_tags.is_none());
 }
@@ -198,11 +273,24 @@ fn entry(path: &str) -> FileEntry {
 fn search_snapshots_replace_entries_and_preserve_selection_by_location() {
     let mut state = NavigationState::default();
     state.navigate(location("/search"), RequestId(10));
-    state.apply_snapshot(RequestId(10), vec![named_entry("/a", "a"), named_entry("/b", "b"), named_entry("/c", "c")]);
+    state.apply_snapshot(
+        RequestId(10),
+        vec![
+            named_entry("/a", "a"),
+            named_entry("/b", "b"),
+            named_entry("/c", "c"),
+        ],
+    );
     state.select(0, 0);
     state.set_selection(0, &[0, 1], Some(1));
     assert_eq!(state.apply_snapshot(RequestId(9), vec![]), None);
-    assert_eq!(state.apply_snapshot(RequestId(10), vec![named_entry("/b", "b"), named_entry("/d", "d")]), Some(0));
+    assert_eq!(
+        state.apply_snapshot(
+            RequestId(10),
+            vec![named_entry("/b", "b"), named_entry("/d", "d")]
+        ),
+        Some(0)
+    );
     assert_eq!(state.columns[0].entries.len(), 2);
     assert_eq!(state.columns[0].selected, Some(0));
     assert_eq!(state.selected_positions(0), vec![0]);
@@ -217,14 +305,18 @@ fn search_snapshots_do_not_accumulate_superseded_top_results() {
     let mut state = NavigationState::default();
     state.navigate(location("/search"), RequestId(10));
     for batch in 0..4 {
-        let entries = (0..100).map(|number| entry(&format!("/result-{batch}-{number}"))).collect();
+        let entries = (0..100)
+            .map(|number| entry(&format!("/result-{batch}-{number}")))
+            .collect();
         state.apply_snapshot(RequestId(10), entries);
         assert_eq!(state.columns[0].entries.len(), 100);
     }
 }
 
 fn named_entry(path: &str, name: &str) -> FileEntry {
-    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location: location(path),
+    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner {
+        music_tags: None,
+        location: location(path),
         native_name: OsString::from(name),
         display_name: name.into(),
         kind: EntryKind::Directory,
@@ -678,12 +770,27 @@ fn batches_are_merged_into_one_global_sort_order() {
 fn ordered_batches_reuse_storage_and_emit_only_new_splices() {
     let preferences = ViewPreferences::default();
     let mut existing = Vec::with_capacity(8);
-    existing.extend([named_entry("/fixture/a", "a"), named_entry("/fixture/b", "b")]);
+    existing.extend([
+        named_entry("/fixture/a", "a"),
+        named_entry("/fixture/b", "b"),
+    ]);
     let storage = existing.as_ptr();
-    let (merged, insertions) = merge_entries(existing,
-        vec![named_entry("/fixture/d", "d"), named_entry("/fixture/c", "c")], preferences);
+    let (merged, insertions) = merge_entries(
+        existing,
+        vec![
+            named_entry("/fixture/d", "d"),
+            named_entry("/fixture/c", "c"),
+        ],
+        preferences,
+    );
     assert_eq!(merged.as_ptr(), storage);
-    assert_eq!(merged.iter().map(|entry| entry.display_name.as_str()).collect::<Vec<_>>(), vec!["a", "b", "c", "d"]);
+    assert_eq!(
+        merged
+            .iter()
+            .map(|entry| entry.display_name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["a", "b", "c", "d"]
+    );
     assert_eq!(insertions.len(), 1);
     assert_eq!(insertions[0].position, 2);
     assert_eq!(insertions[0].entries.len(), 2);
@@ -696,18 +803,27 @@ fn ordered_batches_reuse_storage_and_emit_only_new_splices() {
 #[test]
 #[ignore = "Synthetic model-only timing; no filesystem reads or desktop interaction"]
 fn profile_ordered_directory_merges() {
-    let entries: Vec<_> = (0..100_000).map(|index| {
-        let name = format!("entry-{index:06}.txt");
-        named_entry(&format!("/fixture/{name}"), &name)
-    }).collect();
+    let entries: Vec<_> = (0..100_000)
+        .map(|index| {
+            let name = format!("entry-{index:06}.txt");
+            named_entry(&format!("/fixture/{name}"), &name)
+        })
+        .collect();
     let started = std::time::Instant::now();
     let mut merged = Vec::new();
     for batch in entries.chunks(128) {
         merged = merge_entries(merged, batch.to_vec(), ViewPreferences::default()).0;
     }
     assert_eq!(merged.len(), entries.len());
-    assert!(merged.windows(2).all(|pair| pair[0].display_name <= pair[1].display_name));
-    eprintln!("100k ordered entries / 128-entry batches: {:?}", started.elapsed());
+    assert!(
+        merged
+            .windows(2)
+            .all(|pair| pair[0].display_name <= pair[1].display_name)
+    );
+    eprintln!(
+        "100k ordered entries / 128-entry batches: {:?}",
+        started.elapsed()
+    );
 }
 
 #[test]
@@ -817,7 +933,7 @@ fn natural_name_sorting_orders_numerals_and_groups_case_insensitively() {
         sort_direction: SortDirection::Ascending,
         ..ViewPreferences::default()
     };
-    let mut entries = vec![
+    let mut entries = [
         named_file_entry("/file10.txt", "file10.txt"),
         named_file_entry("/file2.txt", "file2.txt"),
         named_file_entry("/apple.txt", "apple.txt"),
@@ -828,7 +944,13 @@ fn natural_name_sorting_orders_numerals_and_groups_case_insensitively() {
     let names: Vec<&str> = entries.iter().map(|e| e.display_name.as_str()).collect();
     assert_eq!(
         names,
-        vec!["Apple.txt", "apple.txt", "banana.txt", "file2.txt", "file10.txt"]
+        vec![
+            "Apple.txt",
+            "apple.txt",
+            "banana.txt",
+            "file2.txt",
+            "file10.txt"
+        ]
     );
 }
 
@@ -839,7 +961,7 @@ fn sort_by_type_groups_extensions_case_insensitively_with_natural_name_tie_break
         sort_direction: SortDirection::Ascending,
         ..ViewPreferences::default()
     };
-    let mut entries = vec![
+    let mut entries = [
         named_file_entry("/notes10.txt", "notes10.txt"),
         named_file_entry("/track.flac", "track.flac"),
         named_file_entry("/notes2.txt", "notes2.txt"),

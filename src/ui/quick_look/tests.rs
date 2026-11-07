@@ -2,19 +2,14 @@
 
 use super::*;
 
-fn setup_test_gtk() -> bool {
-    if std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_err() {
-        return false;
-    }
-    gtk::init().is_ok()
+fn setup_test_gtk() {
+    gtk::init().expect("initialize the isolated GTK display");
 }
 
 #[test]
 #[ignore = "Requires isolated GTK display; verifies QuickLookModal initial closed state"]
 fn test_quick_look_initial_state() {
-    if !setup_test_gtk() {
-        return;
-    }
+    setup_test_gtk();
     let modal = QuickLookModal::new();
     assert!(!modal.is_open());
     modal.close();
@@ -24,9 +19,7 @@ fn test_quick_look_initial_state() {
 #[test]
 #[ignore = "Requires isolated GTK display; verifies QuickLookModal navigation handlers registration"]
 fn test_quick_look_navigation_handlers() {
-    if !setup_test_gtk() {
-        return;
-    }
+    setup_test_gtk();
     let modal = QuickLookModal::new();
     let next_called = Rc::new(Cell::new(false));
     let prev_called = Rc::new(Cell::new(false));

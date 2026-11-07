@@ -29,6 +29,27 @@ impl Default for Options {
     }
 }
 
+pub(super) fn release_ephemeral_on_close(menu: &gtk::Popover, anchor: &gtk::Widget) {
+    let weak_anchor = anchor.downgrade();
+    menu.connect_closed(move |menu| {
+        // Older GTK can retain a detached popup through the window's focus.
+        if let Some(root) = menu.root()
+            && root
+                .focus()
+                .is_some_and(|focus| focus == *menu || focus.is_ancestor(menu))
+        {
+            root.set_focus(None::<&gtk::Widget>);
+            if let Some(anchor) = weak_anchor.upgrade() {
+                anchor.grab_focus();
+            }
+        }
+        menu.set_child(None::<&gtk::Widget>);
+        if menu.parent().is_some() {
+            menu.unparent();
+        }
+    });
+}
+
 pub(super) fn tidy_separators(container: &gtk::Box) {
     let mut child = container.first_child();
     let mut preceding_item = false;

@@ -84,6 +84,10 @@ impl FileSource for SearchFileSource {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each delivered result must validate its query, scope and request revision before updating the directory"
+)]
 fn deliver_results(
     event: SearchEvent,
     query: &str,

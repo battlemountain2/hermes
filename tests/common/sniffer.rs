@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#![allow(dead_code)]
 
 /// Fast dimensions sniffer and frame budget verifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

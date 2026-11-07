@@ -6,7 +6,7 @@ fn call(method: &str, uris: &[&str]) -> Vec<Request> {
         &uris.iter().map(|uri| uri.to_string()).collect::<Vec<_>>(),
         "token",
     )
-    .unwrap()
+    .expect("expected test value from requests( method, &uris.iter().map(|uri| uri.to_string()).collect::<Vec<_>>(), \"token\", )")
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn encoded_native_names_remain_byte_safe_without_accepting_nul() {
     assert_eq!(
         parsed[0].selection[0]
             .native_path()
-            .unwrap()
+            .expect("expected test value from parsed[0].selection[0] .native_path()")
             .as_os_str()
             .as_bytes(),
         b"/tmp/byte\xff.flac"
@@ -141,23 +141,27 @@ fn folder_integration_defaults_off_and_rejects_unsafe_or_unrecognized_preference
         br#"{"version":1,"enabled":false}"#,
         br#"{"version":1,"enabled":true,"extra":1}"#,
     ] {
-        fs::write(&path, bytes).unwrap();
+        fs::write(&path, bytes).expect("write generated fixture");
         assert!(!enabled_at(&path));
     }
-    fs::write(&path, br#"{"version":1,"enabled":true}"#).unwrap();
+    fs::write(&path, br#"{"version":1,"enabled":true}"#).expect("write generated fixture");
     assert!(enabled_at(&path));
     let alias = directory.0.join("alias.json");
-    std::os::unix::fs::symlink(&path, &alias).unwrap();
+    std::os::unix::fs::symlink(&path, &alias)
+        .expect("expected test value from std::os::unix::fs::symlink(&path, &alias)");
     assert!(!enabled_at(&alias));
-    fs::write(&path, vec![b' '; 1025]).unwrap();
+    fs::write(&path, vec![b' '; 1025]).expect("write generated fixture");
     assert!(!enabled_at(&path));
     assert!(!enabled_at(&directory.0));
 }
 
 #[test]
 fn introspection_has_only_the_three_standard_methods() {
-    let node = gio::DBusNodeInfo::for_xml(XML).unwrap();
-    let interface = node.lookup_interface(BUS).unwrap();
+    let node = gio::DBusNodeInfo::for_xml(XML)
+        .expect("expected test value from gio::DBusNodeInfo::for_xml(XML)");
+    let interface = node
+        .lookup_interface(BUS)
+        .expect("expected test value from node.lookup_interface(BUS)");
     assert_eq!(XML.matches("<method ").count(), 3);
     for name in ["ShowFolders", "ShowItems", "ShowItemProperties"] {
         assert!(interface.lookup_method(name).is_some());
@@ -185,11 +189,11 @@ fn private_bus_dispatches_requests_keeps_existing_owner_and_releases_registratio
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .unwrap());
+        .expect("expected test value from Command::new(\"dbus-daemon\") .args([\"--session\", \"--nofork\", \"--print-address=1\"]) .stdout(Stdio::piped()) .stderr(Stdio::null()..."));
     let mut address = String::new();
-    BufReader::new(bus.0.stdout.take().unwrap())
+    BufReader::new(bus.0.stdout.take().expect("expected test value from bus.0.stdout.take()"))
         .read_line(&mut address)
-        .unwrap();
+        .expect("expected test value from BufReader::new(bus.0.stdout.take().unwrap()) .read_line(&mut address)");
     let context = glib::MainContext::new();
     context
         .with_thread_default(|| {
@@ -201,7 +205,7 @@ fn private_bus_dispatches_requests_keeps_existing_owner_and_releases_registratio
                     None,
                     None::<&gio::Cancellable>,
                 )
-                .unwrap()
+                .expect("expected test value from gio::DBusConnection::for_address_sync( address.trim(), gio::DBusConnectionFlags::AUTHENTICATION_CLIENT | gio::DBusConnectionFla...")
             };
             let server = connect();
             let client = connect();
@@ -242,11 +246,11 @@ fn private_bus_dispatches_requests_keeps_existing_owner_and_releases_registratio
             };
             assert_eq!(
                 dbus("GetNameOwner", (BUS,).to_variant())
-                    .unwrap()
+                    .expect("expected test value from dbus(\"GetNameOwner\", (BUS,).to_variant())")
                     .get::<(String,)>()
-                    .unwrap()
+                    .expect("expected test value from dbus(\"GetNameOwner\", (BUS,).to_variant()) .unwrap() .get::<(String,)>()")
                     .0,
-                server.unique_name().unwrap()
+                server.unique_name().expect("expected test value from server.unique_name()")
             );
             let invoke = |method: &str, uris: Vec<String>| {
                 context.block_on(client.call_future(
@@ -261,7 +265,7 @@ fn private_bus_dispatches_requests_keeps_existing_owner_and_releases_registratio
                 ))
             };
             for method in ["ShowFolders", "ShowItems", "ShowItemProperties"] {
-                invoke(method, vec!["file:///tmp/generated/song.flac".into()]).unwrap();
+                invoke(method, vec!["file:///tmp/generated/song.flac".into()]).expect("expected test value from invoke(method, vec![\"file:///tmp/generated/song.flac\".into()])");
             }
             assert_eq!(received.borrow().len(), 3);
             assert!(received.borrow()[2].properties);
@@ -271,9 +275,9 @@ fn private_bus_dispatches_requests_keeps_existing_owner_and_releases_registratio
             drop(first);
             until(&|| {
                 !dbus("NameHasOwner", (BUS,).to_variant())
-                    .unwrap()
+                    .expect("expected test value from dbus(\"NameHasOwner\", (BUS,).to_variant())")
                     .get::<(bool,)>()
-                    .unwrap()
+                    .expect("expected test value from dbus(\"NameHasOwner\", (BUS,).to_variant()) .unwrap() .get::<(bool,)>()")
                     .0
             });
             assert!(losing.export.borrow().is_none());
@@ -293,8 +297,8 @@ fn private_bus_dispatches_requests_keeps_existing_owner_and_releases_registratio
             );
             drop(losing);
             for connection in [&server, &client, &competitor] {
-                connection.close_sync(None::<&gio::Cancellable>).unwrap();
+                connection.close_sync(None::<&gio::Cancellable>).expect("expected test value from connection.close_sync(None::<&gio::Cancellable>)");
             }
         })
-        .unwrap();
+        .expect("expected test value from context .with_thread_default(|| { let connect = || { gio::DBusConnection::for_address_sync( address.trim(), gio::DBusConnection...");
 }

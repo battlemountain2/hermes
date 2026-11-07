@@ -105,7 +105,11 @@ impl ParseOperation {
         }
         if matches!(
             self,
-            Self::MusicTags | Self::MusicWaveform | Self::PreviewAudioMetadata | Self::ImageMetadata | Self::MediaMetadata
+            Self::MusicTags
+                | Self::MusicWaveform
+                | Self::PreviewAudioMetadata
+                | Self::ImageMetadata
+                | Self::MediaMetadata
         ) {
             "result.json"
         } else if self == Self::PreviewAnimation {
@@ -394,6 +398,12 @@ fn sandbox_command(
         "--setenv",
         "XDG_CACHE_HOME",
         "/tmp/cache",
+        "--setenv",
+        "OPENBLAS_NUM_THREADS",
+        "1",
+        "--setenv",
+        "OMP_NUM_THREADS",
+        "1",
         "--proc",
         "/proc",
         "--dev",
@@ -419,6 +429,9 @@ fn sandbox_command(
         "--ro-bind-try",
         "/etc/ld.so.cache",
         "/etc/ld.so.cache",
+        "--ro-bind-try",
+        "/etc/alternatives",
+        "/etc/alternatives",
         "--ro-bind-try",
         "/var/cache/fontconfig",
         "/var/cache/fontconfig",
@@ -488,7 +501,9 @@ fn sandbox_input_path(input: &Path) -> String {
         Some(extension)
             if !extension.is_empty()
                 && extension.len() <= 16
-                && extension.bytes().all(|character| character.is_ascii_alphanumeric()) =>
+                && extension
+                    .bytes()
+                    .all(|character| character.is_ascii_alphanumeric()) =>
         {
             format!("/input.{}", extension.to_ascii_lowercase())
         }

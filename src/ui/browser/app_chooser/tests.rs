@@ -48,7 +48,7 @@ fn suggested_apps_precede_unrelated_apps_without_launching_or_changing_defaults(
     assert_eq!(gtk::glib::user_data_dir(), root.join("data"));
     assert_eq!(gtk::glib::user_config_dir(), root.join("config"));
     let applications = root.join("data/applications");
-    fs::create_dir_all(&applications).unwrap();
+    fs::create_dir_all(&applications).expect("create generated fixture directory");
     for (id, name, mime) in [
         ("hermes-test-default", "Zebra Default Player", "audio/flac;"),
         (
@@ -58,18 +58,21 @@ fn suggested_apps_precede_unrelated_apps_without_launching_or_changing_defaults(
         ),
         ("hermes-test-other", "Aardvark Other Editor", "text/plain;"),
     ] {
-        fs::write(applications.join(format!("{id}.desktop")), format!("[Desktop Entry]\nType=Application\nName={name}\nExec=/bin/false %f\nMimeType={mime}\n")).unwrap();
+        fs::write(applications.join(format!("{id}.desktop")), format!("[Desktop Entry]\nType=Application\nName={name}\nExec=/bin/false %f\nMimeType={mime}\n")).expect("write generated fixture");
     }
-    fs::write(root.join("config/mimeapps.list"), "[Default Applications]\naudio/flac=hermes-test-default.desktop;\n[Added Associations]\naudio/flac=hermes-test-default.desktop;hermes-test-suggested.desktop;\n").unwrap();
+    fs::write(root.join("config/mimeapps.list"), "[Default Applications]\naudio/flac=hermes-test-default.desktop;\n[Added Associations]\naudio/flac=hermes-test-default.desktop;hermes-test-suggested.desktop;\n").expect("write generated fixture");
     let file = root.join("home/generated.flac");
-    fs::write(&file, b"fLaC").unwrap();
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    fs::write(&file, b"fLaC").expect("write generated fixture");
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     super::super::super::window::load_styles();
     let _theme = super::super::super::theme::ThemeManager::shared();
     let window = gtk::Window::new();
     let dialog = dialog(&window, &gio::File::for_path(&file));
-    let chooser = dialog.widget().downcast::<gtk::AppChooserWidget>().unwrap();
+    let chooser = dialog
+        .widget()
+        .downcast::<gtk::AppChooserWidget>()
+        .expect("expected test value from dialog.widget().downcast::<gtk::AppChooserWidget>()");
     assert!(!chooser.shows_all());
     assert!(!chooser.shows_default());
     assert!(chooser.shows_recommended());
@@ -90,11 +93,13 @@ fn suggested_apps_precede_unrelated_apps_without_launching_or_changing_defaults(
         );
         if let Some(node) = snapshot.to_node() {
             let renderer = gtk::gsk::CairoRenderer::new();
-            renderer.realize(None::<&gtk::gdk::Surface>).unwrap();
+            renderer
+                .realize(None::<&gtk::gdk::Surface>)
+                .expect("expected test value from renderer.realize(None::<&gtk::gdk::Surface>)");
             renderer
                 .render_texture(&node, None)
                 .save_to_png(std::path::PathBuf::from(path).with_file_name("open-with.png"))
-                .unwrap();
+                .expect("expected test value from renderer .render_texture(&node, None) .save_to_png(std::path::PathBuf::from(path).with_file_name(\"open-with.png\"))");
             renderer.unrealize();
         }
     }
@@ -120,7 +125,9 @@ fn suggested_apps_precede_unrelated_apps_without_launching_or_changing_defaults(
     assert!(position("Zebra Default Player") < position("Aardvark Other Editor"));
     assert!(position("Middle Suggested Player") < position("Aardvark Other Editor"));
     check_scroll_position(chooser.upcast_ref());
-    let selected = chooser.app_info().unwrap();
+    let selected = chooser
+        .app_info()
+        .expect("expected test value from chooser.app_info()");
     assert!(
         gio::AppInfo::recommended_for_type("audio/flac")
             .iter()
@@ -130,7 +137,9 @@ fn suggested_apps_precede_unrelated_apps_without_launching_or_changing_defaults(
     window.destroy();
     assert_eq!(
         gio::AppInfo::default_for_type("audio/flac", false)
-            .unwrap()
+            .expect(
+                "expected test value from gio::AppInfo::default_for_type(\"audio/flac\", false)"
+            )
             .id()
             .as_deref(),
         Some("hermes-test-default.desktop")

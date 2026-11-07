@@ -92,7 +92,7 @@ impl ImagePreview {
             image_drag.connect_prepare(move |source, x, y| {
                 let paintable = gtk::WidgetPaintable::new(source.widget().as_ref());
                 source.set_icon(Some(&paintable), x.round() as i32, y.round() as i32);
-                crate::ui::browser::file_drag_content(&[drag_entry.clone()])
+                crate::ui::browser::file_drag_content(std::slice::from_ref(&drag_entry))
             });
             image_drag.connect_drag_begin(|source, _| {
                 if let Some(w) = source.widget() {

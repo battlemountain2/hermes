@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#![allow(dead_code)]
+#![expect(
+    dead_code,
+    reason = "Each integration executable uses a different subset of shared test fixtures and oracles"
+)]
 
 pub mod sniffer;
 pub mod status_bar;
@@ -57,7 +60,6 @@ impl Drop for TestEnv {
     }
 }
 
-#[allow(dead_code)]
 pub struct HelperOutput {
     pub status: ExitStatus,
     pub stdout: String,

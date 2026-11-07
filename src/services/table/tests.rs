@@ -399,7 +399,8 @@ fn xlsx_root_relationship_selects_relocated_workbook_and_worksheet_parts() {
             "<worksheet><sheetData><row><c t=\"inlineStr\"><is><t>Relocated heading</t></is></c></row><row><c><v>57</v></c></row></sheetData></worksheet>",
         ),
     ]);
-    let data = SpreadsheetData::read_workbook(&fixture.0).unwrap();
+    let data = SpreadsheetData::read_workbook(&fixture.0)
+        .expect("expected test value from SpreadsheetData::read_workbook(&fixture.0)");
     assert_eq!(data.sheet_names, ["Relocated"]);
     assert_eq!(data.headers, ["Relocated heading"]);
     assert_eq!(data.rows, [vec!["57"]]);

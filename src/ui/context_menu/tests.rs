@@ -5,11 +5,13 @@ fn defaults_keep_clipboard_actions_primary_and_optional_dialogs_hidden() {
     let defaults = Options::default();
     assert!(defaults.archives && defaults.music && defaults.open_with);
     assert!(!defaults.transfer_destinations && !defaults.compress_files);
-    let restored: Options = toml::from_str("music = false\ntransfer_destinations = true").unwrap();
+    let restored: Options = toml::from_str("music = false\ntransfer_destinations = true").expect(
+        "expected test value from toml::from_str(\"music = false\\ntransfer_destinations = true\")",
+    );
     assert!(!restored.music);
     assert!(restored.transfer_destinations && restored.archives);
     assert_eq!(
-        toml::from_str::<Options>(&toml::to_string(&restored).unwrap()).unwrap(),
+        toml::from_str::<Options>(&toml::to_string(&restored).expect("expected test value from toml::to_string(&restored)")).expect("expected test value from toml::from_str::<Options>(&toml::to_string(&restored).unwrap())"),
         restored
     );
 }
@@ -17,7 +19,7 @@ fn defaults_keep_clipboard_actions_primary_and_optional_dialogs_hidden() {
 #[test]
 #[ignore = "Requires an isolated GTK display; no personal files"]
 fn desktop_context_sections_hide_empty_and_duplicate_separators() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let separators: Vec<_> = (0..4)
         .map(|_| gtk::Separator::new(gtk::Orientation::Horizontal))

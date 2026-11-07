@@ -6,7 +6,7 @@ fn native_clipboard_encodes_directory_uris_without_inspecting_files() {
         Location::local("/generated/Folder ü #100%"),
         Location::uri("sftp://host.example/home/user/Second%20folder"),
     ];
-    assert_eq!(file_clipboard_uri_list(&locations).unwrap().as_ref(),
+    assert_eq!(file_clipboard_uri_list(&locations).expect("generated fixture must provide the expected value").as_ref(),
         b"file:///generated/Folder%20%C3%BC%20%23100%25\r\nsftp://host.example/home/user/Second%20folder\r\n");
     assert!(file_clipboard_uri_list(&[]).is_none());
 }
@@ -18,7 +18,9 @@ fn native_clipboard_preserves_non_utf8_directory_names() {
         b"/generated/folder-\xff".to_vec(),
     )));
     assert_eq!(
-        file_clipboard_uri_list(&[location]).unwrap().as_ref(),
+        file_clipboard_uri_list(&[location])
+            .expect("generated fixture must provide the expected value")
+            .as_ref(),
         b"file:///generated/folder-%FF\r\n"
     );
 }
@@ -29,15 +31,19 @@ fn gnome_copied_files_encodes_cut_and_copy_actions() {
         Location::local("/generated/Item 1"),
         Location::local("/generated/Item 2"),
     ];
-    let copy_bytes = gnome_copied_files_bytes(&locations, false).unwrap();
+    let copy_bytes = gnome_copied_files_bytes(&locations, false)
+        .expect("generated fixture must provide the expected value");
     assert_eq!(
-        std::str::from_utf8(copy_bytes.as_ref()).unwrap(),
+        std::str::from_utf8(copy_bytes.as_ref())
+            .expect("generated fixture must provide the expected value"),
         "copy\nfile:///generated/Item%201\nfile:///generated/Item%202\n"
     );
 
-    let cut_bytes = gnome_copied_files_bytes(&locations, true).unwrap();
+    let cut_bytes = gnome_copied_files_bytes(&locations, true)
+        .expect("generated fixture must provide the expected value");
     assert_eq!(
-        std::str::from_utf8(cut_bytes.as_ref()).unwrap(),
+        std::str::from_utf8(cut_bytes.as_ref())
+            .expect("generated fixture must provide the expected value"),
         "cut\nfile:///generated/Item%201\nfile:///generated/Item%202\n"
     );
 
@@ -93,13 +99,20 @@ fn pump_until(mut condition: impl FnMut() -> bool) {
 }
 
 fn run_client(command: &mut Command) -> std::process::ExitStatus {
-    let mut child = ClipboardClient(command.spawn().unwrap());
+    let mut child = ClipboardClient(
+        command
+            .spawn()
+            .expect("generated fixture must provide the expected value"),
+    );
     let mut status = None;
     pump_until(|| {
-        status = child.0.try_wait().unwrap();
+        status = child
+            .0
+            .try_wait()
+            .expect("generated fixture must provide the expected value");
         status.is_some()
     });
-    status.unwrap()
+    status.expect("generated fixture must provide the expected value")
 }
 
 fn client_text(command: &mut Command) -> (std::process::ExitStatus, String) {
@@ -109,11 +122,14 @@ fn client_text(command: &mut Command) -> (std::process::ExitStatus, String) {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .spawn()
-            .unwrap(),
+            .expect("generated fixture must provide the expected value"),
     );
     let mut status = None;
     pump_until(|| {
-        status = child.0.try_wait().unwrap();
+        status = child
+            .0
+            .try_wait()
+            .expect("generated fixture must provide the expected value");
         status.is_some()
     });
     let mut output = String::new();
@@ -121,10 +137,13 @@ fn client_text(command: &mut Command) -> (std::process::ExitStatus, String) {
         .0
         .stdout
         .take()
-        .unwrap()
+        .expect("generated fixture must provide the expected value")
         .read_to_string(&mut output)
-        .unwrap();
-    (status.unwrap(), output)
+        .expect("generated fixture must provide the expected value");
+    (
+        status.expect("generated fixture must provide the expected value"),
+        output,
+    )
 }
 
 struct ClipboardClient(std::process::Child);
@@ -161,7 +180,7 @@ fn menu_button(widget: &gtk::Widget, title: &str) -> Option<gtk::Button> {
 
 fn build_kde_clipboard_probe(root: &Path) -> PathBuf {
     let source = root.join("kde-probe");
-    std::fs::create_dir(&source).unwrap();
+    std::fs::create_dir(&source).expect("generated fixture must provide the expected value");
     std::fs::write(
         source.join("CMakeLists.txt"),
         r#"
@@ -174,7 +193,7 @@ add_executable(probe probe.cpp)
 target_link_libraries(probe PRIVATE Qt6::Widgets KF6::KIOWidgets KF6::CoreAddons)
 "#,
     )
-    .unwrap();
+    .expect("generated fixture must provide the expected value");
     std::fs::write(source.join("probe.cpp"), r#"
 #include <QApplication>
 #include <QClipboard>
@@ -214,7 +233,7 @@ int main(int argc, char **argv)
     QTimer::singleShot(15000, &app, [&] { app.exit(4); });
     return app.exec();
 }
-"#).unwrap();
+"#).expect("generated fixture must provide the expected value");
     let build = source.join("build");
     for command in [
         Command::new("cmake")
@@ -224,7 +243,9 @@ int main(int argc, char **argv)
             .arg(&build),
         Command::new("cmake").arg("--build").arg(&build),
     ] {
-        let output = command.output().unwrap();
+        let output = command
+            .output()
+            .expect("generated fixture must provide the expected value");
         assert!(
             output.status.success(),
             "{}{}",
@@ -240,28 +261,41 @@ int main(int argc, char **argv)
 fn desktop_directory_copy_pastes_into_dolphin() {
     use crate::services::{DirectoryEvent, DirectoryRequest, LoadHandle};
 
-    let config = PathBuf::from(std::env::var_os("XDG_CONFIG_HOME").unwrap());
-    let runtime = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
+    let config = PathBuf::from(
+        std::env::var_os("XDG_CONFIG_HOME")
+            .expect("generated fixture must provide the expected value"),
+    );
+    let runtime = PathBuf::from(
+        std::env::var_os("XDG_RUNTIME_DIR")
+            .expect("generated fixture must provide the expected value"),
+    );
     assert!(config.starts_with(std::env::temp_dir()));
     assert!(runtime.starts_with(std::env::temp_dir()));
     for variable in ["HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"] {
         assert!(
-            PathBuf::from(std::env::var_os(variable).unwrap())
-                .starts_with(config.parent().unwrap())
+            PathBuf::from(
+                std::env::var_os(variable)
+                    .expect("generated fixture must provide the expected value")
+            )
+            .starts_with(
+                config
+                    .parent()
+                    .expect("generated fixture must provide the expected value")
+            )
         );
     }
     assert!(
         std::env::var("DBUS_SESSION_BUS_ADDRESS")
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .starts_with("unix:path=/tmp/")
     );
     assert!(!crate::services::actions_path().exists());
     let root = config
         .parent()
-        .unwrap()
+        .expect("generated fixture must provide the expected value")
         .join(format!("directory-copy-{}", std::process::id()));
     assert!(!root.exists());
-    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&root).expect("generated fixture must provide the expected value");
     let probe = build_kde_clipboard_probe(&root);
     let source = root.join("source");
     let names = ["Folder ü #100%", "Second folder"];
@@ -269,9 +303,12 @@ fn desktop_directory_copy_pastes_into_dolphin() {
         .iter()
         .map(|name| {
             let directory = source.join(name);
-            std::fs::create_dir_all(directory.join("nested")).unwrap();
-            std::fs::create_dir_all(directory.join("empty")).unwrap();
-            std::fs::write(directory.join("nested/payload.txt"), name.as_bytes()).unwrap();
+            std::fs::create_dir_all(directory.join("nested"))
+                .expect("generated fixture must provide the expected value");
+            std::fs::create_dir_all(directory.join("empty"))
+                .expect("generated fixture must provide the expected value");
+            std::fs::write(directory.join("nested/payload.txt"), name.as_bytes())
+                .expect("generated fixture must provide the expected value");
             FileEntry(Rc::new(crate::model::FileEntryInner {
                 location: Location::local(directory),
                 native_name: (*name).into(),
@@ -306,8 +343,8 @@ fn desktop_directory_copy_pastes_into_dolphin() {
             LoadHandle::new(|| {})
         }
     }
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("generated fixture must provide the expected value");
+    crate::assets::prepare().expect("generated fixture must provide the expected value");
     let view = BrowserView::new(Rc::new(GeneratedSource(entries)), PeekBehavior::default());
     view.browser().navigate(Location::local(&source));
     pump_until(|| view.browser().entry_at(0, 1).is_some());
@@ -338,7 +375,7 @@ fn desktop_directory_copy_pastes_into_dolphin() {
                 .and_downcast::<gtk::GestureClick>()
         })
         .next()
-        .unwrap();
+        .expect("generated fixture must provide the expected value");
     for count in [1, 2] {
         if let Some(input) = std::env::var_os("HERMES_CLIPBOARD_QA_INPUT") {
             let input = PathBuf::from(input);
@@ -356,7 +393,9 @@ fn desktop_directory_copy_pastes_into_dolphin() {
             .expect("Ordinary folder Copy, not Copy to")
             .emit_clicked();
         assert!(view.state.cut_locations.borrow().is_empty());
-        let clipboard = gtk::gdk::Display::default().unwrap().clipboard();
+        let clipboard = gtk::gdk::Display::default()
+            .expect("generated fixture must provide the expected value")
+            .clipboard();
         let formats = clipboard.formats();
         assert!(formats.contain_mime_type("text/uri-list"));
         assert!(formats.contain_mime_type("application/x-kde4-urilist"));
@@ -374,17 +413,22 @@ fn desktop_directory_copy_pastes_into_dolphin() {
                 clipboard
                     .read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT),
             )
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .get::<gtk::gdk::FileList>()
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .files();
         assert_eq!(files.len(), count);
         for file in &files {
-            assert!(file.path().unwrap().starts_with(&source));
+            assert!(
+                file.path()
+                    .expect("generated fixture must provide the expected value")
+                    .starts_with(&source)
+            );
         }
         for client in ["kio", "dolphin"] {
             let destination = root.join(format!("{client}-{count}"));
-            std::fs::create_dir(&destination).unwrap();
+            std::fs::create_dir(&destination)
+                .expect("generated fixture must provide the expected value");
             if client == "kio" {
                 assert!(
                     run_client(
@@ -409,7 +453,7 @@ fn desktop_directory_copy_pastes_into_dolphin() {
                         .arg("--new-window")
                         .arg(&destination)
                         .spawn()
-                        .unwrap(),
+                        .expect("generated fixture must provide the expected value"),
                 );
                 let service = format!("org.kde.dolphin-{}", dolphin.0.id());
                 let action = "/dolphin/Dolphin_1/actions/edit_paste";
@@ -449,19 +493,26 @@ fn desktop_directory_copy_pastes_into_dolphin() {
             }
             for name in names.iter().take(count) {
                 assert_eq!(
-                    std::fs::read(destination.join(name).join("nested/payload.txt")).unwrap(),
+                    std::fs::read(destination.join(name).join("nested/payload.txt"))
+                        .expect("generated fixture must provide the expected value"),
                     name.as_bytes()
                 );
                 assert!(destination.join(name).join("empty").is_dir());
                 assert_eq!(
-                    std::fs::read(source.join(name).join("nested/payload.txt")).unwrap(),
+                    std::fs::read(source.join(name).join("nested/payload.txt"))
+                        .expect("generated fixture must provide the expected value"),
                     name.as_bytes()
                 );
             }
-            assert_eq!(std::fs::read_dir(&destination).unwrap().count(), count);
+            assert_eq!(
+                std::fs::read_dir(&destination)
+                    .expect("generated fixture must provide the expected value")
+                    .count(),
+                count
+            );
             eprintln!("Verified {client} ordinary Copy/paste: {count} generated folder(s)");
         }
     }
     window.close();
-    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(root).expect("generated fixture must provide the expected value");
 }

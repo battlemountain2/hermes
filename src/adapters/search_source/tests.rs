@@ -147,7 +147,13 @@ fn provisional_search_tab_results_replace_instead_of_accumulating() {
         &active,
         &emit,
     );
-    assert_eq!(previous.as_ref().unwrap()[0].display_name, "second.flac");
+    assert_eq!(
+        previous
+            .as_ref()
+            .expect("expected test value from previous.as_ref()")[0]
+            .display_name,
+        "second.flac"
+    );
     assert_eq!(
         deliver_results(
             results(&["second.flac"], false),
@@ -332,7 +338,11 @@ fn scoped_folder_uris_preserve_non_utf8_native_paths() {
         b"/home/me/album-\xff".to_vec(),
     ));
     let search = ScopedSearch::new(SearchScope::ThisFolder, &root, "song");
-    assert_eq!(ScopedSearch::from_uri(&search.to_uri()).unwrap(), search);
+    assert_eq!(
+        ScopedSearch::from_uri(&search.to_uri())
+            .expect("expected test value from ScopedSearch::from_uri(&search.to_uri())"),
+        search
+    );
 }
 
 #[test]

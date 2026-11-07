@@ -1,5 +1,69 @@
 # Next agent: Hermes performance, file features and media polish
 
+## November 7 compatibility qualification — current
+
+The release-foundation follow-up is backed up in draft PR #8 on
+`ci/6-release-qualification`, stacked on safety PR #7. Its current status and
+source SHA are recorded in the PR. Durable evidence remains under
+`/home/bry/hermes-validation/2026-11-06/` because that run began on November 6.
+
+- The hosted Ubuntu runner explicitly prepares Bubblewrap user/network
+  namespaces before executing private tests. Spelling, dependency policy and
+  disposable Arch package builds have passed on GitHub.
+- GTK 4.14 exposed focus ownership retaining closed native popups. Photo and
+  music menus now share cleanup that clears an internal menu focus, returns it
+  to the anchor and releases ephemeral action widgets before detaching.
+- Search geometry checks measure controls inside their native filter popover,
+  which works across GTK runtime versions.
+- Both helper launch paths bound OpenBLAS/OpenMP worker threads to one. Media
+  metadata failures retain a bounded diagnostic and exit status for diagnosis.
+- The complete local suite passed 1,350 ordinary tests and 116 isolated GTK
+  checks before the final compatibility fixes. Targeted photo/music/search/hover
+  checks exercise those fixes with system GTK and private GTK 4.14 libraries.
+  Hosted full-suite results and the final candidate identity belong in PR #8.
+
+Next release gates still include real clean-package installation/upgrade/removal,
+physical Wayland/browser/audio acceptance, Asahi and Mac qualification, and
+reviewing the 115 explicitly excluded dependency/corpus/platform checks.
+
+## November 6 CI/package follow-up — current
+
+Worktree: `/home/bry/hermes-worktrees/safety`, branch
+`ci/6-release-qualification`, based on safety checkpoint `e9aab4a5`, issue #6.
+The original checkout, installed executable and desktop providers are untouched.
+This is a follow-up to draft PR #7, not permission to merge or publish.
+
+- Repository-wide Rust formatting and strict all-target Clippy cleanup preserve
+  the lint policy. Tests use descriptive fixture expectations instead of blanket
+  lint suppression; three inline modules moved into adjacent test files.
+- Calamine/ZIP and their locked graph were refreshed to resolve advisory findings.
+  Pinned Rust/checking tools and fail-closed local/CI gates replace optional checks.
+- The full test runner isolates process-global GTK, D-Bus, XDG and Home filesystem
+  state and inventories dependency/corpus exclusions explicitly. Criticals remain
+  fatal. See `docs/test-isolation.md` for scope and current acceptance boundaries.
+- Broader GUI checks found a retained-tab keyboard context handler keeping closed
+  models alive. Handlers now travel with retained presentations. The regression
+  verifies restoration and release across Columns, Grid and Explorer. Compact
+  density CSS is now initialized before the first zoom action.
+- Search keeps a compact status/filter row at a steady height and bounds long
+  inferred-chip scrolling. Its geometry regression exercises 10/13/22px fonts.
+  Fixture updates follow combined lyrics mode, asynchronous first-launch gating
+  and controls moved into the Filters popover. Generated thumbnail/hover probes
+  receive private roots explicitly.
+- Publication controls bind a manual channel/version/SHA decision, exact-commit
+  CI and human environment approval; no main/version rewrite or tag movement.
+  No real release dispatch or repository protection change has been performed.
+- Native pacman test candidates use checksum-bound Git archives and declared
+  dependencies; CI builds x86_64 in a disposable Arch container. Physical install,
+  Asahi and Mac qualification remain open. Native release publication is not yet
+  wired to the bundle release workflow.
+
+Reproduction and remaining gates: `docs/ci-and-release-gates.md`,
+`docs/test-isolation.md`, `docs/native-packages.md`, `docs/release-process.md`.
+Durable local evidence is under `/home/bry/hermes-validation/2026-11-06/`.
+These implementation claims do not replace full-suite, artifact or physical
+acceptance evidence. Keep the earlier roadmap exclusions; no new feature scope.
+
 ## November 4 safety and UI checkpoint — current
 
 Worktree: `/home/bry/hermes-worktrees/safety`; branch `fix/6-release-safety`;

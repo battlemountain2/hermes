@@ -135,13 +135,12 @@ impl Collections {
 
         for playlist in &mut self.playlists {
             for track in &mut playlist.tracks {
-                if let Some(p) = track.native_path() {
-                    if let Some(target) = Self::relocate_path(p, from, to) {
-                        if valid_path(&target) {
-                            *track = Location::local(target);
-                            changed = true;
-                        }
-                    }
+                if let Some(p) = track.native_path()
+                    && let Some(target) = Self::relocate_path(p, from, to)
+                    && valid_path(&target)
+                {
+                    *track = Location::local(target);
+                    changed = true;
                 }
             }
             let mut seen = BTreeSet::new();

@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#![allow(dead_code, unused_imports, clippy::all)]
-
 //! Empirical Challenger Stress Test Suite for Milestone 3.1:
 //! - 1. Multi-IFD COGs with diverse pyramid levels (1024x1024, 2048x2048, 4096x4096):
 //!      verify selected overview matches specification (smallest in [1200, 2048] or largest <= 2048).
@@ -14,20 +12,16 @@
 //! - 5. 4-band optical rasters with NIR = 0:
 //!      verify NIR is discarded and alpha = 255 across all pixels.
 
-use std::{
-    fs::{self, File},
-    io::{Read, Seek, SeekFrom, Write},
-    path::Path,
-};
-
 use gdk_pixbuf::prelude::*;
 
 mod common;
-use common::*;
 
+#[expect(
+    dead_code,
+    reason = "This integration oracle imports only the GeoTIFF parser subset"
+)]
 #[path = "../src/sandbox_helper/geotiff.rs"]
 mod geotiff;
-use geotiff::*;
 
 // =========================================================================
 // Verification Oracles & Statistical Helpers
@@ -37,9 +31,10 @@ use geotiff::*;
 /// Luminance formula: Y = 0.299 * R + 0.587 * G + 0.114 * B.
 pub fn calculate_contrast_variance(rgba: &[u8]) -> f64 {
     let mut luminances = Vec::new();
-    for chunk in rgba.chunks_exact(4) {
+    for chunk in rgba.as_chunks::<4>().0 {
         if chunk[3] > 0 {
-            let y = 0.299 * (chunk[0] as f64) + 0.587 * (chunk[1] as f64) + 0.114 * (chunk[2] as f64);
+            let y =
+                0.299 * (chunk[0] as f64) + 0.587 * (chunk[1] as f64) + 0.114 * (chunk[2] as f64);
             luminances.push(y);
         }
     }
@@ -48,14 +43,16 @@ pub fn calculate_contrast_variance(rgba: &[u8]) -> f64 {
     }
     let n = luminances.len() as f64;
     let mean = luminances.iter().sum::<f64>() / n;
-    let variance = luminances.iter().map(|&y| (y - mean).powi(2)).sum::<f64>() / n;
-    variance
+
+    luminances.iter().map(|&y| (y - mean).powi(2)).sum::<f64>() / n
 }
 
 /// Decodes PNG bytes to raw 8-bit RGBA pixel slice using GdkPixbuf loader.
 pub fn decode_png_to_rgba(png_bytes: &[u8]) -> (Vec<u8>, u32, u32) {
     let loader = gdk_pixbuf::PixbufLoader::new();
-    loader.write(png_bytes).expect("Failed to write to pixbuf loader");
+    loader
+        .write(png_bytes)
+        .expect("Failed to write to pixbuf loader");
     loader.close().expect("Failed to close pixbuf loader");
     let pixbuf = loader.pixbuf().expect("Valid pixbuf expected");
     let width = pixbuf.width() as u32;
@@ -83,6 +80,14 @@ pub fn decode_png_to_rgba(png_bytes: &[u8]) -> (Vec<u8>, u32, u32) {
 }
 
 #[test]
-fn test_harness_sanity() {
-    assert!(true);
+fn test_harness_decodes_generated_png() {
+    let bytes = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, 2, 3)
+        .expect("allocate generated RGBA fixture");
+    bytes.fill(0x336699ff);
+    let png = bytes
+        .save_to_bufferv("png", &[])
+        .expect("encode generated PNG");
+    let (pixels, width, height) = decode_png_to_rgba(&png);
+    assert_eq!((width, height), (2, 3));
+    assert_eq!(pixels, [0x33, 0x66, 0x99, 0xff].repeat(6));
 }

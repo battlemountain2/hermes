@@ -96,7 +96,11 @@ pub(super) fn view_options_content(popover: &gtk::Popover) -> gtk::Box {
     for (mode, label, icon) in [
         (BrowserMode::Columns, "List", crate::assets::icons::LIST),
         (BrowserMode::Grid, "Grid", crate::assets::icons::GRID),
-        (BrowserMode::Explorer, "Explorer", crate::assets::icons::ROWS),
+        (
+            BrowserMode::Explorer,
+            "Explorer",
+            crate::assets::icons::ROWS,
+        ),
     ] {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         row.append(&crate::assets::primary_icon(icon, 16));
@@ -106,17 +110,11 @@ pub(super) fn view_options_content(popover: &gtk::Popover) -> gtk::Box {
         row.append(&label);
         let check = crate::assets::primary_icon(crate::assets::icons::CHECK, 16);
         row.append(&check);
-        let button = gtk::Button::builder()
-            .child(&row)
-            .has_frame(false)
-            .build();
+        let button = gtk::Button::builder().child(&row).has_frame(false).build();
         button.add_css_class("appearance-option");
         let weak_popover = popover.downgrade();
         button.connect_clicked(move |button| {
-            let _ = button.activate_action(
-                "win.view-mode",
-                Some(&mode.action_name().to_variant()),
-            );
+            let _ = button.activate_action("win.view-mode", Some(&mode.action_name().to_variant()));
             if let Some(popover) = weak_popover.upgrade() {
                 popover.popdown();
             }
@@ -237,8 +235,12 @@ impl ModeViews {
         presentation.single_click_previews = self.single_click_previews.clone();
         presentation.transfer_handler = self.transfer_handler.clone();
         presentation.cut_locations = self.cut_locations.clone();
-        presentation.context_state.replace(self.context_state.borrow().clone());
-        presentation.grid_thumbnail_size.set(self.grid_thumbnail_size.get());
+        presentation
+            .context_state
+            .replace(self.context_state.borrow().clone());
+        presentation
+            .grid_thumbnail_size
+            .set(self.grid_thumbnail_size.get());
         presentation.mode = self.mode;
         presentation.set_density(self.density);
         presentation.stack.set_visible_child_name(match self.mode {
@@ -268,10 +270,7 @@ impl ModeViews {
         explorer_root.set_hexpand(true);
         explorer_root.set_vexpand(true);
 
-        let stack = gtk::Stack::builder()
-            .hexpand(true)
-            .vexpand(true)
-            .build();
+        let stack = gtk::Stack::builder().hexpand(true).vexpand(true).build();
         stack.add_named(columns, Some("columns"));
         stack.add_named(&grid_scroll, Some("grid"));
         stack.add_named(&explorer_root, Some("explorer"));
@@ -417,7 +416,11 @@ impl ModeViews {
     }
 
     pub fn submit_rename(&self) -> bool {
-        let field = self.active_rename.borrow().as_ref().map(|r| r.field.clone());
+        let field = self
+            .active_rename
+            .borrow()
+            .as_ref()
+            .map(|r| r.field.clone());
         if let Some(field) = field {
             field.activate();
             true
@@ -603,16 +606,15 @@ impl ModeViews {
     }
 
     pub fn step_zoom(&mut self, direction: i32) {
-        if self.mode == BrowserMode::Grid {
-            if let Some(pane) = self.grid_panes.last() {
-                if let Some(scale) = &pane.thumbnail_scale {
-                    let current = scale.value();
-                    let new_val = (current + direction as f64)
-                        .clamp(0.0, (GRID_THUMBNAIL_SIZES.len() - 1) as f64);
-                    scale.set_value(new_val);
-                    return;
-                }
-            }
+        if self.mode == BrowserMode::Grid
+            && let Some(pane) = self.grid_panes.last()
+            && let Some(scale) = &pane.thumbnail_scale
+        {
+            let current = scale.value();
+            let new_val =
+                (current + direction as f64).clamp(0.0, (GRID_THUMBNAIL_SIZES.len() - 1) as f64);
+            scale.set_value(new_val);
+            return;
         }
         let new_density = if direction > 0 {
             BrowserDensity::Airy
@@ -623,13 +625,12 @@ impl ModeViews {
     }
 
     pub fn reset_zoom(&mut self) {
-        if self.mode == BrowserMode::Grid {
-            if let Some(pane) = self.grid_panes.last() {
-                if let Some(scale) = &pane.thumbnail_scale {
-                    let default_idx = thumbnail_size_index(DEFAULT_GRID_THUMBNAIL_SIZE);
-                    scale.set_value(default_idx as f64);
-                }
-            }
+        if self.mode == BrowserMode::Grid
+            && let Some(pane) = self.grid_panes.last()
+            && let Some(scale) = &pane.thumbnail_scale
+        {
+            let default_idx = thumbnail_size_index(DEFAULT_GRID_THUMBNAIL_SIZE);
+            scale.set_value(default_idx as f64);
         }
         self.set_density(BrowserDensity::Compact);
     }
@@ -641,13 +642,16 @@ impl ModeViews {
                 self.load_errors.retain(|(depth, _)| depth < len);
             }
             BrowserEvent::ColumnAdded { depth, .. } => {
-                self.load_errors.retain(|(error_depth, _)| error_depth < depth);
+                self.load_errors
+                    .retain(|(error_depth, _)| error_depth < depth);
             }
             BrowserEvent::ColumnReloaded { depth } | BrowserEvent::LoadFinished { depth } => {
-                self.load_errors.retain(|(error_depth, _)| error_depth != depth);
+                self.load_errors
+                    .retain(|(error_depth, _)| error_depth != depth);
             }
             BrowserEvent::LoadFailed { depth, message } => {
-                self.load_errors.retain(|(error_depth, _)| error_depth != depth);
+                self.load_errors
+                    .retain(|(error_depth, _)| error_depth != depth);
                 self.load_errors.push((*depth, message.clone()));
             }
             _ => {}
@@ -673,7 +677,11 @@ impl ModeViews {
                         self.grid_root.remove(&pane.shell);
                     }
                 }
-                if self.browser.active_depth().is_some_and(|depth| depth < *len) {
+                if self
+                    .browser
+                    .active_depth()
+                    .is_some_and(|depth| depth < *len)
+                {
                     self.rebuild_grid();
                     self.rebuild_explorer();
                 } else {
@@ -1282,7 +1290,14 @@ fn build_grid_pane(
         item_content.append(&field);
         centered.set_center_widget(Some(&item_content));
         card.append(&centered);
-        install_file_hover(&card, item, browser_for_setup.clone(), source_for_setup.clone(), filtered_for_setup.clone(), depth);
+        install_file_hover(
+            &card,
+            item,
+            browser_for_setup.clone(),
+            source_for_setup.clone(),
+            filtered_for_setup.clone(),
+            depth,
+        );
         install_preview_click(
             &card,
             item,
@@ -1497,7 +1512,9 @@ fn refresh_grid_thumbnail_size(
         let Some(item) = bound.item.upgrade() else {
             return;
         };
-        let Some(card) = bound.widget.upgrade()
+        let Some(card) = bound
+            .widget
+            .upgrade()
             .and_downcast::<gtk::Overlay>()
             .and_then(|overlay| overlay.child())
             .and_downcast::<gtk::Box>()
@@ -1730,7 +1747,10 @@ fn show_back_history_popover(button: &gtk::Button, browser: &Rc<Browser>) {
         let row = gtk::Button::builder().has_frame(false).build();
         row.add_css_class("back-history-row");
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        content.append(&crate::assets::primary_icon(crate::assets::icons::FOLDER, 16));
+        content.append(&crate::assets::primary_icon(
+            crate::assets::icons::FOLDER,
+            16,
+        ));
         let label = gtk::Label::new(Some(&location.display_name()));
         label.set_xalign(0.0);
         label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
@@ -1962,7 +1982,14 @@ fn build_explorer_pane(
         row.append(&size);
         row.append(&kind);
         row.append(&modified);
-        install_file_hover(&row, item, browser_for_setup.clone(), source_for_setup.clone(), view_model_for_setup.clone(), depth);
+        install_file_hover(
+            &row,
+            item,
+            browser_for_setup.clone(),
+            source_for_setup.clone(),
+            view_model_for_setup.clone(),
+            depth,
+        );
         install_preview_click(
             &row,
             item,
@@ -2419,14 +2446,18 @@ fn install_file_hover(
     depth: usize,
 ) {
     let hovered_item = item.downgrade();
-    super::hover::install(anchor, item, Rc::new({
-        move || {
-            let item = hovered_item.upgrade()?;
-            item.item()?;
-            let position = source_position_for_view(&source, Some(&filtered), item.position())?;
-            browser.upgrade()?.entry_at(depth, position)
-        }
-    }));
+    super::hover::install(
+        anchor,
+        item,
+        Rc::new({
+            move || {
+                let item = hovered_item.upgrade()?;
+                item.item()?;
+                let position = source_position_for_view(&source, Some(&filtered), item.position())?;
+                browser.upgrade()?.entry_at(depth, position)
+            }
+        }),
+    );
 }
 
 fn install_grid_peek(
@@ -2445,8 +2476,7 @@ fn install_grid_peek(
     let entered_item = item.downgrade();
     let state_for_enter = state.clone();
     motion.connect_enter(move |motion, _, _| {
-        let (Some(entered_item), Some(entered_card)) =
-            (entered_item.upgrade(), motion.widget())
+        let (Some(entered_item), Some(entered_card)) = (entered_item.upgrade(), motion.widget())
         else {
             return;
         };
@@ -2584,12 +2614,15 @@ fn install_explorer_drag_drop(
                 let weak_b = Rc::downgrade(&browser);
                 let nav_loc = entry.location.clone();
                 let timer_handle = timer_enter.clone();
-                let source = glib::timeout_add_local_once(std::time::Duration::from_millis(750), move || {
-                    timer_handle.borrow_mut().take();
-                    if let Some(b) = weak_b.upgrade() {
-                        b.navigate(nav_loc);
-                    }
-                });
+                let source = glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(750),
+                    move || {
+                        timer_handle.borrow_mut().take();
+                        if let Some(b) = weak_b.upgrade() {
+                            b.navigate(nav_loc);
+                        }
+                    },
+                );
                 if let Some(prev) = timer_enter.borrow_mut().replace(source) {
                     prev.remove();
                 }

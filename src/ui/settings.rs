@@ -24,6 +24,16 @@ use super::{
 
 type ThemeCards = Rc<RefCell<Vec<(String, gtk::Button, gtk::Image)>>>;
 type ThemeFollows = [gtk::Switch; 2];
+type NavigationButtons = Rc<
+    RefCell<
+        Vec<(
+            gtk::Button,
+            &'static str,
+            &'static str,
+            &'static [&'static str],
+        )>,
+    >,
+>;
 
 pub fn build_layer(
     browser: &BrowserView,
@@ -293,16 +303,7 @@ pub fn build_layer(
         ),
     ];
 
-    let nav_buttons: Rc<
-        RefCell<
-            Vec<(
-                gtk::Button,
-                &'static str,
-                &'static str,
-                &'static [&'static str],
-            )>,
-        >,
-    > = Rc::new(RefCell::new(Vec::new()));
+    let nav_buttons: NavigationButtons = Rc::new(RefCell::new(Vec::new()));
     for (label, icon, name, keywords) in items {
         let button = navigation_button(icon, label);
         if *name == "general" {
@@ -346,23 +347,24 @@ pub fn build_layer(
                 if first_match.is_none() {
                     first_match = Some((btn, *name, *label));
                 }
-                if let Some(ref cur) = current_name {
-                    if cur == name {
-                        current_visible_matched = true;
-                    }
+                if let Some(ref cur) = current_name
+                    && cur == name
+                {
+                    current_visible_matched = true;
                 }
             }
         }
 
-        if !current_visible_matched && !query.is_empty() {
-            if let Some((btn, name, label)) = first_match {
-                for (candidate, _, _, _) in buttons.iter() {
-                    candidate.remove_css_class("settings-nav-active");
-                }
-                btn.add_css_class("settings-nav-active");
-                stack_for_filter.set_visible_child_name(name);
-                title_for_filter.set_text(label);
+        if !current_visible_matched
+            && !query.is_empty()
+            && let Some((btn, name, label)) = first_match
+        {
+            for (candidate, _, _, _) in buttons.iter() {
+                candidate.remove_css_class("settings-nav-active");
             }
+            btn.add_css_class("settings-nav-active");
+            stack_for_filter.set_visible_child_name(name);
+            title_for_filter.set_text(label);
         }
     });
 

@@ -22,11 +22,11 @@ impl Fixture {
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .expect("expected test value from std::time::SystemTime::now() .duration_since(std::time::UNIX_EPOCH)")
                 .as_nanos(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        fs::create_dir(&root).unwrap();
+        fs::create_dir(&root).expect("create generated fixture directory");
         let fixture = Self {
             integration: Integration {
                 config: root.join("config"),
@@ -49,15 +49,19 @@ impl Fixture {
             &fixture.integration.binary,
             fs::Permissions::from_mode(0o755),
         )
-        .unwrap();
+        .expect("expected test value from fs::set_permissions( &fixture.integration.binary, fs::Permissions::from_mode(0o755), )");
         fixture.seed(&fixture.inherited(), GTK);
         fixture
     }
 
     fn seed(&self, path: &Path, content: &[u8]) {
         assert!(path.starts_with(&self.root));
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, content).unwrap();
+        fs::create_dir_all(
+            path.parent()
+                .expect("expected test value from path.parent()"),
+        )
+        .expect("create generated fixture directory");
+        fs::write(path, content).expect("write generated fixture");
     }
 
     fn portal(&self) -> PathBuf {
@@ -96,21 +100,38 @@ impl Fixture {
     }
 
     fn enable(&self) {
-        self.integration.set_enabled(true).unwrap();
-        assert!(self.integration.is_enabled().unwrap());
-        assert!(fs::read_to_string(self.portal()).unwrap().contains(KEY));
+        self.integration
+            .set_enabled(true)
+            .expect("expected test value from self.integration.set_enabled(true)");
+        assert!(
+            self.integration
+                .is_enabled()
+                .expect("expected test value from self.integration.is_enabled()")
+        );
+        assert!(
+            fs::read_to_string(self.portal())
+                .expect("expected test value from fs::read_to_string(self.portal())")
+                .contains(KEY)
+        );
     }
 
     fn restore(&self) {
-        self.integration.set_enabled(false).unwrap();
-        assert!(!self.integration.is_enabled().unwrap());
+        self.integration
+            .set_enabled(false)
+            .expect("expected test value from self.integration.set_enabled(false)");
+        assert!(
+            !self
+                .integration
+                .is_enabled()
+                .expect("expected test value from self.integration.is_enabled()")
+        );
         assert!(!self.journal().exists());
     }
 }
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        fs::remove_dir_all(&self.root).unwrap();
+        fs::remove_dir_all(&self.root).expect("remove generated fixture");
     }
 }
 
@@ -118,24 +139,35 @@ impl Drop for Fixture {
 fn gtk_hermes_gtk_roundtrip_is_exact_and_repeated_enable_keeps_original_snapshot() {
     let fixture = Fixture::new();
     fixture.seed(&fixture.portal(), GTK);
-    fs::set_permissions(fixture.portal(), fs::Permissions::from_mode(0o640)).unwrap();
+    fs::set_permissions(fixture.portal(), fs::Permissions::from_mode(0o640)).expect("expected test value from fs::set_permissions(fixture.portal(), fs::Permissions::from_mode(0o640))");
     let unrelated = fixture.integration.config.join("mimeapps.list");
     fixture.seed(&unrelated, b"# unrelated folder defaults\n");
     fixture.enable();
-    let content = fs::read_to_string(fixture.portal()).unwrap();
+    let content = fs::read_to_string(fixture.portal())
+        .expect("expected test value from fs::read_to_string(fixture.portal())");
     assert!(content.contains("default=gtk;\r\n"));
     assert!(content.contains("org.freedesktop.impl.portal.ScreenCast=wlr\r\n"));
-    let journal = fs::read(fixture.journal()).unwrap();
+    let journal = fs::read(fixture.journal()).expect("read generated fixture");
     fixture.enable();
-    assert_eq!(fs::read(fixture.journal()).unwrap(), journal);
-    fixture.restore();
-    assert_eq!(fs::read(fixture.portal()).unwrap(), GTK);
     assert_eq!(
-        fs::metadata(fixture.portal()).unwrap().permissions().mode() & 0o777,
+        fs::read(fixture.journal()).expect("read generated fixture"),
+        journal
+    );
+    fixture.restore();
+    assert_eq!(
+        fs::read(fixture.portal()).expect("read generated fixture"),
+        GTK
+    );
+    assert_eq!(
+        fs::metadata(fixture.portal())
+            .expect("expected test value from fs::metadata(fixture.portal())")
+            .permissions()
+            .mode()
+            & 0o777,
         0o640
     );
     assert_eq!(
-        fs::read(unrelated).unwrap(),
+        fs::read(unrelated).expect("read generated fixture"),
         b"# unrelated folder defaults\n"
     );
     assert!(!fixture.marker().exists());
@@ -146,13 +178,21 @@ fn gtk_hermes_gtk_roundtrip_is_exact_and_repeated_enable_keeps_original_snapshot
 #[test]
 fn absent_user_file_and_marker_are_removed_after_inherited_config_roundtrip() {
     let fixture = Fixture::new();
-    assert!(!fixture.integration.is_enabled().unwrap());
+    assert!(
+        !fixture
+            .integration
+            .is_enabled()
+            .expect("expected test value from fixture.integration.is_enabled()")
+    );
     assert!(!fixture.integration.state.exists()); // Status is read only.
     fixture.enable();
     fixture.restore();
     assert!(!fixture.portal().exists());
     assert!(!fixture.marker().exists());
-    assert_eq!(fs::read(fixture.inherited()).unwrap(), GTK);
+    assert_eq!(
+        fs::read(fixture.inherited()).expect("read generated fixture"),
+        GTK
+    );
     fixture.restore(); // Opt-out is idempotent after restoration.
 }
 
@@ -164,9 +204,12 @@ fn missing_assignment_is_inserted_and_its_absence_is_restored() {
     fixture.seed(&fixture.marker(), b"{\"version\":1,\"enabled\":false}\n");
     fixture.enable();
     fixture.restore();
-    assert_eq!(fs::read(fixture.portal()).unwrap(), original);
     assert_eq!(
-        fs::read(fixture.marker()).unwrap(),
+        fs::read(fixture.portal()).expect("read generated fixture"),
+        original
+    );
+    assert_eq!(
+        fs::read(fixture.marker()).expect("read generated fixture"),
         b"{\"version\":1,\"enabled\":false}\n"
     );
 }
@@ -183,12 +226,12 @@ fn generic_user_config_beats_inherited_desktop_config_and_stays_untouched() {
     fixture.enable();
     assert!(
         fs::read_to_string(fixture.portal())
-            .unwrap()
+            .expect("expected test value from fs::read_to_string(fixture.portal())")
             .contains("default=gtk\n")
     );
     fixture.restore();
     assert!(!fixture.portal().exists());
-    assert_eq!(fs::read(generic).unwrap(), original);
+    assert_eq!(fs::read(generic).expect("read generated fixture"), original);
 }
 
 #[test]
@@ -196,37 +239,52 @@ fn externally_changed_provider_is_never_overwritten_and_snapshot_is_retained() {
     let fixture = Fixture::new();
     fixture.seed(&fixture.portal(), GTK);
     fixture.enable();
-    let enabled = fs::read(fixture.portal()).unwrap();
+    let enabled = fs::read(fixture.portal()).expect("read generated fixture");
     let external = b"[preferred]\ndefault=gtk\norg.freedesktop.impl.portal.FileChooser=gnome\n";
     fixture.seed(&fixture.portal(), external);
-    let journal = fs::read(fixture.journal()).unwrap();
-    let marker = fs::read(fixture.marker()).unwrap();
+    let journal = fs::read(fixture.journal()).expect("read generated fixture");
+    let marker = fs::read(fixture.marker()).expect("read generated fixture");
     for requested in [false, true] {
         let error = fixture
             .integration
             .set_enabled(requested)
-            .unwrap_err()
+            .expect_err("invalid or cancelled fixture must fail")
             .to_string();
         assert!(error.contains("changed outside Hermes"), "{error}");
-        assert_eq!(fs::read(fixture.portal()).unwrap(), external);
-        assert_eq!(fs::read(fixture.journal()).unwrap(), journal);
-        assert_eq!(fs::read(fixture.marker()).unwrap(), marker);
+        assert_eq!(
+            fs::read(fixture.portal()).expect("read generated fixture"),
+            external
+        );
+        assert_eq!(
+            fs::read(fixture.journal()).expect("read generated fixture"),
+            journal
+        );
+        assert_eq!(
+            fs::read(fixture.marker()).expect("read generated fixture"),
+            marker
+        );
     }
     assert!(fixture.integration.is_enabled().is_err());
     fixture.seed(&fixture.portal(), &enabled);
     fixture.restore();
-    assert_eq!(fs::read(fixture.portal()).unwrap(), GTK);
+    assert_eq!(
+        fs::read(fixture.portal()).expect("read generated fixture"),
+        GTK
+    );
 }
 
 #[test]
 fn unrelated_external_portal_edits_are_preserved_by_refusing_restoration() {
     let fixture = Fixture::new();
     fixture.enable();
-    let mut external = fs::read(fixture.portal()).unwrap();
+    let mut external = fs::read(fixture.portal()).expect("read generated fixture");
     external.extend_from_slice(b"# another program updated this file\n");
     fixture.seed(&fixture.portal(), &external);
     assert!(fixture.integration.set_enabled(false).is_err());
-    assert_eq!(fs::read(fixture.portal()).unwrap(), external);
+    assert_eq!(
+        fs::read(fixture.portal()).expect("read generated fixture"),
+        external
+    );
     assert!(fixture.service().exists()); // Preflight refuses any partial restore.
 }
 
@@ -238,10 +296,13 @@ fn journal_write_failure_leaves_all_desktop_outputs_unchanged() {
     let error = fixture
         .integration
         .set_enabled(true)
-        .unwrap_err()
+        .expect_err("invalid or cancelled fixture must fail")
         .to_string();
     assert!(error.contains("non-directory parent"), "{error}");
-    assert_eq!(fs::read(fixture.portal()).unwrap(), GTK);
+    assert_eq!(
+        fs::read(fixture.portal()).expect("read generated fixture"),
+        GTK
+    );
     assert!(!fixture.marker().exists());
     assert!(!fixture.service().exists());
     assert!(!fixture.manifest().exists());
@@ -251,14 +312,17 @@ fn journal_write_failure_leaves_all_desktop_outputs_unchanged() {
 fn marker_write_failure_is_reported_without_switching_the_provider() {
     let fixture = Fixture::new();
     fixture.seed(&fixture.portal(), GTK);
-    fs::create_dir_all(fixture.marker()).unwrap();
+    fs::create_dir_all(fixture.marker()).expect("create generated fixture directory");
     let error = fixture
         .integration
         .set_enabled(true)
-        .unwrap_err()
+        .expect_err("invalid or cancelled fixture must fail")
         .to_string();
     assert!(error.contains("picker-integration.json"), "{error}");
-    assert_eq!(fs::read(fixture.portal()).unwrap(), GTK);
+    assert_eq!(
+        fs::read(fixture.portal()).expect("read generated fixture"),
+        GTK
+    );
     assert!(!fixture.service().exists());
     assert!(!fixture.journal().exists());
 }
@@ -293,27 +357,41 @@ scope["os"].replace = failing_replace
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap();
+        .expect("expected test value from Command::new(\"python3\") .args([\"-I\", \"-c\", &bridge]) .arg(&fixture.integration.config) .arg(&fixture.integration.data) .arg(&fi...");
     child
         .stdin
         .take()
-        .unwrap()
+        .expect("expected test value from child .stdin .take()")
         .write_all(SETUP.as_bytes())
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
+        .expect(
+            "expected test value from child .stdin .take() .unwrap() .write_all(SETUP.as_bytes())",
+        );
+    let output = child
+        .wait_with_output()
+        .expect("expected test value from child.wait_with_output()");
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("Generated provider publication failure"),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(fs::read(fixture.portal()).unwrap(), GTK);
+    assert_eq!(
+        fs::read(fixture.portal()).expect("read generated fixture"),
+        GTK
+    );
     assert!(fixture.journal().exists());
     assert!(fixture.marker().exists());
-    let error = fixture.integration.is_enabled().unwrap_err().to_string();
+    let error = fixture
+        .integration
+        .is_enabled()
+        .expect_err("invalid or cancelled fixture must fail")
+        .to_string();
     assert!(error.contains("incomplete"), "{error}");
     fixture.restore();
-    assert_eq!(fs::read(fixture.portal()).unwrap(), GTK);
+    assert_eq!(
+        fs::read(fixture.portal()).expect("read generated fixture"),
+        GTK
+    );
     assert!(!fixture.marker().exists());
     assert!(!fixture.service().exists());
 }
@@ -328,7 +406,7 @@ fn legacy_enabled_marker_without_snapshot_is_refused_instead_of_guessing_kde() {
         fixture
             .integration
             .is_enabled()
-            .unwrap_err()
+            .expect_err("invalid or cancelled fixture must fail")
             .to_string()
             .contains("previous provider is unknown")
     );
@@ -337,11 +415,14 @@ fn legacy_enabled_marker_without_snapshot_is_refused_instead_of_guessing_kde() {
             fixture
                 .integration
                 .set_enabled(requested)
-                .unwrap_err()
+                .expect_err("invalid or cancelled fixture must fail")
                 .to_string()
                 .contains("recovery journal is missing")
         );
-        assert_eq!(fs::read(fixture.portal()).unwrap(), legacy);
+        assert_eq!(
+            fs::read(fixture.portal()).expect("read generated fixture"),
+            legacy
+        );
         assert!(!fixture.journal().exists());
     }
 }
@@ -350,41 +431,57 @@ fn legacy_enabled_marker_without_snapshot_is_refused_instead_of_guessing_kde() {
 fn development_enable_and_restore_cannot_touch_shared_defaults_or_create_a_lock() {
     let mut fixture = Fixture::new();
     fixture.enable();
-    let portal = fs::read(fixture.portal()).unwrap();
-    let journal = fs::read(fixture.journal()).unwrap();
-    fs::remove_file(fixture.journal().with_extension("lock")).unwrap();
+    let portal = fs::read(fixture.portal()).expect("read generated fixture");
+    let journal = fs::read(fixture.journal()).expect("read generated fixture");
+    fs::remove_file(fixture.journal().with_extension("lock")).expect("remove generated fixture");
     fixture.integration.development = true;
     for requested in [true, false] {
         assert_eq!(
             fixture
                 .integration
                 .set_enabled(requested)
-                .unwrap_err()
+                .expect_err("invalid or cancelled fixture must fail")
                 .kind(),
             io::ErrorKind::PermissionDenied
         );
     }
     assert!(fixture.integration.is_enabled().is_err());
-    assert_eq!(fs::read(fixture.portal()).unwrap(), portal);
-    assert_eq!(fs::read(fixture.journal()).unwrap(), journal);
+    assert_eq!(
+        fs::read(fixture.portal()).expect("read generated fixture"),
+        portal
+    );
+    assert_eq!(
+        fs::read(fixture.journal()).expect("read generated fixture"),
+        journal
+    );
     assert!(!fixture.journal().with_extension("lock").exists());
 }
 
 #[test]
 fn symlink_target_is_not_written_and_custom_discovery_is_refused() {
     let mut fixture = Fixture::new();
-    fs::create_dir_all(fixture.portal().parent().unwrap()).unwrap();
-    symlink(fixture.inherited(), fixture.portal()).unwrap();
+    fs::create_dir_all(
+        fixture
+            .portal()
+            .parent()
+            .expect("expected test value from fixture.portal().parent()"),
+    )
+    .expect("create generated fixture directory");
+    symlink(fixture.inherited(), fixture.portal())
+        .expect("expected test value from symlink(fixture.inherited(), fixture.portal())");
     assert!(fixture.integration.set_enabled(true).is_err());
-    assert_eq!(fs::read(fixture.inherited()).unwrap(), GTK);
+    assert_eq!(
+        fs::read(fixture.inherited()).expect("read generated fixture"),
+        GTK
+    );
     assert!(!fixture.journal().exists());
-    fs::remove_file(fixture.portal()).unwrap();
+    fs::remove_file(fixture.portal()).expect("remove generated fixture");
     fixture.integration.portal_dir = Some(fixture.root.join("custom").into_os_string());
     assert!(
         fixture
             .integration
             .set_enabled(true)
-            .unwrap_err()
+            .expect_err("invalid or cancelled fixture must fail")
             .to_string()
             .contains("overrides discovery")
     );

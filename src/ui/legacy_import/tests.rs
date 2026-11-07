@@ -23,15 +23,17 @@ fn private_first_launch_waits_for_explicit_consent_before_importing() {
         );
     }
     glib::set_prgname(Some("hermes-import-test"));
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     let application = gtk::Application::builder()
         .application_id("io.github.battlemountain2.Hermes.ImportTest")
         .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
-    application.register(None::<&gio::Cancellable>).unwrap();
-    fs::create_dir_all(&roots.source[0]).unwrap();
+    application
+        .register(None::<&gio::Cancellable>)
+        .expect("expected test value from application.register(None::<&gio::Cancellable>)");
+    fs::create_dir_all(&roots.source[0]).expect("create generated fixture directory");
     let settings = b"[theme]\nmode = 'theme'\ntheme = 'graphite'\n";
-    fs::write(roots.source[0].join("settings.toml"), settings).unwrap();
+    fs::write(roots.source[0].join("settings.toml"), settings).expect("write generated fixture");
     let gate = Rc::new(Gate {
         application: application.downgrade(),
         phase: Cell::new(Phase::Idle),
@@ -51,12 +53,17 @@ fn private_first_launch_waits_for_explicit_consent_before_importing() {
     assert_eq!(application.windows().len(), 1);
     assert!(!roots.target[0].join("settings.toml").exists());
     assert!(!roots.target[2].join("legacy-import-v2").exists());
-    let window = gate.window.borrow().as_ref().unwrap().clone();
+    let window = gate
+        .window
+        .borrow()
+        .as_ref()
+        .expect("expected test value from gate.window.borrow().as_ref()")
+        .clone();
     fn find_button(widget: &gtk::Widget) -> Option<gtk::Button> {
-        if let Some(button) = widget.downcast_ref::<gtk::Button>() {
-            if button.label().as_deref() == Some("Import / resume Strata data") {
-                return Some(button.clone());
-            }
+        if let Some(button) = widget.downcast_ref::<gtk::Button>()
+            && button.label().as_deref() == Some("Import / resume Strata data")
+        {
+            return Some(button.clone());
         }
         let mut child = widget.first_child();
         while let Some(widget) = child {
@@ -67,14 +74,16 @@ fn private_first_launch_waits_for_explicit_consent_before_importing() {
         }
         None
     }
-    find_button(window.upcast_ref()).unwrap().emit_clicked();
+    find_button(window.upcast_ref())
+        .expect("expected test value from find_button(window.upcast_ref())")
+        .emit_clicked();
     until(|| gate.phase.get() == Phase::Ready);
     assert_eq!(
-        fs::read(roots.target[0].join("settings.toml")).unwrap(),
+        fs::read(roots.target[0].join("settings.toml")).expect("read generated fixture"),
         settings
     );
     assert_eq!(
-        fs::read(roots.source[0].join("settings.toml")).unwrap(),
+        fs::read(roots.source[0].join("settings.toml")).expect("read generated fixture"),
         settings
     );
     assert!(gate.window.borrow().is_none());

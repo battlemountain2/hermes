@@ -74,10 +74,12 @@ impl Session {
             .map_err(|error| error.to_string())?.downcast::<gst::Pipeline>().map_err(|_| "Audio pipeline missing")?;
         let pcm = audio
             .by_name("pcm")
-            .unwrap()
+            .ok_or("Audio PCM source missing")?
             .downcast::<app::AppSrc>()
-            .unwrap();
-        let volume = audio.by_name("level").unwrap();
+            .map_err(|_| "Audio PCM source has an unexpected type")?;
+        let volume = audio
+            .by_name("level")
+            .ok_or("Audio volume control missing")?;
         volume.set_property("mute", true);
         volume.set_property("volume", 0.0_f64);
         volume::preserve_pcm_silence(&volume)?;
@@ -87,8 +89,10 @@ impl Session {
         if let Some(bus) = audio.bus() {
             bus.set_sync_handler(move |_, message| {
                 if let gst::MessageView::Error(error) = message.view() {
-                    audio_updates.lock().unwrap().error =
-                        Some(format!("Audio output failed: {}", error.error()));
+                    audio_updates
+                        .lock()
+                        .expect("Playback state lock poisoned")
+                        .error = Some(format!("Audio output failed: {}", error.error()));
                 }
                 gst::BusSyncReply::Drop
             });
@@ -159,8 +163,10 @@ impl Session {
                     break;
                 }
                 if control_audio.set_state(output_state(&command)).is_err() {
-                    control_updates.lock().unwrap().error =
-                        Some("Audio output could not change playback state".to_owned());
+                    control_updates
+                        .lock()
+                        .expect("Playback state lock poisoned")
+                        .error = Some("Audio output could not change playback state".to_owned());
                     break;
                 }
                 let result = (|| -> io::Result<()> {
@@ -169,8 +175,10 @@ impl Session {
                     input.flush()
                 })();
                 if let Err(error) = result {
-                    control_updates.lock().unwrap().error =
-                        Some(format!("Playback control failed: {error}"));
+                    control_updates
+                        .lock()
+                        .expect("Playback state lock poisoned")
+                        .error = Some(format!("Playback control failed: {error}"));
                     break;
                 }
             }
@@ -190,9 +198,13 @@ impl Session {
                     Ok(packet) => packet,
                     Err(error) => {
                         if !reader_stopped.load(Ordering::Acquire) {
-                            reader_updates.lock().unwrap().error.get_or_insert_with(|| {
-                                format!("Playback decoder disconnected: {error}")
-                            });
+                            reader_updates
+                                .lock()
+                                .expect("Playback state lock poisoned")
+                                .error
+                                .get_or_insert_with(|| {
+                                    format!("Playback decoder disconnected: {error}")
+                                });
                         }
                         break;
                     }
@@ -207,8 +219,10 @@ impl Session {
                         seekable,
                     } => {
                         reader_waiting.store(false, Ordering::Release);
-                        reader_updates.lock().unwrap().prepared =
-                            Some((duration, audio, video, seekable));
+                        reader_updates
+                            .lock()
+                            .expect("Playback state lock poisoned")
+                            .prepared = Some((duration, audio, video, seekable));
                     }
                     Event::Frame {
                         epoch,
@@ -216,7 +230,8 @@ impl Session {
                         width,
                         height,
                     } if epoch == current => {
-                        let mut updates = reader_updates.lock().unwrap();
+                        let mut updates =
+                            reader_updates.lock().expect("Playback state lock poisoned");
                         if reader_epoch.load(Ordering::Acquire) == epoch {
                             updates.frame = Some((timestamp, width, height, data));
                         }
@@ -225,30 +240,46 @@ impl Session {
                         if epoch == current && reader_playing.load(Ordering::Acquire) =>
                     {
                         if !reader_waiting.load(Ordering::Acquire) {
-                            reader_spectrum.lock().unwrap().push_pcm(&data);
+                            reader_spectrum
+                                .lock()
+                                .expect("Playback state lock poisoned")
+                                .push_pcm(&data);
                             let _pushed = pcm.push_buffer(pcm_buffer(data));
                         }
                     }
                     Event::Position { epoch, timestamp } if epoch == current => {
-                        let mut updates = reader_updates.lock().unwrap();
+                        let mut updates =
+                            reader_updates.lock().expect("Playback state lock poisoned");
                         if reader_epoch.load(Ordering::Acquire) == epoch {
                             updates.position = Some(timestamp);
                         }
                     }
                     Event::Seeked { epoch, success } if epoch == current => {
-                        reader_spectrum.lock().unwrap().reset();
+                        reader_spectrum
+                            .lock()
+                            .expect("Playback state lock poisoned")
+                            .reset();
                         reader_waiting.store(false, Ordering::Release);
                         if reader_playing.load(Ordering::Acquire) {
                             let _state = reader_audio.set_state(gst::State::Playing);
                         }
-                        reader_updates.lock().unwrap().seeked = Some(success);
+                        reader_updates
+                            .lock()
+                            .expect("Playback state lock poisoned")
+                            .seeked = Some(success);
                     }
                     Event::Ended { epoch } if epoch == current => {
                         reader_playing.store(false, Ordering::Release);
-                        reader_updates.lock().unwrap().ended = true;
+                        reader_updates
+                            .lock()
+                            .expect("Playback state lock poisoned")
+                            .ended = true;
                     }
                     Event::Error { message } => {
-                        reader_updates.lock().unwrap().error = Some(message);
+                        reader_updates
+                            .lock()
+                            .expect("Playback state lock poisoned")
+                            .error = Some(message);
                     }
                     _ => {}
                 }
@@ -271,7 +302,7 @@ impl Session {
     }
 
     pub fn take_updates(&self) -> Updates {
-        std::mem::take(&mut *self.updates.lock().unwrap())
+        std::mem::take(&mut *self.updates.lock().expect("Playback state lock poisoned"))
     }
     pub fn play(&self) -> bool {
         self.heartbeat
@@ -284,11 +315,14 @@ impl Session {
         let _sent = self.send(Command::Pause);
     }
     pub fn seek(&self, timestamp: i64) -> bool {
-        self.spectrum.lock().unwrap().reset();
+        self.spectrum
+            .lock()
+            .expect("Playback state lock poisoned")
+            .reset();
         self.heartbeat
             .store(self.started.elapsed().as_millis() as u64, Ordering::Release);
         let epoch = self.epoch.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
-        *self.updates.lock().unwrap() = Updates::default();
+        *self.updates.lock().expect("Playback state lock poisoned") = Updates::default();
         self.waiting_since
             .store(self.started.elapsed().as_millis() as u64, Ordering::Release);
         self.waiting.store(true, Ordering::Release);
@@ -298,7 +332,7 @@ impl Session {
         if self.stopped.load(Ordering::Acquire) {
             return [0.0; SPECTRUM_BANDS];
         }
-        let mut analyzer = self.spectrum.lock().unwrap();
+        let mut analyzer = self.spectrum.lock().expect("Playback state lock poisoned");
         if self.playing.load(Ordering::Acquire) {
             analyzer.analyze()
         } else {
@@ -317,8 +351,10 @@ impl Session {
         match self.commands.try_send(command) {
             Ok(()) => true,
             Err(_) => {
-                self.updates.lock().unwrap().error =
-                    Some("Playback command queue unavailable".into());
+                self.updates
+                    .lock()
+                    .expect("Playback state lock poisoned")
+                    .error = Some("Playback command queue unavailable".into());
                 false
             }
         }
@@ -346,6 +382,10 @@ impl Drop for Session {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Watchdog observes independently published transport and playback state"
+)]
 fn monitor(
     child: &mut Child,
     stopped: &AtomicBool,
@@ -362,7 +402,7 @@ fn monitor(
         }
         if let Ok(Some(status)) = child.try_wait() {
             std::thread::sleep(Duration::from_millis(50));
-            let mut updates = updates.lock().unwrap();
+            let mut updates = updates.lock().expect("Playback state lock poisoned");
             if updates
                 .error
                 .as_ref()
@@ -381,7 +421,8 @@ fn monitor(
         if (playing.load(Ordering::Acquire) && silent > 12_000)
             || (waiting.load(Ordering::Acquire) && pending > 12_000)
         {
-            updates.lock().unwrap().error = Some("Playback decoder stopped responding".into());
+            updates.lock().expect("Playback state lock poisoned").error =
+                Some("Playback decoder stopped responding".into());
             break;
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -486,7 +527,7 @@ fn pcm_buffer(mut data: Vec<u8>) -> gst::Buffer {
     let mut buffer = gst::Buffer::from_mut_slice(data);
     buffer
         .get_mut()
-        .unwrap()
+        .expect("A newly created PCM buffer has unique ownership")
         .set_duration(gst::ClockTime::from_nseconds(
             frames * gst::ClockTime::SECOND.nseconds() / 48_000,
         ));
@@ -494,8 +535,8 @@ fn pcm_buffer(mut data: Vec<u8>) -> gst::Buffer {
 }
 
 fn sanitize_pcm(data: &mut [u8]) {
-    for sample in data.chunks_exact_mut(4) {
-        let value = f32::from_le_bytes(sample.try_into().unwrap());
+    for sample in data.as_chunks_mut::<4>().0 {
+        let value = f32::from_le_bytes(*sample);
         sample.copy_from_slice(
             &if value.is_finite() {
                 value.clamp(-1.0, 1.0)

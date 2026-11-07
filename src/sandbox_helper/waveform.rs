@@ -134,13 +134,11 @@ fn read_pcm(mut reader: impl Read, limit: u64) -> Result<Vec<f32>, String> {
         }
         let available = carried + count;
         let aligned = available / 4 * 4;
-        for sample in bytes[..aligned].chunks_exact(4) {
+        for sample in bytes[..aligned].as_chunks::<4>().0 {
             if histogram.samples >= limit {
                 return Err("Unsupported long track: waveform sample budget exceeded".to_owned());
             }
-            histogram.push(f32::from_le_bytes(
-                sample.try_into().expect("four PCM bytes"),
-            ))?;
+            histogram.push(f32::from_le_bytes(*sample))?;
         }
         bytes.copy_within(aligned..available, 0);
         carried = available - aligned;

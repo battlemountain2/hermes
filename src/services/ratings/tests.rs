@@ -37,28 +37,50 @@ fn ratings_data_validates_1_to_5_stars_and_supported_formats() {
     let folder = PathBuf::from("/photos/album");
 
     // Valid ratings
-    assert!(data.apply(Command::Set { path: photo.clone(), rating: Some(5) }).unwrap());
-    assert!(data.apply(Command::Set { path: video.clone(), rating: Some(3) }).unwrap());
-    assert!(data.apply(Command::Set { path: doc.clone(), rating: Some(1) }).unwrap());
+    assert!(data.apply(Command::Set { path: photo.clone(), rating: Some(5) }).expect("expected test value from data.apply(Command::Set { path: photo.clone(), rating: Some(5) })"));
+    assert!(data.apply(Command::Set { path: video.clone(), rating: Some(3) }).expect("expected test value from data.apply(Command::Set { path: video.clone(), rating: Some(3) })"));
+    assert!(data.apply(Command::Set { path: doc.clone(), rating: Some(1) }).expect("expected test value from data.apply(Command::Set { path: doc.clone(), rating: Some(1) })"));
 
     assert_eq!(data.ratings.get(&photo), Some(&5));
     assert_eq!(data.ratings.get(&video), Some(&3));
     assert_eq!(data.ratings.get(&doc), Some(&1));
 
     // Reject 0 or > 5 stars
-    assert!(data.apply(Command::Set { path: photo.clone(), rating: Some(0) }).is_err());
-    assert!(data.apply(Command::Set { path: photo.clone(), rating: Some(6) }).is_err());
+    assert!(
+        data.apply(Command::Set {
+            path: photo.clone(),
+            rating: Some(0)
+        })
+        .is_err()
+    );
+    assert!(
+        data.apply(Command::Set {
+            path: photo.clone(),
+            rating: Some(6)
+        })
+        .is_err()
+    );
 
     // Reject music (must use favorites instead)
-    let music_err = data.apply(Command::Set { path: music, rating: Some(4) }).unwrap_err();
+    let music_err = data
+        .apply(Command::Set {
+            path: music,
+            rating: Some(4),
+        })
+        .expect_err("invalid or cancelled fixture must fail");
     assert!(music_err.contains("Music cannot be rated"));
 
     // Reject folders
-    let folder_err = data.apply(Command::Set { path: folder, rating: Some(4) }).unwrap_err();
+    let folder_err = data
+        .apply(Command::Set {
+            path: folder,
+            rating: Some(4),
+        })
+        .expect_err("invalid or cancelled fixture must fail");
     assert!(folder_err.contains("Only photos, videos, and documents"));
 
     // Clear rating
-    assert!(data.apply(Command::Set { path: photo.clone(), rating: None }).unwrap());
+    assert!(data.apply(Command::Set { path: photo.clone(), rating: None }).expect("expected test value from data.apply(Command::Set { path: photo.clone(), rating: None })"));
     assert_eq!(data.ratings.get(&photo), None);
 }
 
@@ -72,7 +94,7 @@ fn ratings_data_batch_sets_and_clears_multiple_files() {
     let changed = data.apply(Command::SetMany {
         paths: vec![p1.clone(), p2.clone(), p3.clone()],
         rating: Some(4),
-    }).unwrap();
+    }).expect("expected test value from data.apply(Command::SetMany { paths: vec![p1.clone(), p2.clone(), p3.clone()], rating: Some(4), })");
     assert!(changed);
 
     assert_eq!(data.ratings.get(&p1), Some(&4));
@@ -83,7 +105,7 @@ fn ratings_data_batch_sets_and_clears_multiple_files() {
     let cleared = data.apply(Command::SetMany {
         paths: vec![p1.clone(), p2.clone()],
         rating: None,
-    }).unwrap();
+    }).expect("expected test value from data.apply(Command::SetMany { paths: vec![p1.clone(), p2.clone()], rating: None, })");
     assert!(cleared);
     assert_eq!(data.ratings.get(&p1), None);
     assert_eq!(data.ratings.get(&p2), None);
@@ -97,16 +119,34 @@ fn ratings_relocate_tracks_single_file_and_directory_moves() {
     let img2 = PathBuf::from("/home/user/Pictures/2026/sunset.png");
     let doc = PathBuf::from("/home/user/Documents/notes.txt");
 
-    data.apply(Command::Set { path: img1.clone(), rating: Some(5) }).unwrap();
-    data.apply(Command::Set { path: img2.clone(), rating: Some(4) }).unwrap();
-    data.apply(Command::Set { path: doc.clone(), rating: Some(3) }).unwrap();
+    data.apply(Command::Set {
+        path: img1.clone(),
+        rating: Some(5),
+    })
+    .expect(
+        "expected test value from data.apply(Command::Set { path: img1.clone(), rating: Some(5) })",
+    );
+    data.apply(Command::Set {
+        path: img2.clone(),
+        rating: Some(4),
+    })
+    .expect(
+        "expected test value from data.apply(Command::Set { path: img2.clone(), rating: Some(4) })",
+    );
+    data.apply(Command::Set {
+        path: doc.clone(),
+        rating: Some(3),
+    })
+    .expect(
+        "expected test value from data.apply(Command::Set { path: doc.clone(), rating: Some(3) })",
+    );
 
     // 1. Single file rename
     let img1_new = PathBuf::from("/home/user/Pictures/2026/beach_trip.jpg");
     let changed = data.apply(Command::Relocate {
         from: img1.clone(),
         to: img1_new.clone(),
-    }).unwrap();
+    }).expect("expected test value from data.apply(Command::Relocate { from: img1.clone(), to: img1_new.clone(), })");
     assert!(changed);
     assert_eq!(data.ratings.get(&img1), None);
     assert_eq!(data.ratings.get(&img1_new), Some(&5));
@@ -117,7 +157,7 @@ fn ratings_relocate_tracks_single_file_and_directory_moves() {
     let changed = data.apply(Command::Relocate {
         from: from_dir,
         to: to_dir,
-    }).unwrap();
+    }).expect("expected test value from data.apply(Command::Relocate { from: from_dir, to: to_dir, })");
     assert!(changed);
 
     let expected_img1 = PathBuf::from("/home/user/Pictures/Archive/2026/beach_trip.jpg");
@@ -138,18 +178,24 @@ fn ratings_store_persists_to_disk_and_reloads_fresh_instance() {
     wait_snapshot(&store, |s| s.ready);
 
     let img = PathBuf::from("/photos/pic.jpg");
-    store.set(img.clone(), Some(5)).unwrap();
-    store.flush(Duration::from_secs(2)).unwrap();
+    store
+        .set(img.clone(), Some(5))
+        .expect("expected test value from store.set(img.clone(), Some(5))");
+    store
+        .flush(Duration::from_secs(2))
+        .expect("expected test value from store.flush(Duration::from_secs(2))");
     drop(store);
 
     // Verify raw file on disk
     assert!(file.exists());
-    let loaded = load(&file).unwrap();
+    let loaded = load(&file).expect("expected test value from load(&file)");
     assert_eq!(loaded.ratings.get(&img), Some(&5));
 
     // Reload with fresh store
     let second_store = Store::start(Some(file));
-    let snapshot = wait_snapshot(&second_store, |s| s.ready && s.data.ratings.contains_key(&img));
+    let snapshot = wait_snapshot(&second_store, |s| {
+        s.ready && s.data.ratings.contains_key(&img)
+    });
     assert_eq!(snapshot.data.ratings.get(&img), Some(&5));
     drop(second_store);
     let _ = fs::remove_dir_all(dir);
@@ -170,11 +216,21 @@ fn ratings_extension_rename_roundtrip_preserves_other_ratings_and_subsequent_edi
         let target = PathBuf::from(target);
         let store = Store::start(Some(file.clone()));
         wait_snapshot(&store, |snapshot| snapshot.ready);
-        store.set(source.clone(), Some(5)).unwrap();
-        store.set(unrelated.clone(), Some(3)).unwrap();
-        store.flush(Duration::from_secs(2)).unwrap();
-        store.relocate(source.clone(), target.clone()).unwrap();
-        store.flush(Duration::from_secs(2)).unwrap();
+        store
+            .set(source.clone(), Some(5))
+            .expect("expected test value from store.set(source.clone(), Some(5))");
+        store
+            .set(unrelated.clone(), Some(3))
+            .expect("expected test value from store.set(unrelated.clone(), Some(3))");
+        store
+            .flush(Duration::from_secs(2))
+            .expect("expected test value from store.flush(Duration::from_secs(2))");
+        store
+            .relocate(source.clone(), target.clone())
+            .expect("expected test value from store.relocate(source.clone(), target.clone())");
+        store
+            .flush(Duration::from_secs(2))
+            .expect("expected test value from store.flush(Duration::from_secs(2))");
         let snapshot = store.snapshot();
         let expected_rating = is_ratable_format(&target).then_some(5);
         assert!(snapshot.error.is_none());
@@ -185,29 +241,38 @@ fn ratings_extension_rename_roundtrip_preserves_other_ratings_and_subsequent_edi
         assert_eq!(snapshot.data.ratings.get(&unrelated), Some(&3));
         assert!(!snapshot.data.ratings.contains_key(&source));
         assert_eq!(snapshot.data.ratings.get(&target).copied(), expected_rating);
-        assert_eq!(load(&file).unwrap(), snapshot.data);
+        assert_eq!(
+            load(&file).expect("expected test value from load(&file)"),
+            snapshot.data
+        );
         drop(store);
 
         let restored = Store::start(Some(file.clone()));
         let snapshot = wait_snapshot(&restored, |snapshot| snapshot.ready);
         assert!(snapshot.error.is_none());
         assert_eq!(snapshot.data.ratings.get(&unrelated), Some(&3));
-        restored.set(unrelated.clone(), Some(4)).unwrap();
-        restored.set(source.clone(), Some(2)).unwrap();
-        restored.flush(Duration::from_secs(2)).unwrap();
-        let reloaded = load(&file).unwrap();
+        restored
+            .set(unrelated.clone(), Some(4))
+            .expect("expected test value from restored.set(unrelated.clone(), Some(4))");
+        restored
+            .set(source.clone(), Some(2))
+            .expect("expected test value from restored.set(source.clone(), Some(2))");
+        restored
+            .flush(Duration::from_secs(2))
+            .expect("expected test value from restored.flush(Duration::from_secs(2))");
+        let reloaded = load(&file).expect("expected test value from load(&file)");
         assert_eq!(reloaded.ratings.get(&unrelated), Some(&4));
         assert_eq!(reloaded.ratings.get(&source), Some(&2));
         assert_eq!(reloaded.ratings.get(&target).copied(), expected_rating);
         drop(restored);
-        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(root).expect("remove generated fixture");
     }
 }
 
 #[test]
 fn ratings_load_recovers_valid_entries_and_remains_editable_after_save_and_reload() {
     let root = temp_path("individual-invalid");
-    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&root).expect("create generated fixture directory");
     let file = root.join("ratings.json");
     let mut ratings = serde_json::json!({
         "/generated/good.jpg": 5,
@@ -227,36 +292,55 @@ fn ratings_load_recovers_valid_entries_and_remains_editable_after_save_and_reloa
         "/generated/array.jpg": [],
         "/generated/bool.jpg": true
     });
-    ratings.as_object_mut().unwrap().insert(
-        format!("/generated/{}.jpg", "x".repeat(4096)),
-        serde_json::json!(4),
-    );
+    ratings
+        .as_object_mut()
+        .expect("expected test value from ratings.as_object_mut()")
+        .insert(
+            format!("/generated/{}.jpg", "x".repeat(4096)),
+            serde_json::json!(4),
+        );
     let original = serde_json::to_vec(&serde_json::json!({
         "version": 1,
         "ratings": ratings
     }))
-    .unwrap();
-    fs::write(&file, &original).unwrap();
+    .expect("serialize generated JSON fixture");
+    fs::write(&file, &original).expect("write generated fixture");
     let store = Store::start(Some(file.clone()));
     let snapshot = wait_snapshot(&store, |snapshot| snapshot.ready);
     assert!(snapshot.error.is_none());
     assert_eq!(snapshot.data.ratings.len(), 2);
     assert_eq!(store.get(Path::new("/generated/good.jpg")), Some(5));
     assert_eq!(store.get(Path::new("/generated/other.pdf")), Some(2));
-    assert_eq!(fs::read(&file).unwrap(), original);
-    store.set("/generated/new.png".into(), Some(3)).unwrap();
-    store.flush(Duration::from_secs(2)).unwrap();
-    assert_eq!(load(&file).unwrap().ratings.len(), 3);
+    assert_eq!(fs::read(&file).expect("read generated fixture"), original);
+    store
+        .set("/generated/new.png".into(), Some(3))
+        .expect("expected test value from store.set(\"/generated/new.png\".into(), Some(3))");
+    store
+        .flush(Duration::from_secs(2))
+        .expect("expected test value from store.flush(Duration::from_secs(2))");
+    assert_eq!(
+        load(&file)
+            .expect("expected test value from load(&file)")
+            .ratings
+            .len(),
+        3
+    );
     drop(store);
 
     let restored = Store::start(Some(file.clone()));
     let snapshot = wait_snapshot(&restored, |snapshot| snapshot.ready);
     assert!(snapshot.error.is_none());
     assert_eq!(snapshot.data.ratings.len(), 3);
-    restored.set("/generated/good.jpg".into(), Some(4)).unwrap();
-    restored.set("/generated/other.pdf".into(), None).unwrap();
-    restored.flush(Duration::from_secs(2)).unwrap();
-    let reloaded = load(&file).unwrap();
+    restored
+        .set("/generated/good.jpg".into(), Some(4))
+        .expect("expected test value from restored.set(\"/generated/good.jpg\".into(), Some(4))");
+    restored
+        .set("/generated/other.pdf".into(), None)
+        .expect("expected test value from restored.set(\"/generated/other.pdf\".into(), None)");
+    restored
+        .flush(Duration::from_secs(2))
+        .expect("expected test value from restored.flush(Duration::from_secs(2))");
+    let reloaded = load(&file).expect("expected test value from load(&file)");
     assert_eq!(reloaded.ratings.len(), 2);
     assert_eq!(
         reloaded.ratings.get(Path::new("/generated/good.jpg")),
@@ -267,13 +351,13 @@ fn ratings_load_recovers_valid_entries_and_remains_editable_after_save_and_reloa
         Some(&3)
     );
     drop(restored);
-    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).expect("remove generated fixture");
 }
 
 #[test]
 fn ratings_corrupt_or_unsupported_stores_remain_read_only_and_preserve_bytes() {
     let root = temp_path("invalid-store");
-    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&root).expect("create generated fixture directory");
     let file = root.join("ratings.json");
     for bytes in [
         b"not json".as_slice(),
@@ -281,18 +365,20 @@ fn ratings_corrupt_or_unsupported_stores_remain_read_only_and_preserve_bytes() {
         br#"{"version":1,"ratings":[]}"#,
         br#"{"ratings":{"/generated/good.jpg":5}}"#,
     ] {
-        fs::write(&file, bytes).unwrap();
+        fs::write(&file, bytes).expect("write generated fixture");
         let store = Store::start(Some(file.clone()));
         let initial = wait_snapshot(&store, |snapshot| snapshot.ready);
         assert!(initial.error.is_some());
-        store.set("/generated/new.jpg".into(), Some(3)).unwrap();
+        store
+            .set("/generated/new.jpg".into(), Some(3))
+            .expect("expected test value from store.set(\"/generated/new.jpg\".into(), Some(3))");
         wait_snapshot(&store, |snapshot| snapshot.revision > initial.revision);
         assert!(store.flush(Duration::from_secs(2)).is_err());
         assert!(store.snapshot().data.ratings.is_empty());
-        assert_eq!(fs::read(&file).unwrap(), bytes);
+        assert_eq!(fs::read(&file).expect("read generated fixture"), bytes);
         drop(store);
     }
-    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).expect("remove generated fixture");
 }
 
 #[test]
@@ -301,18 +387,18 @@ fn ratings_save_rejects_invalid_data_without_replacing_existing_bytes() {
     let file = root.join("ratings.json");
     let mut data = RatingsData::default();
     data.ratings.insert("/generated/good.jpg".into(), 4);
-    save(&file, &data).unwrap();
-    let original = fs::read(&file).unwrap();
+    save(&file, &data).expect("expected test value from save(&file, &data)");
+    let original = fs::read(&file).expect("read generated fixture");
     for (path, star) in [("/generated/bad.bin", 5), ("/generated/bad.jpg", 6)] {
         let mut invalid = data.clone();
         invalid.ratings.insert(path.into(), star);
         assert!(save(&file, &invalid).is_err());
-        assert_eq!(fs::read(&file).unwrap(), original);
+        assert_eq!(fs::read(&file).expect("read generated fixture"), original);
     }
     data.version = 99;
     assert!(save(&file, &data).is_err());
-    assert_eq!(fs::read(&file).unwrap(), original);
-    fs::remove_dir_all(root).unwrap();
+    assert_eq!(fs::read(&file).expect("read generated fixture"), original);
+    fs::remove_dir_all(root).expect("remove generated fixture");
 }
 
 #[test]
@@ -323,32 +409,42 @@ fn ratings_worker_rejects_unserializable_paths_before_publishing_or_saving() {
     let file = root.join("ratings.json");
     let store = Store::start(Some(file.clone()));
     wait_snapshot(&store, |snapshot| snapshot.ready);
-    store.set("/generated/good.jpg".into(), Some(4)).unwrap();
-    store.flush(Duration::from_secs(2)).unwrap();
-    let original = fs::read(&file).unwrap();
+    store
+        .set("/generated/good.jpg".into(), Some(4))
+        .expect("expected test value from store.set(\"/generated/good.jpg\".into(), Some(4))");
+    store
+        .flush(Duration::from_secs(2))
+        .expect("expected test value from store.flush(Duration::from_secs(2))");
+    let original = fs::read(&file).expect("read generated fixture");
     let invalid = PathBuf::from(std::ffi::OsString::from_vec(
         b"/generated/bad-\xff.jpg".to_vec(),
     ));
     let revision = store.snapshot().revision;
-    store.set(invalid.clone(), Some(5)).unwrap();
+    store
+        .set(invalid.clone(), Some(5))
+        .expect("expected test value from store.set(invalid.clone(), Some(5))");
     let rejected = wait_snapshot(&store, |snapshot| {
         snapshot.revision > revision && snapshot.error.is_some()
     });
     assert!(!rejected.data.ratings.contains_key(&invalid));
     assert_eq!(rejected.data.ratings.len(), 1);
-    assert_eq!(fs::read(&file).unwrap(), original);
-    store.set("/generated/good.jpg".into(), Some(2)).unwrap();
-    store.flush(Duration::from_secs(2)).unwrap();
+    assert_eq!(fs::read(&file).expect("read generated fixture"), original);
+    store
+        .set("/generated/good.jpg".into(), Some(2))
+        .expect("expected test value from store.set(\"/generated/good.jpg\".into(), Some(2))");
+    store
+        .flush(Duration::from_secs(2))
+        .expect("expected test value from store.flush(Duration::from_secs(2))");
     assert!(store.snapshot().error.is_none());
     assert_eq!(
         load(&file)
-            .unwrap()
+            .expect("expected test value from load(&file)")
             .ratings
             .get(Path::new("/generated/good.jpg")),
         Some(&2)
     );
     drop(store);
-    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(root).expect("remove generated fixture");
 }
 
 #[test]
@@ -366,10 +462,10 @@ fn ratings_relocate_collision_keeps_source_rating_through_save_and_reload() {
             from: "/generated/source".into(),
             to: "/generated/destination".into(),
         })
-        .unwrap()
+        .expect("expected test value from data.apply(Command::Relocate { from: \"/generated/source\".into(), to: \"/generated/destination\".into(), })")
     );
-    save(&file, &data).unwrap();
-    let mut restored = load(&file).unwrap();
+    save(&file, &data).expect("expected test value from save(&file, &data)");
+    let mut restored = load(&file).expect("expected test value from load(&file)");
     assert_eq!(restored.ratings.len(), 2);
     assert_eq!(
         restored
@@ -388,10 +484,13 @@ fn ratings_relocate_collision_keeps_source_rating_through_save_and_reload() {
             path: "/generated/destination/photo.jpg".into(),
             rating: Some(4),
         })
-        .unwrap();
-    save(&file, &restored).unwrap();
-    assert_eq!(load(&file).unwrap(), restored);
-    fs::remove_dir_all(root).unwrap();
+        .expect("expected test value from restored .apply(Command::Set { path: \"/generated/destination/photo.jpg\".into(), rating: Some(4), })");
+    save(&file, &restored).expect("expected test value from save(&file, &restored)");
+    assert_eq!(
+        load(&file).expect("expected test value from load(&file)"),
+        restored
+    );
+    fs::remove_dir_all(root).expect("remove generated fixture");
 }
 
 #[test]
@@ -407,11 +506,11 @@ fn ratings_batch_capacity_counts_unique_new_paths() {
             paths: vec![last.clone(), last.clone()],
             rating: Some(5),
         })
-        .unwrap()
+        .expect("expected test value from data.apply(Command::SetMany { paths: vec![last.clone(), last.clone()], rating: Some(5), })")
     );
     assert_eq!(data.ratings.len(), MAX_RATINGS);
     assert_eq!(data.ratings.get(&last), Some(&5));
-    validate(&data).unwrap();
+    validate(&data).expect("expected test value from validate(&data)");
     let before = data.clone();
     assert!(
         data.apply(Command::SetMany {

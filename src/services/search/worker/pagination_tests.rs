@@ -7,15 +7,16 @@ impl Fixture {
     fn new(count: usize) -> Self {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
             "hermes-search-pages-{}-{nonce}",
             std::process::id()
         ));
-        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&root).expect("generated fixture must provide the expected value");
         for number in 0..count {
-            std::fs::write(root.join(format!("match-{number:04}.txt")), b"Synthetic").unwrap();
+            std::fs::write(root.join(format!("match-{number:04}.txt")), b"Synthetic")
+                .expect("generated fixture must provide the expected value");
         }
         Self(root)
     }
@@ -81,7 +82,8 @@ fn shared_results_page_all_matches_without_duplicate_advancement() {
 #[test]
 fn result_tabs_request_every_match_and_filters_preserve_global_ranking() {
     let fixture = Fixture::new(245);
-    std::fs::write(fixture.0.join("match"), b"Exact name").unwrap();
+    std::fs::write(fixture.0.join("match"), b"Exact name")
+        .expect("generated fixture must provide the expected value");
     let (handle, receiver) = fixture.search();
     let generation = handle.query_all("match");
     let (items, end) = page(&receiver, generation, 246, 246);
@@ -89,11 +91,12 @@ fn result_tabs_request_every_match_and_filters_preserve_global_ranking() {
     assert!(!end.has_more());
     let generation = handle.query_all("match ext:txt type:file");
     let (items, _) = page(&receiver, generation, 245, 245);
-    assert!(
-        items
-            .iter()
-            .all(|item| item.path.extension().unwrap() == "txt")
-    );
+    assert!(items.iter().all(|item| {
+        item.path
+            .extension()
+            .expect("generated fixture must provide the expected value")
+            == "txt"
+    }));
 }
 
 #[test]
@@ -104,7 +107,8 @@ fn old_page_does_not_replace_new_query_and_new_index_invalidates_cursor() {
     let (_, old) = page(&receiver, generation, 100, 205);
     handle.more(old);
     page(&receiver, generation, 200, 205);
-    std::fs::write(fixture.0.join("match-9999.txt"), b"New file").unwrap();
+    std::fs::write(fixture.0.join("match-9999.txt"), b"New file")
+        .expect("generated fixture must provide the expected value");
     let (_, fresh) = page(&receiver, generation, 100, 206);
     assert_ne!(fresh.revision, old.revision);
     handle.more(old);
@@ -141,14 +145,20 @@ fn oversized_candidate_index_falls_back_without_losing_tag_matches() {
     ]);
     worker.rescore_shared();
     worker.publish(false);
-    let SearchEvent::Results { items: first, .. } = worker.events.take().unwrap();
+    let SearchEvent::Results { items: first, .. } = worker
+        .events
+        .take()
+        .expect("generated fixture must provide the expected value");
     assert_eq!(first.len(), 2);
     worker.prepare_candidates();
     assert!(worker.candidate_attempted);
     assert!(worker.candidates.is_none());
     worker.rescore_shared();
     worker.publish(false);
-    let SearchEvent::Results { items: second, .. } = worker.events.take().unwrap();
+    let SearchEvent::Results { items: second, .. } = worker
+        .events
+        .take()
+        .expect("generated fixture must provide the expected value");
     assert_eq!(first, second);
     assert!(second.iter().any(|item| item.name == "large.flac"));
     assert!(second.iter().any(|item| item.name == "small.flac"));

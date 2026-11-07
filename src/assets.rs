@@ -125,7 +125,8 @@ pub fn prepare() -> Result<(), Box<dyn std::error::Error>> {
 pub fn register_icon_theme() {
     if let Some(display) = gdk::Display::default() {
         gtk::IconTheme::for_display(&display).add_resource_path("/io/github/lgse/Strata/icons");
-        gtk::IconTheme::for_display(&display).add_resource_path("/io/github/battlemountain2/Hermes/icons");
+        gtk::IconTheme::for_display(&display)
+            .add_resource_path("/io/github/battlemountain2/Hermes/icons");
     }
 }
 
@@ -137,7 +138,12 @@ pub fn primary_icon(name: &str, pixel_size: i32) -> gtk::Image {
 }
 
 pub fn set_primary_icon(image: &gtk::Image, name: &str) {
-    ON_ACCENT_ICONS.with(|icons| icons.borrow_mut().entries.remove(&(image.as_ptr() as usize)));
+    ON_ACCENT_ICONS.with(|icons| {
+        icons
+            .borrow_mut()
+            .entries
+            .remove(&(image.as_ptr() as usize))
+    });
     let color = PRIMARY_ICON_COLOR.with(|color| color.borrow().clone());
     apply_primary_icon(image, name, &color);
     PRIMARY_ICONS.with(|icons| register_icon(icons, image, name));
@@ -175,7 +181,12 @@ pub fn text_icon(name: &str, pixel_size: i32) -> gtk::Image {
 }
 
 pub fn set_text_icon(image: &gtk::Image, name: &str) {
-    ON_ACCENT_ICONS.with(|icons| icons.borrow_mut().entries.remove(&(image.as_ptr() as usize)));
+    ON_ACCENT_ICONS.with(|icons| {
+        icons
+            .borrow_mut()
+            .entries
+            .remove(&(image.as_ptr() as usize))
+    });
     let color = TEXT_ICON_COLOR.with(|color| color.borrow().clone());
     apply_primary_icon(image, name, &color);
     TEXT_ICONS.with(|icons| register_icon(icons, image, name));
@@ -194,8 +205,18 @@ pub fn on_accent_icon(name: &str, pixel_size: i32) -> gtk::Image {
 }
 
 pub fn set_on_accent_icon(image: &gtk::Image, name: &str) {
-    PRIMARY_ICONS.with(|icons| icons.borrow_mut().entries.remove(&(image.as_ptr() as usize)));
-    TEXT_ICONS.with(|icons| icons.borrow_mut().entries.remove(&(image.as_ptr() as usize)));
+    PRIMARY_ICONS.with(|icons| {
+        icons
+            .borrow_mut()
+            .entries
+            .remove(&(image.as_ptr() as usize))
+    });
+    TEXT_ICONS.with(|icons| {
+        icons
+            .borrow_mut()
+            .entries
+            .remove(&(image.as_ptr() as usize))
+    });
     let color = ON_ACCENT_ICON_COLOR
         .with(|color| color.borrow().clone())
         .unwrap_or_else(|| TEXT_ICON_COLOR.with(|color| color.borrow().clone()));

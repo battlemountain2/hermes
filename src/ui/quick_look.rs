@@ -7,21 +7,19 @@ use std::{
 
 use gtk::{glib, prelude::*};
 
-use crate::{
-    adapters::LocalPreviewProvider,
-    model::FileEntry,
-    ui::preview::PreviewDrawer,
-};
+use crate::{adapters::LocalPreviewProvider, model::FileEntry, ui::preview::PreviewDrawer};
 
 #[cfg(test)]
 mod tests;
+
+type AdjacentEntryHandler = Rc<dyn Fn() -> Option<FileEntry>>;
 
 pub struct QuickLookModal {
     window: gtk::Window,
     drawer: PreviewDrawer,
     is_open: Cell<bool>,
-    on_next: RefCell<Option<Rc<dyn Fn() -> Option<FileEntry>>>>,
-    on_prev: RefCell<Option<Rc<dyn Fn() -> Option<FileEntry>>>>,
+    on_next: RefCell<Option<AdjacentEntryHandler>>,
+    on_prev: RefCell<Option<AdjacentEntryHandler>>,
 }
 
 impl QuickLookModal {
@@ -84,23 +82,25 @@ impl QuickLookModal {
                 modal.close();
                 return glib::Propagation::Stop;
             }
-            if matches!(key, gtk::gdk::Key::Right | gtk::gdk::Key::Down) {
-                if let Some(next_fn) = modal.on_next.borrow().as_ref() {
-                    if let Some(entry) = next_fn() {
-                        modal.window.set_title(Some(&format!("Quick Look — {}", entry.display_name)));
-                        modal.drawer.show(entry);
-                        return glib::Propagation::Stop;
-                    }
-                }
+            if matches!(key, gtk::gdk::Key::Right | gtk::gdk::Key::Down)
+                && let Some(next_fn) = modal.on_next.borrow().as_ref()
+                && let Some(entry) = next_fn()
+            {
+                modal
+                    .window
+                    .set_title(Some(&format!("Quick Look — {}", entry.display_name)));
+                modal.drawer.show(entry);
+                return glib::Propagation::Stop;
             }
-            if matches!(key, gtk::gdk::Key::Left | gtk::gdk::Key::Up) {
-                if let Some(prev_fn) = modal.on_prev.borrow().as_ref() {
-                    if let Some(entry) = prev_fn() {
-                        modal.window.set_title(Some(&format!("Quick Look — {}", entry.display_name)));
-                        modal.drawer.show(entry);
-                        return glib::Propagation::Stop;
-                    }
-                }
+            if matches!(key, gtk::gdk::Key::Left | gtk::gdk::Key::Up)
+                && let Some(prev_fn) = modal.on_prev.borrow().as_ref()
+                && let Some(entry) = prev_fn()
+            {
+                modal
+                    .window
+                    .set_title(Some(&format!("Quick Look — {}", entry.display_name)));
+                modal.drawer.show(entry);
+                return glib::Propagation::Stop;
             }
             glib::Propagation::Proceed
         });
@@ -115,7 +115,8 @@ impl QuickLookModal {
 
     pub fn show(&self, entry: FileEntry, parent: &impl IsA<gtk::Window>) {
         self.window.set_transient_for(Some(parent));
-        self.window.set_title(Some(&format!("Quick Look — {}", entry.display_name)));
+        self.window
+            .set_title(Some(&format!("Quick Look — {}", entry.display_name)));
         self.window.set_visible(true);
         self.window.present();
         self.drawer.show(entry);
@@ -124,7 +125,8 @@ impl QuickLookModal {
 
     pub fn update_entry(&self, entry: FileEntry) {
         if self.is_open.get() {
-            self.window.set_title(Some(&format!("Quick Look — {}", entry.display_name)));
+            self.window
+                .set_title(Some(&format!("Quick Look — {}", entry.display_name)));
             self.drawer.show(entry);
         }
     }

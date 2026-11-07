@@ -202,7 +202,7 @@ fn prism_rectangles_remain_nested_without_respawning() {
                 ..frame
             },
         );
-        for (index, rectangle) in geometry.chunks_exact(4).enumerate() {
+        for (index, rectangle) in geometry.as_chunks::<4>().0.iter().enumerate() {
             for edge in 0..4 {
                 assert_eq!(rectangle[edge].end, rectangle[(edge + 1) % 4].start);
                 let point = rectangle[edge].start;
@@ -316,7 +316,13 @@ fn prism_and_orbit_native_snapshot_budgets() {
                 assert!(sparse_native_area(&node) < width * height * 0.025);
                 let repeat = gtk::Snapshot::new();
                 snapshot_frame(&repeat, width, height, style, time, [1.0; 32], PALETTE);
-                assert_eq!(node.serialize(), repeat.to_node().unwrap().serialize());
+                assert_eq!(
+                    node.serialize(),
+                    repeat
+                        .to_node()
+                        .expect("expected test value from repeat.to_node()")
+                        .serialize()
+                );
             }
         }
     }

@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#![allow(dead_code, unused_imports, clippy::all)]
-
 //! Empirical Challenger Stress Test Suite for Milestone 3 (M3.2):
 //! - 1. Coordinate reprojection for UTM Zones 1-60 N & S, Web Mercator (EPSG:3857), and WGS84 (EPSG:4326):
 //!      verify lat/lon conversion accuracy, pole/equator behavior, and bounds clamping on extremes.
@@ -16,8 +14,7 @@
 //!      FIFO capacity eviction (32 entries), TTL expiration, and 8-byte framing round-trip.
 
 use std::{
-    fs::{self, File},
-    io::{Read, Write},
+    fs::{self},
     path::{Path, PathBuf},
     sync::Mutex,
     time::{Duration, Instant},
@@ -26,8 +23,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 mod common;
-use common::*;
 use common::wire_protocol::*;
+use common::*;
 mod fixtures;
 use fixtures::geotiff::*;
 
@@ -61,8 +58,16 @@ pub fn normalize_to_lon_lat(bounds: [f64; 4], epsg: Option<u32>) -> (f64, f64, f
             let zone = if is_south { code - 32700 } else { code - 32600 };
             let central_lon = (zone as f64) * 6.0 - 183.0;
 
-            let northing_min = if is_south { y_min - 10_000_000.0 } else { y_min };
-            let northing_max = if is_south { y_max - 10_000_000.0 } else { y_max };
+            let northing_min = if is_south {
+                y_min - 10_000_000.0
+            } else {
+                y_min
+            };
+            let northing_max = if is_south {
+                y_max - 10_000_000.0
+            } else {
+                y_max
+            };
 
             let lat1 = northing_min / 111_319.5;
             let lat2 = northing_max / 111_319.5;
@@ -87,7 +92,12 @@ pub fn normalize_to_lon_lat(bounds: [f64; 4], epsg: Option<u32>) -> (f64, f64, f
             if x_min >= -180.0 && x_max <= 180.0 && y_min >= -90.0 && y_max <= 90.0 {
                 (x_min, y_min, x_max, y_max)
             } else {
-                (x_min.clamp(-180.0, 180.0), y_min.clamp(-90.0, 90.0), x_max.clamp(-180.0, 180.0), y_max.clamp(-90.0, 90.0))
+                (
+                    x_min.clamp(-180.0, 180.0),
+                    y_min.clamp(-90.0, 90.0),
+                    x_max.clamp(-180.0, 180.0),
+                    y_max.clamp(-90.0, 90.0),
+                )
             }
         }
     };
@@ -100,13 +110,7 @@ pub fn normalize_to_lon_lat(bounds: [f64; 4], epsg: Option<u32>) -> (f64, f64, f
     (min_lon, min_lat, max_lon, max_lat)
 }
 
-fn draw_world_continents(
-    context: &cairo::Context,
-    pad_x: f64,
-    pad_y: f64,
-    map_w: f64,
-    map_h: f64,
-) {
+fn draw_world_continents(context: &cairo::Context, pad_x: f64, pad_y: f64, map_w: f64, map_h: f64) {
     let to_canvas = |lon: f64, lat: f64| -> (f64, f64) {
         let x = pad_x + ((lon + 180.0) / 360.0) * map_w;
         let y = pad_y + ((90.0 - lat) / 180.0) * map_h;
@@ -128,34 +132,64 @@ fn draw_world_continents(
 
     // North America
     draw_poly(&[
-        (-165.0, 65.0), (-140.0, 70.0), (-90.0, 70.0), (-60.0, 60.0),
-        (-55.0, 45.0), (-80.0, 25.0), (-100.0, 20.0), (-110.0, 30.0),
-        (-125.0, 50.0), (-165.0, 65.0),
+        (-165.0, 65.0),
+        (-140.0, 70.0),
+        (-90.0, 70.0),
+        (-60.0, 60.0),
+        (-55.0, 45.0),
+        (-80.0, 25.0),
+        (-100.0, 20.0),
+        (-110.0, 30.0),
+        (-125.0, 50.0),
+        (-165.0, 65.0),
     ]);
 
     // South America
     draw_poly(&[
-        (-80.0, 10.0), (-35.0, -5.0), (-40.0, -22.0), (-55.0, -35.0),
-        (-65.0, -55.0), (-75.0, -45.0), (-80.0, 0.0),
+        (-80.0, 10.0),
+        (-35.0, -5.0),
+        (-40.0, -22.0),
+        (-55.0, -35.0),
+        (-65.0, -55.0),
+        (-75.0, -45.0),
+        (-80.0, 0.0),
     ]);
 
     // Eurasia
     draw_poly(&[
-        (-10.0, 36.0), (30.0, 36.0), (40.0, 30.0), (60.0, 25.0),
-        (100.0, 10.0), (120.0, 20.0), (140.0, 40.0), (170.0, 65.0),
-        (100.0, 75.0), (40.0, 70.0), (10.0, 55.0), (-10.0, 42.0),
+        (-10.0, 36.0),
+        (30.0, 36.0),
+        (40.0, 30.0),
+        (60.0, 25.0),
+        (100.0, 10.0),
+        (120.0, 20.0),
+        (140.0, 40.0),
+        (170.0, 65.0),
+        (100.0, 75.0),
+        (40.0, 70.0),
+        (10.0, 55.0),
+        (-10.0, 42.0),
     ]);
 
     // Africa
     draw_poly(&[
-        (-15.0, 35.0), (35.0, 30.0), (50.0, 12.0), (42.0, -10.0),
-        (30.0, -34.0), (18.0, -34.0), (10.0, 5.0), (-15.0, 15.0),
+        (-15.0, 35.0),
+        (35.0, 30.0),
+        (50.0, 12.0),
+        (42.0, -10.0),
+        (30.0, -34.0),
+        (18.0, -34.0),
+        (10.0, 5.0),
+        (-15.0, 15.0),
     ]);
 
     // Australia
     draw_poly(&[
-        (115.0, -20.0), (150.0, -15.0), (150.0, -35.0),
-        (135.0, -35.0), (115.0, -30.0),
+        (115.0, -20.0),
+        (150.0, -15.0),
+        (150.0, -35.0),
+        (135.0, -35.0),
+        (115.0, -30.0),
     ]);
 
     context.set_source_rgba(1.0, 1.0, 1.0, 0.12);
@@ -181,12 +215,30 @@ pub fn execute_placement_map_draw(
         let r = 6.0;
         let degrees = std::f64::consts::PI / 180.0;
         context.new_sub_path();
-        context.arc((w - r).max(0.0), r.min(h), r, -90.0 * degrees, 0.0 * degrees);
-        context.arc((w - r).max(0.0), (h - r).max(0.0), r, 0.0 * degrees, 90.0 * degrees);
-        context.arc(r.min(w), (h - r).max(0.0), r, 90.0 * degrees, 180.0 * degrees);
+        context.arc(
+            (w - r).max(0.0),
+            r.min(h),
+            r,
+            -90.0 * degrees,
+            0.0 * degrees,
+        );
+        context.arc(
+            (w - r).max(0.0),
+            (h - r).max(0.0),
+            r,
+            0.0 * degrees,
+            90.0 * degrees,
+        );
+        context.arc(
+            r.min(w),
+            (h - r).max(0.0),
+            r,
+            90.0 * degrees,
+            180.0 * degrees,
+        );
         context.arc(r.min(w), r.min(h), r, 180.0 * degrees, 270.0 * degrees);
         context.close_path();
-        let _ = context.clip();
+        context.clip();
 
         // 2. Dark card fill
         context.set_source_rgba(0.10, 0.12, 0.16, 0.95);
@@ -306,22 +358,15 @@ impl CustomGeoTiffBuilder {
         out.extend_from_slice(&8u32.to_le_bytes());
 
         // Construct baseline entries
-        let mut entries: Vec<(u16, u16, u32, Vec<u8>)> = Vec::new();
-
-        // 256: ImageWidth
-        entries.push((256, 4, 1, self.width.to_le_bytes().to_vec()));
-        // 257: ImageLength
-        entries.push((257, 4, 1, self.height.to_le_bytes().to_vec()));
-        // 258: BitsPerSample
-        entries.push((258, 3, 1, (8u16).to_le_bytes().to_vec()));
-        // 259: Compression (1 = none)
-        entries.push((259, 3, 1, (1u16).to_le_bytes().to_vec()));
-        // 262: PhotometricInterpretation (1 = BlackIsZero)
-        entries.push((262, 3, 1, (1u16).to_le_bytes().to_vec()));
-        // 277: SamplesPerPixel
-        entries.push((277, 3, 1, (1u16).to_le_bytes().to_vec()));
-        // 278: RowsPerStrip
-        entries.push((278, 4, 1, self.height.to_le_bytes().to_vec()));
+        let mut entries: Vec<(u16, u16, u32, Vec<u8>)> = vec![
+            (256, 4, 1, self.width.to_le_bytes().to_vec()),
+            (257, 4, 1, self.height.to_le_bytes().to_vec()),
+            (258, 3, 1, (8u16).to_le_bytes().to_vec()),
+            (259, 3, 1, (1u16).to_le_bytes().to_vec()),
+            (262, 3, 1, (1u16).to_le_bytes().to_vec()),
+            (277, 3, 1, (1u16).to_le_bytes().to_vec()),
+            (278, 4, 1, self.height.to_le_bytes().to_vec()),
+        ];
 
         let strip_len = self.width * self.height;
         // 279: StripByteCounts
@@ -413,7 +458,8 @@ impl CustomGeoTiffBuilder {
         for (i, entry) in entries.iter().enumerate() {
             if entry.0 == 273 {
                 let entry_offset = entries_start + i * 12;
-                out[entry_offset + 8..entry_offset + 12].copy_from_slice(&strip_data_offset.to_le_bytes());
+                out[entry_offset + 8..entry_offset + 12]
+                    .copy_from_slice(&strip_data_offset.to_le_bytes());
             }
         }
 
@@ -509,6 +555,12 @@ impl TestPreviewCache {
     }
 }
 
+impl Default for TestPreviewCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // =========================================================================
 // Test Suite
 // =========================================================================
@@ -600,7 +652,8 @@ fn test_stress_utm_extreme_bounds_clamping() {
     assert_eq!(max_lat, 90.0);
 
     // South hemisphere extreme bounds
-    let (s_min_lon, s_min_lat, s_max_lon, s_max_lat) = normalize_to_lon_lat(extreme_bounds, Some(32732));
+    let (s_min_lon, s_min_lat, s_max_lon, s_max_lat) =
+        normalize_to_lon_lat(extreme_bounds, Some(32732));
     assert_eq!(s_min_lon, -180.0);
     assert_eq!(s_max_lon, 180.0);
     assert_eq!(s_min_lat, -90.0);
@@ -668,7 +721,11 @@ fn test_edge_zero_resolution_fallback_to_1() {
     let meta_path = env.file_path("result.meta");
 
     let res = run_preview_helper("preview-geotiff", &input_path, &output_path, 1400);
-    assert!(res.status.success(), "Helper failed on zero resolution: {}", res.stderr);
+    assert!(
+        res.status.success(),
+        "Helper failed on zero resolution: {}",
+        res.stderr
+    );
 
     let meta_str = fs::read_to_string(&meta_path).expect("result.meta must be written");
     let meta: GeoTiffMetadata = serde_json::from_str(&meta_str).expect("parse metadata JSON");
@@ -728,7 +785,11 @@ fn test_edge_corrupted_geokey_directory() {
     let meta_path = env.file_path("result.meta");
 
     let res = run_preview_helper("preview-geotiff", &input_path, &output_path, 1400);
-    assert!(res.status.success(), "Helper must not crash on corrupt geokeys: {}", res.stderr);
+    assert!(
+        res.status.success(),
+        "Helper must not crash on corrupt geokeys: {}",
+        res.stderr
+    );
 
     let meta_str = fs::read_to_string(&meta_path).expect("result.meta must be written");
     let meta: GeoTiffMetadata = serde_json::from_str(&meta_str).expect("parse metadata JSON");
@@ -748,7 +809,11 @@ fn test_edge_missing_all_geotiff_metadata() {
     let meta_path = env.file_path("result.meta");
 
     let res = run_preview_helper("preview-geotiff", &input_path, &output_path, 1400);
-    assert!(res.status.success(), "Helper must succeed on standard TIFF: {}", res.stderr);
+    assert!(
+        res.status.success(),
+        "Helper must succeed on standard TIFF: {}",
+        res.stderr
+    );
 
     let meta_str = fs::read_to_string(&meta_path).expect("result.meta must be written");
     let meta: GeoTiffMetadata = serde_json::from_str(&meta_str).expect("parse metadata JSON");
@@ -764,8 +829,8 @@ fn test_edge_missing_all_geotiff_metadata() {
 
 #[test]
 fn test_cairo_placement_map_zero_panics_all_zones_and_edge_cases() {
-    let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 160, 90)
-        .expect("create cairo surface");
+    let surface =
+        cairo::ImageSurface::create(cairo::Format::ARgb32, 160, 90).expect("create cairo surface");
     let context = cairo::Context::new(&surface).expect("create cairo context");
 
     // 1. Stress all 60 UTM North zones
@@ -791,10 +856,17 @@ fn test_cairo_placement_map_zero_panics_all_zones_and_edge_cases() {
 
     // 3. Zero-area bounding box (min == max)
     let zero_bounds = [500_000.0, 5_000_000.0, 500_000.0, 5_000_000.0];
-    let (_bx, _by, bw, bh) = execute_placement_map_draw(&context, 160, 90, zero_bounds, Some(32632));
+    let (_bx, _by, bw, bh) =
+        execute_placement_map_draw(&context, 160, 90, zero_bounds, Some(32632));
     assert!(context.status().is_ok());
-    assert_eq!(bw, 4.0, "Zero-area box must be clamped to 4.0 minimum width");
-    assert_eq!(bh, 4.0, "Zero-area box must be clamped to 4.0 minimum height");
+    assert_eq!(
+        bw, 4.0,
+        "Zero-area box must be clamped to 4.0 minimum width"
+    );
+    assert_eq!(
+        bh, 4.0,
+        "Zero-area box must be clamped to 4.0 minimum height"
+    );
 
     // 4. Inverted bounding box (min > max)
     let inv_bounds = [600_000.0, 6_000_000.0, 400_000.0, 4_000_000.0];
@@ -804,7 +876,13 @@ fn test_cairo_placement_map_zero_panics_all_zones_and_edge_cases() {
     assert!(bh >= 4.0);
 
     // 5. Web Mercator & WGS84
-    execute_placement_map_draw(&context, 160, 90, [-20037508.34, -20037508.34, 20037508.34, 20037508.34], Some(3857));
+    execute_placement_map_draw(
+        &context,
+        160,
+        90,
+        [-20037508.34, -20037508.34, 20037508.34, 20037508.34],
+        Some(3857),
+    );
     assert!(context.status().is_ok());
     execute_placement_map_draw(&context, 160, 90, [-180.0, -90.0, 180.0, 90.0], Some(4326));
     assert!(context.status().is_ok());
@@ -818,7 +896,10 @@ fn test_cairo_placement_map_zero_panics_all_zones_and_edge_cases() {
     // 7. Verify PNG encoding succeeds without error
     let mut png_out = Vec::new();
     surface.write_to_png(&mut png_out).expect("write to png");
-    assert!(is_valid_png(&png_out), "Cairo placement map must produce valid PNG bytes");
+    assert!(
+        is_valid_png(&png_out),
+        "Cairo placement map must produce valid PNG bytes"
+    );
 }
 
 #[test]
@@ -869,10 +950,21 @@ fn test_cache_entry_persistence_and_restoration() {
     let meta_json = br#"{"epsg":32632,"dimensions":[1024,1024]}"#.to_vec();
 
     // Cache miss initially
-    assert!(cache.check_cache_entry(path, mtime, size, op.clone()).is_none());
+    assert!(
+        cache
+            .check_cache_entry(path, mtime, size, op.clone())
+            .is_none()
+    );
 
     // Put cache entry with metadata
-    cache.put_cache_entry(path, mtime, size, op.clone(), png.clone(), Some(meta_json.clone()));
+    cache.put_cache_entry(
+        path,
+        mtime,
+        size,
+        op.clone(),
+        png.clone(),
+        Some(meta_json.clone()),
+    );
 
     // Cache hit
     let (cached_png, cached_meta) = cache
@@ -883,13 +975,29 @@ fn test_cache_entry_persistence_and_restoration() {
     assert_eq!(cached_meta, Some(meta_json));
 
     // Miss on different mtime
-    assert!(cache.check_cache_entry(path, mtime + 1, size, op.clone()).is_none());
+    assert!(
+        cache
+            .check_cache_entry(path, mtime + 1, size, op.clone())
+            .is_none()
+    );
     // Miss on different size
-    assert!(cache.check_cache_entry(path, mtime, size + 1, op.clone()).is_none());
+    assert!(
+        cache
+            .check_cache_entry(path, mtime, size + 1, op.clone())
+            .is_none()
+    );
     // Miss on different operation
-    assert!(cache.check_cache_entry(path, mtime, size, WireOp::PreviewImage).is_none());
+    assert!(
+        cache
+            .check_cache_entry(path, mtime, size, WireOp::PreviewImage)
+            .is_none()
+    );
     // Miss on different path
-    assert!(cache.check_cache_entry(Path::new("/other.tif"), mtime, size, op.clone()).is_none());
+    assert!(
+        cache
+            .check_cache_entry(Path::new("/other.tif"), mtime, size, op.clone())
+            .is_none()
+    );
 }
 
 #[test]
@@ -915,7 +1023,9 @@ fn test_cache_fifo_eviction_boundary() {
     for i in 0..3 {
         let path_str = format!("/tmp/file_{i}.tif");
         assert!(
-            cache.check_cache_entry(Path::new(&path_str), 1000 + i as u64, 1024, op.clone()).is_none(),
+            cache
+                .check_cache_entry(Path::new(&path_str), 1000 + i as u64, 1024, op.clone())
+                .is_none(),
             "Entry {i} should have been evicted by FIFO policy"
         );
     }
@@ -947,7 +1057,8 @@ fn test_end_to_end_dem_and_optical_preview_with_meta_caching() {
     let dem_png = fs::read(&dem_output).expect("read dem png");
     assert!(is_valid_png(&dem_png));
     let dem_meta_str = fs::read_to_string(&dem_meta_path).expect("read dem meta");
-    let dem_meta: GeoTiffMetadata = serde_json::from_str(&dem_meta_str).expect("deserialize dem meta");
+    let dem_meta: GeoTiffMetadata =
+        serde_json::from_str(&dem_meta_str).expect("deserialize dem meta");
     assert_eq!(dem_meta.data_type, "Float32DEM");
     assert!(dem_meta.elevation_min.is_some());
     assert!(dem_meta.elevation_max.is_some());
@@ -959,12 +1070,17 @@ fn test_end_to_end_dem_and_optical_preview_with_meta_caching() {
     let opt_meta_path = env.file_path("result.meta");
 
     let res = run_preview_helper("preview-geotiff", &opt_input, &opt_output, 1400);
-    assert!(res.status.success(), "Optical preview failed: {}", res.stderr);
+    assert!(
+        res.status.success(),
+        "Optical preview failed: {}",
+        res.stderr
+    );
 
     let opt_png = fs::read(&opt_output).expect("read optical png");
     assert!(is_valid_png(&opt_png));
     let opt_meta_str = fs::read_to_string(&opt_meta_path).expect("read optical meta");
-    let opt_meta: GeoTiffMetadata = serde_json::from_str(&opt_meta_str).expect("deserialize optical meta");
+    let opt_meta: GeoTiffMetadata =
+        serde_json::from_str(&opt_meta_str).expect("deserialize optical meta");
     assert_eq!(opt_meta.data_type, "MultiBand");
     assert_eq!(opt_meta.band_count, 3);
     assert_eq!(opt_meta.epsg, Some(32632));

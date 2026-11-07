@@ -13,7 +13,7 @@ fn audio_preview_metadata_is_json_with_unchanged_sandbox_limits() {
         Path::new("/tmp/output"),
         operation,
         0,
-    ).unwrap();
+    ).expect("expected test value from sandbox_command( Path::new(\"/tmp/strata\"), Path::new(\"/tmp/track.flac\"), Path::new(\"/tmp/output\"), operation, 0, )");
     let arguments = command
         .get_args()
         .map(|value| value.to_string_lossy())
@@ -56,7 +56,7 @@ fn sandbox_exposes_only_runtime_input_and_private_output() {
         Path::new("/tmp/private-output"),
         ParseOperation::PreviewPdf,
         2,
-    ).unwrap();
+    ).expect("expected test value from sandbox_command( Path::new(\"/tmp/strata\"), Path::new(\"/home/alice/Downloads/untrusted.pdf\"), Path::new(\"/tmp/private-output\"), ...");
     let arguments: Vec<_> = command
         .get_args()
         .map(|argument| argument.to_string_lossy().into_owned())
@@ -112,10 +112,14 @@ fn one_shot_renderers_reuse_only_optional_read_only_system_font_caches() {
             operation,
             0,
         )
-        .unwrap();
+        .expect("expected test value from sandbox_command( Path::new(\"/generated/hermes\"), Path::new(\"/generated/input.pdf\"), Path::new(\"/generated/output\"), operation, ...");
         let arguments = command
             .get_args()
-            .map(|argument| argument.to_str().unwrap())
+            .map(|argument| {
+                argument
+                    .to_str()
+                    .expect("expected test value from argument.to_str()")
+            })
             .collect::<Vec<_>>();
         assert!(arguments.windows(3).any(|values| values
             == [
@@ -150,7 +154,8 @@ fn one_shot_renderers_reuse_only_optional_read_only_system_font_caches() {
 fn one_shot_office_previews_preserve_format_and_text_limits() {
     use crate::sandbox::browser::format_tests::{FixtureDirectory, write_package};
     let directory = FixtureDirectory::new();
-    let helper = super::helper_executable().unwrap();
+    let helper =
+        super::helper_executable().expect("expected test value from super::helper_executable()");
     for (name, member, xml) in [
         (
             "private.DOCX",
@@ -172,10 +177,10 @@ fn one_shot_office_previews_preserve_format_and_text_limits() {
             &Cancellation::default(),
             &helper,
         )
-        .unwrap();
+        .expect("expected test value from super::parse_one_shot_with_executable( &path, ParseOperation::PreviewOffice, 1024, &Cancellation::default(), &helper, )");
         assert!(
             String::from_utf8(result.data)
-                .unwrap()
+                .expect("expected test value from String::from_utf8(result.data)")
                 .contains("Hermes generated office document")
         );
         let limited = super::parse_one_shot_with_executable(
@@ -185,7 +190,7 @@ fn one_shot_office_previews_preserve_format_and_text_limits() {
             &Cancellation::default(),
             &helper,
         )
-        .unwrap();
+        .expect("expected test value from super::parse_one_shot_with_executable( &path, ParseOperation::ExtractOfficeText, 8, &Cancellation::default(), &helper, )");
         assert!(limited.data.len() <= 8);
         let cancellation = Cancellation::default();
         cancellation.cancel();
@@ -204,8 +209,9 @@ fn one_shot_office_previews_preserve_format_and_text_limits() {
         &Cancellation::default(),
         &helper,
     )
-    .unwrap();
-    let text = String::from_utf8(result.data).unwrap();
+    .expect("expected test value from super::parse_one_shot_with_executable( &slides, ParseOperation::PreviewOffice, 1024, &Cancellation::default(), &helper, )");
+    let text = String::from_utf8(result.data)
+        .expect("expected test value from String::from_utf8(result.data)");
     assert!(text.contains("Slide 1"));
     assert!(text.contains("Generated slide body"));
 }
@@ -235,7 +241,7 @@ fn pdf_text_extraction_uses_a_text_output_inside_the_sandbox() {
         Path::new("/tmp/private-output"),
         operation,
         1_048_576,
-    ).unwrap();
+    ).expect("expected test value from sandbox_command( Path::new(\"/tmp/strata\"), Path::new(\"/home/alice/Documents/manual.pdf\"), Path::new(\"/tmp/private-output\"), ope...");
     let arguments: Vec<_> = command
         .get_args()
         .map(|argument| argument.to_string_lossy().into_owned())
@@ -267,7 +273,7 @@ fn archive_and_office_operations_use_bounded_text_outputs() {
             Path::new("/tmp/private-output"),
             operation,
             1_048_576,
-        ).unwrap();
+        ).expect("expected test value from sandbox_command( Path::new(\"/tmp/strata\"), Path::new(\"/home/alice/Documents/input.bin\"), Path::new(\"/tmp/private-output\"), oper...");
         let arguments = command
             .get_args()
             .map(|value| value.to_string_lossy())

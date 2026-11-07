@@ -75,7 +75,7 @@ fn decay_profile_changes_clamp_existing_hold_without_extending_it() {
 #[test]
 #[ignore = "Private GTK display; tests weak stream/widget ownership without starting a decoder"]
 fn desktop_visualizer_releases_stream_widgets_and_signal_handlers() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     for _ in 0..32 {
         let stream: PlaybackStream = glib::Object::new();
         let weak_stream = stream.downgrade();
@@ -101,11 +101,11 @@ fn desktop_visualizer_releases_stream_widgets_and_signal_handlers() {
 #[test]
 #[ignore = "Private GTK display; tests mapped tick cancellation and shared reduced-motion policy without audio"]
 fn desktop_visualizer_cancels_ticks_when_hidden_reduced_or_stopped() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     let _theme_manager = ThemeManager::shared();
     crate::ui::motion::set_reduce_motion(false);
     gtk::Settings::default()
-        .unwrap()
+        .expect("expected test value from gtk::Settings::default()")
         .set_gtk_enable_animations(true);
     let stream: PlaybackStream = glib::Object::new();
     let visualizer = MicroSegmentVisualizer::new(&stream);
@@ -142,12 +142,12 @@ fn desktop_visualizer_cancels_ticks_when_hidden_reduced_or_stopped() {
     visualizer.ensure_tick_running();
     assert!(visualizer.state.tick.borrow().is_some());
     gtk::Settings::default()
-        .unwrap()
+        .expect("expected test value from gtk::Settings::default()")
         .set_gtk_enable_animations(false);
     visualizer.ensure_tick_running();
     assert!(visualizer.state.tick.borrow().is_none());
     gtk::Settings::default()
-        .unwrap()
+        .expect("expected test value from gtk::Settings::default()")
         .set_gtk_enable_animations(true);
     visualizer.state.peaks.set([1.0; SPECTRUM_BANDS]);
     visualizer.ensure_tick_running();
@@ -177,7 +177,8 @@ impl PreferencesFixture {
         );
         gtk::init().expect("Private GTK display available");
         let theme_manager = ThemeManager::shared();
-        let settings = gtk::Settings::default().unwrap();
+        let settings =
+            gtk::Settings::default().expect("expected test value from gtk::Settings::default()");
         let original_animations = settings.is_gtk_enable_animations();
         let original_options = audio_preferences::current();
         settings.set_gtk_enable_animations(true);
@@ -325,7 +326,7 @@ fn gtk_visualizer_live_options_observer_releases_on_stop_and_drop() {
                 .preferences_observer
                 .borrow()
                 .as_ref()
-                .unwrap(),
+                .expect("expected test value from visualizer .state .preferences_observer .borrow() .as_ref()"),
         );
         let state = visualizer.state.clone();
         let widget = visualizer.widget().clone();

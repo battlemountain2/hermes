@@ -8,11 +8,13 @@ fn saved_query_reopens_as_live_results_without_copying_files() {
         saved_searches::{Command, Store},
     };
     let root = std::env::temp_dir().join(format!("hermes-saved-query-live-{}", std::process::id()));
-    std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir(&root).expect("generated fixture must provide the expected value");
     let photos = root.join("photos");
-    std::fs::create_dir(&photos).unwrap();
-    std::fs::write(photos.join("first.jpg"), b"Generated names-only fixture").unwrap();
-    std::fs::write(photos.join("other.mp4"), b"Generated names-only fixture").unwrap();
+    std::fs::create_dir(&photos).expect("generated fixture must provide the expected value");
+    std::fs::write(photos.join("first.jpg"), b"Generated names-only fixture")
+        .expect("generated fixture must provide the expected value");
+    std::fs::write(photos.join("other.mp4"), b"Generated names-only fixture")
+        .expect("generated fixture must provide the expected value");
     let path = root.join("private/queries.json");
     let store = Store::start(path);
     assert!(store.flush(Duration::from_secs(3)));
@@ -27,20 +29,32 @@ fn saved_query_reopens_as_live_results_without_copying_files() {
             name: "Trip photos".into(),
             uri: search.to_uri(),
         })
-        .unwrap();
+        .expect("generated fixture must provide the expected value");
     assert!(store.flush(Duration::from_secs(3)));
-    let saved = store.snapshot().entries.into_iter().next().unwrap();
+    let saved = store
+        .snapshot()
+        .entries
+        .into_iter()
+        .next()
+        .expect("generated fixture must provide the expected value");
     let reopened = store;
-    reopened.send(Command::Reload).unwrap();
+    reopened
+        .send(Command::Reload)
+        .expect("generated fixture must provide the expected value");
     assert!(reopened.flush(Duration::from_secs(3)));
-    assert_eq!(reopened.snapshot().entries, [saved.clone()]);
+    assert_eq!(
+        reopened.snapshot().entries.as_slice(),
+        std::slice::from_ref(&saved)
+    );
     let expected = Rc::new(std::cell::RefCell::new(Vec::new()));
     let captured = expected.clone();
     let failures = Rc::new(std::cell::RefCell::new(Vec::new()));
     let errors = failures.clone();
     let source = SearchFileSource::new();
     let location = Location::uri(&saved.uri);
-    source.validate_location(&location).unwrap();
+    source
+        .validate_location(&location)
+        .expect("generated fixture must provide the expected value");
     let handle = source.enumerate(
         DirectoryRequest {
             id: crate::services::RequestId(912),
@@ -71,11 +85,17 @@ fn saved_query_reopens_as_live_results_without_copying_files() {
         }
     };
     wait_for("first.jpg");
-    std::fs::rename(photos.join("first.jpg"), photos.join("renamed.jpg")).unwrap();
+    std::fs::rename(photos.join("first.jpg"), photos.join("renamed.jpg"))
+        .expect("generated fixture must provide the expected value");
     wait_for("renamed.jpg");
-    assert_eq!(std::fs::read_dir(&photos).unwrap().count(), 2);
+    assert_eq!(
+        std::fs::read_dir(&photos)
+            .expect("generated fixture must provide the expected value")
+            .count(),
+        2
+    );
     assert!(photos.join("other.mp4").exists());
     drop(handle);
     drop(reopened);
-    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(root).expect("generated fixture must provide the expected value");
 }

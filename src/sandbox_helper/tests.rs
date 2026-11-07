@@ -126,7 +126,11 @@ fn test_oversized_embedded_thumbnail_rejected() {
     ];
     let result = scale_embedded_thumbnail(&huge_thumb_jpeg, 256);
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("frame budget"));
+    assert!(
+        result
+            .expect_err("invalid or cancelled fixture must fail")
+            .contains("frame budget")
+    );
 }
 #[test]
 fn media_preview_only_retries_resource_killed_conversions() {

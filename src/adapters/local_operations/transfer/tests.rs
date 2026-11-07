@@ -128,7 +128,11 @@ fn destination_changed_during_copy_requires_a_new_conflict_decision() -> Result<
             Ok(())
         },
     );
-    assert!(result.unwrap_err().matches(gio::IOErrorEnum::Exists));
+    assert!(
+        result
+            .expect_err("invalid or cancelled fixture must fail")
+            .matches(gio::IOErrorEnum::Exists)
+    );
     assert_eq!(fs::read(fixture.target())?, b"a newer destination version");
     assert_eq!(fs::read(fixture.source())?, b"new contents");
     fixture.assert_clean()?;

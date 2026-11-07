@@ -79,10 +79,10 @@ impl PdfFullscreen {
                 let scroll = weak_scroll.upgrade();
                 let fraction = scroll.as_ref().map(scroll_fraction);
                 window.set_child(None::<&gtk::Widget>);
-                if let (Some(home), Some(viewer)) = (weak_home.upgrade(), weak_viewer.upgrade()) {
-                    if viewer.parent().is_none() {
-                        home.append(&viewer);
-                    }
+                if let (Some(home), Some(viewer)) = (weak_home.upgrade(), weak_viewer.upgrade())
+                    && viewer.parent().is_none()
+                {
+                    home.append(&viewer);
                 }
                 if let Some(button) = weak_button.upgrade() {
                     button.set_child(Some(&assets::primary_icon(icons::MAXIMIZE, 16)));

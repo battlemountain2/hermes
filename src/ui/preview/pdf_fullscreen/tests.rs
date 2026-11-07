@@ -3,8 +3,8 @@ use super::*;
 #[test]
 #[ignore = "Requires GTK desktop display; uses generated widgets, not personal documents"]
 fn desktop_pdf_fullscreen_reuses_reader_and_restores_on_exit_and_close() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.set_size_request(600, 4000);
     let scroll = gtk::ScrolledWindow::builder()
@@ -28,9 +28,16 @@ fn desktop_pdf_fullscreen_reuses_reader_and_restores_on_exit_and_close() {
     };
     pump(&|| scroll.height() > 0);
     scroll.vadjustment().set_value(1300.0);
-    let viewer = reader.widget.first_child().unwrap();
+    let viewer = reader
+        .widget
+        .first_child()
+        .expect("expected test value from reader.widget.first_child()");
     assert!(reader.open_fullscreen());
-    let fullscreen = reader.window.borrow().clone().unwrap();
+    let fullscreen = reader
+        .window
+        .borrow()
+        .clone()
+        .expect("expected test value from reader.window.borrow().clone()");
     assert_eq!(fullscreen.child().as_ref(), Some(&viewer));
     assert!(reader.widget.first_child().is_none());
     pump(&|| fullscreen.is_fullscreen() && scroll.vadjustment().value() > 1200.0);
@@ -40,7 +47,7 @@ fn desktop_pdf_fullscreen_reuses_reader_and_restores_on_exit_and_close() {
         .filter_map(Result::ok)
         .filter_map(|object| object.downcast::<gtk::EventControllerKey>().ok())
         .find(|keys| keys.name().as_deref() == Some("hermes-pdf-fullscreen"))
-        .unwrap();
+        .expect("expected test value from fullscreen .observe_controllers() .iter::<glib::Object>() .filter_map(Result::ok) .filter_map(|object| object.downcast::<gtk::E...");
     assert!(!keys.emit_by_name::<bool>(
         "key-pressed",
         &[
@@ -55,7 +62,10 @@ fn desktop_pdf_fullscreen_reuses_reader_and_restores_on_exit_and_close() {
     ));
     assert!(reader.window.borrow().is_none());
     assert_eq!(reader.widget.first_child().as_ref(), Some(&viewer));
-    let viewport = scroll.child().and_downcast::<gtk::Viewport>().unwrap();
+    let viewport = scroll
+        .child()
+        .and_downcast::<gtk::Viewport>()
+        .expect("expected test value from scroll.child().and_downcast::<gtk::Viewport>()");
     assert_eq!(viewport.child().as_ref(), Some(content.upcast_ref()));
     assert!(reader.open_fullscreen());
     reader.stop();
@@ -95,9 +105,9 @@ fn desktop_pdf_fullscreen_reuses_reader_and_restores_on_exit_and_close() {
     }
     let mut png = Vec::new();
     cairo::ImageSurface::create(cairo::Format::ARgb32, 500, 700)
-        .unwrap()
+        .expect("expected test value from cairo::ImageSurface::create(cairo::Format::ARgb32, 500, 700)")
         .write_to_png(&mut png)
-        .unwrap();
+        .expect("expected test value from cairo::ImageSurface::create(cairo::Format::ARgb32, 500, 700) .unwrap() .write_to_png(&mut png)");
     let drawer = super::super::PreviewDrawer::new(Rc::new(Pages(png)));
     let entry = crate::model::FileEntry(Rc::new(crate::model::FileEntryInner {
         location: crate::model::Location::local("/fixture/document.pdf"),
@@ -122,11 +132,11 @@ fn desktop_pdf_fullscreen_reuses_reader_and_restores_on_exit_and_close() {
         .pdf
         .borrow()
         .as_ref()
-        .unwrap()
+        .expect("expected test value from drawer .state .pdf .borrow() .as_ref()")
         .window
         .borrow()
         .clone()
-        .unwrap();
+        .expect("expected test value from drawer .state .pdf .borrow() .as_ref() .unwrap() .window .borrow() .clone()");
     pump(&|| fullscreen.is_visible());
     drawer.close();
     assert!(!fullscreen.is_visible());

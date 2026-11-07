@@ -21,7 +21,10 @@ fn literal_smart_queries_keep_grouped_and_result_tab_matches_with_sql_candidates
     worker.query.text = "Video Games".into();
     worker.prepare_candidates();
     assert!(worker.candidates.is_none());
-    worker.candidates = Some(super::super::candidates::Candidates::build(&worker.shared_items, &|| false).unwrap());
+    worker.candidates = Some(
+        super::super::candidates::Candidates::build(&worker.shared_items, &|| false)
+            .expect("generated fixture must provide the expected value"),
+    );
     for virtual_results in [true, false] {
         worker.query.grouping = Some(Grouping {
             group: SearchGroup::Songs,
@@ -35,7 +38,10 @@ fn literal_smart_queries_keep_grouped_and_result_tab_matches_with_sql_candidates
         assert_eq!(worker.ranked, indexed);
         worker.candidates = candidates;
         if virtual_results {
-            let groups = worker.groups.as_ref().unwrap();
+            let groups = worker
+                .groups
+                .as_ref()
+                .expect("generated fixture must provide the expected value");
             assert_eq!(groups.counts().songs, 1);
             assert_eq!(groups.counts().albums, 1);
         } else {
@@ -77,7 +83,10 @@ fn entity_pages_can_extend_past_the_source_entry_limit() {
         page: Some(page),
         groups: Some(groups),
         ..
-    } = worker.events.take().unwrap()
+    } = worker
+        .events
+        .take()
+        .expect("generated fixture must provide the expected value")
     else {
         panic!("Expected grouped first page")
     };
@@ -91,7 +100,10 @@ fn entity_pages_can_extend_past_the_source_entry_limit() {
         page: Some(page),
         groups: Some(groups),
         ..
-    } = worker.events.take().unwrap()
+    } = worker
+        .events
+        .take()
+        .expect("generated fixture must provide the expected value")
     else {
         panic!("Expected extended page")
     };
@@ -192,7 +204,7 @@ fn grouped_catalog_uses_all_eligible_tags_and_exports_only_real_scoped_songs() {
                 .join(format!("performer-notes-{number:04}.txt")),
             b"Synthetic",
         )
-        .unwrap();
+        .expect("generated fixture must provide the expected value");
     }
     for number in 0..245 {
         let album = if number < 120 { "Alpha" } else { "Beta" };
@@ -200,14 +212,22 @@ fn grouped_catalog_uses_all_eligible_tags_and_exports_only_real_scoped_songs() {
             .root
             .join(album)
             .join(format!("track-{number:04}.flac"));
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(
+            path.parent()
+                .expect("generated fixture must provide the expected value"),
+        )
+        .expect("generated fixture must provide the expected value");
         let tags = MusicTags {
             title: Some(format!("Song {number}")),
             artist: Some("Performer".into()),
             album: Some(album.into()),
             ..MusicTags::default()
         };
-        std::fs::write(path, serde_json::to_vec(&tags).unwrap()).unwrap();
+        std::fs::write(
+            path,
+            serde_json::to_vec(&tags).expect("generated fixture must provide the expected value"),
+        )
+        .expect("generated fixture must provide the expected value");
     }
     let mut subscription = fixture.subscribe();
     ready(&mut subscription, |snapshot| {
@@ -271,7 +291,7 @@ fn grouped_catalog_uses_all_eligible_tags_and_exports_only_real_scoped_songs() {
         .results
         .iter()
         .find(|result| matches!(result, SearchResult::Album(entity) if entity.title == "Alpha"))
-        .unwrap()
+        .expect("generated fixture must provide the expected value")
     else {
         panic!("Expected album")
     };
@@ -282,10 +302,10 @@ fn grouped_catalog_uses_all_eligible_tags_and_exports_only_real_scoped_songs() {
     assert!(songs.results.iter().all(|result| {
         result
             .file()
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .path
             .parent()
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .ends_with("Alpha")
     }));
     let generation = handle.query_all_scoped(query, SearchGroup::Songs, Some(entity));
@@ -303,11 +323,12 @@ fn grouped_catalog_uses_all_eligible_tags_and_exports_only_real_scoped_songs() {
         {
             assert_eq!(items.len(), 120);
             assert_eq!(page.total, 120);
-            assert!(
-                items
-                    .iter()
-                    .all(|item| item.path.parent().unwrap().ends_with("Alpha"))
-            );
+            assert!(items.iter().all(|item| {
+                item.path
+                    .parent()
+                    .expect("generated fixture must provide the expected value")
+                    .ends_with("Alpha")
+            }));
             break;
         }
         assert!(Instant::now() < deadline);
@@ -324,11 +345,12 @@ fn grouped_catalog_uses_all_eligible_tags_and_exports_only_real_scoped_songs() {
             && current == generation
         {
             assert_eq!(items.len(), 150);
-            assert!(
-                items
-                    .iter()
-                    .all(|item| item.path.extension().unwrap() == "txt")
-            );
+            assert!(items.iter().all(|item| {
+                item.path
+                    .extension()
+                    .expect("generated fixture must provide the expected value")
+                    == "txt"
+            }));
             break;
         }
         assert!(Instant::now() < deadline);
@@ -348,9 +370,9 @@ fn compilation_drilldown_uses_album_artist_without_replacing_track_artist_filter
         };
         std::fs::write(
             fixture.root.join(format!("{number}.flac")),
-            serde_json::to_vec(&tags).unwrap(),
+            serde_json::to_vec(&tags).expect("generated fixture must provide the expected value"),
         )
-        .unwrap();
+        .expect("generated fixture must provide the expected value");
     }
     let mut subscription = fixture.subscribe();
     ready(&mut subscription, |snapshot| {
@@ -378,7 +400,13 @@ fn compilation_drilldown_uses_album_artist_without_replacing_track_artist_filter
         Some(album.key.clone()),
     );
     let (songs, _) = grouped_page(&receiver, generation, SearchGroup::Songs, 1, 1);
-    assert_eq!(songs.results[0].file().unwrap().name, "1.flac");
+    assert_eq!(
+        songs.results[0]
+            .file()
+            .expect("generated fixture must provide the expected value")
+            .name,
+        "1.flac"
+    );
     let generation = handle.query_group("", SearchGroup::Songs, Some(album.key.clone()));
     let (songs, _) = grouped_page(&receiver, generation, SearchGroup::Songs, 2, 2);
     assert!(songs.results.iter().all(|result| result.file().is_some()));

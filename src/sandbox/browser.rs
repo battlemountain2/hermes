@@ -124,12 +124,18 @@ pub(crate) fn default_worker_limit() -> usize {
         .min(MAX_WORKERS)
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "Pool worker limit query helper"))]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "Pool worker limit query helper")
+)]
 pub(crate) fn worker_limit() -> usize {
     pool().limit.load(Ordering::Relaxed)
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "Pool worker limit setter helper"))]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "Pool worker limit setter helper")
+)]
 pub(crate) fn set_worker_limit(limit: usize) {
     let limit = limit.clamp(1, MAX_WORKERS);
     pool().limit.store(limit, Ordering::Relaxed);
@@ -230,7 +236,10 @@ impl Pool {
             let now = Instant::now();
             while let Some((_, last_used)) = state.idle.front() {
                 if now.duration_since(*last_used) >= DEFAULT_WORKER_IDLE_TIMEOUT {
-                    let (worker, _) = state.idle.pop_front().unwrap();
+                    let (worker, _) = state
+                        .idle
+                        .pop_front()
+                        .expect("The idle queue front was checked while holding its lock");
                     drop(worker);
                     state.count = state.count.saturating_sub(1);
                 } else {
@@ -432,6 +441,12 @@ fn spawn_worker() -> io::Result<Worker> {
         "--setenv",
         "XDG_CACHE_HOME",
         "/tmp/cache",
+        "--setenv",
+        "OPENBLAS_NUM_THREADS",
+        "1",
+        "--setenv",
+        "OMP_NUM_THREADS",
+        "1",
         "--proc",
         "/proc",
         "--dev",
@@ -457,6 +472,9 @@ fn spawn_worker() -> io::Result<Worker> {
         "--ro-bind-try",
         "/etc/ld.so.cache",
         "/etc/ld.so.cache",
+        "--ro-bind-try",
+        "/etc/alternatives",
+        "/etc/alternatives",
         "--ro-bind-try",
         "/var/cache/fontconfig",
         "/var/cache/fontconfig",
@@ -540,11 +558,13 @@ fn map_thumbnail_op(op: &ParseOperation) -> Option<Operation> {
     }
 }
 
+type PreviewReply = Option<Result<(Vec<u8>, Option<Vec<u8>>), String>>;
+
 pub(crate) fn preview(
     input: &Path,
     operation: &ParseOperation,
     cancellation: &Cancellation,
-) -> Option<Result<(Vec<u8>, Option<Vec<u8>>), String>> {
+) -> PreviewReply {
     if !workers_supported() {
         return None;
     }

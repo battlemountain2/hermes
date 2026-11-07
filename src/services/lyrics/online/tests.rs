@@ -84,7 +84,7 @@ fn transient_provider_failures_retry_with_backoff_and_then_return_lyrics() {
             Ok(())
         },
     )
-    .unwrap();
+    .expect("expected test value from fetch_with_retry( &query(), &Cancellation::default(), |_, _, remaining| { assert!(!remaining.is_zero() && remaining <= LOOKUP_D...");
     assert_eq!(attempts, 3);
     assert_eq!(delays, RETRY_DELAYS);
     assert_eq!(response.status, 200);
@@ -107,7 +107,7 @@ fn provider_retries_are_bounded_and_do_not_repeat_misses_rate_limits_or_bad_resp
             },
             |_, _| Ok(()),
         )
-        .unwrap();
+        .expect("expected test value from fetch_with_retry( &query(), &Cancellation::default(), |_, _, _| { attempts += 1; Ok(Response { status, body: Vec::new(), }) }, ...");
         assert_eq!(attempts, if retryable { 3 } else { 1 });
         assert_eq!(result.status, status);
     }
@@ -175,10 +175,15 @@ fn service_unavailable_is_not_reported_or_cached_as_missing_lyrics() {
             body: Vec::new(),
         })
     })
-    .unwrap_err();
+    .expect_err("invalid or cancelled fixture must fail");
     assert!(error.contains("temporarily unavailable"));
     assert!(!error.contains("No matching"));
-    assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 0);
+    assert_eq!(
+        fs::read_dir(&fixture.0)
+            .expect("expected test value from fs::read_dir(&fixture.0)")
+            .count(),
+        0
+    );
 }
 
 #[test]

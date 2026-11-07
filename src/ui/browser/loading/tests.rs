@@ -25,7 +25,7 @@ fn fixture() -> (gtk::Stack, gtk::Spinner, LoadingTransition) {
 #[test]
 #[ignore = "Requires isolated GTK display; delayed loading lifecycle and reduced motion"]
 fn desktop_loading_transition_cancels_fast_stale_and_destroyed_feedback() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     let (stack, spinner, transition) = fixture();
     assert_eq!(stack.visible_child_name().as_deref(), Some("pending"));
     assert!(!spinner.get_visible());

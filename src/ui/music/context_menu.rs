@@ -248,7 +248,10 @@ fn show(
                     let repair_state = state.clone();
                     let repair_popover = popover.downgrade();
                     let control = gtk::Button::with_label("Locate missing file…");
-                    control.set_child(Some(&control_contents(icons::SEARCH, "Locate missing file…")));
+                    control.set_child(Some(&control_contents(
+                        icons::SEARCH,
+                        "Locate missing file…",
+                    )));
                     control.add_css_class("music-control");
                     control.connect_clicked(move |btn| {
                         if let Some(menu) = repair_popover.upgrade() {
@@ -257,7 +260,7 @@ fn show(
                         let Some(root) = btn.root().and_downcast::<gtk::Window>() else {
                             return;
                         };
-                        #[allow(deprecated)]
+                        #[expect(deprecated, reason = "GTK dialog is shared with the application's local folder chooser")]
                         let dialog = gtk::FileChooserNative::new(
                             Some("Locate Track File"),
                             Some(&root),
@@ -267,18 +270,16 @@ fn show(
                         );
                         let old_path = repair_path.clone();
                         let state = repair_state.clone();
-                        #[allow(deprecated)]
+                        #[expect(deprecated, reason = "GTK dialog response closes the local folder chooser")]
                         dialog.connect_response(move |dialog, response| {
-                            if response == gtk::ResponseType::Accept {
-                                if let Some(new_path) = dialog.file().and_then(|f| f.path()) {
-                                    if let Some(state) = state.upgrade().filter(|s| !s.disposed.get()) {
+                            if response == gtk::ResponseType::Accept
+                                && let Some(new_path) = dialog.file().and_then(|f| f.path())
+                                    && let Some(state) = state.upgrade().filter(|s| !s.disposed.get()) {
                                         state.collection_command(CollectionCommand::Relocate {
                                             from: old_path.clone(),
                                             to: new_path,
                                         });
                                     }
-                                }
-                            }
                         });
                         dialog.show();
                     });
@@ -328,11 +329,7 @@ fn show(
         }
     }
     popover.set_child(Some(&contents));
-    popover.connect_closed(|menu| {
-        if menu.parent().is_some() {
-            menu.unparent();
-        }
-    });
+    crate::ui::context_menu::release_ephemeral_on_close(&popover, anchor);
     popover.popup();
     popover
 }

@@ -32,7 +32,10 @@ pub fn sample_ods_spreadsheet() -> Vec<u8> {
 </office:document-content>"#;
 
     create_zip(&[
-        ("mimetype", b"application/vnd.oasis.opendocument.spreadsheet"),
+        (
+            "mimetype",
+            b"application/vnd.oasis.opendocument.spreadsheet",
+        ),
         ("content.xml", content_xml.as_bytes()),
     ])
 }

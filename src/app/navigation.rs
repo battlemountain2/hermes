@@ -327,16 +327,25 @@ impl NavigationState {
             merge_entries(Vec::new(), entries, column.preferences).0
         };
         column.selected = selected_location.and_then(|location| {
-            column.entries.iter().position(|entry| entry.location == location)
+            column
+                .entries
+                .iter()
+                .position(|entry| entry.location == location)
         });
         if column.selected.is_some() {
             column.selection_target = None;
         }
         column.selected_locations.retain(|location| {
-            column.entries.iter().any(|entry| &entry.location == location)
+            column
+                .entries
+                .iter()
+                .any(|entry| &entry.location == location)
         });
         if column.selection_anchor.as_ref().is_some_and(|location| {
-            !column.entries.iter().any(|entry| &entry.location == location)
+            !column
+                .entries
+                .iter()
+                .any(|entry| &entry.location == location)
         }) {
             column.selection_anchor = None;
         }
@@ -344,7 +353,9 @@ impl NavigationState {
     }
 
     pub fn accepts_request(&self, depth: usize, request_id: RequestId) -> bool {
-        self.columns.get(depth).is_some_and(|column| column.request_id == request_id)
+        self.columns
+            .get(depth)
+            .is_some_and(|column| column.request_id == request_id)
     }
 
     pub fn apply_directory_change(
@@ -449,7 +460,10 @@ impl NavigationState {
     }
 
     pub fn restart(&mut self, request_id: RequestId) -> Option<usize> {
-        let depth = self.columns.iter().position(|column| column.request_id == request_id)?;
+        let depth = self
+            .columns
+            .iter()
+            .position(|column| column.request_id == request_id)?;
         self.reload_column(depth, request_id)?;
         Some(depth)
     }
@@ -473,11 +487,14 @@ impl NavigationState {
     }
 
     pub fn retained_preferences_match(&self, preferences: ViewPreferences) -> bool {
-        self.active_depth().and_then(|depth| self.columns.get(depth)).is_some_and(|column| {
-            column.preferences == preferences
-                || (column.automatic_track && !column.sort_explicit
-                    && column.base_preferences == preferences)
-        })
+        self.active_depth()
+            .and_then(|depth| self.columns.get(depth))
+            .is_some_and(|column| {
+                column.preferences == preferences
+                    || (column.automatic_track
+                        && !column.sort_explicit
+                        && column.base_preferences == preferences)
+            })
     }
 
     pub fn set_column_preferences(
@@ -533,7 +550,8 @@ impl NavigationState {
         entries: &[FileEntry],
     ) -> Option<usize> {
         let (depth, column) = self.column_for_request_mut(request_id)?;
-        let focused = column.selected
+        let focused = column
+            .selected
             .and_then(|position| column.entries.get(position))
             .map(|entry| entry.location.clone());
         let changed = hydrate_music_tags(&mut column.entries, entries);
@@ -552,18 +570,22 @@ impl NavigationState {
             return None;
         }
         if !column.relevance_order() {
-            column.entries.sort_unstable_by(|left, right| {
-                compare_entries(left, right, column.preferences)
-            });
+            column
+                .entries
+                .sort_unstable_by(|left, right| compare_entries(left, right, column.preferences));
         }
         column.selected = focused.and_then(|location| {
-            column.entries.iter().position(|entry| entry.location == location)
+            column
+                .entries
+                .iter()
+                .position(|entry| entry.location == location)
         });
         Some(depth)
     }
 
     pub fn peek_entries(&self) -> Vec<FileEntry> {
-        self.peek.as_ref()
+        self.peek
+            .as_ref()
             .map(|peek| peek.entries.clone())
             .unwrap_or_default()
     }
@@ -597,8 +619,18 @@ impl NavigationState {
     pub fn finish(&mut self, request_id: RequestId) -> Option<usize> {
         let (depth, column) = self.column_for_request_mut(request_id)?;
         column.selection_target = None;
-        column.selected_locations.retain(|location| column.entries.iter().any(|entry| &entry.location == location));
-        if column.selection_anchor.as_ref().is_some_and(|location| !column.entries.iter().any(|entry| &entry.location == location)) {
+        column.selected_locations.retain(|location| {
+            column
+                .entries
+                .iter()
+                .any(|entry| &entry.location == location)
+        });
+        if column.selection_anchor.as_ref().is_some_and(|location| {
+            !column
+                .entries
+                .iter()
+                .any(|entry| &entry.location == location)
+        }) {
             column.selection_anchor = None;
         }
         column.load_state = if column.entries.is_empty() {
@@ -881,7 +913,10 @@ impl NavigationState {
 impl ColumnState {
     fn relevance_order(&self) -> bool {
         !self.sort_explicit
-            && self.location.uri_value().is_some_and(|uri| uri.starts_with("search://"))
+            && self
+                .location
+                .uri_value()
+                .is_some_and(|uri| uri.starts_with("search://"))
     }
 }
 
@@ -902,9 +937,11 @@ fn merge_entries(
         return (incoming, vec![insertion]);
     }
 
-    if existing.last().zip(incoming.first()).is_some_and(|(last, first)| {
-        compare_entries(last, first, preferences) == Ordering::Less
-    }) {
+    if existing
+        .last()
+        .zip(incoming.first())
+        .is_some_and(|(last, first)| compare_entries(last, first, preferences) == Ordering::Less)
+    {
         let insertion = EntryInsertion {
             position: existing.len(),
             entries: incoming.clone(),
@@ -984,7 +1021,11 @@ fn insert_monitored_entry(
     });
 }
 
-pub(super) fn compare_entries(left: &FileEntry, right: &FileEntry, preferences: ViewPreferences) -> Ordering {
+pub(super) fn compare_entries(
+    left: &FileEntry,
+    right: &FileEntry,
+    preferences: ViewPreferences,
+) -> Ordering {
     if preferences.folders_first {
         let directory_order = right.is_directory().cmp(&left.is_directory());
         if directory_order != Ordering::Equal {
@@ -993,8 +1034,11 @@ pub(super) fn compare_entries(left: &FileEntry, right: &FileEntry, preferences: 
     }
 
     if preferences.sort_key == SortKey::Track {
-        let audio_order = super::music_order::is_audio(right).cmp(&super::music_order::is_audio(left));
-        if audio_order != Ordering::Equal { return audio_order; }
+        let audio_order =
+            super::music_order::is_audio(right).cmp(&super::music_order::is_audio(left));
+        if audio_order != Ordering::Equal {
+            return audio_order;
+        }
     }
 
     let ordering = match preferences.sort_key {
@@ -1013,9 +1057,9 @@ pub(super) fn compare_entries(left: &FileEntry, right: &FileEntry, preferences: 
                     .extension()
                     .and_then(|ext| ext.to_str())
                     .map(|ext| ext.to_lowercase());
-                left_ext
-                    .cmp(&right_ext)
-                    .then_with(|| super::music_order::natural_name(&left.display_name, &right.display_name))
+                left_ext.cmp(&right_ext).then_with(|| {
+                    super::music_order::natural_name(&left.display_name, &right.display_name)
+                })
             }
         }
         SortKey::Size => compare_metadata(&left.size, &right.size),
@@ -1050,14 +1094,13 @@ fn hydrate_music_tags(current: &mut [FileEntry], hydrated: &[FileEntry]) -> bool
             continue;
         }
         if let Some(current) = current.iter_mut().find(|current| {
-            current.location == entry.location && current.size == entry.size
+            current.location == entry.location
+                && current.size == entry.size
                 && current.modified_unix_seconds == entry.modified_unix_seconds
-        })
+        }) && current.music_tags != entry.music_tags
         {
-            if current.music_tags != entry.music_tags {
-                std::rc::Rc::make_mut(&mut current.0).music_tags = entry.music_tags.clone();
-                changed = true;
-            }
+            std::rc::Rc::make_mut(&mut current.0).music_tags = entry.music_tags.clone();
+            changed = true;
         }
     }
     changed

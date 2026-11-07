@@ -3,12 +3,18 @@ use super::*;
 #[test]
 fn library_refresh_waits_for_finished_snapshots_and_preserves_service_errors() {
     use crate::services::music_library::Snapshot;
-    let mut snapshot = Snapshot { indexing: true, ..Snapshot::default() };
+    let mut snapshot = Snapshot {
+        indexing: true,
+        ..Snapshot::default()
+    };
     assert_eq!(library_refresh_result(&snapshot), None);
     snapshot.notice = Some("Folder unavailable: generated fixture".into());
     assert_eq!(library_refresh_result(&snapshot), None);
     snapshot.indexing = false;
-    assert_eq!(library_refresh_result(&snapshot), Some(Err("Folder unavailable: generated fixture".into())));
+    assert_eq!(
+        library_refresh_result(&snapshot),
+        Some(Err("Folder unavailable: generated fixture".into()))
+    );
     snapshot.notice = None;
     assert_eq!(library_refresh_result(&snapshot), Some(Ok(())));
     snapshot.indexing = true;
@@ -24,8 +30,8 @@ fn refreshed_settings_keep_the_current_release_version() {
 #[test]
 #[ignore = "Requires isolated GTK display and settings directory"]
 fn desktop_context_menu_options_apply_persist_and_restore_defaults() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let manager = ThemeManager::shared();
     manager.set_context_menu_options(super::super::context_menu::Options::default());
     let page = context_menu_page(manager.clone());
@@ -44,15 +50,17 @@ fn desktop_context_menu_options_apply_persist_and_restore_defaults() {
     assert!(!manager.context_menu_options().music);
     let saved: toml::Value = toml::from_str(
         &std::fs::read_to_string(crate::paths::settings_file())
-            .unwrap(),
+            .expect("expected test value from std::fs::read_to_string(crate::paths::settings_file())"),
     )
-    .unwrap();
-    let saved: super::super::context_menu::Options =
-        saved["context_menu"].clone().try_into().unwrap();
+    .expect("expected test value from toml::from_str( &std::fs::read_to_string(crate::paths::settings_file()) .unwrap(), )");
+    let saved: super::super::context_menu::Options = saved["context_menu"]
+        .clone()
+        .try_into()
+        .expect("expected test value from saved[\"context_menu\"].clone().try_into()");
     assert_eq!(saved, manager.context_menu_options());
     page.last_child()
         .and_downcast::<gtk::Button>()
-        .unwrap()
+        .expect("expected test value from page.last_child() .and_downcast::<gtk::Button>()")
         .emit_clicked();
     assert_eq!(
         manager.context_menu_options(),
@@ -64,31 +72,39 @@ fn desktop_context_menu_options_apply_persist_and_restore_defaults() {
 #[test]
 #[ignore = "Requires an isolated GTK display; settings and font control fixture"]
 fn desktop_fonts_and_shortcuts_have_live_controls_and_scrollable_pages() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let manager = ThemeManager::shared();
     let fonts = fonts_page(manager.clone());
-    let row = fonts.first_child().unwrap().next_sibling().unwrap();
+    let row = fonts
+        .first_child()
+        .expect("expected test value from fonts.first_child()")
+        .next_sibling()
+        .expect("expected test value from fonts.first_child().unwrap().next_sibling()");
     let family = row
         .last_child()
-        .unwrap()
+        .expect("expected test value from row .last_child()")
         .downcast::<gtk::DropDown>()
-        .unwrap();
+        .expect(
+            "expected test value from row .last_child() .unwrap() .downcast::<gtk::DropDown>()",
+        );
     family.set_selected(2);
     assert_eq!(manager.interface_font(), "sans");
-    let size_row = row.next_sibling().unwrap();
+    let size_row = row
+        .next_sibling()
+        .expect("expected test value from row.next_sibling()");
     let size = size_row
         .last_child()
-        .unwrap()
+        .expect("expected test value from size_row .last_child()")
         .downcast::<gtk::SpinButton>()
-        .unwrap();
+        .expect("expected test value from size_row .last_child() .unwrap() .downcast::<gtk::SpinButton>()");
     size.set_value(17.0);
     assert_eq!(manager.interface_font_size(), 17);
     fonts
         .last_child()
-        .unwrap()
+        .expect("expected test value from fonts .last_child()")
         .downcast::<gtk::Button>()
-        .unwrap()
+        .expect("expected test value from fonts .last_child() .unwrap() .downcast::<gtk::Button>()")
         .emit_clicked();
     assert_eq!(manager.interface_font(), "maple");
     assert_eq!(manager.interface_font_size(), 13);
@@ -109,7 +125,7 @@ fn desktop_fonts_and_shortcuts_have_live_controls_and_scrollable_pages() {
     window.close();
     let shortcuts = keybindings_page()
         .downcast::<gtk::ScrolledWindow>()
-        .unwrap();
+        .expect("expected test value from keybindings_page() .downcast::<gtk::ScrolledWindow>()");
     assert_eq!(shortcuts.hscrollbar_policy(), gtk::PolicyType::Never);
     assert_eq!(shortcuts.vscrollbar_policy(), gtk::PolicyType::Automatic);
 }
@@ -117,13 +133,14 @@ fn desktop_fonts_and_shortcuts_have_live_controls_and_scrollable_pages() {
 #[test]
 #[ignore = "Requires isolated GTK display"]
 fn audio_and_search_preferences_default_values_and_roundtrip() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let toml_str = r#"
 mode = "theme"
 theme = "azure-glow"
 "#;
-    let saved: toml::Value = toml::from_str(toml_str).unwrap();
+    let saved: toml::Value =
+        toml::from_str(toml_str).expect("expected test value from toml::from_str(toml_str)");
     assert!(saved.get("mode").is_some());
 
     // Verify Preferences defaults
@@ -151,8 +168,8 @@ theme = "azure-glow"
 #[test]
 #[ignore = "Requires isolated GTK display"]
 fn audio_and_diagnostics_pages_build_cleanly() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let manager = ThemeManager::shared();
     let audio = audio_page(manager.clone());
     assert!(audio.is::<gtk::Box>());

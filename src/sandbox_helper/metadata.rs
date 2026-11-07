@@ -38,8 +38,20 @@ pub(crate) fn media(path: &Path) -> Result<Vec<u8>, String> {
             "-show_entries", "format=duration:format_tags=title,artist,album_artist,albumartist,album:stream=codec_type,codec_name,width,height,duration:stream_tags=title,artist,album_artist,albumartist,album:stream_disposition=attached_pic",
             "-of", "json", "-i", "/proc/self/fd/0"])
         .output().map_err(|error| error.to_string())?;
-    if !output.status.success() || output.stdout.len() > 65536 {
-        return Err("Quick media details unavailable".into());
+    if !output.status.success() {
+        let detail: String = String::from_utf8_lossy(&output.stderr)
+            .chars()
+            .filter(|character| !character.is_control() || *character == '\n')
+            .take(1024)
+            .collect();
+        return Err(format!(
+            "Quick media details unavailable ({}): {}",
+            output.status,
+            detail.trim()
+        ));
+    }
+    if output.stdout.len() > 65536 {
+        return Err("Quick media details exceeded their budget".into());
     }
     serde_json::to_vec(&parse_media(&output.stdout)?).map_err(|error| error.to_string())
 }

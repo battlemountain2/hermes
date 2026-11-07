@@ -528,10 +528,10 @@ impl FileSource for CachedFileSource {
             active.set(false);
             if let Some(cache) = weak.upgrade() {
                 let mut cache = cache.borrow_mut();
-                if let Some(position) = cache.position(token) {
-                    if !cache.listings[position].finished {
-                        cache.remove(position);
-                    }
+                if let Some(position) = cache.position(token)
+                    && !cache.listings[position].finished
+                {
+                    cache.remove(position);
                 }
             }
             drop(load);

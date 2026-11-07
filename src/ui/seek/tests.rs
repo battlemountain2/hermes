@@ -53,7 +53,7 @@ fn timestamps_are_bounded_and_finite() {
 #[test]
 #[ignore = "Requires a GTK display; deterministic stream, no personal media"]
 fn desktop_drag_preserves_thumb_and_coalesces_pending_seeks() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     let first = stream();
     let active = Rc::new(RefCell::new(Some(
         first.clone().upcast::<gtk::MediaStream>(),
