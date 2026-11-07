@@ -20,6 +20,12 @@ complete isolation. Network access is disabled inside the test process. Real
 documents, settings, desktop defaults and installed application state are not test
 fixtures. GLib criticals are fatal and GTK stylesheet errors fail the runner.
 
+The disposable Ubuntu GitHub runner needs an explicit CI preparation step for
+Bubblewrap user/network namespaces. The workflow checks that it is GitHub-hosted,
+adjusts that runner's AppArmor user-namespace restriction and immediately probes
+the namespace setup. These commands belong to the hosted CI job. Application
+runtime and local checking commands retain their existing host-policy behavior.
+
 Every ignored test must state its platform, helper, decoder, corpus or desktop
 requirement. The runner inventories those reasons and explicitly removes cases
 from the exclusion list only after executing them successfully. It does not

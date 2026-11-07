@@ -44,6 +44,16 @@ jobs:
           toolchain: '1.99.0'
           components: clippy, rustfmt
 
+      - name: Prepare isolated test namespaces on disposable hosted runner
+        env:
+          RUNNER_KIND: ${{ runner.environment }}
+        run: |
+          test "$RUNNER_KIND" = github-hosted
+          # Ubuntu's hosted-image policy blocks Bubblewrap's loopback setup.
+          # This machine is disposable and all tests still use private namespaces.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bwrap --unshare-user --unshare-net --ro-bind / / -- /usr/bin/true
+
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
