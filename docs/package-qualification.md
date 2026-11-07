@@ -57,6 +57,11 @@ starts from `archlinux:base`, installs Python/Git observer tools, downloads that
 run's package and binds qualification to the workflow's source SHA. Dependencies
 come from package metadata. All package-manager changes stay in the fresh job
 container. Its result participates in the existing aggregate release gate.
+The official container image suppresses documentation through a `NoExtract`
+rule. The runtime fixture removes that documentation rule before installing
+Hermes so file-integrity checks cover its full payload. Other package-manager
+policies remain in force. The first hosted run exposed this difference from the
+bootstrap userspace. [Arch container configuration](https://github.com/archlinux/archlinux-docker/blob/master/pacman-conf.d-noextract.conf)
 
 For a local reproduction, prepare an extracted candidate directory with
 `BUILD-INFO.json`, `SHA256SUMS` and its single package. Use fresh absolute source
@@ -72,6 +77,7 @@ docker run --rm \
   archlinux:base /bin/bash -euc '
     pacman -Syu --needed --noconfirm python
     printf "hermes-package-qualification-v1\n" > /.hermes-disposable-root
+    sed -i "/^NoExtract[[:space:]]*=.*usr\/share\/doc\//d" /etc/pacman.conf
     python /checks/qualify_arch_package.py \
       --candidate /candidate --source-commit "$EXPECTED_SOURCE_COMMIT" \
       --output /evidence/run

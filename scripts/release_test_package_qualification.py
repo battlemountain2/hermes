@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shlex
+import subprocess
 import tempfile
 import sys
 import unittest
@@ -13,6 +15,18 @@ import qualify_arch_package as qualification
 
 
 class QualificationSafetyTests(unittest.TestCase):
+    def test_container_doc_policy_fix_preserves_other_pacman_policy(self):
+        workflow = Path(__file__).resolve().parents[1] / ".github/workflows/packages.yml"
+        command = next(line.strip() for line in workflow.read_text().splitlines() if "sed -i " in line)
+        with tempfile.TemporaryDirectory(prefix="hermes-pacman-policy-") as temporary:
+            config = Path(temporary) / "pacman.conf"
+            retained = "[options]\nSigLevel = Required DatabaseOptional\nNoExtract = usr/share/man/*\n"
+            config.write_text(retained + "NoExtract  = usr/share/gtk-doc/html/* usr/share/doc/*\n")
+            arguments = shlex.split(command)
+            arguments[-1] = str(config)
+            subprocess.run(arguments, check=True)
+            self.assertEqual(config.read_text(), retained)
+
     def test_refuses_normal_host_before_running_commands(self):
         with patch.object(os, "geteuid", return_value=1000), self.assertRaises(ValueError):
             qualification.require_disposable_root()

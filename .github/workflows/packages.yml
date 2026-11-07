@@ -51,6 +51,8 @@ jobs:
         run: |
           pacman -Syu --needed --noconfirm python git
           printf 'hermes-package-qualification-v1\n' > /.hermes-disposable-root
+          # The official container suppresses docs. Qualify the full Hermes payload.
+          sed -i '/^NoExtract[[:space:]]*=.*usr\/share\/doc\//d' /etc/pacman.conf
       - name: Check out qualification tools
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
