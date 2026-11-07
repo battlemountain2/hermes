@@ -1,0 +1,60 @@
+# Generate an immutable recipe with scripts/build-arch-package.py.
+pkgname=hermes-file-manager
+pkgver='@VERSION@'
+pkgrel=1
+pkgdesc='Hermes file manager (test candidate; platform qualification pending)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/battlemountain2/hermes'
+license=('GPL-3.0-or-later')
+_commit='@SOURCE_COMMIT@'
+source=("hermes-${_commit}.tar")
+sha256sums=('@SOURCE_SHA256@')
+depends=('glibc' 'gcc-libs' 'cairo' 'fontconfig' 'gdk-pixbuf2' 'glib2'
+         'gstreamer' 'gst-plugins-base' 'gtk4>=4.12' 'gtksourceview5'
+         'libheif>=1.17' 'pango' 'poppler-glib' 'bubblewrap' 'util-linux')
+makedepends=('rustup' 'pkgconf' 'python')
+optdepends=('ffmpeg: audio/video metadata and isolated playback'
+            'gst-libav: additional GStreamer media codecs'
+            'ffmpegthumbnailer: video thumbnails'
+            'imagemagick: large image format rendering'
+            'libreoffice-fresh: full Office layouts'
+            'libarchive: compression and archive browsing'
+            'python: reversible desktop-picker setup')
+provides=('hermes')
+conflicts=('hermes')
+options=('!lto' '!debug')
+
+prepare() {
+    cd "hermes-${_commit}"
+    cargo +1.99.0 fetch --locked --target "$(rustc +1.99.0 -vV | sed -n 's/^host: //p')"
+}
+
+build() {
+    cd "hermes-${_commit}"
+    export HERMES_BUILD_COMMIT="$_commit"
+    cargo +1.99.0 build --frozen --release --bin hermes -j 2
+    python scripts/package-inventory.py --output package-docs
+    local binary="${CARGO_TARGET_DIR:-target}/release/hermes"
+    "$binary" --version | grep -F "$_commit"
+}
+
+package() {
+    cd "hermes-${_commit}"
+    install -Dm755 "${CARGO_TARGET_DIR:-target}/release/hermes" "$pkgdir/usr/bin/hermes"
+    for launcher in packaging/linux/*.desktop; do
+        install -Dm644 "$launcher" "$pkgdir/usr/share/applications/${launcher##*/}"
+    done
+    install -Dm644 data/icons/scalable/apps/io.github.battlemountain2.Hermes.svg \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/io.github.battlemountain2.Hermes.svg"
+    install -Dm644 packaging/macos/Hermes.iconset/icon_512x512.png \
+        "$pkgdir/usr/share/icons/hicolor/512x512/apps/io.github.battlemountain2.Hermes.png"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 THIRD_PARTY_LICENSES.md "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY_LICENSES.md"
+    cp -r package-docs/dependency-licenses "$pkgdir/usr/share/licenses/$pkgname/"
+    for doc in README.md docs/desktop-integration.md docs/branding-and-migration.md; do
+        install -Dm644 "$doc" "$pkgdir/usr/share/doc/hermes/${doc##*/}"
+    done
+    printf '%s\n' "$_commit" > "$pkgdir/usr/share/doc/hermes/SOURCE_COMMIT"
+    install -Dm644 package-docs/DEPENDENCIES.json "$pkgdir/usr/share/doc/hermes/DEPENDENCIES.json"
+    install -Dm644 scripts/desktop-integration.py "$pkgdir/usr/share/hermes/scripts/desktop-integration.py"
+}

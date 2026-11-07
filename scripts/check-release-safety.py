@@ -32,6 +32,8 @@ GTK_TESTS = [
 def run_case(binary, base, case, index, gui):
     profile = base / f"case-{index:02d}"
     profile.mkdir(mode=0o700)
+    private_home = profile / "private-home"
+    private_home.mkdir(mode=0o700)
     env = os.environ.copy()
     for key in ("DBUS_SESSION_BUS_ADDRESS", "DBUS_STARTER_ADDRESS", "DBUS_STARTER_BUS_TYPE",
                 "DISPLAY", "WAYLAND_DISPLAY", "HERMES_DEV", "STRATA_DEV",
@@ -79,8 +81,18 @@ def run_case(binary, base, case, index, gui):
             invocation = [str(binary), case, "--test-threads=1", "--nocapture"]
             if gui:
                 invocation += ["--exact", "--ignored"]
+            # Mask the real home in this process's mount namespace. Merely
+            # setting XDG directories is insufficient: GIO chooses Trash by
+            # the home filesystem's device, and some libraries consult passwd.
+            # Keep the checkout readable and /tmp writable for generated data.
+            checkout = Path(__file__).resolve().parents[1]
+            isolated = ["bwrap", "--die-with-parent", "--unshare-pid", "--unshare-net",
+                        "--ro-bind", "/", "/", "--bind", "/tmp", "/tmp",
+                        "--bind", str(private_home), str(Path.home()),
+                        "--ro-bind", str(checkout), str(checkout),
+                        "--proc", "/proc", "--dev-bind", "/dev", "/dev", "--"]
             with (profile / "test.log").open("w") as log:
-                result = subprocess.run(["dbus-run-session", "--"] + invocation,
+                result = subprocess.run(["dbus-run-session", "--"] + isolated + invocation,
                     env=env, stdout=log, stderr=log, timeout=70)
             output = (profile / "test.log").read_text()
             if result.returncode or "running 0 tests" in output or "Theme parser error" in output:
@@ -95,7 +107,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--test-binary", type=Path, required=True)
     args = parser.parse_args()
-    for program in ("gtk4-broadwayd", "dbus-run-session"):
+    for program in ("gtk4-broadwayd", "dbus-run-session", "bwrap"):
         if not shutil.which(program):
             parser.error(f"Missing test dependency: {program}")
     binary = args.test_binary.resolve(strict=True)
