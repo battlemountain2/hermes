@@ -21,26 +21,42 @@ fn scaled_output_rejects_invalid_sizes_headers_and_oversized_dimensions() {
 fn missing_optional_decoder_and_invalid_input_fail_without_changing_the_source() {
     let fixture = crate::sandbox::browser::format_tests::FixtureDirectory::new();
     let path = fixture.0.join("invalid.jpg");
-    std::fs::write(&path, b"generated invalid image").unwrap();
+    std::fs::write(&path, b"generated invalid image").expect("write generated fixture");
     assert!(render_with("/nonexistent/hermes-scaled-decoder", &path, 1400).is_err());
     assert!(render(&path, 0).is_err());
-    assert_eq!(std::fs::read(path).unwrap(), b"generated invalid image");
+    assert_eq!(
+        std::fs::read(path).expect("read generated fixture"),
+        b"generated invalid image"
+    );
 }
 
 fn decode(bytes: &[u8]) -> gdk_pixbuf::Pixbuf {
     let loader = gdk_pixbuf::PixbufLoader::new();
-    loader.write(bytes).unwrap();
-    loader.close().unwrap();
-    loader.pixbuf().unwrap()
+    loader
+        .write(bytes)
+        .expect("expected test value from loader.write(bytes)");
+    loader
+        .close()
+        .expect("expected test value from loader.close()");
+    loader
+        .pixbuf()
+        .expect("expected test value from loader.pixbuf()")
 }
 
 #[test]
 #[ignore = "Private generated 12MP corpus, vips/ImageMagick, bubblewrap and built helper"]
 fn generated_heavy_photos_use_scaled_sandbox_path_with_full_size_and_colors() {
-    let root = std::path::PathBuf::from(std::env::var_os("HERMES_PREVIEW_PROBE").unwrap());
+    let root = std::path::PathBuf::from(
+        std::env::var_os("HERMES_PREVIEW_PROBE")
+            .expect("expected test value from std::env::var_os(\"HERMES_PREVIEW_PROBE\")"),
+    );
     assert!(root.starts_with("/tmp"));
     assert!(
-        std::path::PathBuf::from(std::env::var_os("XDG_CACHE_HOME").unwrap()).starts_with(&root)
+        std::path::PathBuf::from(
+            std::env::var_os("XDG_CACHE_HOME")
+                .expect("expected test value from std::env::var_os(\"XDG_CACHE_HOME\")")
+        )
+        .starts_with(&root)
     );
     for (name, operation) in [
         ("textured.jpg", crate::sandbox::ParseOperation::PreviewImage),
@@ -55,10 +71,11 @@ fn generated_heavy_photos_use_scaled_sandbox_path_with_full_size_and_colors() {
         let mut expected = None;
         for sample in 0..3 {
             let started = std::time::Instant::now();
-            let scaled = render(&path, 1400).unwrap();
+            let scaled = render(&path, 1400).expect("expected test value from render(&path, 1400)");
             let fast_time = started.elapsed();
             let started = std::time::Instant::now();
-            let original = super::super::render_imagemagick(&path, 1400).unwrap();
+            let original = super::super::render_imagemagick(&path, 1400)
+                .expect("expected test value from super::super::render_imagemagick(&path, 1400)");
             eprintln!(
                 "Heavy {name} sample{sample}: scaled={fast_time:?}, previous={:?}",
                 started.elapsed()
@@ -94,26 +111,26 @@ fn generated_heavy_photos_use_scaled_sandbox_path_with_full_size_and_colors() {
             );
             expected = Some(scaled);
         }
-        let expected = expected.unwrap();
+        let expected = expected.expect("expected test value from expected");
         let pooled = crate::sandbox::parse(
             &path,
             operation,
             1400,
             &crate::sandbox::Cancellation::default(),
         )
-        .unwrap();
+        .expect("expected test value from crate::sandbox::parse( &path, operation, 1400, &crate::sandbox::Cancellation::default(), )");
         assert_eq!(pooled.data, expected);
         let one_shot = crate::sandbox::parse_one_shot_with_executable(
             &path,
             operation,
             1400,
             &crate::sandbox::Cancellation::default(),
-            &crate::sandbox::helper_executable().unwrap(),
+            &crate::sandbox::helper_executable().expect("expected test value from crate::sandbox::helper_executable()"),
         )
-        .unwrap();
+        .expect("expected test value from crate::sandbox::parse_one_shot_with_executable( &path, operation, 1400, &crate::sandbox::Cancellation::default(), &crate::sandb...");
         assert_eq!(one_shot.data, expected);
     }
-    let source = std::fs::read(root.join("fixtures/textured.jpg")).unwrap();
+    let source = std::fs::read(root.join("fixtures/textured.jpg")).expect("read generated fixture");
     let fixture = crate::sandbox::browser::format_tests::FixtureDirectory::new();
     for orientation in 1..=8 {
         let path = fixture.0.join(format!("oriented-{orientation}.jpg"));
@@ -121,9 +138,13 @@ fn generated_heavy_photos_use_scaled_sandbox_path_with_full_size_and_colors() {
             &path,
             super::super::jpeg::tests::jpeg_fixture(orientation, &source, &[]),
         )
-        .unwrap();
-        let scaled = decode(&render(&path, 1400).unwrap());
-        let reference = decode(&super::super::render_imagemagick(&path, 1400).unwrap());
+        .expect("write generated fixture");
+        let scaled =
+            decode(&render(&path, 1400).expect("expected test value from render(&path, 1400)"));
+        let reference = decode(
+            &super::super::render_imagemagick(&path, 1400)
+                .expect("expected test value from super::super::render_imagemagick(&path, 1400)"),
+        );
         assert_eq!(
             (scaled.width(), scaled.height()),
             (reference.width(), reference.height())
@@ -153,15 +174,15 @@ fn generated_heavy_photos_use_scaled_sandbox_path_with_full_size_and_colors() {
         );
     }
     let missing = fixture.0.join("tools-without-vips");
-    std::fs::create_dir(&missing).unwrap();
-    std::os::unix::fs::symlink("/usr/bin/magick", missing.join("magick")).unwrap();
+    std::fs::create_dir(&missing).expect("create generated fixture directory");
+    std::os::unix::fs::symlink("/usr/bin/magick", missing.join("magick")).expect("expected test value from std::os::unix::fs::symlink(\"/usr/bin/magick\", missing.join(\"magick\"))");
     for (file, operation) in [
         ("textured.jpg", "preview-image"),
         ("textured.heic", "preview-heif"),
     ] {
         let path = root.join("fixtures").join(file);
         let output = fixture.0.join("fallback.png");
-        let result = std::process::Command::new(crate::sandbox::helper_executable().unwrap())
+        let result = std::process::Command::new(crate::sandbox::helper_executable().expect("expected test value from crate::sandbox::helper_executable()"))
             .env("PATH", &missing)
             .arg("--preview-helper")
             .arg(operation)
@@ -169,9 +190,9 @@ fn generated_heavy_photos_use_scaled_sandbox_path_with_full_size_and_colors() {
             .arg(&output)
             .arg("1400")
             .output()
-            .unwrap();
+            .expect("expected test value from std::process::Command::new(crate::sandbox::helper_executable().unwrap()) .env(\"PATH\", &missing) .arg(\"--preview-helper\") .arg(o...");
         assert!(result.status.success(), "{:?}", result);
-        let fallback = decode(&std::fs::read(output).unwrap());
+        let fallback = decode(&std::fs::read(output).expect("read generated fixture"));
         assert_eq!((fallback.width(), fallback.height()), (1400, 1050));
     }
 }

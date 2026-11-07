@@ -23,28 +23,42 @@ fn blocked_audio_writer_does_not_block_volume_motion_or_lose_unmute() {
     let (resume, resumed) = mpsc::channel();
     let worker = std::thread::spawn(move || {
         consume(receiver, &latest, &worker_stopped, |muted, volume| {
-            applied.send((muted, volume)).unwrap();
-            resumed.recv().unwrap();
+            applied
+                .send((muted, volume))
+                .expect("expected test value from applied.send((muted, volume))");
+            resumed
+                .recv()
+                .expect("expected test value from resumed.recv()");
         });
     });
     control.set(true, 0.9);
     assert_eq!(
-        received.recv_timeout(Duration::from_secs(2)).unwrap(),
+        received
+            .recv_timeout(Duration::from_secs(2))
+            .expect("expected test value from received.recv_timeout(Duration::from_secs(2))"),
         (true, 0.9)
     );
     for index in 0..100_000 {
         control.set(true, f64::from(index % 100) / 100.0);
     }
     control.set(false, 0.23);
-    resume.send(()).unwrap();
+    resume
+        .send(())
+        .expect("expected test value from resume.send(())");
     assert_eq!(
-        received.recv_timeout(Duration::from_secs(2)).unwrap(),
+        received
+            .recv_timeout(Duration::from_secs(2))
+            .expect("expected test value from received.recv_timeout(Duration::from_secs(2))"),
         (false, 0.23)
     );
     stopped.store(true, Ordering::Release);
     control.set(true, 0.0);
-    resume.send(()).unwrap();
-    worker.join().unwrap();
+    resume
+        .send(())
+        .expect("expected test value from resume.send(())");
+    worker
+        .join()
+        .expect("expected test value from worker.join()");
     assert!(received.try_recv().is_err());
 }
 
@@ -90,8 +104,10 @@ fn stopped_volume_worker_skips_pending_audio_changes() {
 
 #[test]
 fn native_audio_unmutes_only_after_applying_the_requested_gain() {
-    gst::init().unwrap();
-    let element = gst::ElementFactory::make("volume").build().unwrap();
+    gst::init().expect("expected test value from gst::init()");
+    let element = gst::ElementFactory::make("volume")
+        .build()
+        .expect("expected test value from gst::ElementFactory::make(\"volume\").build()");
     element.set_property("mute", true);
     element.set_property("volume", 0.0_f64);
     let (sent, received) = mpsc::channel();
@@ -100,12 +116,14 @@ fn native_audio_unmutes_only_after_applying_the_requested_gain() {
             element.property::<bool>("mute"),
             element.property::<f64>("volume"),
         ))
-        .unwrap();
+        .expect("expected test value from sent.send(( element.property::<bool>(\"mute\"), element.property::<f64>(\"volume\"), ))");
     });
     let stopped = Arc::new(AtomicBool::new(false));
     let control = Control::start(element.clone(), stopped.clone());
     let expect_audio = |expected_mute: bool, expected_volume: f64| {
-        let (muted, volume) = received.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (muted, volume) = received
+            .recv_timeout(Duration::from_secs(2))
+            .expect("expected test value from received.recv_timeout(Duration::from_secs(2))");
         assert_eq!(muted, expected_mute);
         assert!((volume - expected_volume).abs() < 0.000001);
     };
@@ -121,26 +139,30 @@ fn native_audio_unmutes_only_after_applying_the_requested_gain() {
 
 #[test]
 fn native_zero_gain_and_mute_keep_continuous_pcm_and_restore_exact_gain() {
-    gst::init().unwrap();
+    gst::init().expect("expected test value from gst::init()");
     let pipeline = gst::parse::launch(
         "appsrc name=pcm is-live=true format=time caps=audio/x-raw,format=F32LE,rate=48000,channels=2,layout=interleaved ! volume name=level ! appsink name=capture sync=false async=false",
     )
-    .unwrap()
+    .expect("expected test value from gst::parse::launch( \"appsrc name=pcm is-live=true format=time caps=audio/x-raw,format=F32LE,rate=48000,channels=2,layout=interl...")
     .downcast::<gst::Pipeline>()
-    .unwrap();
+    .expect("expected test value from gst::parse::launch( \"appsrc name=pcm is-live=true format=time caps=audio/x-raw,format=F32LE,rate=48000,channels=2,layout=interl...");
     let source = pipeline
         .by_name("pcm")
-        .unwrap()
+        .expect("expected test value from pipeline .by_name(\"pcm\")")
         .downcast::<app::AppSrc>()
-        .unwrap();
+        .expect("expected test value from pipeline .by_name(\"pcm\") .unwrap() .downcast::<app::AppSrc>()");
     let capture = pipeline
         .by_name("capture")
-        .unwrap()
+        .expect("expected test value from pipeline .by_name(\"capture\")")
         .downcast::<app::AppSink>()
-        .unwrap();
-    let volume = pipeline.by_name("level").unwrap();
-    preserve_pcm_silence(&volume).unwrap();
-    pipeline.set_state(gst::State::Playing).unwrap();
+        .expect("expected test value from pipeline .by_name(\"capture\") .unwrap() .downcast::<app::AppSink>()");
+    let volume = pipeline
+        .by_name("level")
+        .expect("expected test value from pipeline.by_name(\"level\")");
+    preserve_pcm_silence(&volume).expect("expected test value from preserve_pcm_silence(&volume)");
+    pipeline
+        .set_state(gst::State::Playing)
+        .expect("expected test value from pipeline.set_state(gst::State::Playing)");
     for packet in 0..240_u64 {
         let (muted, gain) = match packet % 120 {
             0..20 => (false, 0.5),
@@ -153,37 +175,51 @@ fn native_zero_gain_and_mute_keep_continuous_pcm_and_restore_exact_gain() {
         volume.set_property("volume", gain);
         let data = 0.5_f32.to_le_bytes().repeat(960);
         let mut buffer = pcm_buffer(data);
-        let buffer_ref = buffer.get_mut().unwrap();
+        let buffer_ref = buffer
+            .get_mut()
+            .expect("expected test value from buffer.get_mut()");
         let timestamp = gst::ClockTime::from_mseconds(packet * 10);
         buffer_ref.set_pts(timestamp);
         buffer_ref.set_offset(packet * 480);
         buffer_ref.set_flags(gst::BufferFlags::DISCONT);
-        source.push_buffer(buffer).unwrap();
+        source
+            .push_buffer(buffer)
+            .expect("expected test value from source.push_buffer(buffer)");
         let sample = capture
             .try_pull_sample(gst::ClockTime::from_seconds(2))
             .expect("Continuous audio packet, including while silent");
-        let output = sample.buffer().unwrap();
+        let output = sample
+            .buffer()
+            .expect("expected test value from sample.buffer()");
         assert!(!output.flags().contains(gst::BufferFlags::GAP));
         assert!(output.flags().contains(gst::BufferFlags::DISCONT));
         assert_eq!(output.pts(), Some(timestamp));
         assert_eq!(output.offset(), packet * 480);
         assert_eq!(output.duration(), Some(gst::ClockTime::from_mseconds(10)));
         let expected = if muted { 0.0 } else { (gain * 0.5) as f32 };
-        let mapped = output.map_readable().unwrap();
+        let mapped = output
+            .map_readable()
+            .expect("expected test value from output.map_readable()");
         assert_eq!(mapped.size(), 3840);
-        for value in mapped.as_slice().chunks_exact(4) {
-            assert_eq!(f32::from_le_bytes(value.try_into().unwrap()), expected);
+        for value in mapped.as_slice().as_chunks::<4>().0 {
+            assert_eq!(f32::from_le_bytes(*value), expected);
         }
     }
-    pipeline.set_state(gst::State::Null).unwrap();
+    pipeline
+        .set_state(gst::State::Null)
+        .expect("expected test value from pipeline.set_state(gst::State::Null)");
 }
 
 #[test]
 fn silent_pcm_probe_keeps_empty_gap_markers_and_shared_buffer_metadata() {
-    gst::init().unwrap();
-    let volume = gst::ElementFactory::make("volume").build().unwrap();
-    preserve_pcm_silence(&volume).unwrap();
-    let output_pad = volume.static_pad("src").unwrap();
+    gst::init().expect("expected test value from gst::init()");
+    let volume = gst::ElementFactory::make("volume")
+        .build()
+        .expect("expected test value from gst::ElementFactory::make(\"volume\").build()");
+    preserve_pcm_silence(&volume).expect("expected test value from preserve_pcm_silence(&volume)");
+    let output_pad = volume
+        .static_pad("src")
+        .expect("expected test value from volume.static_pad(\"src\")");
     let sink_pad = gst::Pad::builder(gst::PadDirection::Sink)
         .chain_function(|_, _, buffer| {
             if buffer.size() == 0 {
@@ -196,13 +232,19 @@ fn silent_pcm_probe_keeps_empty_gap_markers_and_shared_buffer_metadata() {
             Ok(gst::FlowSuccess::Ok)
         })
         .build();
-    output_pad.set_active(true).unwrap();
-    sink_pad.set_active(true).unwrap();
-    output_pad.link(&sink_pad).unwrap();
+    output_pad
+        .set_active(true)
+        .expect("expected test value from output_pad.set_active(true)");
+    sink_pad
+        .set_active(true)
+        .expect("expected test value from sink_pad.set_active(true)");
+    output_pad
+        .link(&sink_pad)
+        .expect("expected test value from output_pad.link(&sink_pad)");
     assert!(output_pad.push_event(gst::event::StreamStart::new("private-pcm-test")));
     let caps = "audio/x-raw,format=F32LE,rate=48000,channels=2,layout=interleaved"
         .parse::<gst::Caps>()
-        .unwrap();
+        .expect("expected test value from \"audio/x-raw,format=F32LE,rate=48000,channels=2,layout=interleaved\" .parse::<gst::Caps>()");
     assert!(output_pad.push_event(gst::event::Caps::new(&caps)));
     assert!(
         output_pad.push_event(gst::event::Segment::new(&gst::FormattedSegment::<
@@ -213,17 +255,25 @@ fn silent_pcm_probe_keeps_empty_gap_markers_and_shared_buffer_metadata() {
         let mut buffer = gst::Buffer::from_mut_slice(vec![0_u8; size]);
         buffer
             .get_mut()
-            .unwrap()
+            .expect("expected test value from buffer .get_mut()")
             .set_pts(gst::ClockTime::from_seconds(3));
         buffer
             .get_mut()
-            .unwrap()
+            .expect("expected test value from buffer .get_mut()")
             .set_flags(gst::BufferFlags::GAP | gst::BufferFlags::DISCONT);
         let retained = buffer.clone();
-        output_pad.push(buffer).unwrap();
+        output_pad
+            .push(buffer)
+            .expect("expected test value from output_pad.push(buffer)");
         assert!(retained.flags().contains(gst::BufferFlags::GAP));
     }
-    output_pad.unlink(&sink_pad).unwrap();
-    output_pad.set_active(false).unwrap();
-    sink_pad.set_active(false).unwrap();
+    output_pad
+        .unlink(&sink_pad)
+        .expect("expected test value from output_pad.unlink(&sink_pad)");
+    output_pad
+        .set_active(false)
+        .expect("expected test value from output_pad.set_active(false)");
+    sink_pad
+        .set_active(false)
+        .expect("expected test value from sink_pad.set_active(false)");
 }

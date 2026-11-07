@@ -18,7 +18,7 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         let root = parent.join("Music");
-        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&root).expect("create generated fixture directory");
         Self {
             cache_path: parent.join("cache/tags.json"),
             root,
@@ -30,7 +30,11 @@ impl Fixture {
 
     pub(crate) fn song(&self, name: &str, title: &str) {
         let path = self.root.join(name);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::create_dir_all(
+            path.parent()
+                .expect("expected test value from path.parent()"),
+        )
+        .expect("create generated fixture directory");
         let tags = MusicTags {
             title: Some(title.into()),
             artist: Some("Hermes fixture artist".into()),
@@ -38,7 +42,11 @@ impl Fixture {
             track: Some(1),
             ..MusicTags::default()
         };
-        fs::write(path, serde_json::to_vec(&tags).unwrap()).unwrap();
+        fs::write(
+            path,
+            serde_json::to_vec(&tags).expect("serialize generated JSON fixture"),
+        )
+        .expect("write generated fixture");
     }
 
     fn configuration(&self) -> Configuration {
@@ -61,7 +69,7 @@ impl Fixture {
         let subscription = subscribe_with(configuration);
         self.instances
             .lock()
-            .unwrap()
+            .expect("expected test value from self.instances .lock()")
             .push(Arc::downgrade(&subscription.library));
         subscription
     }
@@ -69,7 +77,10 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let instances = self.instances.lock().unwrap();
+        let instances = self
+            .instances
+            .lock()
+            .expect("expected test value from self.instances.lock()");
         for weak in instances.iter() {
             if let Some(library) = weak.upgrade() {
                 library.cancellation.cancel();
@@ -184,7 +195,7 @@ fn persistent_tags_survive_restart_but_same_size_edits_are_revalidated() {
     stop(subscription);
     std::thread::sleep(Duration::from_millis(2));
     fixture.song("01.flac", "New song");
-    fs::remove_file(fixture.root.join("removed.flac")).unwrap();
+    fs::remove_file(fixture.root.join("removed.flac")).expect("remove generated fixture");
     let mut subscription = fixture.subscribe();
     let snapshot = ready(&mut subscription, |snapshot| {
         snapshot.entries.len() == 1
@@ -210,7 +221,7 @@ fn monitors_follow_new_folders_renames_atomic_tag_replacements_and_deletions() {
             .iter()
             .any(|entry| entry.music_tags.is_some())
     });
-    fs::rename(fixture.root.join("First"), fixture.root.join("Renamed")).unwrap();
+    fs::rename(fixture.root.join("First"), fixture.root.join("Renamed")).expect("expected test value from fs::rename(fixture.root.join(\"First\"), fixture.root.join(\"Renamed\"))");
     ready(&mut subscription, |snapshot| {
         snapshot
             .entries
@@ -226,7 +237,7 @@ fn monitors_follow_new_folders_renames_atomic_tag_replacements_and_deletions() {
         fixture.root.join("replacement.flac"),
         fixture.root.join("Renamed/01.flac"),
     )
-    .unwrap();
+    .expect("expected test value from fs::rename( fixture.root.join(\"replacement.flac\"), fixture.root.join(\"Renamed/01.flac\"), )");
     ready(&mut subscription, |snapshot| {
         snapshot.entries.iter().any(|entry| {
             entry
@@ -236,7 +247,7 @@ fn monitors_follow_new_folders_renames_atomic_tag_replacements_and_deletions() {
                 == Some("Replaced song")
         })
     });
-    fs::remove_dir_all(fixture.root.join("Renamed")).unwrap();
+    fs::remove_dir_all(fixture.root.join("Renamed")).expect("remove generated fixture");
     ready(&mut subscription, |snapshot| snapshot.entries.is_empty());
 }
 
@@ -245,7 +256,7 @@ fn missing_root_recovers_after_deletion_and_recreation_without_manual_refresh() 
     let fixture = Fixture::new();
     let mut subscription = fixture.subscribe();
     ready(&mut subscription, |snapshot| snapshot.entries.is_empty());
-    fs::remove_dir(&fixture.root).unwrap();
+    fs::remove_dir(&fixture.root).expect("remove generated fixture");
     ready(&mut subscription, |snapshot| {
         snapshot
             .notice
@@ -267,12 +278,12 @@ fn hidden_files_symlinks_and_invalid_cached_paths_are_excluded() {
     let fixture = Fixture::new();
     fixture.song(".hidden/01.flac", "Private fixture");
     fixture.song("Visible/01.flac", "Visible fixture");
-    std::os::unix::fs::symlink(&fixture.root, fixture.root.join("loop")).unwrap();
+    std::os::unix::fs::symlink(&fixture.root, fixture.root.join("loop")).expect("expected test value from std::os::unix::fs::symlink(&fixture.root, fixture.root.join(\"loop\"))");
     std::os::unix::fs::symlink(
         fixture.root.join("Visible/01.flac"),
         fixture.root.join("linked.flac"),
     )
-    .unwrap();
+    .expect("expected test value from std::os::unix::fs::symlink( fixture.root.join(\"Visible/01.flac\"), fixture.root.join(\"linked.flac\"), )");
     let mut subscription = fixture.subscribe();
     let snapshot = ready(&mut subscription, |snapshot| {
         snapshot
@@ -284,11 +295,16 @@ fn hidden_files_symlinks_and_invalid_cached_paths_are_excluded() {
     assert_eq!(fixture.calls.load(Ordering::Relaxed), 1);
     stop(subscription);
     let mut cached: Vec<cache::CachedTags> =
-        serde_json::from_slice(&fs::read(&fixture.cache_path).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(&fixture.cache_path).expect("read generated fixture"))
+            .expect("read generated fixture");
     cached[0].identity.path = crate::model::Location::local(fixture.root.join("../outside.flac"));
-    fs::write(&fixture.cache_path, serde_json::to_vec(&cached).unwrap()).unwrap();
+    fs::write(
+        &fixture.cache_path,
+        serde_json::to_vec(&cached).expect("serialize generated JSON fixture"),
+    )
+    .expect("write generated fixture");
     assert!(cache::read(&fixture.cache_path, &fixture.root).is_empty());
-    fs::write(&fixture.cache_path, "not JSON").unwrap();
+    fs::write(&fixture.cache_path, "not JSON").expect("write generated fixture");
     assert!(cache::read(&fixture.cache_path, &fixture.root).is_empty());
 }
 
@@ -297,9 +313,9 @@ fn valid_untagged_files_are_cached_instead_of_parsed_on_every_refresh() {
     let fixture = Fixture::new();
     fs::write(
         fixture.root.join("untagged.flac"),
-        serde_json::to_vec(&MusicTags::default()).unwrap(),
+        serde_json::to_vec(&MusicTags::default()).expect("serialize generated JSON fixture"),
     )
-    .unwrap();
+    .expect("write generated fixture");
     let mut subscription = fixture.subscribe();
     ready(&mut subscription, |snapshot| {
         snapshot
@@ -329,7 +345,8 @@ fn valid_untagged_files_are_cached_instead_of_parsed_on_every_refresh() {
 #[test]
 fn failed_metadata_remains_searchable_and_is_retried_after_refresh() {
     let fixture = Fixture::new();
-    fs::write(fixture.root.join("broken.flac"), "invalid metadata fixture").unwrap();
+    fs::write(fixture.root.join("broken.flac"), "invalid metadata fixture")
+        .expect("write generated fixture");
     let mut subscription = fixture.subscribe();
     let snapshot = ready(&mut subscription, |snapshot| {
         snapshot.entries.len() == 1 && snapshot.notice.is_some()
@@ -354,7 +371,7 @@ fn limited_monitors_fall_back_to_periodic_verification() {
         snapshot
             .notice
             .as_ref()
-            .unwrap()
+            .expect("expected test value from snapshot .notice .as_ref()")
             .contains("cannot be watched")
     );
     fixture.song("Added/01.flac", "Fallback discovery");
@@ -382,11 +399,24 @@ fn index_entry_track_and_byte_limits_report_partial_results() {
         let snapshot = ready(&mut subscription, |snapshot| snapshot.notice.is_some());
         if limit == 1 {
             assert_eq!(snapshot.entries.len(), 2);
-            assert!(snapshot.entries.iter().filter(|entry| entry.music_tags.is_some()).count() <= 1);
+            assert!(
+                snapshot
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.music_tags.is_some())
+                    .count()
+                    <= 1
+            );
         } else {
             assert!(snapshot.entries.len() <= 1);
         }
-        assert!(snapshot.notice.as_ref().unwrap().contains("limit"));
+        assert!(
+            snapshot
+                .notice
+                .as_ref()
+                .expect("expected test value from snapshot.notice.as_ref()")
+                .contains("limit")
+        );
     }
 }
 
@@ -432,7 +462,11 @@ fn source_change_during_parse_is_retried_without_persisting_stale_tags() {
                 title: Some("Updated song".into()),
                 ..MusicTags::default()
             };
-            fs::write(path, serde_json::to_vec(&tags).unwrap()).unwrap();
+            fs::write(
+                path,
+                serde_json::to_vec(&tags).expect("serialize generated JSON fixture"),
+            )
+            .expect("write generated fixture");
             return Some(MusicTags {
                 title: Some("Stale song".into()),
                 ..MusicTags::default()
@@ -454,7 +488,7 @@ fn source_change_during_parse_is_retried_without_persisting_stale_tags() {
         snapshot.entries[0]
             .music_tags
             .as_ref()
-            .unwrap()
+            .expect("expected test value from snapshot.entries[0] .music_tags .as_ref()")
             .title
             .as_deref(),
         Some("Updated song")
@@ -481,7 +515,7 @@ fn file_activation_reuses_shared_tags_but_rejects_changed_sources() {
         &fixture.root.join("01.flac"),
         &Cancellation::default(),
     )
-    .unwrap();
+    .expect("expected test value from crate::adapters::music_metadata::read_tags( &fixture.root.join(\"01.flac\"), &Cancellation::default(), )");
     assert_eq!(tags.title.as_deref(), Some("Shared playback title"));
     fixture.song("01.flac", "Changed playback title");
     assert!(cached_tags(&fixture.root.join("01.flac")).is_none());
@@ -494,7 +528,11 @@ fn cache_preserves_native_non_utf8_paths_and_legacy_identity_shape() {
     let path = fixture
         .root
         .join(std::ffi::OsString::from_vec(b"song-\xff.flac".to_vec()));
-    fs::write(&path, serde_json::to_vec(&MusicTags::default()).unwrap()).unwrap();
+    fs::write(
+        &path,
+        serde_json::to_vec(&MusicTags::default()).expect("serialize generated JSON fixture"),
+    )
+    .expect("write generated fixture");
     let mut subscription = fixture.subscribe();
     ready(&mut subscription, |snapshot| {
         snapshot
@@ -503,8 +541,9 @@ fn cache_preserves_native_non_utf8_paths_and_legacy_identity_shape() {
             .is_some_and(|entry| entry.music_tags.is_some())
     });
     stop(subscription);
-    let data = fs::read(&fixture.cache_path).unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&data).unwrap();
+    let data = fs::read(&fixture.cache_path).expect("read generated fixture");
+    let json: serde_json::Value =
+        serde_json::from_slice(&data).expect("decode generated JSON fixture");
     assert!(json[0]["identity"]["device"].is_number());
     assert!(json[0]["identity"]["path"]["value"].is_array());
     let cached = cache::read(&fixture.cache_path, &fixture.root);
@@ -520,10 +559,12 @@ fn cache_preserves_native_non_utf8_paths_and_legacy_identity_shape() {
 }
 
 #[test]
-#[ignore = "Read-only real Music library; requires the built production sandbox helper"]
-fn real_shared_library_cold_search_music_and_persistent_warm_restart() {
+#[ignore = "Generated tagged Music corpus, FFmpeg and a built helper; run with scripts/check-test-suite.py"]
+fn generated_shared_library_cold_search_music_and_persistent_warm_restart() {
     let fixture = Fixture::new();
-    let root = crate::services::SearchScope::MusicLibrary.root(&gio::glib::home_dir());
+    let root = PathBuf::from(
+        std::env::var_os("HERMES_GENERATED_MUSIC_ROOT").expect("runner-generated Music corpus"),
+    );
     let samples = [
         ("Nikes Frank Ocean", "Frank Ocean - Blonde/1. Nikes.flac"),
         (
@@ -535,7 +576,9 @@ fn real_shared_library_cold_search_music_and_persistent_warm_restart() {
     for (_, path) in samples {
         assert!(root.join(path).is_file());
     }
-    let executable = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/hermes");
+    let executable = PathBuf::from(
+        std::env::var_os("HERMES_TEST_WORKER").expect("Cargo-discovered built worker"),
+    );
     assert!(executable.is_file());
     let calls = fixture.calls.clone();
     let tags: Arc<TagReader> = Arc::new(move |path, cancellation| {
@@ -614,7 +657,7 @@ fn real_shared_library_cold_search_music_and_persistent_warm_restart() {
         audio,
         "Search and Music must decode each tag set just once"
     );
-    let tracks = music.poll().unwrap();
+    let tracks = music.poll().expect("expected test value from music.poll()");
     assert_eq!(tracks.tracks.len(), audio);
     eprintln!(
         "Shared cold metadata: {:?}, {audio} tag reads",

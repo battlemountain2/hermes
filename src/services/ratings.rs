@@ -152,7 +152,13 @@ pub(crate) enum Command {
     Flush(mpsc::SyncSender<Result<(), String>>),
 }
 
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "Snapshot exposes asynchronous store status alongside ratings"
+    )
+)]
 #[derive(Default, Clone)]
 pub(crate) struct Snapshot {
     pub revision: u64,
@@ -213,7 +219,10 @@ impl Store {
         self.snapshot().data.ratings.get(path).copied()
     }
 
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "Collection accessor retained for rating views and store verification"
+    )]
     pub fn all(&self) -> BTreeMap<PathBuf, u8> {
         self.snapshot().data.ratings.clone()
     }
@@ -293,7 +302,9 @@ pub fn is_ratable_format(path: &Path) -> bool {
 fn validate_target_path(path: &Path) -> Result<(), String> {
     if !path.is_absolute()
         || path.as_os_str().len() > 4096
-        || path.components().any(|part| matches!(part, Component::ParentDir))
+        || path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir))
     {
         return Err("Invalid file path".into());
     }
@@ -310,7 +321,9 @@ fn validate_target_path(path: &Path) -> Result<(), String> {
 fn validate_relocate_path(path: &Path) -> Result<(), String> {
     if !path.is_absolute()
         || path.as_os_str().len() > 4096
-        || path.components().any(|part| matches!(part, Component::ParentDir))
+        || path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir))
     {
         return Err("Invalid relocate path".into());
     }
@@ -418,7 +431,10 @@ fn run(
     receiver: mpsc::Receiver<Command>,
     output: Arc<Mutex<Arc<Snapshot>>>,
 ) {
-    let loaded = path.as_deref().map(load).unwrap_or_else(|| Ok(RatingsData::default()));
+    let loaded = path
+        .as_deref()
+        .map(load)
+        .unwrap_or_else(|| Ok(RatingsData::default()));
     let read_only = loaded.is_err();
     let mut error = loaded.as_ref().err().cloned();
     let mut data = loaded.unwrap_or_default();

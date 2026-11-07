@@ -15,10 +15,10 @@ impl Drop for Bus {
 #[test]
 #[ignore = "GTK/private bus/built worker integration; only generated silent media, no personal state"]
 fn desktop_private_bus_drives_real_shared_music_controller() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("generated fixture must provide the expected value");
+    crate::assets::prepare().expect("generated fixture must provide the expected value");
     let folder = std::env::temp_dir().join(format!("hermes-mpris-playback-{}", std::process::id()));
-    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::create_dir_all(&folder).expect("generated fixture must provide the expected value");
     let path = folder.join("fixture.flac");
     assert!(
         Process::new("ffmpeg")
@@ -36,7 +36,7 @@ fn desktop_private_bus_drives_real_shared_music_controller() {
             ])
             .arg(&path)
             .status()
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .success()
     );
     let mut bus = Bus(Process::new("dbus-daemon")
@@ -44,11 +44,16 @@ fn desktop_private_bus_drives_real_shared_music_controller() {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .unwrap());
+        .expect("generated fixture must provide the expected value"));
     let mut address = String::new();
-    BufReader::new(bus.0.stdout.take().unwrap())
-        .read_line(&mut address)
-        .unwrap();
+    BufReader::new(
+        bus.0
+            .stdout
+            .take()
+            .expect("generated fixture must provide the expected value"),
+    )
+    .read_line(&mut address)
+    .expect("generated fixture must provide the expected value");
     let context = glib::MainContext::default();
     context
         .with_thread_default(|| {
@@ -60,14 +65,14 @@ fn desktop_private_bus_drives_real_shared_music_controller() {
                 None,
                 None::<&gio::Cancellable>,
             )
-            .unwrap();
+            .expect("generated fixture must provide the expected value");
             let client = gio::DBusConnection::for_address_sync(
                 address.trim(),
                 flags,
                 None,
                 None::<&gio::Cancellable>,
             )
-            .unwrap();
+            .expect("generated fixture must provide the expected value");
             server.set_exit_on_close(false);
             client.set_exit_on_close(false);
             let controller = crate::ui::test_music_controller();
@@ -80,7 +85,7 @@ fn desktop_private_bus_drives_real_shared_music_controller() {
                 Rc::new(|| {}),
                 false,
             )
-            .unwrap();
+            .expect("generated fixture must provide the expected value");
             let call = |method: &str, parameters: glib::Variant| {
                 context
                     .block_on(client.call_future(
@@ -93,7 +98,7 @@ fn desktop_private_bus_drives_real_shared_music_controller() {
                         gio::DBusCallFlags::NONE,
                         3000,
                     ))
-                    .unwrap()
+                    .expect("generated fixture must provide the expected value")
             };
             let pump = |predicate: &dyn Fn() -> bool| {
                 let deadline = std::time::Instant::now() + Duration::from_secs(15);
@@ -111,7 +116,14 @@ fn desktop_private_bus_drives_real_shared_music_controller() {
             pump(&|| backend.snapshot().can_seek && backend.snapshot().position > 0);
             let snapshot = backend.snapshot();
             assert_eq!(snapshot.status, "Playing");
-            assert_eq!(snapshot.track.as_ref().unwrap().path, path);
+            assert_eq!(
+                snapshot
+                    .track
+                    .as_ref()
+                    .expect("generated fixture must provide the expected value")
+                    .path,
+                path
+            );
             assert!(!snapshot.can_next);
             call("Next", ().to_variant());
             assert_eq!(backend.snapshot().status, "Playing");
@@ -121,7 +133,8 @@ fn desktop_private_bus_drives_real_shared_music_controller() {
             call(
                 "SetPosition",
                 (
-                    glib::variant::ObjectPath::try_from("/stale").unwrap(),
+                    glib::variant::ObjectPath::try_from("/stale")
+                        .expect("generated fixture must provide the expected value"),
                     20_000_000_i64,
                 )
                     .to_variant(),
@@ -130,7 +143,8 @@ fn desktop_private_bus_drives_real_shared_music_controller() {
             call(
                 "SetPosition",
                 (
-                    glib::variant::ObjectPath::try_from(snapshot.track_id.as_str()).unwrap(),
+                    glib::variant::ObjectPath::try_from(snapshot.track_id.as_str())
+                        .expect("generated fixture must provide the expected value"),
                     5_000_000_i64,
                 )
                     .to_variant(),
@@ -158,9 +172,13 @@ fn desktop_private_bus_drives_real_shared_music_controller() {
             assert!(backend.snapshot().position < 2_000_000);
             controller.shutdown();
             drop(export);
-            client.close_sync(None::<&gio::Cancellable>).unwrap();
-            server.close_sync(None::<&gio::Cancellable>).unwrap();
+            client
+                .close_sync(None::<&gio::Cancellable>)
+                .expect("generated fixture must provide the expected value");
+            server
+                .close_sync(None::<&gio::Cancellable>)
+                .expect("generated fixture must provide the expected value");
         })
-        .unwrap();
-    std::fs::remove_dir_all(folder).unwrap();
+        .expect("generated fixture must provide the expected value");
+    std::fs::remove_dir_all(folder).expect("generated fixture must provide the expected value");
 }

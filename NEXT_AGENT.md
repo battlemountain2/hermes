@@ -1,5 +1,43 @@
 # Next agent: Hermes performance, file features and media polish
 
+## November 6 CI/package follow-up — current
+
+Worktree: `/home/bry/hermes-worktrees/safety`, branch
+`ci/6-release-qualification`, based on safety checkpoint `e9aab4a5`, issue #6.
+The original checkout, installed executable and desktop providers are untouched.
+This is a follow-up to draft PR #7, not permission to merge or publish.
+
+- Repository-wide Rust formatting and strict all-target Clippy cleanup preserve
+  the lint policy. Tests use descriptive fixture expectations instead of blanket
+  lint suppression; three inline modules moved into adjacent test files.
+- Calamine/ZIP and their locked graph were refreshed to resolve advisory findings.
+  Pinned Rust/checking tools and fail-closed local/CI gates replace optional checks.
+- The full test runner isolates process-global GTK, D-Bus, XDG and Home filesystem
+  state and inventories dependency/corpus exclusions explicitly. Criticals remain
+  fatal. See `docs/test-isolation.md` for scope and current acceptance boundaries.
+- Broader GUI checks found a retained-tab keyboard context handler keeping closed
+  models alive. Handlers now travel with retained presentations. The regression
+  verifies restoration and release across Columns, Grid and Explorer. Compact
+  density CSS is now initialized before the first zoom action.
+- Search keeps a compact status/filter row at a steady height and bounds long
+  inferred-chip scrolling. Its geometry regression exercises 10/13/22px fonts.
+  Fixture updates follow combined lyrics mode, asynchronous first-launch gating
+  and controls moved into the Filters popover. Generated thumbnail/hover probes
+  receive private roots explicitly.
+- Publication controls bind a manual channel/version/SHA decision, exact-commit
+  CI and human environment approval; no main/version rewrite or tag movement.
+  No real release dispatch or repository protection change has been performed.
+- Native pacman test candidates use checksum-bound Git archives and declared
+  dependencies; CI builds x86_64 in a disposable Arch container. Physical install,
+  Asahi and Mac qualification remain open. Native release publication is not yet
+  wired to the bundle release workflow.
+
+Reproduction and remaining gates: `docs/ci-and-release-gates.md`,
+`docs/test-isolation.md`, `docs/native-packages.md`, `docs/release-process.md`.
+Durable local evidence is under `/home/bry/hermes-validation/2026-11-06/`.
+These implementation claims do not replace full-suite, artifact or physical
+acceptance evidence. Keep the earlier roadmap exclusions; no new feature scope.
+
 ## November 4 safety and UI checkpoint — current
 
 Worktree: `/home/bry/hermes-worktrees/safety`; branch `fix/6-release-safety`;

@@ -112,7 +112,7 @@ pub(crate) fn query_recent_files(limit: usize) -> Vec<RecentFileItem> {
         });
     }
 
-    files.sort_by(|a, b| b.modified_unix.cmp(&a.modified_unix));
+    files.sort_by_key(|file| std::cmp::Reverse(file.modified_unix));
     if files.len() > limit {
         files.truncate(limit);
     }
@@ -152,38 +152,39 @@ pub(crate) fn load_quick_access_folders() -> Vec<QuickAccessFolder> {
     ];
 
     for (user_dir, name, icon) in standard_dirs {
-        if let Some(path) = glib::user_special_dir(user_dir) {
-            if path != home_dir && seen_paths.insert(path.clone()) {
-                let display = path
-                    .strip_prefix(&home_dir)
-                    .map(|rel| format!("~/{}", rel.display()))
-                    .unwrap_or_else(|_| path.display().to_string());
-                folders.push(QuickAccessFolder {
-                    name: name.into(),
-                    path_display: display,
-                    location: Location::local(path),
-                    icon,
-                    is_pinned: false,
-                });
-            }
+        if let Some(path) = glib::user_special_dir(user_dir)
+            && path != home_dir
+            && seen_paths.insert(path.clone())
+        {
+            let display = path
+                .strip_prefix(&home_dir)
+                .map(|rel| format!("~/{}", rel.display()))
+                .unwrap_or_else(|_| path.display().to_string());
+            folders.push(QuickAccessFolder {
+                name: name.into(),
+                path_display: display,
+                location: Location::local(path),
+                icon,
+                is_pinned: false,
+            });
         }
     }
 
     for (location, name) in super::window::load_pinned_places() {
-        if let Some(path) = location.native_path() {
-            if seen_paths.insert(path.to_path_buf()) {
-                let display = path
-                    .strip_prefix(&home_dir)
-                    .map(|rel| format!("~/{}", rel.display()))
-                    .unwrap_or_else(|_| path.display().to_string());
-                folders.push(QuickAccessFolder {
-                    name,
-                    path_display: display,
-                    location,
-                    icon: icons::FOLDER,
-                    is_pinned: true,
-                });
-            }
+        if let Some(path) = location.native_path()
+            && seen_paths.insert(path.to_path_buf())
+        {
+            let display = path
+                .strip_prefix(&home_dir)
+                .map(|rel| format!("~/{}", rel.display()))
+                .unwrap_or_else(|_| path.display().to_string());
+            folders.push(QuickAccessFolder {
+                name,
+                path_display: display,
+                location,
+                icon: icons::FOLDER,
+                is_pinned: true,
+            });
         }
     }
 
@@ -407,10 +408,10 @@ impl HomeDashboard {
         let click_gesture = gtk::GestureClick::new();
         let weak_state = Rc::downgrade(&self.state);
         click_gesture.connect_pressed(move |_, _, _, _| {
-            if let Some(state) = weak_state.upgrade() {
-                if let Some(handler) = state.open_music_handler.borrow().as_ref() {
-                    handler();
-                }
+            if let Some(state) = weak_state.upgrade()
+                && let Some(handler) = state.open_music_handler.borrow().as_ref()
+            {
+                handler();
             }
         });
         shelf.add_controller(click_gesture);
@@ -464,15 +465,15 @@ impl HomeDashboard {
                 ctrl.toggle();
             } else {
                 let music_dir = glib::user_special_dir(glib::UserDirectory::Music);
-                if let (Some(player), Some(dir)) = (weak_player.upgrade(), music_dir) {
-                    if dir.is_dir() {
-                        player.play_folder(dir);
-                    }
+                if let (Some(player), Some(dir)) = (weak_player.upgrade(), music_dir)
+                    && dir.is_dir()
+                {
+                    player.play_folder(dir);
                 }
-                if let Some(state) = weak_state_for_play.upgrade() {
-                    if let Some(handler) = state.open_music_handler.borrow().as_ref() {
-                        handler();
-                    }
+                if let Some(state) = weak_state_for_play.upgrade()
+                    && let Some(handler) = state.open_music_handler.borrow().as_ref()
+                {
+                    handler();
                 }
             }
         });

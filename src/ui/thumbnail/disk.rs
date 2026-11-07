@@ -138,9 +138,12 @@ fn clear_at(root: &Path) -> Result<usize, String> {
 
 pub(super) fn clear() -> Result<usize, String> {
     let (sender, receiver) = mpsc::channel();
-    writer().send(Command::Clear(sender))
+    writer()
+        .send(Command::Clear(sender))
         .map_err(|_| "Thumbnail cache writer is unavailable".to_owned())?;
-    receiver.recv().map_err(|_| "Thumbnail cache clear did not complete".to_owned())?
+    receiver
+        .recv()
+        .map_err(|_| "Thumbnail cache clear did not complete".to_owned())?
 }
 
 pub(super) fn filename(path: &Path) -> Option<String> {
@@ -400,8 +403,12 @@ fn writer() -> &'static mpsc::SyncSender<Command> {
 fn run_writer(root: &Path, receiver: mpsc::Receiver<Command>) {
     while let Ok(item) = receiver.recv() {
         match item {
-            Command::Save(item) => { let _saved = save(root, item); }
-            Command::Clear(reply) => { let _sent = reply.send(clear_at(root)); }
+            Command::Save(item) => {
+                let _saved = save(root, item);
+            }
+            Command::Clear(reply) => {
+                let _sent = reply.send(clear_at(root));
+            }
         }
     }
 }

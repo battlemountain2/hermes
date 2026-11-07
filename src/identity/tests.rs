@@ -40,10 +40,11 @@ fn desktop_launcher_and_resource_icon_match_the_application_identity() {
 #[test]
 #[ignore = "Private GTK display; validates embedded app icons without desktop installation"]
 fn desktop_app_icon_is_available_at_small_sizes_and_symbolic() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     crate::assets::register_icon_theme();
-    let display = gtk::gdk::Display::default().unwrap();
+    let display = gtk::gdk::Display::default()
+        .expect("expected test value from gtk::gdk::Display::default()");
     let icons = gtk::IconTheme::for_display(&display);
     assert!(icons.has_icon(ICON_NAME));
     assert!(icons.has_icon(&format!("{ICON_NAME}-symbolic")));

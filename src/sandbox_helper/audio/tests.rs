@@ -9,8 +9,9 @@ fn test_audio_metadata_serialization() {
         channels: 2,
         bitrate: Some(1500000),
     };
-    let json = serde_json::to_string(&meta).unwrap();
-    let decoded: AudioMetadata = serde_json::from_str(&json).unwrap();
+    let json = serde_json::to_string(&meta).expect("serialize generated JSON fixture");
+    let decoded: AudioMetadata =
+        serde_json::from_str(&json).expect("decode generated JSON fixture");
     assert_eq!(meta, decoded);
 }
 
@@ -39,7 +40,7 @@ fn uses_stream_tags_and_rejects_invalid_numbers() {
 
 #[test]
 fn rich_metadata_preserves_totals_and_useful_tags_without_changing_music_tags() {
-    let details = parse_audio_details(br#"{"format":{"format_name":"flac","duration":"184.2","bit_rate":"1500000","tags":{"TITLE":"Example","ARTIST":"Artist","ALBUM":"Album","ALBUM_ARTIST":"Album artist","TRACK":"3/17","DISC":"2/2","GENRE":"Ambient","DATE":"2025-05-04","COMPOSER":"Composer","COMMENT":"Notes"}},"streams":[{"codec_name":"flac","sample_rate":"96000","channels":2,"bits_per_raw_sample":"24"}]}"#).unwrap();
+    let details = parse_audio_details(br#"{"format":{"format_name":"flac","duration":"184.2","bit_rate":"1500000","tags":{"TITLE":"Example","ARTIST":"Artist","ALBUM":"Album","ALBUM_ARTIST":"Album artist","TRACK":"3/17","DISC":"2/2","GENRE":"Ambient","DATE":"2025-05-04","COMPOSER":"Composer","COMMENT":"Notes"}},"streams":[{"codec_name":"flac","sample_rate":"96000","channels":2,"bits_per_raw_sample":"24"}]}"#).expect("expected test value from parse_audio_details(br#\"{\"format\":{\"format_name\":\"flac\",\"duration\":\"184.2\",\"bit_rate\":\"1500000\",\"tags\":{\"TITLE\":\"Example\",\"ARTI...");
     assert_eq!(details.tags.track, Some(3));
     assert_eq!(details.tags.disc, Some(2));
     assert_eq!(details.embedded_tags["track"], "3/17");
@@ -49,28 +50,32 @@ fn rich_metadata_preserves_totals_and_useful_tags_without_changing_music_tags() 
     assert_eq!(details.properties.sample_rate, Some(96000));
     assert_eq!(details.properties.bitrate, Some(1500000));
     assert_eq!(details.properties.bit_depth, Some(24));
-    let json = serde_json::to_vec(&details).unwrap();
+    let json = serde_json::to_vec(&details).expect("serialize generated JSON fixture");
     assert_eq!(
-        serde_json::from_slice::<AudioDetails>(&json).unwrap(),
+        serde_json::from_slice::<AudioDetails>(&json).expect("decode generated JSON fixture"),
         details
     );
     assert_eq!(
-        serde_json::from_slice::<crate::model::MusicTags>(&json).unwrap(),
+        serde_json::from_slice::<crate::model::MusicTags>(&json)
+            .expect("decode generated JSON fixture"),
         details.tags
     );
 }
 
 #[test]
 fn unknown_or_invalid_audio_properties_are_not_invented() {
-    let details = parse_audio_details(br#"{"format":{"duration":"NaN","bit_rate":"0"},"streams":[{"duration":"inf","sample_rate":"999999999999","channels":65537,"bits_per_raw_sample":"0"}]}"#).unwrap();
+    let details = parse_audio_details(br#"{"format":{"duration":"NaN","bit_rate":"0"},"streams":[{"duration":"inf","sample_rate":"999999999999","channels":65537,"bits_per_raw_sample":"0"}]}"#).expect("expected test value from parse_audio_details(br#\"{\"format\":{\"duration\":\"NaN\",\"bit_rate\":\"0\"},\"streams\":[{\"duration\":\"inf\",\"sample_rate\":\"999999999999\",\"...");
     assert_eq!(details.properties, super::AudioProperties::default());
-    assert_eq!(parse_audio_details(b"{}").unwrap(), AudioDetails::default());
+    assert_eq!(
+        parse_audio_details(b"{}").expect("expected test value from parse_audio_details(b\"{}\")"),
+        AudioDetails::default()
+    );
     assert!(parse_audio_details(b"invalid").is_err());
 }
 
 #[test]
 fn stream_properties_win_and_format_tags_have_stable_precedence() {
-    let details = parse_audio_details(br#"{"format":{"duration":"50","bit_rate":"200","tags":{"ARTIST":"Format artist"}},"streams":[{"duration":"40","bit_rate":"100","tags":{"artist":"Stream artist","genre":"Rock"}}]}"#).unwrap();
+    let details = parse_audio_details(br#"{"format":{"duration":"50","bit_rate":"200","tags":{"ARTIST":"Format artist"}},"streams":[{"duration":"40","bit_rate":"100","tags":{"artist":"Stream artist","genre":"Rock"}}]}"#).expect("expected test value from parse_audio_details(br#\"{\"format\":{\"duration\":\"50\",\"bit_rate\":\"200\",\"tags\":{\"ARTIST\":\"Format artist\"}},\"streams\":[{\"duration\":\"...");
     assert_eq!(details.properties.duration_seconds, Some(40.0));
     assert_eq!(details.properties.bitrate, Some(100));
     assert_eq!(details.embedded_tags["artist"], "Format artist");
@@ -87,8 +92,10 @@ fn rich_embedded_tags_are_bounded_and_control_characters_are_removed() {
             )
         })
         .collect::<std::collections::BTreeMap<_, _>>();
-    let json = serde_json::to_vec(&serde_json::json!({"format":{"tags": tags}})).unwrap();
-    let details = parse_audio_details(&json).unwrap();
+    let json = serde_json::to_vec(&serde_json::json!({"format":{"tags": tags}}))
+        .expect("serialize generated JSON fixture");
+    let details =
+        parse_audio_details(&json).expect("expected test value from parse_audio_details(&json)");
     assert_eq!(details.embedded_tags.len(), 64);
     for value in details.embedded_tags.values() {
         assert_eq!(value.chars().count(), 1024);

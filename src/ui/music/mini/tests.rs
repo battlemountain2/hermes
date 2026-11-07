@@ -17,18 +17,23 @@ fn test_mini_player_constructs_with_proper_title_and_dimensions() {
     let header = mini
         .window()
         .titlebar()
-        .unwrap()
+        .expect("expected test value from mini .window() .titlebar()")
         .downcast::<gtk::WindowHandle>()
-        .unwrap();
+        .expect("expected test value from mini .window() .titlebar() .unwrap() .downcast::<gtk::WindowHandle>()");
     assert!(header.has_css_class("mini-player-header"));
-    assert!(header.child().unwrap().is::<gtk::Box>());
+    assert!(
+        header
+            .child()
+            .expect("expected test value from header.child()")
+            .is::<gtk::Box>()
+    );
     mini.close();
 }
 
 #[test]
 #[ignore = "Requires isolated GTK display; no audio, personal files or preferences"]
 fn desktop_mini_escape_and_close_hide_without_changing_transport() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     let controller = Controller::with_session(None);
     controller.play_intent.set(true);
     controller.resume_position.set(7_000_000);
@@ -38,7 +43,7 @@ fn desktop_mini_escape_and_close_hide_without_changing_transport() {
     let keys = mini.window().observe_controllers();
     let keys = (0..keys.n_items())
         .find_map(|index| keys.item(index)?.downcast::<gtk::EventControllerKey>().ok())
-        .unwrap();
+        .expect("expected test value from (0..keys.n_items()) .find_map(|index| keys.item(index)?.downcast::<gtk::EventControllerKey>().ok())");
     assert_eq!(keys.propagation_phase(), gtk::PropagationPhase::Capture);
     mini.window().set_visible(true);
     mini.state.volume.grab_focus();
@@ -64,7 +69,10 @@ fn desktop_mini_escape_and_close_hide_without_changing_transport() {
     assert_eq!(controller.generation.get(), generation);
     assert_eq!(controller.position(), 7_000_000);
     assert_eq!(controller.session_revision.get(), revision);
-    let child = mini.window().child().unwrap();
+    let child = mini
+        .window()
+        .child()
+        .expect("expected test value from mini.window().child()");
     mini.toggle();
     assert!(mini.is_visible());
     mini.window().close();
@@ -81,8 +89,10 @@ fn desktop_mini_escape_and_close_hide_without_changing_transport() {
 #[test]
 #[ignore = "Requires isolated GTK display; resource-only icons and no personal files or preferences"]
 fn desktop_mini_play_pause_icons_keep_on_accent_colors_across_theme_changes() {
-    gtk::init().unwrap();
-    gtk::gio::resources_register_include!("strata.gresource").unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    gtk::gio::resources_register_include!("strata.gresource").expect(
+        "expected test value from gtk::gio::resources_register_include!(\"strata.gresource\")",
+    );
     assets::set_on_accent_icon_color("#102030");
     let mini = MiniPlayer::new(Controller::with_session(None), Rc::new(|| {}));
     for playing in [false, true, false] {
@@ -91,15 +101,17 @@ fn desktop_mini_play_pause_icons_keep_on_accent_colors_across_theme_changes() {
             .state
             .play
             .child()
-            .unwrap()
+            .expect("expected test value from mini .state .play .child()")
             .downcast::<gtk::Image>()
-            .unwrap();
+            .expect("expected test value from mini .state .play .child() .unwrap() .downcast::<gtk::Image>()");
         let icon = if playing { icons::PAUSE } else { icons::PLAY };
         assert_eq!(
             image.paintable(),
             assets::on_accent_icon(icon, 16).paintable()
         );
-        let original = image.paintable().unwrap();
+        let original = image
+            .paintable()
+            .expect("expected test value from image.paintable()");
         assets::set_primary_icon_color("#aabbcc");
         assets::set_text_icon_color("#ddeeff");
         assert_eq!(image.paintable().as_ref(), Some(&original));

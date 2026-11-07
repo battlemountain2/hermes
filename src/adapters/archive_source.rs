@@ -13,9 +13,7 @@ use std::{
 
 use crate::{
     model::{EntryKind, FileEntry, FileEntryInner, Location, MetadataValue},
-    services::{
-        DirectoryEvent, DirectoryRequest, FileSource, LoadHandle, LocationValidationError,
-    },
+    services::{DirectoryEvent, DirectoryRequest, FileSource, LoadHandle, LocationValidationError},
 };
 
 #[cfg(test)]
@@ -50,14 +48,12 @@ impl ArchiveFileSource {
     pub fn get_or_build_index(&self, archive_path: &Path) -> Result<Arc<ArchiveIndex>, String> {
         let metadata = std::fs::metadata(archive_path)
             .map_err(|e| format!("Cannot read archive metadata: {e}"))?;
-        let mtime = metadata
-            .modified()
-            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let mtime = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
 
-        if let Some((cached_mtime, index)) = self.cache.borrow().get(archive_path) {
-            if *cached_mtime == mtime {
-                return Ok(index.clone());
-            }
+        if let Some((cached_mtime, index)) = self.cache.borrow().get(archive_path)
+            && *cached_mtime == mtime
+        {
+            return Ok(index.clone());
         }
 
         let index = Arc::new(parse_archive_contents(archive_path)?);

@@ -10,8 +10,8 @@ fn desktop_office_layout_reuses_document_reader_and_fallback_explains_missing_re
             LoadHandle::new(|| {})
         }
     }
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("generated fixture must provide the expected value");
+    crate::assets::prepare().expect("generated fixture must provide the expected value");
     let requests = Rc::new(RefCell::new(Vec::new()));
     let drawer = PreviewDrawer::new(Rc::new(Pending(requests.clone())));
     let window = gtk::Window::builder()
@@ -30,7 +30,8 @@ fn desktop_office_layout_reuses_document_reader_and_fallback_explains_missing_re
         modified_unix_seconds: MetadataValue::Unknown,
     }));
     drawer.show(entry.clone());
-    let pixels = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 640, 360).unwrap();
+    let pixels = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 640, 360)
+        .expect("generated fixture must provide the expected value");
     pixels.fill(0x204080ff);
     drawer.state.render(Preview {
         request_id: PreviewRequestId(1),
@@ -38,7 +39,9 @@ fn desktop_office_layout_reuses_document_reader_and_fallback_explains_missing_re
         content_type: "application/vnd.openxmlformats-officedocument.presentationml.presentation"
             .into(),
         content: PreviewContent::Pdf {
-            png: pixels.save_to_bufferv("png", &[]).unwrap(),
+            png: pixels
+                .save_to_bufferv("png", &[])
+                .expect("generated fixture must provide the expected value"),
             page: 0,
             pages: 2,
             text_layer: None,
@@ -48,9 +51,9 @@ fn desktop_office_layout_reuses_document_reader_and_fallback_explains_missing_re
         .state
         .content
         .first_child()
-        .unwrap()
+        .expect("generated fixture must provide the expected value")
         .downcast::<gtk::Label>()
-        .unwrap();
+        .expect("generated fixture must provide the expected value");
     assert_eq!(label.text(), "LibreOffice layout · 2 slides");
     assert!(drawer.state.pdf.borrow().is_some());
     assert_eq!(drawer.state.title.text(), "Presentation.PPTX");
@@ -87,20 +90,20 @@ fn desktop_office_layout_reuses_document_reader_and_fallback_explains_missing_re
         .state
         .content
         .first_child()
-        .unwrap()
+        .expect("generated fixture must provide the expected value")
         .downcast::<gtk::Label>()
-        .unwrap();
+        .expect("generated fixture must provide the expected value");
     assert!(label.text().contains("Install LibreOffice"));
     let scroll = label
         .next_sibling()
-        .unwrap()
+        .expect("generated fixture must provide the expected value")
         .downcast::<gtk::ScrolledWindow>()
-        .unwrap();
+        .expect("generated fixture must provide the expected value");
     let text = scroll
         .child()
-        .unwrap()
+        .expect("generated fixture must provide the expected value")
         .downcast::<sourceview5::View>()
-        .unwrap()
+        .expect("generated fixture must provide the expected value")
         .buffer();
     assert_eq!(
         text.text(&text.start_iter(), &text.end_iter(), false),

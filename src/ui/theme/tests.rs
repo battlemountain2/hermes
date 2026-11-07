@@ -8,19 +8,24 @@ use super::{
 fn hover_previews_default_on_and_round_trip_without_changing_older_preferences() {
     let defaults = Preferences::default();
     assert!(defaults.hover_previews);
-    let mut serialized = serde_json::to_value(defaults).unwrap();
-    serialized.as_object_mut().unwrap().remove("hover_previews");
-    let legacy: Preferences = serde_json::from_value(serialized.clone()).unwrap();
+    let mut serialized = serde_json::to_value(defaults).expect("serialize generated JSON fixture");
+    serialized
+        .as_object_mut()
+        .expect("expected test value from serialized.as_object_mut()")
+        .remove("hover_previews");
+    let legacy: Preferences =
+        serde_json::from_value(serialized.clone()).expect("decode generated JSON fixture");
     assert!(legacy.hover_previews);
     serialized["hover_previews"] = false.into();
-    let disabled: Preferences = serde_json::from_value(serialized).unwrap();
+    let disabled: Preferences =
+        serde_json::from_value(serialized).expect("decode generated JSON fixture");
     assert!(!disabled.hover_previews);
 }
 
 #[test]
 #[ignore = "Requires isolated GTK display and private temporary preferences; no media"]
 fn desktop_audio_preferences_reload_and_normalize_legacy_values() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     assert!(super::settings_path().starts_with(std::env::temp_dir()));
     let manager = super::ThemeManager::load();
     manager.set_audio_spin_animation(false);
@@ -56,7 +61,7 @@ fn desktop_audio_preferences_reload_and_normalize_legacy_values() {
 #[test]
 #[ignore = "Requires isolated GTK display and private temporary preferences"]
 fn desktop_date_and_size_preferences_reload_into_the_cached_formatting_policy() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     assert!(super::settings_path().starts_with(std::env::temp_dir()));
     let manager = super::ThemeManager::load();
     manager.set_date_format("iso");
@@ -74,7 +79,7 @@ fn desktop_date_and_size_preferences_reload_into_the_cached_formatting_policy() 
 #[test]
 #[ignore = "Requires isolated GTK display and private temporary settings"]
 fn desktop_general_preferences_reload_and_validate_startup_choices() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     assert!(super::settings_path().starts_with(std::env::temp_dir()));
     let manager = super::ThemeManager::load();
     manager.set_startup_location("music");
@@ -117,16 +122,17 @@ fn filled_controls_choose_the_more_legible_semantic_foreground() {
 #[ignore = "Requires an isolated GTK display; renders filled player controls in light and dark themes"]
 fn desktop_filled_player_controls_render_with_live_theme_contrast() {
     use gtk::{gdk::prelude::*, prelude::*};
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     gtk::Settings::default()
-        .unwrap()
+        .expect("expected test value from gtk::Settings::default()")
         .set_gtk_enable_animations(false);
-    crate::assets::prepare().unwrap();
+    crate::assets::prepare().expect("register embedded test assets");
     let manager = super::ThemeManager::shared();
     let styles = gtk::CssProvider::new();
     styles.load_from_string(include_str!("../../style.css"));
     gtk::style_context_add_provider_for_display(
-        &gtk::gdk::Display::default().unwrap(),
+        &gtk::gdk::Display::default()
+            .expect("expected test value from gtk::gdk::Display::default()"),
         &styles,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
@@ -174,12 +180,19 @@ fn desktop_filled_player_controls_render_with_live_theme_contrast() {
             gtk::glib::MainContext::default().iteration(false);
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        let tokens = manager.applied_tokens().unwrap();
-        let expected_color = gtk::gdk::RGBA::parse(super::on_accent_color(&tokens)).unwrap();
+        let tokens = manager
+            .applied_tokens()
+            .expect("expected test value from manager.applied_tokens()");
+        let expected_color = gtk::gdk::RGBA::parse(super::on_accent_color(&tokens)).expect(
+            "expected test value from gtk::gdk::RGBA::parse(super::on_accent_color(&tokens))",
+        );
         let expected_icon = crate::assets::on_accent_icon(crate::assets::icons::PLAY, 20);
         for button in &buttons {
             assert_eq!(button.color(), expected_color);
-            let image = button.child().and_downcast::<gtk::Image>().unwrap();
+            let image = button
+                .child()
+                .and_downcast::<gtk::Image>()
+                .expect("expected test value from button.child().and_downcast::<gtk::Image>()");
             assert_eq!(image.paintable(), expected_icon.paintable());
         }
         if let Ok(directory) = std::env::var("HERMES_PLAYER_CONTRAST_SHOTS") {
@@ -209,13 +222,15 @@ fn desktop_filled_player_controls_render_with_live_theme_contrast() {
                 continue;
             };
             let renderer = gtk::gsk::CairoRenderer::new();
-            renderer.realize(window.surface().as_ref()).unwrap();
+            renderer
+                .realize(window.surface().as_ref())
+                .expect("expected test value from renderer.realize(window.surface().as_ref())");
             let texture = renderer.render_texture(&node, None);
             texture
                 .save_to_png(
                     std::path::Path::new(&directory).join(format!("player-controls-{theme}.png")),
                 )
-                .unwrap();
+                .expect("expected test value from texture .save_to_png( std::path::Path::new(&directory).join(format!(\"player-controls-{theme}.png\")), )");
             renderer.unrealize();
         }
     }
@@ -238,7 +253,8 @@ fn font_choices_are_safe_and_legacy_sizes_default_to_thirteen() {
     assert_eq!(super::normalized_font("sans"), "sans");
     assert_eq!(super::normalized_font("mono"), "mono");
     assert_eq!(super::normalized_font("malformed; CSS"), "maple");
-    let preferences: Preferences = toml::from_str("mode = 'theme'\ntheme = 'paper'").unwrap();
+    let preferences: Preferences = toml::from_str("mode = 'theme'\ntheme = 'paper'")
+        .expect("expected test value from toml::from_str(\"mode = 'theme'\\ntheme = 'paper'\")");
     assert_eq!(preferences.interface_font_size, 13);
     let css = super::tokens_css(&super::azure_tokens(), "sans");
     assert!(css.contains("font-family: sans-serif"));
@@ -385,7 +401,7 @@ theme = "azure-glow"
 #[test]
 #[ignore = "requires a GTK display; tests theme manager layout observer"]
 fn layout_observer_notified_on_music_player_layout_change() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     use super::ThemeManager;
     use std::cell::Cell;
     use std::rc::Rc;
@@ -654,9 +670,12 @@ fn test_sync_picker_theme_preferences() {
     let preferences = Preferences::default();
     assert!(preferences.sync_picker_theme);
     let parsed: Preferences =
-        toml::from_str("mode = 'theme'\ntheme = 'azure-glow'\nsync_picker_theme = false").unwrap();
+        toml::from_str("mode = 'theme'\ntheme = 'azure-glow'\nsync_picker_theme = false").expect("expected test value from toml::from_str(\"mode = 'theme'\\ntheme = 'azure-glow'\\nsync_picker_theme = false\")");
     assert!(!parsed.sync_picker_theme);
-    let roundtripped: Preferences = toml::from_str(&toml::to_string(&parsed).unwrap()).unwrap();
+    let roundtripped: Preferences = toml::from_str(
+        &toml::to_string(&parsed).expect("expected test value from toml::to_string(&parsed)"),
+    )
+    .expect("expected test value from toml::from_str(&toml::to_string(&parsed).unwrap())");
     assert!(!roundtripped.sync_picker_theme);
 }
 
@@ -668,19 +687,20 @@ fn picker_tracks_atomic_preferences_new_custom_themes_and_font_changes() {
         fs,
         time::{Duration, Instant},
     };
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     assert!(
         crate::paths::config_dir().starts_with(std::env::temp_dir()),
         "Use isolated XDG directories"
     );
     let config = crate::paths::config_dir();
-    fs::create_dir_all(&config).unwrap();
+    fs::create_dir_all(&config).expect("create generated fixture directory");
     let mut preferences = Preferences::default();
     fs::write(
         super::settings_path(),
-        toml::to_string(&preferences).unwrap(),
+        toml::to_string(&preferences)
+            .expect("expected test value from toml::to_string(&preferences)"),
     )
-    .unwrap();
+    .expect("write generated fixture");
     let manager = super::ThemeManager::load();
     manager.use_picker_theme();
     let until = |condition: &dyn Fn() -> bool| {
@@ -696,15 +716,25 @@ fn picker_tracks_atomic_preferences_new_custom_themes_and_font_changes() {
     };
     let replace = |preferences: &Preferences| {
         let stage = config.join("generated-preferences.tmp");
-        fs::write(&stage, toml::to_string(preferences).unwrap()).unwrap();
-        fs::rename(stage, super::settings_path()).unwrap();
+        fs::write(
+            &stage,
+            toml::to_string(preferences)
+                .expect("expected test value from toml::to_string(preferences)"),
+        )
+        .expect("write generated fixture");
+        fs::rename(stage, super::settings_path())
+            .expect("expected test value from fs::rename(stage, super::settings_path())");
     };
     let mut custom = super::azure_tokens();
     custom.name = "Warm copper".into();
     custom.accent = "#eebb99".into();
-    fs::create_dir_all(super::themes_directory()).unwrap();
+    fs::create_dir_all(super::themes_directory()).expect("create generated fixture directory");
     let custom_path = super::themes_directory().join("warm-copper.toml");
-    fs::write(&custom_path, toml::to_string(&custom).unwrap()).unwrap();
+    fs::write(
+        &custom_path,
+        toml::to_string(&custom).expect("expected test value from toml::to_string(&custom)"),
+    )
+    .expect("write generated fixture");
     preferences.theme = "warm-copper".into();
     preferences.interface_font = "sans".into();
     preferences.interface_font_size = 17;
@@ -722,7 +752,11 @@ fn picker_tracks_atomic_preferences_new_custom_themes_and_font_changes() {
     replace(&preferences);
     until(&|| manager.interface_font_size() == 20);
     custom.accent = "#aaddee".into();
-    fs::write(custom_path, toml::to_string(&custom).unwrap()).unwrap();
+    fs::write(
+        custom_path,
+        toml::to_string(&custom).expect("expected test value from toml::to_string(&custom)"),
+    )
+    .expect("write generated fixture");
     until(&|| {
         manager
             .applied_tokens
@@ -735,7 +769,12 @@ fn picker_tracks_atomic_preferences_new_custom_themes_and_font_changes() {
     replace(&preferences);
     until(&|| !manager.sync_picker_theme());
     assert_eq!(
-        manager.applied_tokens.borrow().as_ref().unwrap().accent,
+        manager
+            .applied_tokens
+            .borrow()
+            .as_ref()
+            .expect("expected test value from manager.applied_tokens.borrow().as_ref()")
+            .accent,
         custom.accent
     );
     preferences.sync_picker_theme = true;

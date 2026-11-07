@@ -3,10 +3,9 @@
 use super::*;
 
 #[test]
+#[ignore = "Private GTK display; execute with scripts/check-test-suite.py"]
 fn test_shortcuts_window_constructs_without_panics() {
-    if gtk::init().is_err() {
-        return;
-    }
+    gtk::init().expect("initialize the isolated GTK display");
     let parent = gtk::Window::new();
     let window = gtk::ShortcutsWindow::builder()
         .transient_for(&parent)

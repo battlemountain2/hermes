@@ -22,7 +22,7 @@ pub(crate) fn entry(name: &str, disc: Option<u32>, track: Option<u32>) -> FileEn
 
 #[test]
 fn metadata_wins_over_filenames_and_discs_precede_tracks() {
-    let mut entries = vec![
+    let mut entries = [
         entry("1. Finale.flac", Some(2), Some(1)),
         entry("10. Opening.flac", Some(1), Some(1)),
         entry("2. Late.flac", Some(1), Some(10)),
@@ -45,7 +45,7 @@ fn metadata_wins_over_filenames_and_discs_precede_tracks() {
 
 #[test]
 fn filename_fallback_is_numeric_and_deterministic() {
-    let mut entries = vec![
+    let mut entries = [
         entry("10. Song.flac", None, None),
         entry("2. Song.flac", None, None),
         entry("1. Song.flac", None, None),
@@ -80,7 +80,7 @@ fn detects_album_folders_not_mixed_libraries_or_general_folders() {
     Rc::make_mut(&mut mixed[1].0)
         .music_tags
         .as_mut()
-        .unwrap()
+        .expect("expected test value from Rc::make_mut(&mut mixed[1].0) .music_tags .as_mut()")
         .album = Some("Other".into());
     assert!(!is_album(&mixed));
     let mut general = tracks;

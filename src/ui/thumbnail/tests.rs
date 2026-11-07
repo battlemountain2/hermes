@@ -57,7 +57,8 @@ fn identity() -> SourceIdentity {
 }
 
 pub(in crate::ui) fn cache_fixture(path: &Path, bytes: glib::Bytes) {
-    let identity = SourceIdentity::read(path).unwrap();
+    let identity =
+        SourceIdentity::read(path).expect("expected test value from SourceIdentity::read(path)");
     THUMBNAIL_CACHE.with(|cache| {
         cache.borrow_mut().insert(
             ThumbnailKey {
@@ -87,7 +88,14 @@ fn preview_cache_only_reuses_the_requested_file_not_adjacent_album_art() {
     assert!(cache.preview(&path).is_none());
     key.source_path = path.clone();
     cache.insert(key, glib::Bytes::from_static(b"same file"));
-    assert_eq!(cache.preview(&path).unwrap().1.as_ref(), b"same file");
+    assert_eq!(
+        cache
+            .preview(&path)
+            .expect("expected test value from cache.preview(&path)")
+            .1
+            .as_ref(),
+        b"same file"
+    );
     assert!(cache.preview(Path::new("/generated/other.flac")).is_none());
 }
 
@@ -111,16 +119,40 @@ fn cached_previews_obey_format_size_and_policy_changes_without_decoding() {
     let bytes = glib::Bytes::from_static(b"already rendered preview");
     cache_fixture(&path, bytes.clone());
     let context = glib::MainContext::new();
-    let disabled = super::PreviewPolicy { images: false, ..preview_policy() };
-    assert!(context.block_on(super::cached_preview_bytes_with_policy(&path, || disabled)).is_none());
-    let too_small = super::PreviewPolicy { max_bytes: 1, ..preview_policy() };
-    assert!(context.block_on(super::cached_preview_bytes_with_policy(&path, || too_small)).is_none());
-    assert_eq!(context.block_on(super::cached_preview_bytes_with_policy(&path, preview_policy)), Some(bytes));
+    let disabled = super::PreviewPolicy {
+        images: false,
+        ..preview_policy()
+    };
+    assert!(
+        context
+            .block_on(super::cached_preview_bytes_with_policy(&path, || disabled))
+            .is_none()
+    );
+    let too_small = super::PreviewPolicy {
+        max_bytes: 1,
+        ..preview_policy()
+    };
+    assert!(
+        context
+            .block_on(super::cached_preview_bytes_with_policy(&path, || too_small))
+            .is_none()
+    );
+    assert_eq!(
+        context.block_on(super::cached_preview_bytes_with_policy(
+            &path,
+            preview_policy
+        )),
+        Some(bytes)
+    );
     let calls = std::cell::Cell::new(0);
     let changed = context.block_on(super::cached_preview_bytes_with_policy(&path, || {
         let count = calls.get() + 1;
         calls.set(count);
-        if count >= 3 { disabled } else { preview_policy() }
+        if count >= 3 {
+            disabled
+        } else {
+            preview_policy()
+        }
     }));
     assert!(changed.is_none());
     assert!(calls.get() >= 3);
@@ -189,7 +221,7 @@ fn audio_thumbnails_prefer_embedded_art_then_track_identity_checked_folder_cover
             }
         },
     )
-    .unwrap();
+    .expect("expected test value from super::render_thumbnail_with_cover( initial, ThumbnailKind::AudioAlbum, &Cancellation::default(), |path, operation, _, _| { cal...");
     assert_eq!(
         calls,
         vec![
@@ -218,7 +250,7 @@ fn audio_thumbnails_prefer_embedded_art_then_track_identity_checked_folder_cover
             Ok(vec![4])
         },
     )
-    .unwrap();
+    .expect("expected test value from super::render_thumbnail_with_cover( edited, ThumbnailKind::AudioAlbum, &Cancellation::default(), |_, operation, _, _| { assert_...");
     assert_eq!(embedded.key.source_path, path);
 }
 
@@ -248,7 +280,7 @@ fn cancelled_or_replaced_audio_never_falls_back_to_an_album_cover() {
             &Cancellation::default(),
             |_, operation, _, _| {
                 assert_eq!(operation, ParseOperation::ThumbnailVideo);
-                std::fs::write(&path, b"replaced audio").unwrap();
+                std::fs::write(&path, b"replaced audio").expect("write generated fixture");
                 Err("Changed".into())
             }
         )
@@ -266,7 +298,12 @@ fn audio_formats_can_request_artwork_even_without_flac_files() {
     }
     let fixture = Fixture::new();
     let path = fixture.write("track.mp3", b"audio placeholder");
-    assert_eq!(folder_album_art(&fixture.0).unwrap().0, path);
+    assert_eq!(
+        folder_album_art(&fixture.0)
+            .expect("expected test value from folder_album_art(&fixture.0)")
+            .0,
+        path
+    );
 }
 
 #[test]
@@ -276,9 +313,11 @@ fn generated_mp3_tracks_decode_embedded_art_and_adjacent_cover_fallback() {
     let fixture = Fixture::new();
     let cover = fixture.0.join("cover.png");
     let image =
-        gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, false, 8, 320, 320).unwrap();
+        gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, false, 8, 320, 320).expect("expected test value from gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, false, 8, 320, 320)");
     image.fill(0xd02040ff);
-    image.savev(&cover, "png", &[]).unwrap();
+    image
+        .savev(&cover, "png", &[])
+        .expect("expected test value from image.savev(&cover, \"png\", &[])");
     let plain = fixture.0.join("plain.mp3");
     let embedded = fixture.0.join("embedded.mp3");
     for path in [&plain, &embedded] {
@@ -312,7 +351,7 @@ fn generated_mp3_tracks_decode_embedded_art_and_adjacent_cover_fallback() {
                 .args(["-c:a", "libmp3lame", "-threads", "1"])
                 .arg(path)
                 .status()
-                .unwrap()
+                .expect("expected test value from command .args([\"-c:a\", \"libmp3lame\", \"-threads\", \"1\"]) .arg(path) .status()")
                 .success()
         );
     }
@@ -326,7 +365,7 @@ fn generated_mp3_tracks_decode_embedded_art_and_adjacent_cover_fallback() {
                 crate::sandbox::parse(path, operation, size, cancellation).map(|output| output.data)
             },
         )
-        .unwrap();
+        .expect("expected test value from super::render_thumbnail_with_cover( source, ThumbnailKind::AudioAlbum, &Cancellation::default(), |path, operation, size, cancel...");
         assert_eq!(
             result.key.source_path,
             if path == &embedded {
@@ -336,9 +375,15 @@ fn generated_mp3_tracks_decode_embedded_art_and_adjacent_cover_fallback() {
             }
         );
         let loader = gtk::gdk_pixbuf::PixbufLoader::new();
-        loader.write(&bytes).unwrap();
-        loader.close().unwrap();
-        let pixels = loader.pixbuf().unwrap();
+        loader
+            .write(&bytes)
+            .expect("expected test value from loader.write(&bytes)");
+        loader
+            .close()
+            .expect("expected test value from loader.close()");
+        let pixels = loader
+            .pixbuf()
+            .expect("expected test value from loader.pixbuf()");
         assert_eq!((pixels.width(), pixels.height()), (256, 256));
         let decoded = pixels.read_pixel_bytes();
         assert!(decoded[0] > 180 && decoded[1] < 80);
@@ -812,18 +857,35 @@ fn rejects_files_without_a_thumbnail_provider() {
 #[ignore = "Private GTK display, isolated cache and built worker; generated PNG only"]
 fn desktop_thumbnails_persist_and_reload_after_the_memory_cache_is_cleared() {
     use gtk::prelude::*;
-    let root = PathBuf::from(std::env::var_os("HERMES_PREVIEW_PROBE").unwrap());
-    assert!(PathBuf::from(std::env::var_os("XDG_CACHE_HOME").unwrap()).starts_with(&root));
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    let root = PathBuf::from(
+        std::env::var_os("HERMES_PREVIEW_PROBE")
+            .expect("expected test value from std::env::var_os(\"HERMES_PREVIEW_PROBE\")"),
+    );
+    assert!(
+        PathBuf::from(
+            std::env::var_os("XDG_CACHE_HOME")
+                .expect("expected test value from std::env::var_os(\"XDG_CACHE_HOME\")")
+        )
+        .starts_with(&root)
+    );
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let fixture = Fixture::new();
     let pixels =
-        gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 256, 128).unwrap();
+        gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 256, 128).expect("expected test value from gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 256, 128)");
     pixels.fill(0x3050d0ff);
-    let path = fixture.write("source.png", &pixels.save_to_bufferv("png", &[]).unwrap());
+    let path = fixture.write(
+        "source.png",
+        &pixels
+            .save_to_bufferv("png", &[])
+            .expect("expected test value from pixels.save_to_bufferv(\"png\", &[])"),
+    );
     let entry = crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner {
         location: crate::model::Location::local(&path),
-        native_name: path.file_name().unwrap().to_owned(),
+        native_name: path
+            .file_name()
+            .expect("expected test value from path.file_name()")
+            .to_owned(),
         display_name: "source.png".into(),
         kind: crate::model::EntryKind::File,
         size: crate::model::MetadataValue::Unknown,
@@ -834,7 +896,10 @@ fn desktop_thumbnails_persist_and_reload_after_the_memory_cache_is_cleared() {
     let window = gtk::Window::builder().child(&image).build();
     window.present();
     super::set_thumbnail_or_icon(&image, &entry, crate::assets::icons::DOCUMENTS, 32, 64);
-    let cache_file = super::disk::root().join(super::disk::filename(&path).unwrap());
+    let cache_file = super::disk::root().join(
+        super::disk::filename(&path)
+            .expect("expected test value from super::disk::filename(&path)"),
+    );
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(12);
     while !cache_file.is_file() || image.paintable().is_none() {
         assert!(std::time::Instant::now() < deadline);
@@ -848,18 +913,19 @@ fn desktop_thumbnails_persist_and_reload_after_the_memory_cache_is_cleared() {
     THUMBNAIL_CACHE.with(|cache| *cache.borrow_mut() = ThumbnailCache::default());
     let original = image
         .paintable()
-        .unwrap()
+        .expect("expected test value from image .paintable()")
         .downcast::<gtk::gdk::Texture>()
-        .unwrap();
+        .expect("expected test value from image .paintable() .unwrap() .downcast::<gtk::gdk::Texture>()");
     let started = std::time::Instant::now();
     let bytes = glib::MainContext::default()
         .block_on(super::cached_preview_bytes(&path))
-        .unwrap();
+        .expect("expected test value from glib::MainContext::default() .block_on(super::cached_preview_bytes(&path))");
     eprintln!(
         "Persistent preview after memory eviction: {:?}",
         started.elapsed()
     );
-    let reloaded = gtk::gdk::Texture::from_bytes(&bytes).unwrap();
+    let reloaded = gtk::gdk::Texture::from_bytes(&bytes)
+        .expect("expected test value from gtk::gdk::Texture::from_bytes(&bytes)");
     assert_eq!(
         (original.width(), original.height()),
         (reloaded.width(), reloaded.height())
@@ -877,11 +943,23 @@ fn desktop_thumbnails_persist_and_reload_after_the_memory_cache_is_cleared() {
 #[ignore = "Private GTK display/cache, generated Office fixtures and a system LibreOffice renderer"]
 fn desktop_office_icons_render_and_reload_from_the_persistent_cache() {
     use gtk::prelude::*;
-    let root = PathBuf::from(std::env::var_os("HERMES_PREVIEW_PROBE").unwrap());
-    assert!(PathBuf::from(std::env::var_os("XDG_CACHE_HOME").unwrap()).starts_with(&root));
-    let fixtures = PathBuf::from(std::env::var_os("HERMES_OFFICE_FIXTURE_DIR").unwrap());
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    let root = PathBuf::from(
+        std::env::var_os("HERMES_PREVIEW_PROBE")
+            .expect("expected test value from std::env::var_os(\"HERMES_PREVIEW_PROBE\")"),
+    );
+    assert!(
+        PathBuf::from(
+            std::env::var_os("XDG_CACHE_HOME")
+                .expect("expected test value from std::env::var_os(\"XDG_CACHE_HOME\")")
+        )
+        .starts_with(&root)
+    );
+    let fixtures = PathBuf::from(
+        std::env::var_os("HERMES_OFFICE_FIXTURE_DIR")
+            .expect("expected test value from std::env::var_os(\"HERMES_OFFICE_FIXTURE_DIR\")"),
+    );
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let image = gtk::Image::new();
     let window = gtk::Window::builder().child(&image).build();
     window.present();
@@ -892,15 +970,25 @@ fn desktop_office_icons_render_and_reload_from_the_persistent_cache() {
             native_name: name.into(),
             display_name: name.into(),
             kind: crate::model::EntryKind::File,
-            size: crate::model::MetadataValue::Known(fs::metadata(&path).unwrap().len()),
+            size: crate::model::MetadataValue::Known(
+                fs::metadata(&path)
+                    .expect("expected test value from fs::metadata(&path)")
+                    .len(),
+            ),
             modified_unix_seconds: crate::model::MetadataValue::Unknown,
             music_tags: None,
         }));
         super::set_thumbnail_or_icon(&image, &entry, crate::assets::icons::DOCUMENTS, 32, 96);
-        let cache_file = super::disk::root().join(super::disk::filename(&path).unwrap());
+        let cache_file = super::disk::root().join(
+            super::disk::filename(&path)
+                .expect("expected test value from super::disk::filename(&path)"),
+        );
         let deadline = std::time::Instant::now() + Duration::from_secs(40);
         while !cache_file.is_file() || image.paintable().is_none() {
-            assert!(std::time::Instant::now() < deadline, "Office icon not rendered: {name}");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Office icon not rendered: {name}"
+            );
             for _ in 0..64 {
                 if !glib::MainContext::default().iteration(false) {
                     break;
@@ -912,7 +1000,8 @@ fn desktop_office_icons_render_and_reload_from_the_persistent_cache() {
         let bytes = glib::MainContext::default()
             .block_on(super::cached_preview_bytes(&path))
             .expect("Persisted Office icon");
-        let texture = gtk::gdk::Texture::from_bytes(&bytes).unwrap();
+        let texture = gtk::gdk::Texture::from_bytes(&bytes)
+            .expect("expected test value from gtk::gdk::Texture::from_bytes(&bytes)");
         assert!(texture.width().max(texture.height()) <= 96);
     }
     super::cancel_thumbnail(&image);

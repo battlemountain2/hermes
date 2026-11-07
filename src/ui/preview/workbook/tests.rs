@@ -1,6 +1,7 @@
 use super::*;
 
-struct Pending(RefCell<Vec<(bool, PreviewRequest, Rc<dyn Fn(PreviewEvent)>)>>);
+type PendingRequest = (bool, PreviewRequest, Rc<dyn Fn(PreviewEvent)>);
+struct Pending(RefCell<Vec<PendingRequest>>);
 
 impl Pending {
     fn record(
@@ -37,10 +38,10 @@ fn fixture(name: &str) -> FileEntry {
 }
 
 fn button(root: &gtk::Widget, label: &str) -> Option<gtk::ToggleButton> {
-    if let Some(button) = root.downcast_ref::<gtk::ToggleButton>() {
-        if button.label().as_deref() == Some(label) {
-            return Some(button.clone());
-        }
+    if let Some(button) = root.downcast_ref::<gtk::ToggleButton>()
+        && button.label().as_deref() == Some(label)
+    {
+        return Some(button.clone());
     }
     let mut child = root.first_child();
     while let Some(widget) = child {
@@ -65,8 +66,8 @@ fn workbook_layout_support_excludes_legacy_and_non_workbook_formats() {
 #[test]
 #[ignore = "Private GTK display and installed renderer; synthetic workbook UI, no real conversion"]
 fn desktop_workbook_modes_cancel_stale_layouts_and_fall_back_to_data() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     assert!(crate::sandbox::office::available());
     let provider = Rc::new(Pending(RefCell::new(Vec::new())));
     let drawer = PreviewDrawer::new(provider.clone());
@@ -81,9 +82,14 @@ fn desktop_workbook_modes_cancel_stale_layouts_and_fall_back_to_data() {
     let (layout, first_request, first_emit) = provider.0.borrow()[0].clone();
     assert!(layout);
     button(drawer.state.content.upcast_ref(), "Data")
-        .unwrap()
+        .expect("expected test value from button(drawer.state.content.upcast_ref(), \"Data\")")
         .emit_clicked();
-    let (layout, data_request, data_emit) = provider.0.borrow().last().unwrap().clone();
+    let (layout, data_request, data_emit) = provider
+        .0
+        .borrow()
+        .last()
+        .expect("expected test value from provider.0.borrow().last()")
+        .clone();
     assert!(!layout);
     assert_ne!(data_request.id, first_request.id);
     let data = PreviewContent::Spreadsheet {
@@ -96,10 +102,12 @@ fn desktop_workbook_modes_cancel_stale_layouts_and_fall_back_to_data() {
         content: data.clone(),
     }));
     assert!(drawer.state.table.borrow().is_some());
-    let pixels = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 640, 420).unwrap();
+    let pixels = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 640, 420).expect("expected test value from gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 640, 420)");
     pixels.fill(0x204080ff);
     let pdf = PreviewContent::Pdf {
-        png: pixels.save_to_bufferv("png", &[]).unwrap(),
+        png: pixels
+            .save_to_bufferv("png", &[])
+            .expect("expected test value from pixels.save_to_bufferv(\"png\", &[])"),
         page: 0,
         pages: 2,
         text_layer: None,
@@ -113,16 +121,26 @@ fn desktop_workbook_modes_cancel_stale_layouts_and_fall_back_to_data() {
     assert!(drawer.state.table.borrow().is_some());
     assert!(drawer.state.pdf.borrow().is_none());
     button(drawer.state.content.upcast_ref(), "Layout")
-        .unwrap()
+        .expect("expected test value from button(drawer.state.content.upcast_ref(), \"Layout\")")
         .emit_clicked();
-    let (layout, request, emit) = provider.0.borrow().last().unwrap().clone();
+    let (layout, request, emit) = provider
+        .0
+        .borrow()
+        .last()
+        .expect("expected test value from provider.0.borrow().last()")
+        .clone();
     assert!(layout);
     emit(PreviewEvent::Failed {
         request_id: request.id,
         entry: entry.clone(),
         message: "Generated converter failure".into(),
     });
-    let (layout, request, emit) = provider.0.borrow().last().unwrap().clone();
+    let (layout, request, emit) = provider
+        .0
+        .borrow()
+        .last()
+        .expect("expected test value from provider.0.borrow().last()")
+        .clone();
     assert!(!layout);
     emit(PreviewEvent::Ready(Preview {
         request_id: request.id,
@@ -133,9 +151,14 @@ fn desktop_workbook_modes_cancel_stale_layouts_and_fall_back_to_data() {
     assert!(drawer.state.layout_failure.borrow().is_some());
     assert!(drawer.state.table.borrow().is_some());
     button(drawer.state.content.upcast_ref(), "Layout")
-        .unwrap()
+        .expect("expected test value from button(drawer.state.content.upcast_ref(), \"Layout\")")
         .emit_clicked();
-    let (layout, request, emit) = provider.0.borrow().last().unwrap().clone();
+    let (layout, request, emit) = provider
+        .0
+        .borrow()
+        .last()
+        .expect("expected test value from provider.0.borrow().last()")
+        .clone();
     assert!(layout);
     emit(PreviewEvent::Ready(Preview {
         request_id: request.id,
@@ -159,7 +182,8 @@ fn desktop_workbook_modes_cancel_stale_layouts_and_fall_back_to_data() {
         }
         None
     }
-    let scroll = find_layout_scroll(drawer.state.content.upcast_ref()).unwrap();
+    let scroll = find_layout_scroll(drawer.state.content.upcast_ref())
+        .expect("expected test value from find_layout_scroll(drawer.state.content.upcast_ref())");
     assert_eq!(scroll.hscrollbar_policy(), gtk::PolicyType::Always);
     assert_eq!(scroll.vscrollbar_policy(), gtk::PolicyType::Always);
     assert!(!scroll.is_overlay_scrolling());
@@ -170,7 +194,9 @@ fn desktop_workbook_modes_cancel_stale_layouts_and_fall_back_to_data() {
     }
     for bar in [scroll.hscrollbar(), scroll.vscrollbar()] {
         assert!(bar.is_mapped());
-        let bounds = bar.compute_bounds(&scroll).unwrap();
+        let bounds = bar
+            .compute_bounds(&scroll)
+            .expect("expected test value from bar.compute_bounds(&scroll)");
         assert!(pdf_scrollbar_at(
             &scroll,
             f64::from(bounds.x() + bounds.width() / 2.0),

@@ -1,35 +1,46 @@
 use super::*;
 
 fn source() -> (PrivateOutput, Identity) {
-    let directory = PrivateOutput::create().unwrap();
+    let directory =
+        PrivateOutput::create().expect("expected test value from PrivateOutput::create()");
     let path = directory.path().join("fixture.docx");
-    fs::write(&path, b"generated source").unwrap();
-    let identity = Identity::read(&path).unwrap();
+    fs::write(&path, b"generated source").expect("write generated fixture");
+    let identity = Identity::read(&path).expect("expected test value from Identity::read(&path)");
     (directory, identity)
 }
 
 #[test]
 fn saved_posters_decode_without_a_conversion_or_office_profile() {
-    let directory = PrivateOutput::create().unwrap();
+    let directory =
+        PrivateOutput::create().expect("expected test value from PrivateOutput::create()");
     let path = directory.path().join("poster.pptx");
-    let pixels = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 320, 180).unwrap();
+    let pixels = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 320, 180).expect("expected test value from gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 320, 180)");
     pixels.fill(0x305080ff);
-    let mut archive = zip::ZipWriter::new(fs::File::create(&path).unwrap());
+    let mut archive =
+        zip::ZipWriter::new(fs::File::create(&path).expect("create generated fixture file"));
     for (name, bytes) in [
         ("ppt/presentation.xml", b"<presentation/>".to_vec()),
         (
             "docProps/thumbnail.png",
-            pixels.save_to_bufferv("png", &[]).unwrap(),
+            pixels
+                .save_to_bufferv("png", &[])
+                .expect("expected test value from pixels.save_to_bufferv(\"png\", &[])"),
         ),
     ] {
         archive
             .start_file(name, zip::write::SimpleFileOptions::default())
-            .unwrap();
-        archive.write_all(&bytes).unwrap();
+            .expect("expected test value from archive .start_file(name, zip::write::SimpleFileOptions::default())");
+        archive
+            .write_all(&bytes)
+            .expect("write generated ZIP member");
     }
-    archive.finish().unwrap();
-    let bytes = crate::sandbox_helper::office::render::poster(&path, 160).unwrap();
-    let dimensions = crate::sandbox_helper::sniff::sniff_png_dimensions(&bytes).unwrap();
+    archive.finish().expect("finish generated ZIP fixture");
+    let bytes = crate::sandbox_helper::office::render::poster(&path, 160).expect(
+        "expected test value from crate::sandbox_helper::office::render::poster(&path, 160)",
+    );
+    let dimensions = crate::sandbox_helper::sniff::sniff_png_dimensions(&bytes).expect(
+        "expected test value from crate::sandbox_helper::sniff::sniff_png_dimensions(&bytes)",
+    );
     assert_eq!((dimensions.width, dimensions.height), (160, 90));
     assert!(!ParseOperation::OfficePoster.uses_office_renderer());
 }
@@ -41,24 +52,25 @@ fn converted_documents_are_reused_until_source_identity_or_ttl_changes() {
     let cancellation = Cancellation::default();
     let first = cache
         .document(&identity, &cancellation, || Ok(b"%PDF-generated".to_vec()))
-        .unwrap();
+        .expect("expected test value from cache .document(&identity, &cancellation, || Ok(b\"%PDF-generated\".to_vec()))");
     let cached = cache
         .document(&identity, &cancellation, || {
             panic!("Cache should avoid another conversion")
         })
-        .unwrap();
+        .expect("expected test value from cache .document(&identity, &cancellation, || { panic!(\"Cache should avoid another conversion\") })");
     assert!(Arc::ptr_eq(&first, &cached));
-    fs::write(&identity.path, b"changed generated document").unwrap();
-    let changed = Identity::read(&identity.path).unwrap();
+    fs::write(&identity.path, b"changed generated document").expect("write generated fixture");
+    let changed = Identity::read(&identity.path)
+        .expect("expected test value from Identity::read(&identity.path)");
     let second = cache
         .document(&changed, &cancellation, || Ok(b"%PDF-second".to_vec()))
-        .unwrap();
+        .expect("expected test value from cache .document(&changed, &cancellation, || Ok(b\"%PDF-second\".to_vec()))");
     assert!(!Arc::ptr_eq(&first, &second));
     assert_eq!(cache.0.len(), 1);
     cache.0[0].2 = Instant::now() - CACHE_TTL;
     let third = cache
         .document(&changed, &cancellation, || Ok(b"%PDF-third".to_vec()))
-        .unwrap();
+        .expect("expected test value from cache .document(&changed, &cancellation, || Ok(b\"%PDF-third\".to_vec()))");
     assert!(!Arc::ptr_eq(&second, &third));
 }
 
@@ -87,7 +99,8 @@ fn cancelled_changed_failed_and_invalid_conversions_never_enter_the_cache() {
     assert!(
         cache
             .document(&identity, &cancellation, || {
-                fs::write(&identity.path, b"source replaced during conversion").unwrap();
+                fs::write(&identity.path, b"source replaced during conversion")
+                    .expect("write generated fixture");
                 Ok(b"%PDF-stale".to_vec())
             })
             .is_err()
@@ -106,12 +119,15 @@ fn conversion_cache_has_bounded_entries_and_preserves_active_readers() {
         let (directory, identity) = source();
         let document = cache
             .document(&identity, &cancellation, || Ok(b"%PDF-active".to_vec()))
-            .unwrap();
+            .expect("expected test value from cache .document(&identity, &cancellation, || Ok(b\"%PDF-active\".to_vec()))");
         active.get_or_insert(document);
         sources.push(directory);
     }
     assert_eq!(cache.0.len(), CACHE_ENTRIES);
-    assert_eq!(active.unwrap().bytes, b"%PDF-active");
+    assert_eq!(
+        active.expect("expected test value from active").bytes,
+        b"%PDF-active"
+    );
 }
 
 #[test]
@@ -127,7 +143,7 @@ fn converted_pdf_memory_is_bounded_independently_of_entry_count() {
                 bytes[..5].copy_from_slice(b"%PDF-");
                 Ok(bytes)
             })
-            .unwrap();
+            .expect("expected test value from cache .document(&identity, &cancellation, || { let mut bytes = vec![0; 20 * 1024 * 1024]; bytes[..5].copy_from_slice(b\"%PDF-\");...");
         sources.push(directory);
     }
     assert_eq!(cache.0.len(), 3);
@@ -150,7 +166,7 @@ fn office_conversion_has_its_own_budgets_and_preserves_network_and_filesystem_is
         ParseOperation::ConvertOfficePdf,
         0,
     )
-    .unwrap();
+    .expect("expected test value from super::super::sandbox_command( Path::new(\"/generated/helper\"), Path::new(\"/private/source.docx\"), Path::new(\"/private/output\"),...");
     let arguments: Vec<_> = command
         .get_args()
         .map(|value| value.to_string_lossy().into_owned())
@@ -182,7 +198,7 @@ fn office_conversion_has_its_own_budgets_and_preserves_network_and_filesystem_is
         ParseOperation::PreviewPdf,
         0,
     )
-    .unwrap();
+    .expect("expected test value from super::super::sandbox_command( Path::new(\"/generated/helper\"), Path::new(\"/private/source.pdf\"), Path::new(\"/private/output\"), ...");
     assert!(pdf.get_args().any(|value| value == "--as=1342177280"));
     assert!(
         !pdf.get_args()
@@ -194,7 +210,7 @@ fn office_conversion_has_its_own_budgets_and_preserves_network_and_filesystem_is
 fn queued_office_work_can_be_cancelled_without_waiting_for_the_converter_lock() {
     let (_directory, identity) = source();
     let cache = Mutex::new(Cache::default());
-    let _guard = cache.lock().unwrap();
+    let _guard = cache.lock().expect("expected test value from cache.lock()");
     let cancellation = Cancellation::default();
     let worker_cancellation = cancellation.clone();
     let worker = thread::spawn(move || {
@@ -209,37 +225,52 @@ fn queued_office_work_can_be_cancelled_without_waiting_for_the_converter_lock() 
         .is_err()
     );
     assert!(started.elapsed() < Duration::from_secs(1));
-    worker.join().unwrap();
+    worker
+        .join()
+        .expect("expected test value from worker.join()");
 }
 
 #[test]
 fn conversion_receives_the_identity_checked_canonical_source_not_a_retargeted_symlink() {
     let (directory, identity) = source();
     let alternate = directory.path().join("alternate.docx");
-    fs::write(&alternate, b"alternate generated source").unwrap();
+    fs::write(&alternate, b"alternate generated source").expect("write generated fixture");
     let alias = directory.path().join("alias.docx");
-    std::os::unix::fs::symlink(&identity.path, &alias).unwrap();
+    std::os::unix::fs::symlink(&identity.path, &alias)
+        .expect("expected test value from std::os::unix::fs::symlink(&identity.path, &alias)");
     let cache = Mutex::new(Cache::default());
     let cancellation = Cancellation::default();
     assert!(
         render_cached(&alias, 0, &cancellation, &cache, |resolved| {
             assert_eq!(resolved, identity.path);
-            fs::remove_file(&alias).unwrap();
-            std::os::unix::fs::symlink(&alternate, &alias).unwrap();
-            assert_eq!(fs::read(resolved).unwrap(), b"generated source");
+            fs::remove_file(&alias).expect("remove generated fixture");
+            std::os::unix::fs::symlink(&alternate, &alias)
+                .expect("expected test value from std::os::unix::fs::symlink(&alternate, &alias)");
+            assert_eq!(
+                fs::read(resolved).expect("read generated fixture"),
+                b"generated source"
+            );
             cancellation.cancel();
             Ok(b"%PDF-cancelled".to_vec())
         })
         .is_err()
     );
-    assert!(cache.lock().unwrap().0.is_empty());
+    assert!(
+        cache
+            .lock()
+            .expect("expected test value from cache.lock()")
+            .0
+            .is_empty()
+    );
 }
 
 #[test]
 #[ignore = "Requires bubblewrap and coreutils; generated harmless child tree, no Office process or audio"]
 fn admitted_office_conversion_cancellation_terminates_its_sandbox_process_tree() {
-    let directory = PrivateOutput::create().unwrap();
-    let helper = super::super::helper_executable().unwrap();
+    let directory =
+        PrivateOutput::create().expect("expected test value from PrivateOutput::create()");
+    let helper = super::super::helper_executable()
+        .expect("expected test value from super::super::helper_executable()");
     let base = super::super::sandbox_command(
         &helper,
         Path::new("/dev/null"),
@@ -247,12 +278,14 @@ fn admitted_office_conversion_cancellation_terminates_its_sandbox_process_tree()
         ParseOperation::ConvertOfficePdf,
         0,
     )
-    .unwrap();
+    .expect("expected test value from super::super::sandbox_command( &helper, Path::new(\"/dev/null\"), directory.path(), ParseOperation::ConvertOfficePdf, 0, )");
     let arguments: Vec<_> = base.get_args().map(ToOwned::to_owned).collect();
     let separator = arguments
         .iter()
         .rposition(|argument| argument == "--")
-        .unwrap();
+        .expect(
+            "expected test value from arguments .iter() .rposition(|argument| argument == \"--\")",
+        );
     let mut command = std::process::Command::new(base.get_program());
     command.args(&arguments[..=separator]).args([
         "/usr/bin/sh",
@@ -278,8 +311,15 @@ fn admitted_office_conversion_cancellation_terminates_its_sandbox_process_tree()
         ParseOperation::ConvertOfficePdf,
         &cancellation,
     );
-    assert_eq!(result.err().unwrap(), "Preview cancelled");
-    assert!(worker.join().unwrap());
+    assert_eq!(
+        result.err().expect("expected test value from result.err()"),
+        "Preview cancelled"
+    );
+    assert!(
+        worker
+            .join()
+            .expect("expected test value from worker.join()")
+    );
     assert!(started.elapsed() < Duration::from_secs(3));
 }
 
@@ -290,7 +330,7 @@ fn cancelled_office_requests_do_not_probe_or_start_a_converter() {
     assert_eq!(
         render(Path::new("/unused/generated.docx"), 0, &cancellation)
             .err()
-            .unwrap(),
+            .expect("expected test value from render(Path::new(\"/unused/generated.docx\"), 0, &cancellation) .err()"),
         "Preview cancelled"
     );
 }
@@ -304,8 +344,10 @@ fn sandboxed_conversion_with_font_cache(
     cancellation: &Cancellation,
     system_font_cache: bool,
 ) -> Result<Vec<u8>, String> {
-    let directory = PrivateOutput::create().unwrap();
-    let helper = super::super::helper_executable().unwrap();
+    let directory =
+        PrivateOutput::create().expect("expected test value from PrivateOutput::create()");
+    let helper = super::super::helper_executable()
+        .expect("expected test value from super::super::helper_executable()");
     let command = super::super::sandbox_command(
         &helper,
         input,
@@ -313,7 +355,7 @@ fn sandboxed_conversion_with_font_cache(
         ParseOperation::ConvertOfficePdf,
         0,
     )
-    .unwrap();
+    .expect("expected test value from super::super::sandbox_command( &helper, input, directory.path(), ParseOperation::ConvertOfficePdf, 0, )");
     let mut arguments: Vec<_> = command.get_args().map(ToOwned::to_owned).collect();
     if !system_font_cache {
         let index = arguments
@@ -323,17 +365,21 @@ fn sandboxed_conversion_with_font_cache(
                     && values[1] == "/var/cache/fontconfig"
                     && values[2] == "/var/cache/fontconfig"
             })
-            .unwrap();
+            .expect("expected test value from arguments .windows(3) .position(|values| { values[0] == \"--ro-bind-try\" && values[1] == \"/var/cache/fontconfig\" && values[2] ==...");
         arguments.drain(index..index + 3);
     }
     let separator = arguments
         .iter()
         .position(|argument| argument == "--")
-        .unwrap();
+        .expect(
+            "expected test value from arguments .iter() .position(|argument| argument == \"--\")",
+        );
     let mut isolated = std::process::Command::new(command.get_program());
     isolated.args(&arguments[..separator]);
     if let Some(runtime) = std::env::var_os("HERMES_OFFICE_TEST_RUNTIME") {
-        let runtime = PathBuf::from(runtime).canonicalize().unwrap();
+        let runtime = PathBuf::from(runtime)
+            .canonicalize()
+            .expect("expected test value from PathBuf::from(runtime).canonicalize()");
         assert!(runtime.join("program/soffice").is_file());
         isolated
             .args(["--dir", "/opt", "--ro-bind"])
@@ -356,18 +402,19 @@ fn uncached_office_font_cache_comparison_retains_layout_and_original() {
     let input = PathBuf::from(
         std::env::var_os("HERMES_OFFICE_TEST_FILE").expect("Choose a read-only Office sample"),
     );
-    let original = fs::read(&input).unwrap();
+    let original = fs::read(&input).expect("read generated fixture");
     let cancellation = Cancellation::default();
     let mut reference = None;
     for system_font_cache in [false, true, true, false] {
         let started = Instant::now();
         let bytes =
-            sandboxed_conversion_with_font_cache(&input, &cancellation, system_font_cache).unwrap();
+            sandboxed_conversion_with_font_cache(&input, &cancellation, system_font_cache).expect("expected test value from sandboxed_conversion_with_font_cache(&input, &cancellation, system_font_cache)");
         let elapsed = started.elapsed();
-        let directory = PrivateOutput::create().unwrap();
+        let directory =
+            PrivateOutput::create().expect("expected test value from PrivateOutput::create()");
         let pdf = directory.path().join("converted.pdf");
-        fs::write(&pdf, &bytes).unwrap();
-        let page = super::super::parse(&pdf, ParseOperation::PreviewPdf, 0, &cancellation).unwrap();
+        fs::write(&pdf, &bytes).expect("write generated fixture");
+        let page = super::super::parse(&pdf, ParseOperation::PreviewPdf, 0, &cancellation).expect("expected test value from super::super::parse(&pdf, ParseOperation::PreviewPdf, 0, &cancellation)");
         let layout = (page.pages, page.text_layer);
         assert!(layout.0 > 0);
         assert!(layout.1.is_some());
@@ -376,7 +423,7 @@ fn uncached_office_font_cache_comparison_retains_layout_and_original() {
         } else {
             reference = Some(layout);
         }
-        assert_eq!(fs::read(&input).unwrap(), original);
+        assert_eq!(fs::read(&input).expect("read generated fixture"), original);
         eprintln!(
             "Uncached Office export: system_font_cache={system_font_cache}, elapsed={elapsed:?}, bytes={}",
             bytes.len()
@@ -390,12 +437,13 @@ fn local_office_document_renders_first_page_without_text_fallback() {
     let input = PathBuf::from(
         std::env::var_os("HERMES_OFFICE_TEST_FILE").expect("Choose a read-only Office sample"),
     );
-    let original = fs::read(&input).unwrap();
+    let original = fs::read(&input).expect("read generated fixture");
     let started = Instant::now();
-    let output = render(&input, 0, &Cancellation::default()).unwrap();
+    let output = render(&input, 0, &Cancellation::default())
+        .expect("expected test value from render(&input, 0, &Cancellation::default())");
     assert!(output.pages > 0);
     assert!(output.data.starts_with(b"\x89PNG\r\n\x1a\n"));
-    assert_eq!(original, fs::read(&input).unwrap());
+    assert_eq!(original, fs::read(&input).expect("read generated fixture"));
     eprintln!("Rendered {} pages in {:?}", output.pages, started.elapsed());
 }
 
@@ -405,12 +453,18 @@ fn office_admission_serializes_jobs_and_queued_cancellation_stops_before_startin
     let (release, released) = std::sync::mpsc::channel();
     let first = thread::spawn(move || {
         admit(&Cancellation::default(), false, || {
-            started.send(()).unwrap();
-            released.recv_timeout(Duration::from_secs(3)).unwrap();
+            started
+                .send(())
+                .expect("expected test value from started.send(())");
+            released
+                .recv_timeout(Duration::from_secs(3))
+                .expect("expected test value from released.recv_timeout(Duration::from_secs(3))");
             Ok(())
         })
     });
-    admitted.recv_timeout(Duration::from_secs(3)).unwrap();
+    admitted
+        .recv_timeout(Duration::from_secs(3))
+        .expect("expected test value from admitted.recv_timeout(Duration::from_secs(3))");
     let cancellation = Cancellation::default();
     let queued = cancellation.clone();
     let second = thread::spawn(move || {
@@ -419,28 +473,46 @@ fn office_admission_serializes_jobs_and_queued_cancellation_stops_before_startin
         })
     });
     cancellation.cancel();
-    assert_eq!(second.join().unwrap().unwrap_err(), "Preview cancelled");
-    release.send(()).unwrap();
-    first.join().unwrap().unwrap();
+    assert_eq!(
+        second
+            .join()
+            .expect("expected test value from second.join()")
+            .expect_err("invalid or cancelled fixture must fail"),
+        "Preview cancelled"
+    );
+    release
+        .send(())
+        .expect("expected test value from release.send(())");
+    first
+        .join()
+        .expect("expected test value from first.join()")
+        .expect("expected test value from first.join().unwrap()");
 }
 
 #[test]
 fn selected_office_conversion_precedes_waiting_thumbnail_exports() {
     let admission = Arc::new(Admission::default());
-    let occupied = admission.converter.lock().unwrap();
+    let occupied = admission
+        .converter
+        .lock()
+        .expect("expected test value from admission.converter.lock()");
     let (events, received) = std::sync::mpsc::channel();
     let background_admission = admission.clone();
     let background_events = events.clone();
     let background = thread::spawn(move || {
         background_admission.run(true, &Cancellation::default(), || {
-            background_events.send("thumbnail").unwrap();
+            background_events
+                .send("thumbnail")
+                .expect("expected test value from background_events.send(\"thumbnail\")");
             Ok(())
         })
     });
     let selected_admission = admission.clone();
     let selected = thread::spawn(move || {
         selected_admission.run(false, &Cancellation::default(), || {
-            events.send("selected").unwrap();
+            events
+                .send("selected")
+                .expect("expected test value from events.send(\"selected\")");
             Ok(())
         })
     });
@@ -451,15 +523,25 @@ fn selected_office_conversion_precedes_waiting_thumbnail_exports() {
     }
     drop(occupied);
     assert_eq!(
-        received.recv_timeout(Duration::from_secs(3)).unwrap(),
+        received
+            .recv_timeout(Duration::from_secs(3))
+            .expect("expected test value from received.recv_timeout(Duration::from_secs(3))"),
         "selected"
     );
     assert_eq!(
-        received.recv_timeout(Duration::from_secs(3)).unwrap(),
+        received
+            .recv_timeout(Duration::from_secs(3))
+            .expect("expected test value from received.recv_timeout(Duration::from_secs(3))"),
         "thumbnail"
     );
-    selected.join().unwrap().unwrap();
-    background.join().unwrap().unwrap();
+    selected
+        .join()
+        .expect("expected test value from selected.join()")
+        .expect("expected test value from selected.join().unwrap()");
+    background
+        .join()
+        .expect("expected test value from background.join()")
+        .expect("expected test value from background.join().unwrap()");
     assert_eq!(admission.foreground.load(Ordering::Acquire), 0);
 }
 
@@ -469,7 +551,9 @@ fn cancelled_selected_office_request_releases_thumbnail_priority() {
     let cancellation = Cancellation::default();
     cancellation.cancel();
     assert_eq!(
-        admission.run(false, &cancellation, || Ok(())).unwrap_err(),
+        admission
+            .run(false, &cancellation, || Ok(()))
+            .expect_err("invalid or cancelled fixture must fail"),
         "Preview cancelled"
     );
     assert_eq!(admission.foreground.load(Ordering::Acquire), 0);
@@ -483,31 +567,34 @@ fn cancelled_selected_office_request_releases_thumbnail_priority() {
 #[test]
 #[ignore = "Generated Office fixtures and a system renderer; checks real icon thumbnail output"]
 fn generated_office_thumbnails_render_documents_slides_and_workbooks() {
-    let fixtures = PathBuf::from(std::env::var_os("HERMES_OFFICE_FIXTURE_DIR").unwrap());
+    let fixtures = PathBuf::from(
+        std::env::var_os("HERMES_OFFICE_FIXTURE_DIR")
+            .expect("expected test value from std::env::var_os(\"HERMES_OFFICE_FIXTURE_DIR\")"),
+    );
     for name in ["layout.docx", "layout.odt", "layout.pptx", "layout.xlsx"] {
         let input = fixtures.join(name);
-        let original = fs::read(&input).unwrap();
+        let original = fs::read(&input).expect("read generated fixture");
         let output = super::super::parse(
             &input,
             ParseOperation::ThumbnailOffice,
             96,
             &Cancellation::default(),
         )
-        .unwrap();
-        let dimensions = crate::sandbox_helper::sniff::sniff_png_dimensions(&output.data).unwrap();
+        .expect("expected test value from super::super::parse( &input, ParseOperation::ThumbnailOffice, 96, &Cancellation::default(), )");
+        let dimensions = crate::sandbox_helper::sniff::sniff_png_dimensions(&output.data).expect("expected test value from crate::sandbox_helper::sniff::sniff_png_dimensions(&output.data)");
         assert!(dimensions.width > 0 && dimensions.height > 0);
         assert!(dimensions.width.max(dimensions.height) <= 96);
         if name == "layout.xlsx" {
             assert!(dimensions.width > dimensions.height * 2);
         }
-        assert_eq!(original, fs::read(input).unwrap());
+        assert_eq!(original, fs::read(input).expect("read generated fixture"));
         if let Some(shots) = std::env::var_os("HERMES_OFFICE_TEST_SHOTS") {
-            fs::create_dir_all(&shots).unwrap();
+            fs::create_dir_all(&shots).expect("create generated fixture directory");
             fs::write(
                 Path::new(&shots).join(format!("{name}-icon.png")),
                 output.data,
             )
-            .unwrap();
+            .expect("write generated fixture");
         }
     }
 }
@@ -525,15 +612,18 @@ fn generated_office_pages_preserve_layout_selectable_text_and_cached_conversion(
         ("layout.pptx", "Hermes slide 1", "Hermes slide 2", true),
     ] {
         let input = fixtures.join(name);
-        let original = fs::read(&input).unwrap();
+        let original = fs::read(&input).expect("read generated fixture");
         let cache = Mutex::new(Cache::default());
         let cancellation = Cancellation::default();
         let first = render_cached(&input, 0, &cancellation, &cache, |source| {
             sandboxed_conversion(source, &cancellation)
         })
-        .unwrap();
+        .expect("expected test value from render_cached(&input, 0, &cancellation, &cache, |source| { sandboxed_conversion(source, &cancellation) })");
         assert_eq!((first.page, first.pages), (0, 2));
-        let first_layer = first.text_layer.as_ref().unwrap();
+        let first_layer = first
+            .text_layer
+            .as_ref()
+            .expect("expected test value from first.text_layer.as_ref()");
         assert!(
             first_layer.text.contains(first_text),
             "{}",
@@ -545,13 +635,13 @@ fn generated_office_pages_preserve_layout_selectable_text_and_cached_conversion(
         let second = render_cached(&input, 1, &cancellation, &cache, |_| {
             panic!("Page changes must reuse conversion")
         })
-        .unwrap();
+        .expect("expected test value from render_cached(&input, 1, &cancellation, &cache, |_| { panic!(\"Page changes must reuse conversion\") })");
         assert_eq!((second.page, second.pages), (1, 2));
         assert!(
             second
                 .text_layer
                 .as_ref()
-                .unwrap()
+                .expect("expected test value from second .text_layer .as_ref()")
                 .text
                 .contains(second_text)
         );
@@ -559,13 +649,15 @@ fn generated_office_pages_preserve_layout_selectable_text_and_cached_conversion(
         let last = render_cached(&input, 999, &cancellation, &cache, |_| {
             panic!("Still cached")
         })
-        .unwrap();
+        .expect("expected test value from render_cached(&input, 999, &cancellation, &cache, |_| { panic!(\"Still cached\") })");
         assert_eq!((last.page, last.pages), (1, 2));
-        assert_eq!(original, fs::read(&input).unwrap());
+        assert_eq!(original, fs::read(&input).expect("read generated fixture"));
         if let Some(shots) = std::env::var_os("HERMES_OFFICE_TEST_SHOTS") {
-            fs::create_dir_all(&shots).unwrap();
-            fs::write(Path::new(&shots).join(format!("{name}-1.png")), first.data).unwrap();
-            fs::write(Path::new(&shots).join(format!("{name}-2.png")), second.data).unwrap();
+            fs::create_dir_all(&shots).expect("create generated fixture directory");
+            fs::write(Path::new(&shots).join(format!("{name}-1.png")), first.data)
+                .expect("write generated fixture");
+            fs::write(Path::new(&shots).join(format!("{name}-2.png")), second.data)
+                .expect("write generated fixture");
         }
     }
 }

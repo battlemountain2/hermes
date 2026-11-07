@@ -8,17 +8,27 @@ use std::{
 };
 
 use super::{
-    RatingFilter, SearchEvent, SearchItem, TextExtractionProvider, UnavailableTextExtraction, fuzzy_score,
-    index_tree, recent_bounds, search_filter_values,
+    RatingFilter, SearchEvent, SearchItem, TextExtractionProvider, UnavailableTextExtraction,
+    fuzzy_score, index_tree, recent_bounds, search_filter_values,
 };
 use crate::services::TextExtractor;
 
 #[test]
 fn category_filters_distinguish_formats_without_a_filename_term() {
     let root = Path::new("/generated-search");
-    for (name, category) in [("song.FLAC", "audio"), ("clip.MOV", "video"), ("photo.HEIC", "image"), ("paper.pdf", "document"), ("game.AppImage", "application"), ("backup.zip", "archive")] {
+    for (name, category) in [
+        ("song.FLAC", "audio"),
+        ("clip.MOV", "video"),
+        ("photo.HEIC", "image"),
+        ("paper.pdf", "document"),
+        ("game.AppImage", "application"),
+        ("backup.zip", "archive"),
+    ] {
         let candidate = SearchItem::from_path(root.join(name), root, false, None);
-        assert!(fuzzy_score(&candidate, &format!("type:{category}"), root).is_some(), "{name}");
+        assert!(
+            fuzzy_score(&candidate, &format!("type:{category}"), root).is_some(),
+            "{name}"
+        );
         let (_, values) = search_filter_values(&format!("artist type:{category}"));
         assert_eq!(values.category.as_deref(), Some(category));
         assert!(fuzzy_score(&candidate, "type:folder", root).is_none());
@@ -104,11 +114,21 @@ fn artist_and_title_terms_match_in_any_order_across_tag_fields() {
     let mut candidate = item("/home/me/Music/Album/01.flac");
     candidate.search_metadata = "nikes frank ocean blonde".into();
     candidate.music_tags = Some(crate::model::MusicTags {
-        title: Some("Nikes".into()), artist: Some("Frank Ocean".into()), album: Some("Blonde".into()),
+        title: Some("Nikes".into()),
+        artist: Some("Frank Ocean".into()),
+        album: Some("Blonde".into()),
         ..crate::model::MusicTags::default()
     });
-    for query in ["Frank Ocean Nikes", "Nikes Ocean Frank", "Blonde Nikes Frank", "Frank Ocean 01.flac"] {
-        assert!(fuzzy_score(&candidate, query, Path::new("/home/me")).is_some(), "{query}");
+    for query in [
+        "Frank Ocean Nikes",
+        "Nikes Ocean Frank",
+        "Blonde Nikes Frank",
+        "Frank Ocean 01.flac",
+    ] {
+        assert!(
+            fuzzy_score(&candidate, query, Path::new("/home/me")).is_some(),
+            "{query}"
+        );
     }
     assert!(fuzzy_score(&candidate, "Frank Ocean absent", Path::new("/home/me")).is_none());
 }
@@ -213,7 +233,9 @@ fn metadata_filters_compose_with_existing_filters_and_free_text_ranking() {
         assert_eq!(
             fuzzy_score(
                 &candidate,
-                &format!("artist:'Frank Ocean' album:Blonde title:Nikes type:audio ext:flac in:Music {terms}"),
+                &format!(
+                    "artist:'Frank Ocean' album:Blonde title:Nikes type:audio ext:flac in:Music {terms}"
+                ),
                 root,
             ),
             fuzzy_score(&candidate, terms, root),
@@ -582,8 +604,10 @@ fn bounded_typo_tolerance_matches_free_words_at_least_four_chars() {
     assert!(fuzzy_score(&candidate, "Camron Winter", root).is_some());
     assert!(fuzzy_score(&candidate, "Cameron Wintr", root).is_some());
 
-    let exact_score = fuzzy_score(&candidate, "Cameron Winter", root).unwrap();
-    let typo_score = fuzzy_score(&candidate, "Camron Winter", root).unwrap();
+    let exact_score = fuzzy_score(&candidate, "Cameron Winter", root)
+        .expect("expected test value from fuzzy_score(&candidate, \"Cameron Winter\", root)");
+    let typo_score = fuzzy_score(&candidate, "Camron Winter", root)
+        .expect("expected test value from fuzzy_score(&candidate, \"Camron Winter\", root)");
     assert!(exact_score > typo_score);
 
     let mut beach_house = item("/home/me/Music/Beach House/Bloom/Myth.flac");
@@ -616,9 +640,14 @@ fn reordered_metadata_matches_beat_incidental_path_matches() {
     incidental_path.name = "document.txt".into();
     incidental_path.search_name = "document.txt".into();
 
-    let meta_score = fuzzy_score(&metadata_match, "Ocean Frank", root).unwrap();
-    let path_score = fuzzy_score(&incidental_path, "Ocean Frank", root).unwrap();
-    assert!(meta_score > path_score, "Metadata tag match should rank above incidental path hit");
+    let meta_score = fuzzy_score(&metadata_match, "Ocean Frank", root)
+        .expect("expected test value from fuzzy_score(&metadata_match, \"Ocean Frank\", root)");
+    let path_score = fuzzy_score(&incidental_path, "Ocean Frank", root)
+        .expect("expected test value from fuzzy_score(&incidental_path, \"Ocean Frank\", root)");
+    assert!(
+        meta_score > path_score,
+        "Metadata tag match should rank above incidental path hit"
+    );
 }
 
 #[test]
@@ -687,11 +716,23 @@ fn inferred_types_preserve_literal_names_and_rank_them_first() {
     let root = Path::new("/synthetic");
     let literal = item("/synthetic/Video Games.flac");
     let video = item("/synthetic/Games.mp4");
-    assert!(fuzzy_score(&literal, "Video Games", root).unwrap()
-        > fuzzy_score(&video, "Video Games", root).unwrap());
-    for name in ["Photos of You.flac", "Documents of Love.flac", "Yesterday songs.txt"] {
+    assert!(
+        fuzzy_score(&literal, "Video Games", root)
+            .expect("expected test value from fuzzy_score(&literal, \"Video Games\", root)")
+            > fuzzy_score(&video, "Video Games", root)
+                .expect("expected test value from fuzzy_score(&video, \"Video Games\", root)")
+    );
+    for name in [
+        "Photos of You.flac",
+        "Documents of Love.flac",
+        "Yesterday songs.txt",
+    ] {
         let candidate = item(&format!("/synthetic/{name}"));
-        let title = Path::new(name).file_stem().unwrap().to_str().unwrap();
+        let title = Path::new(name)
+            .file_stem()
+            .expect("expected test value from Path::new(name).file_stem()")
+            .to_str()
+            .expect("expected test value from Path::new(name).file_stem().unwrap().to_str()");
         assert!(fuzzy_score(&candidate, title, root).is_some(), "{title}");
     }
 }
@@ -714,7 +755,11 @@ fn inferred_filters_preserve_literal_metadata_without_matching_folder_noise() {
 fn explicit_constraints_stay_strict_for_literal_and_inferred_matches() {
     let root = Path::new("/synthetic");
     let literal = item("/synthetic/Video Games.flac");
-    for query in ["Video Games type:video", "Video Games ext:mp3", "Video Games artist:Other"] {
+    for query in [
+        "Video Games type:video",
+        "Video Games ext:mp3",
+        "Video Games artist:Other",
+    ] {
         assert!(fuzzy_score(&literal, query, root).is_none(), "{query}");
     }
     let mut directory = item("/synthetic/videos");
@@ -738,7 +783,10 @@ fn artist_phrase_matches_songs_without_a_literal_song_word() {
         ..Default::default()
     });
     song.search_metadata = "cameron winter heavy metal".into();
-    for query in ["songs by Cameron Winter", "ext:flac songs by Cameron Winter"] {
+    for query in [
+        "songs by Cameron Winter",
+        "ext:flac songs by Cameron Winter",
+    ] {
         let (terms, filters) = search_filter_values(query);
         assert_eq!(terms, "", "{query}");
         assert_eq!(filters.artist.as_deref(), Some("cameron winter"));
@@ -760,12 +808,18 @@ fn literal_titles_rank_above_inferred_date_only_results() {
     let root = Path::new("/synthetic");
     let literal = item("/synthetic/videos from last week.flac");
     let mut video = item("/synthetic/clip.mp4");
-    let now = gio::glib::DateTime::now_local().unwrap();
-    let (start, _) = super::recent_bounds_at("modified:last-week", &now).unwrap();
+    let now = gio::glib::DateTime::now_local()
+        .expect("expected test value from gio::glib::DateTime::now_local()");
+    let (start, _) = super::recent_bounds_at("modified:last-week", &now)
+        .expect("expected test value from super::recent_bounds_at(\"modified:last-week\", &now)");
     video.modified_unix_seconds = Some(start + 1);
     let query = "videos from last week";
-    assert!(fuzzy_score(&literal, query, root).unwrap()
-        > fuzzy_score(&video, query, root).unwrap());
+    assert!(
+        fuzzy_score(&literal, query, root)
+            .expect("expected test value from fuzzy_score(&literal, query, root)")
+            > fuzzy_score(&video, query, root)
+                .expect("expected test value from fuzzy_score(&video, query, root)")
+    );
     assert!(fuzzy_score(&literal, "videos from last week modified:last-week", root).is_none());
 }
 
@@ -780,7 +834,10 @@ fn quoted_terms_stay_literal_through_parsing_and_filter_reconstruction() {
     assert_eq!(terms, "ext:flac");
     assert_eq!(filters.extension, None);
     let query = "\"Video Games\" type:audio \"ext:flac\"";
-    assert_eq!(super::search_filter_terms(query), "\"Video Games\" \"ext:flac\"");
+    assert_eq!(
+        super::search_filter_terms(query),
+        "\"Video Games\" \"ext:flac\""
+    );
     let reconstructed = format!("{} type:audio", super::search_filter_terms(query));
     assert!(search_filter_values(&reconstructed).1.inferred.is_empty());
 }
@@ -795,9 +852,19 @@ fn inferred_chip_dismissal_uses_original_unicode_token_positions() {
         ("İ from   last week", "İ \"from last week\""),
     ] {
         let (_, filters) = search_filter_values(query);
-        let chip = filters.inferred.first().unwrap();
-        assert_eq!(chip.literal_query(query).as_deref(), Some(expected), "{query}");
-        assert!(search_filter_values(expected).1.inferred.is_empty(), "{expected}");
+        let chip = filters
+            .inferred
+            .first()
+            .expect("expected test value from filters.inferred.first()");
+        assert_eq!(
+            chip.literal_query(query).as_deref(),
+            Some(expected),
+            "{query}"
+        );
+        assert!(
+            search_filter_values(expected).1.inferred.is_empty(),
+            "{expected}"
+        );
         assert_eq!(chip.literal_query("a different query"), None);
     }
 }
@@ -806,14 +873,21 @@ fn inferred_chip_dismissal_uses_original_unicode_token_positions() {
 fn inferred_chip_dismissal_preserves_interleaved_explicit_filters_and_escapes() {
     let query = "songs by Cameron ext:flac Winter";
     let (_, filters) = search_filter_values(query);
-    let artist = filters.inferred.iter().find(|chip| chip.label.starts_with("Artist:")).unwrap();
-    let literal = artist.literal_query(query).unwrap();
+    let artist = filters.inferred.iter().find(|chip| chip.label.starts_with("Artist:")).expect("expected test value from filters.inferred.iter().find(|chip| chip.label.starts_with(\"Artist:\"))");
+    let literal = artist
+        .literal_query(query)
+        .expect("expected test value from artist.literal_query(query)");
     assert_eq!(literal, "songs \"by Cameron\" ext:flac \"Winter\"");
-    assert_eq!(search_filter_values(&literal).1.extension.as_deref(), Some("flac"));
+    assert_eq!(
+        search_filter_values(&literal).1.extension.as_deref(),
+        Some("flac")
+    );
     let escaped = "songs by Artist\\\"Name";
     let (_, filters) = search_filter_values(escaped);
-    let artist = filters.inferred.iter().find(|chip| chip.label.starts_with("Artist:")).unwrap();
-    let literal = artist.literal_query(escaped).unwrap();
+    let artist = filters.inferred.iter().find(|chip| chip.label.starts_with("Artist:")).expect("expected test value from filters.inferred.iter().find(|chip| chip.label.starts_with(\"Artist:\"))");
+    let literal = artist
+        .literal_query(escaped)
+        .expect("expected test value from artist.literal_query(escaped)");
     assert!(literal.contains("Artist\\\"Name"));
     assert!(search_filter_values(&literal).1.artist.is_none());
 }
@@ -825,8 +899,14 @@ fn rating_filter_parsing_and_matching() {
     assert_eq!(RatingFilter::parse("5-star"), Some(RatingFilter::Exact(5)));
     assert_eq!(RatingFilter::parse("5stars"), Some(RatingFilter::Exact(5)));
     assert_eq!(RatingFilter::parse(">=4"), Some(RatingFilter::AtLeast(4)));
-    assert_eq!(RatingFilter::parse(">=4-stars"), Some(RatingFilter::AtLeast(4)));
-    assert_eq!(RatingFilter::parse(">3"), Some(RatingFilter::GreaterThan(3)));
+    assert_eq!(
+        RatingFilter::parse(">=4-stars"),
+        Some(RatingFilter::AtLeast(4))
+    );
+    assert_eq!(
+        RatingFilter::parse(">3"),
+        Some(RatingFilter::GreaterThan(3))
+    );
     assert_eq!(RatingFilter::parse("<=2"), Some(RatingFilter::AtMost(2)));
     assert_eq!(RatingFilter::parse("<3"), Some(RatingFilter::LessThan(3)));
     assert_eq!(RatingFilter::parse("unrated"), Some(RatingFilter::Unrated));
@@ -903,7 +983,10 @@ fn search_evaluates_rating_filters_and_excludes_non_matching_items() {
     assert!(store.set(rated_photo_path.clone(), Some(5)).is_ok());
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     while store.get(&rated_photo_path) != Some(5) {
-        assert!(std::time::Instant::now() < deadline, "store update timed out");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "store update timed out"
+        );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 
@@ -932,7 +1015,10 @@ fn search_evaluates_rating_filters_and_excludes_non_matching_items() {
     let _ = store.set(rated_photo_path.clone(), None);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     while store.get(&rated_photo_path).is_some() {
-        assert!(std::time::Instant::now() < deadline, "store cleanup timed out");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "store cleanup timed out"
+        );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }

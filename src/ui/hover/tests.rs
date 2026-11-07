@@ -125,10 +125,13 @@ fn durations_are_bounded_and_audio_does_not_report_cover_dimensions() {
 #[ignore = "Requires private GTK/XDG roots and a built sandbox helper; generated media only, never plays audio"]
 fn private_hover_cards_load_only_when_visible_cancel_and_keep_their_size() {
     use std::{fs, path::PathBuf, time::Instant};
-    let root = PathBuf::from(std::env::var_os("HERMES_PICKER_TEST_ROOT").unwrap());
+    let root = PathBuf::from(
+        std::env::var_os("HERMES_PICKER_TEST_ROOT")
+            .expect("expected test value from std::env::var_os(\"HERMES_PICKER_TEST_ROOT\")"),
+    );
     assert_eq!(glib::user_cache_dir(), root.join("cache"));
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let theme = super::super::theme::ThemeManager::shared();
     theme.set_hover_previews(true);
     let styles = gtk::CssProvider::new();
@@ -144,16 +147,23 @@ fn private_hover_cards_load_only_when_visible_cancel_and_keep_their_size() {
         errors.borrow()
     );
     gtk::style_context_add_provider_for_display(
-        &gtk::gdk::Display::default().unwrap(),
+        &gtk::gdk::Display::default()
+            .expect("expected test value from gtk::gdk::Display::default()"),
         &styles,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
-    fs::create_dir_all(root.join("hover-fixtures")).unwrap();
+    fs::create_dir_all(root.join("hover-fixtures")).expect("create generated fixture directory");
     let path = root.join("hover-fixtures/photo.png");
     let pixels =
-        gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 320, 240).unwrap();
+        gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 320, 240).expect("expected test value from gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 320, 240)");
     pixels.fill(0x376f8aff);
-    fs::write(&path, pixels.save_to_bufferv("png", &[]).unwrap()).unwrap();
+    fs::write(
+        &path,
+        pixels
+            .save_to_bufferv("png", &[])
+            .expect("expected test value from pixels.save_to_bufferv(\"png\", &[])"),
+    )
+    .expect("write generated fixture");
     let audio_path = root.join("hover-fixtures/silence.wav");
     let mut wave = Vec::new();
     wave.extend_from_slice(b"RIFF");
@@ -169,15 +179,16 @@ fn private_hover_cards_load_only_when_visible_cancel_and_keep_their_size() {
     wave.extend_from_slice(b"data");
     wave.extend_from_slice(&16_000u32.to_le_bytes());
     wave.resize(16_044, 0);
-    fs::write(&audio_path, wave).unwrap();
+    fs::write(&audio_path, wave).expect("write generated fixture");
     let audio = crate::sandbox::parse(
         &audio_path,
         ParseOperation::MediaMetadata,
         0,
         &Cancellation::default(),
     )
-    .unwrap();
-    let audio: Details = serde_json::from_slice(&audio.data).unwrap();
+    .expect("expected test value from crate::sandbox::parse( &audio_path, ParseOperation::MediaMetadata, 0, &Cancellation::default(), )");
+    let audio: Details =
+        serde_json::from_slice(&audio.data).expect("decode generated JSON fixture");
     assert_eq!(audio.duration_seconds, Some(1.0));
     assert_eq!(audio.audio_codec.as_deref(), Some("pcm_s16le"));
     let mut photo = fixture_entry("photo.png");
@@ -207,13 +218,20 @@ fn private_hover_cards_load_only_when_visible_cancel_and_keep_their_size() {
     };
     wait(&|| card.widget.is_mapped() && card.widget.width() > 0 && card.widget.height() > 100);
     let initial = (card.widget.width(), card.widget.height());
-    let title_left = card.title.compute_bounds(&card.widget).unwrap().x();
+    let title_left = card
+        .title
+        .compute_bounds(&card.widget)
+        .expect("expected test value from card.title.compute_bounds(&card.widget)")
+        .x();
     wait(&|| card.details.text().contains("320 × 240") && card.image.paintable().is_some());
     settle();
     assert_eq!(initial, (card.widget.width(), card.widget.height()));
     assert_eq!(
         title_left,
-        card.title.compute_bounds(&card.widget).unwrap().x()
+        card.title
+            .compute_bounds(&card.widget)
+            .expect("expected test value from card.title.compute_bounds(&card.widget)")
+            .x()
     );
     snapshot(&window, &root.join("hover-photo.png"));
     assert!(card.current(card.generation.get()));
@@ -253,7 +271,7 @@ fn private_hover_cards_load_only_when_visible_cancel_and_keep_their_size() {
         card.title
             .pango_context()
             .font_description()
-            .unwrap()
+            .expect("expected test value from card.title .pango_context() .font_description()")
             .size()
             == 22 * gtk::pango::SCALE
     });
@@ -278,8 +296,8 @@ fn private_hover_cards_load_only_when_visible_cancel_and_keep_their_size() {
     theme.set_hover_previews(false);
     assert!(!card.current(card.generation.get()));
     let saved: toml::Value =
-        toml::from_str(&fs::read_to_string(crate::paths::settings_file()).unwrap())
-            .unwrap();
+        toml::from_str(&fs::read_to_string(crate::paths::settings_file()).expect("expected test value from fs::read_to_string(crate::paths::settings_file())"))
+            .expect("expected test value from toml::from_str(&fs::read_to_string(crate::paths::settings_file()).unwrap())");
     assert_eq!(saved["hover_previews"].as_bool(), Some(false));
     theme.set_hover_previews(true);
     window.set_visible(false);
@@ -306,11 +324,13 @@ fn snapshot(window: &gtk::Window, path: &std::path::Path) {
         window.snapshot_child(&widget, &snapshot);
     }
     let renderer = gtk::gsk::CairoRenderer::new();
-    renderer.realize(None::<&gtk::gdk::Surface>).unwrap();
     renderer
-        .render_texture(&snapshot.to_node().unwrap(), None)
+        .realize(None::<&gtk::gdk::Surface>)
+        .expect("expected test value from renderer.realize(None::<&gtk::gdk::Surface>)");
+    renderer
+        .render_texture(snapshot.to_node().expect("expected test value from snapshot.to_node()"), None)
         .save_to_png(path)
-        .unwrap();
+        .expect("expected test value from renderer .render_texture(&snapshot.to_node().unwrap(), None) .save_to_png(path)");
     renderer.unrealize();
 }
 

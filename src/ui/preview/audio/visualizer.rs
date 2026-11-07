@@ -249,7 +249,7 @@ fn group_columns(levels: &[f32; SPECTRUM_BANDS], columns: usize) -> [f32; SPECTR
         return *levels;
     }
     let mut grouped = [0.0; SPECTRUM_BANDS];
-    for (column, pair) in levels.chunks_exact(2).enumerate() {
+    for (column, pair) in levels.as_chunks::<2>().0.iter().enumerate() {
         grouped[column] = pair[0].max(pair[1]);
     }
     grouped

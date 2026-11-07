@@ -14,16 +14,19 @@ use std::path::Path;
 use std::time::Instant;
 
 mod common;
-use common::status_bar::*;
 use common::TestEnv;
+use common::status_bar::*;
 
 /// Helper to run an async GIO query on a fresh or default GLib MainContext
 fn query_gio_free_space_async(path: &Path) -> Result<Option<u64>, String> {
     let ctx = glib::MainContext::new();
     let file = gio::File::for_path(path);
-    
+
     ctx.block_on(async move {
-        match file.query_filesystem_info_future("filesystem::free", glib::Priority::DEFAULT).await {
+        match file
+            .query_filesystem_info_future("filesystem::free", glib::Priority::DEFAULT)
+            .await
+        {
             Ok(info) => {
                 if info.has_attribute("filesystem::free") {
                     Ok(Some(info.attribute_uint64("filesystem::free")))
@@ -43,15 +46,24 @@ fn query_gio_free_space_async(path: &Path) -> Result<Option<u64>, String> {
 #[test]
 fn test_cross_mount_ext4_root_query() {
     let res = query_gio_free_space_async(Path::new("/")).expect("query root");
-    assert!(res.is_some(), "Root filesystem (ext4) must report free space");
-    assert!(res.unwrap() > 0, "Root free space must be > 0");
+    assert!(
+        res.is_some(),
+        "Root filesystem (ext4) must report free space"
+    );
+    assert!(
+        res.expect("expected test value from res") > 0,
+        "Root free space must be > 0"
+    );
 }
 
 #[test]
 fn test_cross_mount_tmpfs_tmp_query() {
     let res = query_gio_free_space_async(Path::new("/tmp")).expect("query tmp");
     assert!(res.is_some(), "Tmpfs (/tmp) must report free space");
-    assert!(res.unwrap() > 0, "Tmpfs free space must be > 0");
+    assert!(
+        res.expect("expected test value from res") > 0,
+        "Tmpfs free space must be > 0"
+    );
 }
 
 #[test]
@@ -73,7 +85,10 @@ fn test_cross_mount_vfat_efi_query() {
     if efi.exists() {
         let res = query_gio_free_space_async(efi).expect("query /boot/efi");
         // /boot/efi is vfat; must report free space if mounted
-        assert!(res.is_some(), "VFAT /boot/efi must report free space when mounted");
+        assert!(
+            res.is_some(),
+            "VFAT /boot/efi must report free space when mounted"
+        );
     }
 }
 
@@ -114,7 +129,10 @@ fn test_cross_mount_user_runtime_tmpfs() {
 fn test_path_resolution_nonexistent_path() {
     let path = Path::new("/tmp/nonexistent_subfolder_challenge_12345/abc");
     let res = query_gio_free_space_async(path).expect("query nonexistent path");
-    assert_eq!(res, None, "Nonexistent path should return None without error");
+    assert_eq!(
+        res, None,
+        "Nonexistent path should return None without error"
+    );
 }
 
 #[test]
@@ -128,11 +146,16 @@ fn test_path_resolution_empty_path() {
 #[test]
 fn test_path_resolution_unicode_and_spaces() {
     let env = TestEnv::new();
-    let unicode_dir = env.path().join("🦀 rust 📁 test 空间 with spaces & symbols");
+    let unicode_dir = env
+        .path()
+        .join("🦀 rust 📁 test 空间 with spaces & symbols");
     fs::create_dir_all(&unicode_dir).expect("create unicode dir");
-    
+
     let res = query_gio_free_space_async(&unicode_dir).expect("query unicode path");
-    assert!(res.is_some(), "Valid directory with unicode/spaces must return free space");
+    assert!(
+        res.is_some(),
+        "Valid directory with unicode/spaces must return free space"
+    );
 }
 
 #[test]
@@ -140,10 +163,13 @@ fn test_path_resolution_cross_mount_symlink() {
     let env = TestEnv::new();
     let link = env.file_path("link_to_root");
     let _ = symlink("/", &link);
-    
+
     if link.exists() {
         let res = query_gio_free_space_async(&link).expect("query symlink to root");
-        assert!(res.is_some(), "Symlink resolving to root must report free space");
+        assert!(
+            res.is_some(),
+            "Symlink resolving to root must report free space"
+        );
     }
 }
 
@@ -153,7 +179,7 @@ fn test_path_resolution_broken_symlink() {
     let link = env.file_path("broken_link");
     let target = env.file_path("deleted_target");
     let _ = symlink(&target, &link);
-    
+
     // Broken symlink: target does not exist
     let res = query_gio_free_space_async(&link).expect("query broken symlink");
     // Should gracefully return None without crashing
@@ -165,7 +191,10 @@ fn test_path_resolution_file_path() {
     let env = TestEnv::new();
     let file = env.write_file("regular_file.txt", b"hello world");
     let res = query_gio_free_space_async(&file).expect("query regular file");
-    assert!(res.is_some(), "Filesystem free space query on regular file must return free space of host fs");
+    assert!(
+        res.is_some(),
+        "Filesystem free space query on regular file must return free space of host fs"
+    );
 }
 
 #[test]
@@ -177,7 +206,10 @@ fn test_path_resolution_deeply_nested_directory() {
     }
     fs::create_dir_all(&deep).expect("create deep dirs");
     let res = query_gio_free_space_async(&deep).expect("query deep path");
-    assert!(res.is_some(), "Deeply nested directory must report free space");
+    assert!(
+        res.is_some(),
+        "Deeply nested directory must report free space"
+    );
 }
 
 // -------------------------------------------------------------------------
@@ -188,7 +220,7 @@ fn test_path_resolution_deeply_nested_directory() {
 fn test_glib_maincontext_rapid_stress_queries() {
     let ctx = glib::MainContext::new();
     let num_queries = 500;
-    
+
     let targets = [
         Path::new("/"),
         Path::new("/tmp"),
@@ -203,12 +235,18 @@ fn test_glib_maincontext_rapid_stress_queries() {
         for i in 0..num_queries {
             let target = targets[i % targets.len()];
             let file = gio::File::for_path(target);
-            let _ = file.query_filesystem_info_future("filesystem::free", glib::Priority::DEFAULT).await;
+            let _ = file
+                .query_filesystem_info_future("filesystem::free", glib::Priority::DEFAULT)
+                .await;
         }
     });
 
     let elapsed = start.elapsed();
-    assert!(elapsed.as_millis() < 5000, "500 sequential async queries completed in {:?}, under 5s ceiling", elapsed);
+    assert!(
+        elapsed.as_millis() < 5000,
+        "500 sequential async queries completed in {:?}, under 5s ceiling",
+        elapsed
+    );
 }
 
 // -------------------------------------------------------------------------
@@ -229,7 +267,10 @@ fn test_status_bar_formatting_invariants() {
     assert_eq!(format_selection_info(1, 0), "1 selected, 0 B");
     assert_eq!(format_selection_info(1, 1_500), "1 selected, 1.5 KB");
     assert_eq!(format_selection_info(5, 5_000_000), "5 selected, 5.0 MB");
-    assert_eq!(format_selection_info(10, 10_000_000_000), "10 selected, 10.0 GB");
+    assert_eq!(
+        format_selection_info(10, 10_000_000_000),
+        "10 selected, 10.0 GB"
+    );
 
     // Free space formatting
     assert_eq!(format_free_space(0), "0 B free");
@@ -265,10 +306,10 @@ fn test_async_generation_token_mitigation_model() {
         fn update_free_space(&self, delay_ms: u64, free_bytes: u64, ctx: &glib::MainContext) {
             let generation_id = self.generation.get() + 1;
             self.generation.set(generation_id);
-            
+
             let current_gen = self.generation.clone();
             let label = self.current_text.clone();
-            
+
             ctx.spawn_local(async move {
                 // Simulate varying async response latency
                 if delay_ms > 0 {
@@ -315,11 +356,17 @@ fn test_async_generation_token_mitigation_model() {
 #[test]
 fn test_selection_bytes_saturating_add() {
     let sizes = [1_000_000_000u64, 5_000_000_000u64, 500_000u64];
-    let total: u64 = sizes.iter().copied().fold(0u64, |acc, x| acc.saturating_add(x));
+    let total: u64 = sizes
+        .iter()
+        .copied()
+        .fold(0u64, |acc, x| acc.saturating_add(x));
     assert_eq!(total, 6_000_500_000);
 
     // Extreme test with saturating add near u64::MAX
     let extreme_sizes = [u64::MAX - 10, 50];
-    let extreme_total = extreme_sizes.iter().copied().fold(0u64, |acc, x| acc.saturating_add(x));
+    let extreme_total = extreme_sizes
+        .iter()
+        .copied()
+        .fold(0u64, |acc, x| acc.saturating_add(x));
     assert_eq!(extreme_total, u64::MAX);
 }

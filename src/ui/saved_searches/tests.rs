@@ -53,7 +53,10 @@ fn desktop_saved_search_manager_preserves_fields_and_waits_for_durable_ack() {
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
-            fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&root)
+                .expect("expected test value from fs::DirBuilder::new().mode(0o700).create(&root)");
             Self(root)
         }
     }
@@ -78,13 +81,13 @@ fn desktop_saved_search_manager_preserves_fields_and_waits_for_durable_ack() {
         assert!(dialog.state.pending.borrow().is_none());
     }
 
-    gtk::init().unwrap();
-    assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    assets::prepare().expect("register embedded test assets");
     let fixture = Fixture::new();
     let store = Store::start(fixture.0.join("queries-v1.json"));
     assert!(store.flush(Duration::from_secs(5)));
     let tokens: crate::ui::theme::ThemeTokens =
-        toml::from_str(include_str!("../../../data/themes/azure-glow.toml")).unwrap();
+        toml::from_str(include_str!("../../../data/themes/azure-glow.toml")).expect("expected test value from toml::from_str(include_str!(\"../../../data/themes/azure-glow.toml\"))");
     let styles = gtk::CssProvider::new();
     styles.load_from_string(&format!(
         "@define-color theme_bg {}; @define-color theme_surface {}; @define-color theme_text {}; @define-color theme_accent {}; @define-color theme_danger {}; @define-color theme_muted {}; @define-color theme_highlight {}; @define-color theme_border {}; @define-color theme_dim_text {};\n{}",
@@ -92,7 +95,8 @@ fn desktop_saved_search_manager_preserves_fields_and_waits_for_durable_ack() {
         tokens.muted, tokens.highlight, tokens.border, tokens.dim_text,
         include_str!("../../style.css")
     ));
-    let display = gdk::Display::default().unwrap();
+    let display =
+        gdk::Display::default().expect("expected test value from gdk::Display::default()");
     gtk::style_context_add_provider_for_display(
         &display,
         &styles,
@@ -130,11 +134,11 @@ fn desktop_saved_search_manager_preserves_fields_and_waits_for_durable_ack() {
     let frame = dialog
         .widget()
         .first_child()
-        .unwrap()
+        .expect("expected test value from dialog .widget() .first_child()")
         .next_sibling()
-        .unwrap()
+        .expect("expected test value from dialog .widget() .first_child() .unwrap() .next_sibling()")
         .downcast::<gtk::ScrolledWindow>()
-        .unwrap();
+        .expect("expected test value from dialog .widget() .first_child() .unwrap() .next_sibling() .unwrap() .downcast::<gtk::ScrolledWindow>()");
     assert_eq!(frame.min_content_width(), WIDTH);
     assert_eq!(frame.max_content_width(), WIDTH);
     assert_eq!(frame.min_content_height(), HEIGHT);
@@ -151,14 +155,14 @@ fn desktop_saved_search_manager_preserves_fields_and_waits_for_durable_ack() {
     let bounds = || {
         (
             (frame.width(), frame.height()),
-            dialog.state.status.compute_bounds(&frame).unwrap(),
+            dialog.state.status.compute_bounds(&frame).expect("expected test value from dialog.state.status.compute_bounds(&frame)"),
             dialog
                 .state
                 .save
                 .parent()
-                .unwrap()
+                .expect("expected test value from dialog .state .save .parent()")
                 .compute_bounds(&frame)
-                .unwrap(),
+                .expect("expected test value from dialog .state .save .parent() .unwrap() .compute_bounds(&frame)"),
         )
     };
     let initial_bounds = bounds();
@@ -180,9 +184,13 @@ fn desktop_saved_search_manager_preserves_fields_and_waits_for_durable_ack() {
     assert_eq!(dialog.state.scope.selected(), 0);
     assert_eq!(dialog.state.group.selected(), 2);
     assert_eq!(
-        ScopedSearch::from_uri(&edited_uri(&dialog.state).unwrap())
-            .unwrap()
-            .entity,
+        ScopedSearch::from_uri(
+            &edited_uri(&dialog.state).expect("expected test value from edited_uri(&dialog.state)")
+        )
+        .expect(
+            "expected test value from ScopedSearch::from_uri(&edited_uri(&dialog.state).unwrap())"
+        )
+        .entity,
         Some(entity.clone())
     );
     dialog.state.name.set_text("My songs");
@@ -193,7 +201,12 @@ fn desktop_saved_search_manager_preserves_fields_and_waits_for_durable_ack() {
     ack(&dialog, &store, true);
     assert_eq!(dialog.state.entries.borrow().len(), 1);
     assert!(dialog.state.status.text().contains("Saved to storage"));
-    let original = dialog.state.previous.borrow().clone().unwrap();
+    let original = dialog
+        .state
+        .previous
+        .borrow()
+        .clone()
+        .expect("expected test value from dialog.state.previous.borrow().clone()");
     if let Some(path) = std::env::var_os("HERMES_SAVED_SEARCH_SCREENSHOT") {
         settle();
         let paintable = gtk::WidgetPaintable::new(Some(&dialog.widget()));
@@ -205,9 +218,13 @@ fn desktop_saved_search_manager_preserves_fields_and_waits_for_durable_ack() {
         );
         if let Some(node) = snapshot.to_node() {
             let renderer = gtk::gsk::CairoRenderer::new();
-            renderer.realize(None::<&gdk::Surface>).unwrap();
+            renderer
+                .realize(None::<&gdk::Surface>)
+                .expect("expected test value from renderer.realize(None::<&gdk::Surface>)");
             let texture = renderer.render_texture(&node, None);
-            texture.save_to_png(path).unwrap();
+            texture
+                .save_to_png(path)
+                .expect("expected test value from texture.save_to_png(path)");
             renderer.unrealize();
         }
     }
@@ -215,19 +232,28 @@ fn desktop_saved_search_manager_preserves_fields_and_waits_for_durable_ack() {
     dialog.state.name.set_text("Renamed songs");
     dialog.state.query.set_text("album:synthetic");
     dialog.state.root.set_text("/synthetic/other-root");
-    let edited = ScopedSearch::from_uri(&edited_uri(&dialog.state).unwrap()).unwrap();
+    let edited = ScopedSearch::from_uri(
+        &edited_uri(&dialog.state).expect("expected test value from edited_uri(&dialog.state)"),
+    )
+    .expect("expected test value from ScopedSearch::from_uri(&edited_uri(&dialog.state).unwrap())");
     assert_eq!(edited.entity, Some(entity.clone()));
     assert_eq!(edited.root, PathBuf::from("/synthetic/other-root"));
     dialog.state.save.emit_clicked();
     assert_eq!(dialog.state.entries.borrow()[0], original);
     ack(&dialog, &store, true);
     assert_eq!(
-        dialog.state.previous.borrow().as_ref().unwrap().name,
+        dialog
+            .state
+            .previous
+            .borrow()
+            .as_ref()
+            .expect("expected test value from dialog.state.previous.borrow().as_ref()")
+            .name,
         "Renamed songs"
     );
     assert_eq!(
-        ScopedSearch::from_uri(&dialog.state.previous.borrow().as_ref().unwrap().uri)
-            .unwrap()
+        ScopedSearch::from_uri(&dialog.state.previous.borrow().as_ref().expect("expected test value from dialog.state.previous.borrow().as_ref()").uri)
+            .expect("expected test value from ScopedSearch::from_uri(&dialog.state.previous.borrow().as_ref().unwrap().uri)")
             .entity,
         Some(entity)
     );
@@ -246,7 +272,7 @@ fn desktop_saved_search_manager_preserves_fields_and_waits_for_durable_ack() {
             .context
             .borrow()
             .as_ref()
-            .unwrap()
+            .expect("expected test value from dialog .state .context .borrow() .as_ref()")
             .entity
             .is_some()
     );
@@ -259,7 +285,7 @@ fn desktop_saved_search_manager_preserves_fields_and_waits_for_durable_ack() {
             .context
             .borrow()
             .as_ref()
-            .unwrap()
+            .expect("expected test value from dialog .state .context .borrow() .as_ref()")
             .entity
             .is_none()
     );
@@ -267,7 +293,7 @@ fn desktop_saved_search_manager_preserves_fields_and_waits_for_durable_ack() {
     dialog.state.save.emit_clicked();
     ack(&dialog, &store, true);
     let physical =
-        ScopedSearch::from_uri(&dialog.state.previous.borrow().as_ref().unwrap().uri).unwrap();
+        ScopedSearch::from_uri(&dialog.state.previous.borrow().as_ref().expect("expected test value from dialog.state.previous.borrow().as_ref()").uri).expect("expected test value from ScopedSearch::from_uri(&dialog.state.previous.borrow().as_ref().unwrap().uri)");
     assert_eq!(physical.group, SearchGroup::Files);
     assert!(physical.entity.is_none());
     dialog.state.save.emit_clicked();
@@ -275,7 +301,14 @@ fn desktop_saved_search_manager_preserves_fields_and_waits_for_durable_ack() {
     dialog.state.reload.emit_clicked();
     ack(&dialog, &store, true);
 
-    let opened_uri = dialog.state.previous.borrow().as_ref().unwrap().uri.clone();
+    let opened_uri = dialog
+        .state
+        .previous
+        .borrow()
+        .as_ref()
+        .expect("expected test value from dialog.state.previous.borrow().as_ref()")
+        .uri
+        .clone();
     dialog.state.open.emit_clicked();
     assert!(!dialog.widget().is_visible());
     assert!(dialog.state.poll_source.borrow().is_none());
@@ -289,14 +322,19 @@ fn desktop_saved_search_manager_preserves_fields_and_waits_for_durable_ack() {
     dialog.show_manage();
     dialog.state.name.set_text("My unsaved name");
     dialog.state.query.set_text("my-unsaved-query");
-    let previous = dialog.state.previous.borrow().clone().unwrap();
+    let previous = dialog
+        .state
+        .previous
+        .borrow()
+        .clone()
+        .expect("expected test value from dialog.state.previous.borrow().clone()");
     store
         .send(Command::Update {
             previous: previous.clone(),
             name: "Changed elsewhere".into(),
             uri: previous.uri.clone(),
         })
-        .unwrap();
+        .expect("expected test value from store .send(Command::Update { previous: previous.clone(), name: \"Changed elsewhere\".into(), uri: previous.uri.clone(), })");
     assert!(store.flush(Duration::from_secs(5)));
     poll(&dialog.state);
     assert_eq!(dialog.state.name.text(), "My unsaved name");
@@ -348,14 +386,22 @@ fn desktop_saved_search_manager_preserves_fields_and_waits_for_durable_ack() {
     dialog.state.scope.set_selected(1);
     assert!(!dialog.state.root.is_sensitive());
     assert_eq!(
-        ScopedSearch::from_uri(&edited_uri(&dialog.state).unwrap())
-            .unwrap()
-            .scope,
+        ScopedSearch::from_uri(
+            &edited_uri(&dialog.state).expect("expected test value from edited_uri(&dialog.state)")
+        )
+        .expect(
+            "expected test value from ScopedSearch::from_uri(&edited_uri(&dialog.state).unwrap())"
+        )
+        .scope,
         SearchScope::Home
     );
     assert_eq!(dialog.state.name.max_length(), 80);
 
-    let revision = dialog.state.revision.get().unwrap();
+    let revision = dialog
+        .state
+        .revision
+        .get()
+        .expect("expected test value from dialog.state.revision.get()");
     apply_snapshot(
         &dialog.state,
         Snapshot {

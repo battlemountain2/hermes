@@ -2,15 +2,12 @@
 
 //! Tier 2: Boundary Value Analysis & Adversarial Tests (>= 5 test cases per feature for F1..F14).
 
-use std::fs;
-use std::path::Path;
-use super::common::{
-    run_preview_helper,
-    sniffer::*, status_bar::*, wire_protocol::*, TestEnv,
-};
+use super::common::{TestEnv, run_preview_helper, sniffer::*, status_bar::*, wire_protocol::*};
 use super::fixtures::{
     archives::*, audio::*, geotiff::*, models::*, pdf::*, spreadsheets::*, zip_util::*,
 };
+use std::fs;
+use std::path::Path;
 
 // =========================================================================
 // Feature F1: GeoTIFF Boundaries & Corruption
@@ -58,7 +55,9 @@ fn test_f1_geotiff_zero_dimensions_rejected() {
 
 #[test]
 fn test_f2_dem_all_nodata_values() {
-    let data = GeoTiffBuilder::new(32, 32).float32_dem(Some(-9999.0)).build();
+    let data = GeoTiffBuilder::new(32, 32)
+        .float32_dem(Some(-9999.0))
+        .build();
     assert!(data.len() > 32 * 32 * 4);
 }
 
@@ -69,7 +68,11 @@ fn test_f2_dem_constant_elevation_zero_range() {
     let range = max - min;
     assert_eq!(range, 0.0);
     // Guard against divide-by-zero in normalization stretch
-    let normalized = if range == 0.0 { 128u8 } else { ((min / max) * 255.0) as u8 };
+    let normalized = if range == 0.0 {
+        128u8
+    } else {
+        ((min / max) * 255.0) as u8
+    };
     assert_eq!(normalized, 128);
 }
 
@@ -115,7 +118,11 @@ fn test_f3_metadata_missing_crs_tag() {
 fn test_f3_metadata_zero_resolution_division_guard() {
     let res_x = 0.0f64;
     let res_y = 0.0f64;
-    let safe_calc = if res_x == 0.0 || res_y == 0.0 { 1.0 } else { res_x * res_y };
+    let safe_calc = if res_x == 0.0 || res_y == 0.0 {
+        1.0
+    } else {
+        res_x * res_y
+    };
     assert_eq!(safe_calc, 1.0);
 }
 
@@ -330,14 +337,18 @@ fn test_f8_ascii_stl_empty_file() {
 
 #[test]
 fn test_f8_binary_stl_truncated_80byte_header() {
-    let data = vec![0u8; 40]; // Less than 80 bytes
+    let data = [0u8; 40]; // Less than 80 bytes
     assert!(data.len() < 84);
 }
 
 #[test]
 fn test_f8_binary_stl_triangle_count_mismatch() {
     let corrupted = sample_corrupted_stl();
-    let triangles = u32::from_le_bytes(corrupted[80..84].try_into().unwrap());
+    let triangles = u32::from_le_bytes(
+        corrupted[80..84]
+            .try_into()
+            .expect("expected test value from corrupted[80..84].try_into()"),
+    );
     let expected_bytes = 84 + (triangles as usize) * 50;
     assert!(corrupted.len() < expected_bytes);
 }
@@ -405,7 +416,10 @@ fn test_f9_cbr_truncated_rar_header() {
 
 #[test]
 fn test_f10_ods_missing_content_xml() {
-    let zip = create_zip(&[("mimetype", b"application/vnd.oasis.opendocument.spreadsheet")]);
+    let zip = create_zip(&[(
+        "mimetype",
+        b"application/vnd.oasis.opendocument.spreadsheet",
+    )]);
     let zip_str = String::from_utf8_lossy(&zip);
     assert!(!zip_str.contains("content.xml"));
 }
@@ -414,7 +428,7 @@ fn test_f10_ods_missing_content_xml() {
 fn test_f10_ods_empty_spreadsheet_table() {
     let empty_table_xml = r#"<office:document-content><office:body><office:spreadsheet><table:table/></office:spreadsheet></office:body></office:document-content>"#;
     let zip = create_zip(&[("content.xml", empty_table_xml.as_bytes())]);
-    assert!(zip.len() > 0);
+    assert!(!zip.is_empty());
 }
 
 #[test]
@@ -452,7 +466,11 @@ fn test_f11_wav_truncated_riff_header() {
 fn test_f11_wav_zero_sample_rate() {
     let mut wav = sample_wav();
     wav[24..28].copy_from_slice(&0u32.to_le_bytes()); // sample rate = 0
-    let rate = u32::from_le_bytes(wav[24..28].try_into().unwrap());
+    let rate = u32::from_le_bytes(
+        wav[24..28]
+            .try_into()
+            .expect("expected test value from wav[24..28].try_into()"),
+    );
     assert_eq!(rate, 0);
 }
 
@@ -460,7 +478,11 @@ fn test_f11_wav_zero_sample_rate() {
 fn test_f11_wav_zero_channels() {
     let mut wav = sample_wav();
     wav[22..24].copy_from_slice(&0u16.to_le_bytes()); // num channels = 0
-    let channels = u16::from_le_bytes(wav[22..24].try_into().unwrap());
+    let channels = u16::from_le_bytes(
+        wav[22..24]
+            .try_into()
+            .expect("expected test value from wav[22..24].try_into()"),
+    );
     assert_eq!(channels, 0);
 }
 
@@ -521,8 +543,10 @@ fn test_f12_pdf_missing_trailer_rejected() {
 fn test_f12_pdf_zero_selection_box_no_match() {
     let sel = (10.0f64, 10.0f64, 0.0f64, 0.0f64);
     let glyph = (50.0f64, 50.0f64, 20.0f64, 20.0f64);
-    let intersects = !(glyph.0 > sel.0 + sel.2 || glyph.0 + glyph.2 < sel.0 ||
-                       glyph.1 > sel.1 + sel.3 || glyph.1 + glyph.3 < sel.1);
+    let intersects = !(glyph.0 > sel.0 + sel.2
+        || glyph.0 + glyph.2 < sel.0
+        || glyph.1 > sel.1 + sel.3
+        || glyph.1 + glyph.3 < sel.1);
     assert!(!intersects);
 }
 
@@ -538,7 +562,8 @@ fn test_f12_pdf_out_of_range_page_requested() {
     assert!(res.status.success());
     let meta_file = env.file_path("result.meta");
     if meta_file.exists() {
-        let meta_str = fs::read_to_string(&meta_file).unwrap();
+        let meta_str = fs::read_to_string(&meta_file)
+            .expect("expected test value from fs::read_to_string(&meta_file)");
         assert_eq!(meta_str.trim(), "0 1");
     }
 }

@@ -13,7 +13,7 @@ fn wide_layout_requires_enough_room_for_both_children() {
 #[test]
 #[ignore = "Private GTK display; exercises real height-for-width allocation without a media decoder"]
 fn desktop_player_card_reflows_without_a_width_property_or_resize_loop() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     let hero = gtk::DrawingArea::new();
     hero.set_content_width(230);
     hero.set_content_height(180);
@@ -26,8 +26,12 @@ fn desktop_player_card_reflows_without_a_width_property_or_resize_loop() {
         let (minimum, natural, _, _) = card.measure(gtk::Orientation::Vertical, width);
         assert_eq!(minimum, natural);
         card.allocate(width, natural, -1, None);
-        let hero_bounds = hero.compute_bounds(&card).unwrap();
-        let controls_bounds = controls.compute_bounds(&card).unwrap();
+        let hero_bounds = hero
+            .compute_bounds(&card)
+            .expect("expected test value from hero.compute_bounds(&card)");
+        let controls_bounds = controls
+            .compute_bounds(&card)
+            .expect("expected test value from controls.compute_bounds(&card)");
         if width >= WIDE_THRESHOLD {
             assert_eq!(natural, 200);
             assert!(controls_bounds.x() >= hero_bounds.x() + hero_bounds.width() + SPACING as f32);
@@ -46,7 +50,15 @@ fn desktop_player_card_reflows_without_a_width_property_or_resize_loop() {
     controls.set_content_width(220);
     card.set_direction(gtk::TextDirection::Rtl);
     card.allocate(600, 200, -1, None);
-    assert!(hero.compute_bounds(&card).unwrap().x() > controls.compute_bounds(&card).unwrap().x());
+    assert!(
+        hero.compute_bounds(&card)
+            .expect("expected test value from hero.compute_bounds(&card)")
+            .x()
+            > controls
+                .compute_bounds(&card)
+                .expect("expected test value from controls.compute_bounds(&card)")
+                .x()
+    );
     let weak_hero = hero.downgrade();
     let weak_controls = controls.downgrade();
     drop(hero);

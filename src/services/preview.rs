@@ -95,6 +95,10 @@ pub struct Preview {
 }
 
 #[derive(Clone, Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Provider events carry one owned preview through the existing synchronous callback API"
+)]
 pub enum PreviewEvent {
     Ready(Preview),
     Failed {

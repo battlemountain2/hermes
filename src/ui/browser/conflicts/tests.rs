@@ -3,8 +3,8 @@ use super::*;
 #[test]
 #[ignore = "Private GTK display and isolated XDG roots; verifies real conflict buttons"]
 fn conflict_dialog_returns_the_chosen_policy_and_cancels_when_dismissed() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     crate::ui::window::load_styles();
     let _theme = crate::ui::theme::ThemeManager::shared();
     let view = BrowserView::new(
@@ -40,7 +40,7 @@ fn conflict_dialog_returns_the_chosen_policy_and_cancels_when_dismissed() {
         None
     }
     button(overlay.upcast_ref(), "Merge")
-        .unwrap()
+        .expect("expected test value from button(overlay.upcast_ref(), \"Merge\")")
         .emit_clicked();
     assert_eq!(
         glib::MainContext::default().block_on(reply.wait()),

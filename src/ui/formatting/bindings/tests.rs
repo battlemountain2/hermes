@@ -11,7 +11,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        gtk::init().unwrap();
+        gtk::init().expect("initialize the isolated GTK display");
         let options = OPTIONS.get();
         configure("relative", "decimal");
         Self {
@@ -64,11 +64,22 @@ fn wait_for(predicate: impl Fn() -> bool) {
 }
 
 fn snapshot(label: &gtk::Label) -> Update {
-    REGISTRY.with_borrow(|registry| registry.update(label.as_ptr() as usize).unwrap())
+    REGISTRY.with_borrow(|registry| {
+        registry
+            .update(label.as_ptr() as usize)
+            .expect("expected test value from registry.update(label.as_ptr() as usize)")
+    })
 }
 
 fn timer_identity() -> Rc<()> {
-    REGISTRY.with_borrow(|registry| registry.timer.as_ref().unwrap().identity.clone())
+    REGISTRY.with_borrow(|registry| {
+        registry
+            .timer
+            .as_ref()
+            .expect("expected test value from registry.timer.as_ref()")
+            .identity
+            .clone()
+    })
 }
 
 fn has_timer() -> bool {
@@ -79,7 +90,10 @@ fn has_timer() -> bool {
 #[ignore = "Requires an isolated GTK display; in-memory formatting only"]
 fn live_refresh_updates_retained_labels_and_absolute_date_tooltips() {
     let _fixture = Fixture::new();
-    let seconds = glib::DateTime::now_local().unwrap().to_unix() - 310;
+    let seconds = glib::DateTime::now_local()
+        .expect("expected test value from glib::DateTime::now_local()")
+        .to_unix()
+        - 310;
     let values = [
         Value::Size(1_048_576),
         Value::Timestamp(seconds),
@@ -188,7 +202,10 @@ fn mapped_relative_dates_share_one_minute_timer_and_resume_on_map() {
     for label in [&first, &second, &size] {
         content.append(label);
     }
-    let seconds = glib::DateTime::now_local().unwrap().to_unix() - 310;
+    let seconds = glib::DateTime::now_local()
+        .expect("expected test value from glib::DateTime::now_local()")
+        .to_unix()
+        - 310;
     bind(&first, Value::Timestamp(seconds));
     bind(&second, Value::Timestamp(seconds));
     bind(&size, Value::Size(2048));
@@ -199,8 +216,8 @@ fn mapped_relative_dates_share_one_minute_timer_and_resume_on_map() {
     REGISTRY.with_borrow(|registry| {
         assert_eq!(registry.mapped_dates.len(), 2);
         let source = glib::MainContext::default()
-            .find_source_by_id(&registry.timer.as_ref().unwrap().source)
-            .unwrap();
+            .find_source_by_id(&registry.timer.as_ref().expect("expected test value from registry.timer.as_ref()").source)
+            .expect("expected test value from glib::MainContext::default() .find_source_by_id(&registry.timer.as_ref().unwrap().source)");
         let remaining = source.ready_time() - glib::monotonic_time();
         assert!((55_000_000..=60_000_000).contains(&remaining));
     });
@@ -316,7 +333,10 @@ fn reentrant_preferences_and_clear_keep_only_the_latest_rendering() {
             configure("iso", "binary");
         }
     });
-    let seconds = glib::DateTime::now_local().unwrap().to_unix() - 310;
+    let seconds = glib::DateTime::now_local()
+        .expect("expected test value from glib::DateTime::now_local()")
+        .to_unix()
+        - 310;
     bind(&label, Value::Timestamp(seconds));
     assert_eq!(label.text(), format_value(Value::Timestamp(seconds)));
     assert_eq!(date_format(), DateFormat::Iso);

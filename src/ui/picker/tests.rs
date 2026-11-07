@@ -10,15 +10,17 @@ use std::{
 #[ignore = "Private GTK display and isolated XDG roots; creates only generated folders"]
 fn private_new_folder_control_creates_and_enters_folder_without_changing_save_name() {
     glib::set_prgname(Some("hermes-picker-test"));
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let theme = prepare();
     theme.select_theme("graphite");
     let application = gtk::Application::builder()
         .application_id("io.github.battlemountain2.Hermes.FolderTest")
         .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
-    application.register(None::<&gio::Cancellable>).unwrap();
+    application
+        .register(None::<&gio::Cancellable>)
+        .expect("expected test value from application.register(None::<&gio::Cancellable>)");
     let fixture = FixtureDirectory::new();
     let request = Request::parse(
         "SaveFile",
@@ -34,7 +36,7 @@ fn private_new_folder_control_creates_and_enters_folder_without_changing_save_na
             ("current_name".into(), "download.7z".to_variant()),
         ]),
     )
-    .unwrap();
+    .expect("expected test value from Request::parse( \"SaveFile\", \"Save generated archive\".into(), String::new(), Options::from([ ( \"current_folder\".into(), [fixture...");
     let picker = Picker::new(&application, request, Rc::new(|_| {}));
     until(|| {
         picker
@@ -66,17 +68,19 @@ fn private_new_folder_control_creates_and_enters_folder_without_changing_save_na
     let button = find::<gtk::MenuButton>(picker.0.dialog.upcast_ref(), &|button| {
         button.has_css_class("picker-new-folder")
     })
-    .unwrap();
+    .expect("expected test value from find::<gtk::MenuButton>(picker.0.dialog.upcast_ref(), &|button| { button.has_css_class(\"picker-new-folder\") })");
     button.popup();
-    let popover = button.popover().unwrap();
+    let popover = button
+        .popover()
+        .expect("expected test value from button.popover()");
     let field = find::<gtk::Entry>(popover.upcast_ref(), &|entry| {
         entry.placeholder_text().as_deref() == Some("Folder name")
     })
-    .unwrap();
+    .expect("expected test value from find::<gtk::Entry>(popover.upcast_ref(), &|entry| { entry.placeholder_text().as_deref() == Some(\"Folder name\") })");
     let create = find::<gtk::Button>(popover.upcast_ref(), &|button| {
         button.label().as_deref() == Some("Create folder")
     })
-    .unwrap();
+    .expect("expected test value from find::<gtk::Button>(popover.upcast_ref(), &|button| { button.label().as_deref() == Some(\"Create folder\") })");
     assert!(!create.is_sensitive());
     field.set_text("../outside");
     assert!(!create.is_sensitive());
@@ -103,7 +107,10 @@ fn private_new_folder_control_creates_and_enters_folder_without_changing_save_na
 #[test]
 fn chooser_styles_use_only_existing_semantic_color_tokens() {
     let styles = include_str!("../../style.css");
-    let chooser = styles.split(".hermes-picker,").nth(1).unwrap();
+    let chooser = styles
+        .split(".hermes-picker,")
+        .nth(1)
+        .expect("expected test value from styles.split(\".hermes-picker,\").nth(1)");
     let known = [
         "theme_bg",
         "theme_surface",
@@ -120,7 +127,7 @@ fn chooser_styles_use_only_existing_semantic_color_tokens() {
         let token = value
             .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
             .next()
-            .unwrap();
+            .expect("expected test value from value .split(|character: char| !character.is_ascii_alphanumeric() && character != '_') .next()");
         assert!(
             known.contains(&token),
             "Undefined chooser color token: {token}"
@@ -131,7 +138,10 @@ fn chooser_styles_use_only_existing_semantic_color_tokens() {
 #[test]
 fn chooser_typography_inherits_the_application_font_and_scale() {
     let styles = include_str!("../../style.css");
-    let chooser = styles.split(".hermes-picker,").nth(1).unwrap();
+    let chooser = styles
+        .split(".hermes-picker,")
+        .nth(1)
+        .expect("expected test value from styles.split(\".hermes-picker,\").nth(1)");
     assert!(!chooser.contains("Noto Sans"));
     assert!(!chooser.contains("font-size: 14px"));
     assert!(chooser.contains("font-family: inherit"));
@@ -159,9 +169,9 @@ fn conflict_names_keep_extensions_hidden_names_and_native_bytes() {
 fn open_save_and_multiple_selection_validate_native_paths_without_writing_files() {
     let fixture = FixtureDirectory::new();
     let file = fixture.0.join("generated photo.txt");
-    fs::write(&file, b"original").unwrap();
+    fs::write(&file, b"original").expect("write generated fixture");
     let alias = fixture.0.join("folder alias");
-    symlink(&fixture.0, &alias).unwrap();
+    symlink(&fixture.0, &alias).expect("expected test value from symlink(&fixture.0, &alias)");
     let context = glib::MainContext::new();
     context
         .with_thread_default(|| {
@@ -172,7 +182,7 @@ fn open_save_and_multiple_selection_validate_native_paths_without_writing_files(
                 };
                 let selected = selected_paths(&open, vec![gio::File::for_path(&file)])
                     .await
-                    .unwrap();
+                    .expect("expected test value from selected_paths(&open, vec![gio::File::for_path(&file)]) .await");
                 assert_eq!(selected, [gio::File::for_path(&file).uri().to_string()]);
                 assert!(
                     selected_paths(&open, vec![gio::File::for_path(&fixture.0)])
@@ -204,7 +214,7 @@ fn open_save_and_multiple_selection_validate_native_paths_without_writing_files(
                         vec![gio::File::for_path(&file); 2]
                     )
                     .await
-                    .unwrap()
+                    .expect("expected test value from selected_paths( &Kind::Open { directory: false, multiple: true }, vec![gio::File::for_path(&file); 2] ) .await")
                     .len(),
                     2
                 );
@@ -231,17 +241,17 @@ fn open_save_and_multiple_selection_validate_native_paths_without_writing_files(
                         .is_err()
                 );
                 assert!(!destination.exists());
-                assert_eq!(fs::read(&file).unwrap(), b"original");
+                assert_eq!(fs::read(&file).expect("read generated fixture"), b"original");
             })
         })
-        .unwrap();
+        .expect("read generated fixture");
 }
 
 #[test]
 fn save_files_avoids_existing_broken_symlinks_and_same_request_name_collisions() {
     let fixture = FixtureDirectory::new();
-    fs::write(fixture.0.join("report.txt"), b"keep").unwrap();
-    symlink(fixture.0.join("missing"), fixture.0.join("report (1).txt")).unwrap();
+    fs::write(fixture.0.join("report.txt"), b"keep").expect("write generated fixture");
+    symlink(fixture.0.join("missing"), fixture.0.join("report (1).txt")).expect("expected test value from symlink(fixture.0.join(\"missing\"), fixture.0.join(\"report (1).txt\"))");
     let names = vec![
         "report.txt".into(),
         "report.txt".into(),
@@ -256,15 +266,15 @@ fn save_files_avoids_existing_broken_symlinks_and_same_request_name_collisions()
                     vec![gio::File::for_path(&fixture.0)],
                 )
                 .await
-                .unwrap();
+                .expect("expected test value from selected_paths( &Kind::SaveFiles(names), vec![gio::File::for_path(&fixture.0)], ) .await");
                 assert_eq!(uris.len(), 3);
                 assert!(uris[0].ends_with("report%20(2).txt"));
                 assert!(uris[1].ends_with("report%20(3).txt"));
                 assert!(uris[2].ends_with("native%FF.txt"));
-                assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 2);
+                assert_eq!(fs::read_dir(&fixture.0).expect("expected test value from fs::read_dir(&fixture.0)").count(), 2);
             })
         })
-        .unwrap();
+        .expect("expected test value from context .with_thread_default(|| { context.block_on(async { let uris = selected_paths( &Kind::SaveFiles(names), vec![gio::File::...");
 }
 
 #[track_caller]
@@ -285,18 +295,20 @@ fn until(condition: impl Fn() -> bool) {
 #[ignore = "Private GTK display and isolated XDG roots only; generated chooser files, no user documents"]
 fn private_chooser_returns_file_filters_choices_and_cancels_exactly_once() {
     glib::set_prgname(Some("hermes-picker-test"));
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     glib::set_application_name(crate::identity::NAME);
-    crate::assets::prepare().unwrap();
+    crate::assets::prepare().expect("register embedded test assets");
     let theme = prepare();
     let application = gtk::Application::builder()
         .application_id("io.github.battlemountain2.Hermes.PickerTest")
         .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
-    application.register(None::<&gio::Cancellable>).unwrap();
+    application
+        .register(None::<&gio::Cancellable>)
+        .expect("expected test value from application.register(None::<&gio::Cancellable>)");
     let fixture = FixtureDirectory::new();
     let target = fixture.0.join("chosen.txt");
-    fs::write(&target, b"generated").unwrap();
+    fs::write(&target, b"generated").expect("write generated fixture");
     let _ = fs::create_dir(fixture.0.join("Projects"));
     let _ = fs::write(fixture.0.join("music.flac"), b"audio");
     let filter: crate::portal::request::Filter = ("Text".into(), vec![(0, "*.txt".into())]);
@@ -317,7 +329,7 @@ fn private_chooser_returns_file_filters_choices_and_cancels_exactly_once() {
             ("choices".into(), choices.to_variant()),
         ]),
     )
-    .unwrap();
+    .expect("expected test value from Request::parse( \"OpenFile\", \"Choose generated file\".into(), String::new(), Options::from([ ( \"current_folder\".into(), [fixture....");
     let received = Rc::new(RefCell::new(Vec::new()));
     let captured = received.clone();
     let picker = Picker::new(
@@ -338,13 +350,15 @@ fn private_chooser_returns_file_filters_choices_and_cancels_exactly_once() {
         .0
         .dialog
         .set_file(&gio::File::for_path(&target))
-        .unwrap();
+        .expect(
+            "expected test value from picker .0 .dialog .set_file(&gio::File::for_path(&target))",
+        );
     until(|| picker.0.dialog.file().and_then(|file| file.path()).as_ref() == Some(&target));
     let accept = picker
         .0
         .dialog
         .widget_for_response(gtk::ResponseType::Accept)
-        .unwrap();
+        .expect("expected test value from picker .0 .dialog .widget_for_response(gtk::ResponseType::Accept)");
     fn check_decorations(w: &gtk::Widget, thumbnails: &Cell<usize>, file_icons: &Cell<usize>) {
         if w.type_().name() == "GtkFileThumbnail" && w.has_css_class("picker-thumbnail-connected") {
             thumbnails.set(thumbnails.get() + 1);
@@ -386,7 +400,7 @@ fn private_chooser_returns_file_filters_choices_and_cancels_exactly_once() {
             accept
                 .style_context()
                 .lookup_color("theme_on_accent")
-                .unwrap()
+                .expect("expected test value from accept .style_context() .lookup_color(\"theme_on_accent\")")
         );
     }
     if let Some(path) = std::env::var_os("HERMES_PICKER_SCREENSHOT") {
@@ -424,29 +438,39 @@ fn private_chooser_returns_file_filters_choices_and_cancels_exactly_once() {
             .to_node()
             .expect("The chooser must render before saving its screenshot");
         let renderer = gtk::gsk::CairoRenderer::new();
-        renderer.realize(None::<&gtk::gdk::Surface>).unwrap();
+        renderer
+            .realize(None::<&gtk::gdk::Surface>)
+            .expect("expected test value from renderer.realize(None::<&gtk::gdk::Surface>)");
         renderer
             .render_texture(&node, None)
             .save_to_png(path)
-            .unwrap();
+            .expect(
+                "expected test value from renderer .render_texture(&node, None) .save_to_png(path)",
+            );
         renderer.unrealize();
         sample.close();
     }
     picker.0.dialog.response(gtk::ResponseType::Accept);
     until(|| !received.borrow().is_empty());
-    let results = received.borrow()[0].clone().unwrap();
+    let results = received.borrow()[0]
+        .clone()
+        .expect("expected test value from received.borrow()[0].clone()");
     assert_eq!(
-        results["uris"].get::<Vec<String>>().unwrap(),
+        results["uris"]
+            .get::<Vec<String>>()
+            .expect("expected test value from results[\"uris\"].get::<Vec<String>>()"),
         [gio::File::for_path(&target).uri().to_string()]
     );
     assert_eq!(
         results["current_filter"]
             .get::<crate::portal::request::Filter>()
-            .unwrap(),
+            .expect("expected test value from results[\"current_filter\"] .get::<crate::portal::request::Filter>()"),
         filter
     );
     assert_eq!(
-        results["choices"].get::<Vec<(String, String)>>().unwrap(),
+        results["choices"]
+            .get::<Vec<(String, String)>>()
+            .expect("expected test value from results[\"choices\"].get::<Vec<(String, String)>>()"),
         [("readonly".into(), "true".into())]
     );
     picker.0.dialog.response(gtk::ResponseType::Cancel);
@@ -472,18 +496,20 @@ fn private_chooser_returns_file_filters_choices_and_cancels_exactly_once() {
 #[ignore = "Private GTK display and generated save destinations only; never writes to user documents"]
 fn private_save_requires_overwrite_confirmation_and_closes_child_dialogs() {
     glib::set_prgname(Some("hermes-picker-test"));
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     glib::set_application_name(crate::identity::NAME);
-    crate::assets::prepare().unwrap();
+    crate::assets::prepare().expect("register embedded test assets");
     let _theme = prepare();
     let application = gtk::Application::builder()
         .application_id("io.github.battlemountain2.Hermes.SaveTest")
         .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
-    application.register(None::<&gio::Cancellable>).unwrap();
+    application
+        .register(None::<&gio::Cancellable>)
+        .expect("expected test value from application.register(None::<&gio::Cancellable>)");
     let fixture = FixtureDirectory::new();
     let existing = fixture.0.join("existing.txt");
-    fs::write(&existing, b"original").unwrap();
+    fs::write(&existing, b"original").expect("write generated fixture");
     let options = Options::from([
         (
             "current_folder".into(),
@@ -499,7 +525,7 @@ fn private_save_requires_overwrite_confirmation_and_closes_child_dialogs() {
         String::new(),
         options,
     )
-    .unwrap();
+    .expect("expected test value from Request::parse( \"SaveFile\", \"Save generated file\".into(), String::new(), options, )");
     let received = Rc::new(RefCell::new(Vec::new()));
     let captured = received.clone();
     let picker = Picker::new(
@@ -518,9 +544,13 @@ fn private_save_requires_overwrite_confirmation_and_closes_child_dialogs() {
     });
     picker.0.dialog.response(gtk::ResponseType::Accept);
     until(|| !received.borrow().is_empty());
-    let results = received.borrow()[0].clone().unwrap();
+    let results = received.borrow()[0]
+        .clone()
+        .expect("expected test value from received.borrow()[0].clone()");
     assert_eq!(
-        results["uris"].get::<Vec<String>>().unwrap(),
+        results["uris"]
+            .get::<Vec<String>>()
+            .expect("expected test value from results[\"uris\"].get::<Vec<String>>()"),
         [gio::File::for_path(fixture.0.join("new.txt"))
             .uri()
             .to_string()]
@@ -560,10 +590,13 @@ fn private_save_requires_overwrite_confirmation_and_closes_child_dialogs() {
         0,
         "Existing destination was accepted without confirmation"
     );
-    let child = confirmation().unwrap();
+    let child = confirmation().expect("expected test value from confirmation()");
     picker.close();
     until(|| !child.is_visible());
     assert_eq!(blocked.get(), 0);
-    assert_eq!(fs::read(&existing).unwrap(), b"original");
+    assert_eq!(
+        fs::read(&existing).expect("read generated fixture"),
+        b"original"
+    );
     assert!(application.windows().is_empty());
 }

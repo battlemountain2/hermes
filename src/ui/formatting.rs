@@ -162,7 +162,7 @@ pub(crate) fn format_transfer_eta(remaining_bytes: u64, speed_bytes_per_sec: f64
     } else if remaining_secs < 60 {
         format!("About {remaining_secs} seconds remaining")
     } else if remaining_secs < 3600 {
-        format!("About {} minutes remaining", (remaining_secs + 59) / 60)
+        format!("About {} minutes remaining", remaining_secs.div_ceil(60))
     } else {
         format!(
             "About {}h {}m remaining",

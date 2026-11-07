@@ -14,16 +14,23 @@ fn fixtures() -> PathBuf {
 
 fn save_shot(name: &str, output: &ParseOutput) {
     if let Some(directory) = std::env::var_os("HERMES_OFFICE_TEST_SHOTS") {
-        fs::create_dir_all(&directory).unwrap();
-        fs::write(PathBuf::from(directory).join(name), &output.data).unwrap();
+        fs::create_dir_all(&directory).expect("generated fixture must provide the expected value");
+        fs::write(PathBuf::from(directory).join(name), &output.data)
+            .expect("generated fixture must provide the expected value");
     }
 }
 
 fn assert_color(png: &[u8], expected: [u8; 3]) {
     let loader = gdk_pixbuf::PixbufLoader::new();
-    loader.write(png).unwrap();
-    loader.close().unwrap();
-    let image = loader.pixbuf().unwrap();
+    loader
+        .write(png)
+        .expect("generated fixture must provide the expected value");
+    loader
+        .close()
+        .expect("generated fixture must provide the expected value");
+    let image = loader
+        .pixbuf()
+        .expect("generated fixture must provide the expected value");
     let pixels = image.read_pixel_bytes();
     let channels = image.n_channels() as usize;
     let stride = image.rowstride() as usize;
@@ -54,9 +61,10 @@ fn formatted_workbook_layout_preserves_styles_merged_cells_and_second_sheet_navi
         "Install system LibreOffice"
     );
     let input = fixtures().join("layout.xlsx");
-    let original = fs::read(&input).unwrap();
+    let original = fs::read(&input).expect("generated fixture must provide the expected value");
     let cancellation = Cancellation::default();
-    let first = crate::sandbox::office::render(&input, 0, &cancellation).unwrap();
+    let first = crate::sandbox::office::render(&input, 0, &cancellation)
+        .expect("generated fixture must provide the expected value");
     assert!(first.pages >= 2);
     assert_eq!((first.page, first.pages), (0, 2));
     let first_layer = first.text_layer.as_ref().expect("Selectable workbook text");
@@ -88,9 +96,13 @@ fn formatted_workbook_layout_preserves_styles_merged_cells_and_second_sheet_navi
     save_shot("layout.xlsx-1.png", &first);
 
     for page in [1, 0, 1] {
-        let output = crate::sandbox::office::render(&input, page, &cancellation).unwrap();
+        let output = crate::sandbox::office::render(&input, page, &cancellation)
+            .expect("generated fixture must provide the expected value");
         assert_eq!((output.page, output.pages), (page, 2));
-        let layer = output.text_layer.as_ref().unwrap();
+        let layer = output
+            .text_layer
+            .as_ref()
+            .expect("generated fixture must provide the expected value");
         let expected = if page == 0 {
             "Merged summary"
         } else {
@@ -109,16 +121,26 @@ fn formatted_workbook_layout_preserves_styles_merged_cells_and_second_sheet_navi
     }
 
     let document =
-        crate::sandbox::office::render(&fixtures().join("layout.docx"), 0, &cancellation).unwrap();
-    let document_layer = document.text_layer.as_ref().unwrap();
+        crate::sandbox::office::render(&fixtures().join("layout.docx"), 0, &cancellation)
+            .expect("generated fixture must provide the expected value");
+    let document_layer = document
+        .text_layer
+        .as_ref()
+        .expect("generated fixture must provide the expected value");
     assert!(document_layer.width < document_layer.height);
     assert!(
         first_layer.width / first_layer.height > document_layer.width / document_layer.height * 1.5
     );
 
     let table = crate::sandbox::parse(&input, ParseOperation::PreviewSpreadsheet, 0, &cancellation)
-        .unwrap();
-    let table = SpreadsheetData::from_json(table.metadata.as_ref().unwrap()).unwrap();
+        .expect("generated fixture must provide the expected value");
+    let table = SpreadsheetData::from_json(
+        table
+            .metadata
+            .as_ref()
+            .expect("generated fixture must provide the expected value"),
+    )
+    .expect("generated fixture must provide the expected value");
     assert_eq!(table.sheet_names, ["Overview", "Details"]);
     assert_eq!(table.headers, ["Item", "Count", "Status"]);
     assert_eq!(table.rows[0], ["Generated images", "3", "Ready"]);
@@ -127,7 +149,10 @@ fn formatted_workbook_layout_preserves_styles_merged_cells_and_second_sheet_navi
         table.sheets[1].headers[..2],
         ["Another sheet", "Keeps navigation"]
     );
-    assert_eq!(original, fs::read(&input).unwrap());
+    assert_eq!(
+        original,
+        fs::read(&input).expect("generated fixture must provide the expected value")
+    );
 }
 
 #[test]
@@ -138,11 +163,17 @@ fn full_workbook_layout_includes_printed_rows_beyond_bounded_data_preview() {
         "Install system LibreOffice"
     );
     let input = fixtures().join("full-workbook.xlsx");
-    let original = fs::read(&input).unwrap();
+    let original = fs::read(&input).expect("generated fixture must provide the expected value");
     let cancellation = Cancellation::default();
     let table = crate::sandbox::parse(&input, ParseOperation::PreviewSpreadsheet, 0, &cancellation)
-        .unwrap();
-    let table = SpreadsheetData::from_json(table.metadata.as_ref().unwrap()).unwrap();
+        .expect("generated fixture must provide the expected value");
+    let table = SpreadsheetData::from_json(
+        table
+            .metadata
+            .as_ref()
+            .expect("generated fixture must provide the expected value"),
+    )
+    .expect("generated fixture must provide the expected value");
     assert!(table.truncated);
     assert_eq!(table.rows.len(), crate::services::table::TABLE_ROW_LIMIT);
     assert!(
@@ -152,15 +183,23 @@ fn full_workbook_layout_includes_printed_rows_beyond_bounded_data_preview() {
             .flatten()
             .any(|cell| cell.contains("Beyond row 200 sentinel"))
     );
-    let first = crate::sandbox::office::render(&input, 0, &cancellation).unwrap();
+    let first = crate::sandbox::office::render(&input, 0, &cancellation)
+        .expect("generated fixture must provide the expected value");
     assert!(first.pages >= 2);
-    let first_layer = first.text_layer.as_ref().unwrap();
+    let first_layer = first
+        .text_layer
+        .as_ref()
+        .expect("generated fixture must provide the expected value");
     assert!(first_layer.text.contains("Full workbook first page"));
     assert!(!first_layer.text.contains("Beyond row 200 sentinel"));
-    let last = crate::sandbox::office::render(&input, first.pages - 1, &cancellation).unwrap();
+    let last = crate::sandbox::office::render(&input, first.pages - 1, &cancellation)
+        .expect("generated fixture must provide the expected value");
     assert_eq!(last.pages, first.pages);
     assert_eq!(last.page, first.pages - 1);
-    let last_layer = last.text_layer.as_ref().unwrap();
+    let last_layer = last
+        .text_layer
+        .as_ref()
+        .expect("generated fixture must provide the expected value");
     assert!(
         last_layer.text.contains("Beyond row 200 sentinel"),
         "{}",
@@ -170,5 +209,8 @@ fn full_workbook_layout_includes_printed_rows_beyond_bounded_data_preview() {
     assert_ne!(first.data, last.data);
     save_shot("full-workbook.xlsx-1.png", &first);
     save_shot("full-workbook.xlsx-last.png", &last);
-    assert_eq!(original, fs::read(&input).unwrap());
+    assert_eq!(
+        original,
+        fs::read(&input).expect("generated fixture must provide the expected value")
+    );
 }

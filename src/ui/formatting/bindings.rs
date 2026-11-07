@@ -109,7 +109,12 @@ fn retarget(label: &gtk::Label, value: Option<Value>) -> Update {
         } else {
             registry.mapped_dates.remove(&key);
         }
-        (registry.update(key).unwrap(), new_identity)
+        (
+            registry
+                .update(key)
+                .expect("Binding was inserted before updating it"),
+            new_identity,
+        )
     });
     if let Some(identity) = new_identity {
         let map_identity = identity.clone();
@@ -140,7 +145,10 @@ fn render(update: Update, fallback: &str) {
         if !registry.is_current(&update) {
             return None;
         }
-        let binding = registry.labels.get_mut(&update.key).unwrap();
+        let binding = registry
+            .labels
+            .get_mut(&update.key)
+            .expect("The current revision identifies an existing binding");
         Some(std::mem::replace(
             &mut binding.date_tooltip,
             tooltip.clone(),

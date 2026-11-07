@@ -18,6 +18,9 @@ pub enum ActivePane {
     Right,
 }
 
+type PaneChanged = Rc<dyn Fn(ActivePane)>;
+type SplitToggled = Rc<dyn Fn(bool)>;
+
 pub struct SplitView {
     container: gtk::Box,
     paned: gtk::Paned,
@@ -27,8 +30,8 @@ pub struct SplitView {
     active_pane: Cell<ActivePane>,
     browser_left: BrowserView,
     browser_right: BrowserView,
-    active_pane_handlers: RefCell<Vec<Rc<dyn Fn(ActivePane)>>>,
-    split_toggle_handlers: RefCell<Vec<Rc<dyn Fn(bool)>>>,
+    active_pane_handlers: RefCell<Vec<PaneChanged>>,
+    split_toggle_handlers: RefCell<Vec<SplitToggled>>,
 }
 
 impl SplitView {
@@ -178,10 +181,10 @@ impl SplitView {
             self.paned.set_position(pos);
 
             // Navigate right pane to left pane's current directory if empty
-            if self.browser_right.browser().active_location().is_none() {
-                if let Some(loc) = self.browser_left.browser().active_location() {
-                    self.browser_right.browser().navigate(loc);
-                }
+            if self.browser_right.browser().active_location().is_none()
+                && let Some(loc) = self.browser_left.browser().active_location()
+            {
+                self.browser_right.browser().navigate(loc);
             }
         } else {
             self.paned.set_start_child(None::<&gtk::Widget>);
@@ -191,10 +194,10 @@ impl SplitView {
             }
 
             // Keep the active pane's location when collapsing back to single pane
-            if self.active_pane.get() == ActivePane::Right {
-                if let Some(loc) = self.browser_right.browser().active_location() {
-                    self.browser_left.browser().navigate(loc);
-                }
+            if self.active_pane.get() == ActivePane::Right
+                && let Some(loc) = self.browser_right.browser().active_location()
+            {
+                self.browser_left.browser().navigate(loc);
             }
 
             self.active_pane.set(ActivePane::Left);
@@ -234,11 +237,15 @@ impl SplitView {
     }
 
     pub fn connect_active_pane_changed<F: Fn(ActivePane) + 'static>(&self, handler: F) {
-        self.active_pane_handlers.borrow_mut().push(Rc::new(handler));
+        self.active_pane_handlers
+            .borrow_mut()
+            .push(Rc::new(handler));
     }
 
     pub fn connect_split_toggled<F: Fn(bool) + 'static>(&self, handler: F) {
-        self.split_toggle_handlers.borrow_mut().push(Rc::new(handler));
+        self.split_toggle_handlers
+            .borrow_mut()
+            .push(Rc::new(handler));
     }
 
     pub fn copy_to_opposite_pane(&self) -> bool {

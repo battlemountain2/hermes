@@ -56,13 +56,19 @@ fn test_folder_views_data_relocate() {
     // Relocate Pictures to Media/Photos
     assert!(data.relocate("/home/user/Pictures", "/home/user/Media/Photos"));
 
-    assert!(data.views.get("/home/user/Pictures").is_none());
-    assert!(data.views.get("/home/user/Pictures/Vacation").is_none());
+    assert!(!data.views.contains_key("/home/user/Pictures"));
+    assert!(!data.views.contains_key("/home/user/Pictures/Vacation"));
 
-    let moved_root = data.views.get("/home/user/Media/Photos").expect("moved root");
+    let moved_root = data
+        .views
+        .get("/home/user/Media/Photos")
+        .expect("moved root");
     assert_eq!(moved_root.mode, Some(TrailBrowserMode::Grid));
 
-    let moved_child = data.views.get("/home/user/Media/Photos/Vacation").expect("moved child");
+    let moved_child = data
+        .views
+        .get("/home/user/Media/Photos/Vacation")
+        .expect("moved child");
     assert_eq!(moved_child.mode, Some(TrailBrowserMode::Grid));
     assert_eq!(moved_child.sort_key, Some(SortKey::Modified));
 
@@ -109,12 +115,19 @@ fn test_folder_view_store_lifecycle_and_persistence() {
 
     // Reopen store from disk
     let reopened = FolderViewStore::open(store_path);
-    let loaded = reopened.get("/home/user/Downloads").expect("reloaded config");
+    let loaded = reopened
+        .get("/home/user/Downloads")
+        .expect("reloaded config");
     assert_eq!(loaded, config);
 
     // Test set_show_hidden
     reopened.set_show_hidden("/home/user/Downloads", true);
-    assert_eq!(reopened.get("/home/user/Downloads").and_then(|c| c.show_hidden), Some(true));
+    assert_eq!(
+        reopened
+            .get("/home/user/Downloads")
+            .and_then(|c| c.show_hidden),
+        Some(true)
+    );
 
     // Test remove
     reopened.remove("/home/user/Downloads");
@@ -139,7 +152,11 @@ fn test_folder_heuristics_detects_image_and_music_directories() {
         "/home/user/Screenshots",
     ] {
         let heuristic = folder_heuristics(Path::new(path)).expect("image heuristic");
-        assert_eq!(heuristic.mode, Some(TrailBrowserMode::Grid), "failed for {path}");
+        assert_eq!(
+            heuristic.mode,
+            Some(TrailBrowserMode::Grid),
+            "failed for {path}"
+        );
         assert_eq!(heuristic.sort_key, None);
     }
 
@@ -152,7 +169,11 @@ fn test_folder_heuristics_detects_image_and_music_directories() {
         "/data/Albums",
     ] {
         let heuristic = folder_heuristics(Path::new(path)).expect("music heuristic");
-        assert_eq!(heuristic.sort_key, Some(SortKey::Track), "failed for {path}");
+        assert_eq!(
+            heuristic.sort_key,
+            Some(SortKey::Track),
+            "failed for {path}"
+        );
         assert_eq!(heuristic.mode, None);
     }
 
@@ -163,6 +184,10 @@ fn test_folder_heuristics_detects_image_and_music_directories() {
         "/tmp",
         "/var/log",
     ] {
-        assert_eq!(folder_heuristics(Path::new(path)), None, "failed for generic {path}");
+        assert_eq!(
+            folder_heuristics(Path::new(path)),
+            None,
+            "failed for generic {path}"
+        );
     }
 }

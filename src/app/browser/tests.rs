@@ -48,13 +48,23 @@ fn hidden_visibility_updates_loads_monitors_and_closes_stale_peeks() {
     requests.borrow_mut().clear();
     browser.set_show_hidden(true);
     assert!(browser.peek_request.get().is_none());
-    assert!(browser.column_preferences(0).unwrap().show_hidden);
+    assert!(
+        browser
+            .column_preferences(0)
+            .expect("expected test value from browser.column_preferences(0)")
+            .show_hidden
+    );
     assert_eq!(*requests.borrow(), vec![(false, true), (true, true)]);
     requests.borrow_mut().clear();
     browser.set_show_hidden(true);
     assert!(requests.borrow().is_empty());
     browser.toggle_hidden();
-    assert!(!browser.column_preferences(0).unwrap().show_hidden);
+    assert!(
+        !browser
+            .column_preferences(0)
+            .expect("expected test value from browser.column_preferences(0)")
+            .show_hidden
+    );
     assert_eq!(*requests.borrow(), vec![(false, false), (true, false)]);
 }
 
@@ -129,7 +139,10 @@ fn late_album_metadata_updates_folder_and_peek_snapshots() {
         entries: vec![first.clone(), second.clone()],
     });
     assert_eq!(
-        browser.column_entries(0).unwrap()[0].location,
+        browser
+            .column_entries(0)
+            .expect("expected test value from browser.column_entries(0)")[0]
+            .location,
         first.location
     );
     assert!(events.borrow().iter().any(|event| matches!(event,
@@ -276,9 +289,11 @@ fn refreshing_a_column_invalidates_warm_entries_before_enumerating() {
     );
 }
 
+type OperationCallback = (OperationRequestId, Rc<dyn Fn(OperationEvent)>);
+
 #[derive(Default)]
 struct ControlledOperations {
-    callbacks: RefCell<Vec<(OperationRequestId, Rc<dyn Fn(OperationEvent)>)>>,
+    callbacks: RefCell<Vec<OperationCallback>>,
     cancellations: Rc<Cell<usize>>,
     synchronous_create: Cell<bool>,
 }
@@ -568,7 +583,7 @@ fn finishing_observer_can_start_an_operation_without_losing_its_handle() {
     browser.observe(move |event| {
         if matches!(event, BrowserEvent::TransferFinished) {
             weak.upgrade()
-                .unwrap()
+                .expect("expected test value from weak.upgrade()")
                 .create_file(Location::local("/fixture"), "next".into());
         }
     });
@@ -596,7 +611,9 @@ fn cancellation_from_started_observer_does_not_launch_the_provider() {
     let weak = Rc::downgrade(&browser);
     browser.observe(move |event| {
         if matches!(event, BrowserEvent::TransferStarted { .. }) {
-            weak.upgrade().unwrap().cancel_file_operation();
+            weak.upgrade()
+                .expect("expected test value from weak.upgrade()")
+                .cancel_file_operation();
         }
     });
     browser.transfer(
@@ -1152,7 +1169,9 @@ fn peek_closed_by_started_observer_does_not_start_loading() {
     let weak = Rc::downgrade(&browser);
     browser.observe(move |event| {
         if matches!(event, BrowserEvent::PeekStarted { .. }) {
-            weak.upgrade().unwrap().close_peek();
+            weak.upgrade()
+                .expect("expected test value from weak.upgrade()")
+                .close_peek();
         }
     });
 
@@ -1169,7 +1188,9 @@ fn peek_closed_during_synchronous_enumeration_cancels_returned_handle() {
     let weak = Rc::downgrade(&browser);
     browser.observe(move |event| {
         if matches!(event, BrowserEvent::PeekEntriesReplaced { .. }) {
-            weak.upgrade().unwrap().close_peek();
+            weak.upgrade()
+                .expect("expected test value from weak.upgrade()")
+                .close_peek();
         }
     });
 
@@ -1192,7 +1213,7 @@ fn peek_replaced_by_started_observer_preserves_the_newer_load() {
             if location == Location::local("/fixture/first"))
         {
             weak.upgrade()
-                .unwrap()
+                .expect("expected test value from weak.upgrade()")
                 .begin_peek(0, Location::local("/fixture/second"));
         }
     });
@@ -1209,8 +1230,9 @@ fn peek_replaced_by_started_observer_preserves_the_newer_load() {
 
 #[test]
 fn peek_replaced_during_enumeration_cancels_only_the_obsolete_handle() {
+    type OnEnumerate = Rc<RefCell<Option<Box<dyn FnOnce()>>>>;
     struct ReentrantSource {
-        on_enumerate: Rc<RefCell<Option<Box<dyn FnOnce()>>>>,
+        on_enumerate: OnEnumerate,
         cancelled: Rc<RefCell<Vec<Location>>>,
     }
     impl FileSource for ReentrantSource {
@@ -1241,7 +1263,7 @@ fn peek_replaced_during_enumeration_cancels_only_the_obsolete_handle() {
     let weak = Rc::downgrade(&browser);
     on_enumerate.replace(Some(Box::new(move || {
         weak.upgrade()
-            .unwrap()
+            .expect("expected test value from weak.upgrade()")
             .begin_peek(0, Location::local("/fixture/second"));
     })));
 
@@ -1274,7 +1296,7 @@ fn navigation_from_peek_started_does_not_load_the_abandoned_peek() {
     browser.observe(move |event| {
         if matches!(event, BrowserEvent::PeekStarted { .. }) {
             weak.upgrade()
-                .unwrap()
+                .expect("expected test value from weak.upgrade()")
                 .navigate(Location::local("/different"));
         }
     });
@@ -1300,7 +1322,9 @@ fn peek_cancellation_rejects_synchronous_late_events_without_borrowing_the_handl
     browser.observe(move |event| observed.borrow_mut().push(event));
     let weak = Rc::downgrade(&browser);
     let old = browser.peek_load.replace(Some(LoadHandle::new(move || {
-        let browser = weak.upgrade().unwrap();
+        let browser = weak
+            .upgrade()
+            .expect("expected test value from weak.upgrade()");
         assert!(browser.peek_load.borrow().is_none());
         browser.handle_directory_event(DirectoryEvent::Finished { request_id });
     })));
@@ -1519,7 +1543,10 @@ fn external_selection_notifies_the_view_without_activating_or_previewing_files()
     ));
     assert_eq!(browser.selected_entries().len(), 2);
     assert_eq!(
-        browser.focused_entry().unwrap().location,
+        browser
+            .focused_entry()
+            .expect("expected test value from browser.focused_entry()")
+            .location,
         Location::local("/fixture/c.txt")
     );
     assert!(

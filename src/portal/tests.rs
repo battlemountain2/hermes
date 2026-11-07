@@ -16,8 +16,11 @@ fn until(condition: &dyn Fn() -> bool) {
 
 #[test]
 fn backend_exposes_only_chooser_methods_request_close_and_version() {
-    let node = gio::DBusNodeInfo::for_xml(XML).unwrap();
-    let chooser = node.lookup_interface(INTERFACE).unwrap();
+    let node = gio::DBusNodeInfo::for_xml(XML)
+        .expect("expected test value from gio::DBusNodeInfo::for_xml(XML)");
+    let chooser = node
+        .lookup_interface(INTERFACE)
+        .expect("expected test value from node.lookup_interface(INTERFACE)");
     for method in ["OpenFile", "SaveFile", "SaveFiles"] {
         assert!(chooser.lookup_method(method).is_some());
     }
@@ -25,7 +28,7 @@ fn backend_exposes_only_chooser_methods_request_close_and_version() {
     assert!(chooser.lookup_method("ShowFolders").is_none());
     assert!(
         node.lookup_interface("org.freedesktop.impl.portal.Request")
-            .unwrap()
+            .expect("expected test value from node.lookup_interface(\"org.freedesktop.impl.portal.Request\")")
             .lookup_method("Close")
             .is_some()
     );
@@ -43,9 +46,9 @@ fn private_bus_authenticates_frontend_closes_requests_and_returns_selected_files
         io::{BufRead, BufReader},
         process::{Child, Command, Stdio},
     };
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     glib::set_application_name(crate::identity::NAME);
-    crate::assets::prepare().unwrap();
+    crate::assets::prepare().expect("register embedded test assets");
     let _theme = crate::ui::picker::prepare();
     struct Bus(Child);
     impl Drop for Bus {
@@ -59,13 +62,15 @@ fn private_bus_authenticates_frontend_closes_requests_and_returns_selected_files
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .unwrap());
+        .expect("expected test value from Command::new(\"dbus-daemon\") .args([\"--session\", \"--nofork\", \"--print-address=1\"]) .stdout(Stdio::piped()) .stderr(Stdio::null()..."));
     let mut address = String::new();
-    BufReader::new(bus.0.stdout.take().unwrap())
+    BufReader::new(bus.0.stdout.take().expect("expected test value from bus.0.stdout.take()"))
         .read_line(&mut address)
-        .unwrap();
+        .expect("expected test value from BufReader::new(bus.0.stdout.take().unwrap()) .read_line(&mut address)");
     let context = glib::MainContext::default();
-    let _guard = context.acquire().unwrap();
+    let _guard = context
+        .acquire()
+        .expect("expected test value from context.acquire()");
     let connect = || {
         let connection = gio::DBusConnection::for_address_sync(
             address.trim(),
@@ -74,7 +79,7 @@ fn private_bus_authenticates_frontend_closes_requests_and_returns_selected_files
             None,
             None::<&gio::Cancellable>,
         )
-        .unwrap();
+        .expect("expected test value from gio::DBusConnection::for_address_sync( address.trim(), gio::DBusConnectionFlags::AUTHENTICATION_CLIENT | gio::DBusConnectionFla...");
         connection.set_exit_on_close(false);
         connection
     };
@@ -85,8 +90,11 @@ fn private_bus_authenticates_frontend_closes_requests_and_returns_selected_files
         .application_id("io.github.battlemountain2.Hermes.PortalTest")
         .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
-    application.register(None::<&gio::Cancellable>).unwrap();
-    let export = Export::new(&server, &application).unwrap();
+    application
+        .register(None::<&gio::Cancellable>)
+        .expect("expected test value from application.register(None::<&gio::Cancellable>)");
+    let export = Export::new(&server, &application)
+        .expect("expected test value from Export::new(&server, &application)");
     let invoke = |client: &gio::DBusConnection,
                   path: &str,
                   interface: &str,
@@ -115,7 +123,7 @@ fn private_bus_authenticates_frontend_closes_requests_and_returns_selected_files
             glib::variant::ObjectPath::try_from(format!(
                 "/org/freedesktop/portal/desktop/request/generated/{suffix}"
             ))
-            .unwrap(),
+            .expect("expected test value from glib::variant::ObjectPath::try_from(format!( \"/org/freedesktop/portal/desktop/request/generated/{suffix}\" ))"),
             "generated.app",
             "",
             "Private chooser",
@@ -129,10 +137,10 @@ fn private_bus_authenticates_frontend_closes_requests_and_returns_selected_files
         denied
             .borrow_mut()
             .take()
-            .unwrap()
-            .unwrap()
+            .expect("expected test value from denied .borrow_mut() .take()")
+            .expect("expected test value from denied .borrow_mut() .take() .unwrap()")
             .get::<(u32, Options)>()
-            .unwrap()
+            .expect("expected test value from denied .borrow_mut() .take() .unwrap() .unwrap() .get::<(u32, Options)>()")
             .0,
         2
     );
@@ -149,7 +157,7 @@ fn private_bus_authenticates_frontend_closes_requests_and_returns_selected_files
             2000,
             None::<&gio::Cancellable>,
         )
-        .unwrap();
+        .expect("expected test value from frontend .call_sync( Some(\"org.freedesktop.DBus\"), \"/org/freedesktop/DBus\", \"org.freedesktop.DBus\", \"RequestName\", Some(&(FRONT...");
     let response = invoke(&frontend, PATH, INTERFACE, "OpenFile", arguments("cancel"));
     let handle = "/org/freedesktop/portal/desktop/request/generated/cancel";
     until(&|| {
@@ -161,7 +169,13 @@ fn private_bus_authenticates_frontend_closes_requests_and_returns_selected_files
     });
     let duplicate = invoke(&frontend, PATH, INTERFACE, "OpenFile", arguments("cancel"));
     until(&|| duplicate.borrow().is_some());
-    assert!(duplicate.borrow_mut().take().unwrap().is_err());
+    assert!(
+        duplicate
+            .borrow_mut()
+            .take()
+            .expect("expected test value from duplicate.borrow_mut().take()")
+            .is_err()
+    );
     let denied_close = invoke(
         &intruder,
         handle,
@@ -170,7 +184,13 @@ fn private_bus_authenticates_frontend_closes_requests_and_returns_selected_files
         ().to_variant(),
     );
     until(&|| denied_close.borrow().is_some());
-    assert!(denied_close.borrow_mut().take().unwrap().is_err());
+    assert!(
+        denied_close
+            .borrow_mut()
+            .take()
+            .expect("expected test value from denied_close.borrow_mut().take()")
+            .is_err()
+    );
     assert_eq!(export.pending.borrow().len(), 1);
     let close = invoke(
         &frontend,
@@ -180,15 +200,19 @@ fn private_bus_authenticates_frontend_closes_requests_and_returns_selected_files
         ().to_variant(),
     );
     until(&|| close.borrow().is_some() && response.borrow().is_some());
-    close.borrow_mut().take().unwrap().unwrap();
+    close
+        .borrow_mut()
+        .take()
+        .expect("expected test value from close.borrow_mut().take()")
+        .expect("expected test value from close.borrow_mut().take().unwrap()");
     assert_eq!(
         response
             .borrow_mut()
             .take()
-            .unwrap()
-            .unwrap()
+            .expect("expected test value from response .borrow_mut() .take()")
+            .expect("expected test value from response .borrow_mut() .take() .unwrap()")
             .get::<(u32, Options)>()
-            .unwrap()
+            .expect("expected test value from response .borrow_mut() .take() .unwrap() .unwrap() .get::<(u32, Options)>()")
             .0,
         1
     );
@@ -196,10 +220,10 @@ fn private_bus_authenticates_frontend_closes_requests_and_returns_selected_files
     assert!(application.windows().is_empty());
     let fixture = crate::sandbox::browser::format_tests::FixtureDirectory::new();
     let target = fixture.0.join("chosen file.txt");
-    std::fs::write(&target, b"generated").unwrap();
+    std::fs::write(&target, b"generated").expect("write generated fixture");
     let (path, app_id, parent, title, mut options) = arguments("success")
         .get::<(glib::variant::ObjectPath, String, String, String, Options)>()
-        .unwrap();
+        .expect("expected test value from arguments(\"success\") .get::<(glib::variant::ObjectPath, String, String, String, Options)>()");
     options.insert(
         "current_folder".into(),
         [fixture.0.as_os_str().as_encoded_bytes(), &[0]]
@@ -225,7 +249,7 @@ fn private_bus_authenticates_frontend_closes_requests_and_returns_selected_files
         .windows()
         .into_iter()
         .find_map(|window| window.downcast::<gtk::FileChooserDialog>().ok())
-        .unwrap();
+        .expect("expected test value from application .windows() .into_iter() .find_map(|window| window.downcast::<gtk::FileChooserDialog>().ok())");
     until(&|| {
         dialog
             .current_folder()
@@ -233,20 +257,24 @@ fn private_bus_authenticates_frontend_closes_requests_and_returns_selected_files
             .as_ref()
             == Some(&fixture.0)
     });
-    dialog.set_file(&gio::File::for_path(&target)).unwrap();
+    dialog
+        .set_file(&gio::File::for_path(&target))
+        .expect("expected test value from dialog.set_file(&gio::File::for_path(&target))");
     until(&|| dialog.file().and_then(|file| file.path()).as_ref() == Some(&target));
     dialog.response(gtk::ResponseType::Accept);
     until(&|| response.borrow().is_some());
     let (status, results) = response
         .borrow_mut()
         .take()
-        .unwrap()
-        .unwrap()
+        .expect("expected test value from response .borrow_mut() .take()")
+        .expect("expected test value from response .borrow_mut() .take() .unwrap()")
         .get::<(u32, Options)>()
-        .unwrap();
+        .expect("expected test value from response .borrow_mut() .take() .unwrap() .unwrap() .get::<(u32, Options)>()");
     assert_eq!(status, 0);
     assert_eq!(
-        results["uris"].get::<Vec<String>>().unwrap(),
+        results["uris"]
+            .get::<Vec<String>>()
+            .expect("expected test value from results[\"uris\"].get::<Vec<String>>()"),
         [gio::File::for_path(&target).uri().to_string()]
     );
     assert!(application.windows().is_empty());
@@ -258,14 +286,26 @@ fn private_bus_authenticates_frontend_closes_requests_and_returns_selected_files
         arguments("disconnect"),
     );
     until(&|| !application.windows().is_empty());
-    frontend.close_sync(None::<&gio::Cancellable>).unwrap();
+    frontend
+        .close_sync(None::<&gio::Cancellable>)
+        .expect("expected test value from frontend.close_sync(None::<&gio::Cancellable>)");
     until(&|| export.pending.borrow().is_empty());
     assert!(application.windows().is_empty());
     drop(response);
     drop(export);
     let removed = invoke(&intruder, PATH, INTERFACE, "OpenFile", arguments("removed"));
     until(&|| removed.borrow().is_some());
-    assert!(removed.borrow_mut().take().unwrap().is_err());
-    server.close_sync(None::<&gio::Cancellable>).unwrap();
-    intruder.close_sync(None::<&gio::Cancellable>).unwrap();
+    assert!(
+        removed
+            .borrow_mut()
+            .take()
+            .expect("expected test value from removed.borrow_mut().take()")
+            .is_err()
+    );
+    server
+        .close_sync(None::<&gio::Cancellable>)
+        .expect("expected test value from server.close_sync(None::<&gio::Cancellable>)");
+    intruder
+        .close_sync(None::<&gio::Cancellable>)
+        .expect("expected test value from intruder.close_sync(None::<&gio::Cancellable>)");
 }

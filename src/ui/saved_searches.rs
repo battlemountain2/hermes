@@ -498,10 +498,10 @@ fn connect(state: &Rc<State>, close: &gtk::Button) {
     for field in [&state.name, &state.query, &state.root] {
         let weak = Rc::downgrade(state);
         field.connect_changed(move |_| {
-            if let Some(state) = weak.upgrade() {
-                if !state.rendering.get() {
-                    update_controls(&state);
-                }
+            if let Some(state) = weak.upgrade()
+                && !state.rendering.get()
+            {
+                update_controls(&state);
             }
         });
     }
@@ -547,10 +547,10 @@ fn connect(state: &Rc<State>, close: &gtk::Button) {
     });
     let weak = Rc::downgrade(state);
     state.delete.connect_clicked(move |_| {
-        if let Some(state) = weak.upgrade() {
-            if state.delete.is_sensitive() {
-                ask(&state, Question::Delete);
-            }
+        if let Some(state) = weak.upgrade()
+            && state.delete.is_sensitive()
+        {
+            ask(&state, Question::Delete);
         }
     });
     let weak = Rc::downgrade(state);

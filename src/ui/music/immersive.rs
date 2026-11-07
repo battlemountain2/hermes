@@ -26,9 +26,11 @@ mod tests;
 #[cfg(test)]
 mod performance_tests;
 
-mod canvas;
 mod artwork;
 mod backdrop;
+mod canvas;
+
+type VisualizerPalette = ((f64, f64, f64), (f64, f64, f64));
 
 struct AssetRequest {
     identity: Rc<()>,
@@ -84,10 +86,14 @@ fn read_track_assets(path: &Path, cancellation: &Cancellation) -> TrackAssets {
                 .map(|output| output.data);
     }
     if result.artwork.is_none() && !cancellation.is_cancelled() {
-        result.artwork =
-            crate::sandbox::parse(path, ParseOperation::PreviewAudioArtwork, 1024, cancellation)
-                .ok()
-                .map(|output| output.data);
+        result.artwork = crate::sandbox::parse(
+            path,
+            ParseOperation::PreviewAudioArtwork,
+            1024,
+            cancellation,
+        )
+        .ok()
+        .map(|output| output.data);
     }
     if !cancellation.is_cancelled()
         && let Some((backdrop, palette)) = result.artwork.as_deref().and_then(artwork::presentation)
@@ -202,7 +208,7 @@ struct ImmersiveState {
     on_open_library: Rc<dyn Fn()>,
     ambient_aura: backdrop::ArtworkBackdrop,
     artwork_palette: Cell<Option<artwork::Palette>>,
-    palette: Cell<((f64, f64, f64), (f64, f64, f64))>,
+    palette: Cell<VisualizerPalette>,
     visualizer_canvas: canvas::VisualizerCanvas,
     visualizer_bands: Cell<[f32; crate::playback::SPECTRUM_BANDS]>,
     visualizer_active: Cell<bool>,
@@ -819,18 +825,20 @@ impl ImmersiveView {
 
         let ctrl = controller.clone();
         let scrub_state = Rc::downgrade(&state);
-        state.floating_scrub.connect_change_value(move |_, _, value| {
-            if let Some(state) = scrub_state.upgrade()
-                && !state.syncing.get()
-            {
-                let duration = state.controller.duration();
-                if duration > 0 {
-                    let target_pos = (value * duration as f64) as i64;
-                    ctrl.seek(target_pos);
+        state
+            .floating_scrub
+            .connect_change_value(move |_, _, value| {
+                if let Some(state) = scrub_state.upgrade()
+                    && !state.syncing.get()
+                {
+                    let duration = state.controller.duration();
+                    if duration > 0 {
+                        let target_pos = (value * duration as f64) as i64;
+                        ctrl.seek(target_pos);
+                    }
                 }
-            }
-            glib::Propagation::Proceed
-        });
+                glib::Propagation::Proceed
+            });
 
         let ctrl = controller.clone();
         let shuff_state = Rc::downgrade(&state);
@@ -1056,7 +1064,8 @@ impl ImmersiveState {
             if self.lyrics_active.get() {
                 self.card_visualizer.set_frame(style, time, bands, palette);
             } else {
-                self.visualizer_canvas.set_frame(style, time, bands, palette);
+                self.visualizer_canvas
+                    .set_frame(style, time, bands, palette);
             }
         }
     }
@@ -1069,12 +1078,25 @@ impl ImmersiveState {
             return;
         }
         let palette = visible_artwork_palette(self.artwork_palette.get());
-        if let Some(color) = ThemeManager::shared().applied_tokens()
+        if let Some(color) = ThemeManager::shared()
+            .applied_tokens()
             .and_then(|tokens| gdk::RGBA::parse(&tokens.background).ok())
         {
             let color = self.artwork_palette.get().map_or(color, |palette| {
-                let background = artwork::background(palette, (f64::from(color.red()), f64::from(color.green()), f64::from(color.blue())));
-                gdk::RGBA::new(background.0 as f32, background.1 as f32, background.2 as f32, 1.0)
+                let background = artwork::background(
+                    palette,
+                    (
+                        f64::from(color.red()),
+                        f64::from(color.green()),
+                        f64::from(color.blue()),
+                    ),
+                );
+                gdk::RGBA::new(
+                    background.0 as f32,
+                    background.1 as f32,
+                    background.2 as f32,
+                    1.0,
+                )
             });
             self.ambient_aura.set_base(color);
         }
@@ -1296,9 +1318,11 @@ impl ImmersiveState {
         if let Some(output) = output {
             self.artwork_palette.set(output.palette);
             self.palette.set(visible_artwork_palette(output.palette));
-            self.ambient_aura.set_artwork(output.backdrop.and_then(|bytes| {
-                gdk::Texture::from_bytes(&glib::Bytes::from_owned(bytes)).ok()
-            }));
+            self.ambient_aura.set_artwork(
+                output.backdrop.and_then(|bytes| {
+                    gdk::Texture::from_bytes(&glib::Bytes::from_owned(bytes)).ok()
+                }),
+            );
             if let Some(bytes) = output.artwork
                 && let Ok(texture) = gdk::Texture::from_bytes(&glib::Bytes::from_owned(bytes))
             {
@@ -1432,10 +1456,7 @@ impl ImmersiveState {
 
     fn rebuild_lyrics_ui(self: &Rc<Self>) {
         self.clear_lyrics_ui();
-        if !self.is_mapped()
-            || self.stopped.get()
-            || !self.lyrics_active.get()
-        {
+        if !self.is_mapped() || self.stopped.get() || !self.lyrics_active.get() {
             return;
         }
         let lyrics = self.current_lyrics.borrow();
@@ -1660,11 +1681,21 @@ fn visible_artwork_palette(palette: Option<artwork::Palette>) -> artwork::Palett
     let Some(tokens) = ThemeManager::shared().applied_tokens() else {
         return current_theme_palette();
     };
-    let color = |value: &str| gdk::RGBA::parse(value).ok().map(|color| {
-        (f64::from(color.red()), f64::from(color.green()), f64::from(color.blue()))
-    });
+    let color = |value: &str| {
+        gdk::RGBA::parse(value).ok().map(|color| {
+            (
+                f64::from(color.red()),
+                f64::from(color.green()),
+                f64::from(color.blue()),
+            )
+        })
+    };
     match (color(&tokens.background), color(&tokens.text)) {
-        (Some(background), Some(foreground)) => artwork::legible_palette(palette, artwork::background(palette, background), foreground),
+        (Some(background), Some(foreground)) => artwork::legible_palette(
+            palette,
+            artwork::background(palette, background),
+            foreground,
+        ),
         _ => current_theme_palette(),
     }
 }
@@ -1707,6 +1738,10 @@ pub fn draw_ambient_aura(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Test-only software renderer mirrors the shader's geometry, timing and palette inputs"
+)]
 pub fn draw_generative_visualizer(
     cr: &gtk::cairo::Context,
     width: f64,

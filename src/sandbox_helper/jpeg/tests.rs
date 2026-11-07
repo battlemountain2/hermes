@@ -29,7 +29,7 @@ fn malformed_exif_and_invalid_orientation_fall_back_safely() {
     assert!(exif(b"not a jpeg").is_none());
     assert!(exif(&[0xff, 0xd8, 0xff, 0xe1, 0, 1]).is_none());
     let mut tiff = tiff_header(6, &[]);
-    let primary = directory(&tiff, 8).unwrap();
+    let primary = directory(&tiff, 8).expect("expected test value from directory(&tiff, 8)");
     assert_eq!(orientation(&tiff, primary.0, primary.1), Some(6));
     assert_eq!(directory(&tiff, usize::MAX), None);
     tiff[18..20].copy_from_slice(&9u16.to_le_bytes());
@@ -81,31 +81,45 @@ pub(in crate::sandbox_helper) fn jpeg_fixture(
 
 fn pixels(data: &[u8]) -> Pixbuf {
     let loader = PixbufLoader::new();
-    loader.write(data).unwrap();
-    loader.close().unwrap();
-    loader.pixbuf().unwrap()
+    loader
+        .write(data)
+        .expect("expected test value from loader.write(data)");
+    loader
+        .close()
+        .expect("expected test value from loader.close()");
+    loader
+        .pixbuf()
+        .expect("expected test value from loader.pixbuf()")
 }
 
 #[test]
 #[ignore = "Generated native JPEG benchmark; needs codecs, ImageMagick, bubblewrap and built helper"]
 fn generated_native_scaled_jpeg_preserves_orientation_dimensions_and_colors() {
     let directory = crate::sandbox::browser::format_tests::FixtureDirectory::new();
-    let original = Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 2400, 1600).unwrap();
+    let original = Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 2400, 1600).expect(
+        "expected test value from Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 2400, 1600)",
+    );
     original.fill(0xc04020ff);
-    let corner = Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 1200, 800).unwrap();
+    let corner = Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 1200, 800).expect(
+        "expected test value from Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 1200, 800)",
+    );
     corner.fill(0x20c040ff);
     corner.copy_area(0, 0, 1200, 800, &original, 0, 0);
     let source = original
         .save_to_bufferv("jpeg", &[("quality", "95")])
-        .unwrap();
+        .expect("expected test value from original .save_to_bufferv(\"jpeg\", &[(\"quality\", \"95\")])");
     for orientation in 1..=8 {
         let path = directory.0.join(format!("orientation-{orientation}.jpg"));
-        std::fs::write(&path, jpeg_fixture(orientation, &source, &[])).unwrap();
+        std::fs::write(&path, jpeg_fixture(orientation, &source, &[]))
+            .expect("write generated fixture");
         let start = std::time::Instant::now();
         let native = pixels(&scaled_preview(&path, 1400).expect("Native JPEG preview"));
         let native_time = start.elapsed();
         let start = std::time::Instant::now();
-        let reference = pixels(&super::super::render_imagemagick(&path, 1400).unwrap());
+        let reference = pixels(
+            &super::super::render_imagemagick(&path, 1400)
+                .expect("expected test value from super::super::render_imagemagick(&path, 1400)"),
+        );
         eprintln!(
             "JPEG orientation {orientation}: native={native_time:?}, previous={:?}",
             start.elapsed()
@@ -134,23 +148,24 @@ fn generated_native_scaled_jpeg_preserves_orientation_dimensions_and_colors() {
         }
     }
     let path = directory.0.join("orientation-6.jpg");
-    let expected = scaled_preview(&path, 1400).unwrap();
+    let expected =
+        scaled_preview(&path, 1400).expect("expected test value from scaled_preview(&path, 1400)");
     let pooled = crate::sandbox::parse(
         &path,
         crate::sandbox::ParseOperation::PreviewImage,
         1400,
         &crate::sandbox::Cancellation::default(),
     )
-    .unwrap();
+    .expect("expected test value from crate::sandbox::parse( &path, crate::sandbox::ParseOperation::PreviewImage, 1400, &crate::sandbox::Cancellation::default(), )");
     assert_eq!(pooled.data, expected);
     let one_shot = crate::sandbox::parse_one_shot_with_executable(
         &path,
         crate::sandbox::ParseOperation::PreviewImage,
         1400,
         &crate::sandbox::Cancellation::default(),
-        &crate::sandbox::helper_executable().unwrap(),
+        &crate::sandbox::helper_executable().expect("expected test value from crate::sandbox::helper_executable()"),
     )
-    .unwrap();
+    .expect("expected test value from crate::sandbox::parse_one_shot_with_executable( &path, crate::sandbox::ParseOperation::PreviewImage, 1400, &crate::sandbox::Can...");
     assert_eq!(one_shot.data, expected);
 }
 
@@ -158,34 +173,43 @@ fn generated_native_scaled_jpeg_preserves_orientation_dimensions_and_colors() {
 #[ignore = "Generated JPEG fixture requires JPEG loader and ImageMagick"]
 fn generated_jpeg_thumbnail_orientation_quality_fallback_and_timing() {
     let directory = std::env::temp_dir().join(format!("hermes-jpeg-{}", std::process::id()));
-    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::create_dir_all(&directory).expect("create generated fixture directory");
     let path = directory.join("photo.jpg");
-    let original = Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 2400, 1600).unwrap();
+    let original = Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 2400, 1600).expect(
+        "expected test value from Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 2400, 1600)",
+    );
     original.fill(0x2040d0ff);
     let source = original
         .save_to_bufferv("jpeg", &[("quality", "90")])
-        .unwrap();
-    let thumbnail_pixels = Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 384, 256).unwrap();
+        .expect("expected test value from original .save_to_bufferv(\"jpeg\", &[(\"quality\", \"90\")])");
+    let thumbnail_pixels = Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 384, 256).expect(
+        "expected test value from Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 384, 256)",
+    );
     thumbnail_pixels.fill(0xd02040ff);
-    let corner = Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 192, 128).unwrap();
+    let corner = Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 192, 128).expect(
+        "expected test value from Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 192, 128)",
+    );
     corner.fill(0x20d040ff);
     corner.copy_area(0, 0, 192, 128, &thumbnail_pixels, 0, 0);
     let thumbnail_data = thumbnail_pixels
         .save_to_bufferv("jpeg", &[("quality", "90")])
-        .unwrap();
+        .expect("expected test value from thumbnail_pixels .save_to_bufferv(\"jpeg\", &[(\"quality\", \"90\")])");
     let matching_original = thumbnail_pixels
         .scale_simple(2400, 1600, gdk_pixbuf::InterpType::Bilinear)
-        .unwrap()
+        .expect("expected test value from thumbnail_pixels .scale_simple(2400, 1600, gdk_pixbuf::InterpType::Bilinear)")
         .save_to_bufferv("jpeg", &[("quality", "90")])
-        .unwrap();
+        .expect("expected test value from thumbnail_pixels .scale_simple(2400, 1600, gdk_pixbuf::InterpType::Bilinear) .unwrap() .save_to_bufferv(\"jpeg\", &[(\"quality\", \"...");
     for orientation in 1..=8 {
         std::fs::write(
             &path,
             jpeg_fixture(orientation, &matching_original, &thumbnail_data),
         )
-        .unwrap();
+        .expect("write generated fixture");
         let result = pixels(&thumbnail(&path, 256).expect("Adequate embedded JPEG"));
-        let expected = pixels(&super::super::render_imagemagick(&path, 256).unwrap());
+        let expected = pixels(
+            &super::super::render_imagemagick(&path, 256)
+                .expect("expected test value from super::super::render_imagemagick(&path, 256)"),
+        );
         let dimensions =
             sniff::image_target_dimensions(expected.width() as u32, expected.height() as u32, 256);
         assert_eq!(
@@ -198,7 +222,7 @@ fn generated_jpeg_thumbnail_orientation_quality_fallback_and_timing() {
                 result.height(),
                 gdk_pixbuf::InterpType::Bilinear,
             )
-            .unwrap();
+            .expect("expected test value from expected .scale_simple( result.width(), result.height(), gdk_pixbuf::InterpType::Bilinear, )");
         let actual_bytes = result.read_pixel_bytes();
         let expected_bytes = expected.read_pixel_bytes();
         for (horizontal, vertical) in [
@@ -222,19 +246,25 @@ fn generated_jpeg_thumbnail_orientation_quality_fallback_and_timing() {
             }
         }
     }
-    std::fs::write(&path, jpeg_fixture(1, &source, &thumbnail_data)).unwrap();
+    std::fs::write(&path, jpeg_fixture(1, &source, &thumbnail_data))
+        .expect("write generated fixture");
     let mut fast = Vec::new();
     let mut fallback = Vec::new();
     for _ in 0..3 {
         let start = std::time::Instant::now();
-        super::super::render_image(&path, 256).unwrap();
+        super::super::render_image(&path, 256)
+            .expect("expected test value from super::super::render_image(&path, 256)");
         fast.push(start.elapsed());
         let start = std::time::Instant::now();
-        super::super::render_imagemagick(&path, 256).unwrap();
+        super::super::render_imagemagick(&path, 256)
+            .expect("expected test value from super::super::render_imagemagick(&path, 256)");
         fallback.push(start.elapsed());
     }
     eprintln!("JPEG embedded {fast:?}; original ImageMagick {fallback:?}");
-    let preview = pixels(&super::super::render_image(&path, 1400).unwrap());
+    let preview = pixels(
+        &super::super::render_image(&path, 1400)
+            .expect("expected test value from super::super::render_image(&path, 1400)"),
+    );
     assert_eq!(preview.width(), 1400);
     assert_eq!(preview.height(), 933);
     let bytes = preview.read_pixel_bytes();
@@ -265,7 +295,7 @@ fn generated_jpeg_thumbnail_orientation_quality_fallback_and_timing() {
             256,
             &crate::sandbox::Cancellation::default(),
         )
-        .unwrap();
+        .expect("expected test value from crate::sandbox::parse( &path, operation, 256, &crate::sandbox::Cancellation::default(), )");
         let cold = start.elapsed();
         let start = std::time::Instant::now();
         let warm = crate::sandbox::parse(
@@ -274,7 +304,7 @@ fn generated_jpeg_thumbnail_orientation_quality_fallback_and_timing() {
             256,
             &crate::sandbox::Cancellation::default(),
         )
-        .unwrap();
+        .expect("expected test value from crate::sandbox::parse( &path, operation, 256, &crate::sandbox::Cancellation::default(), )");
         assert_eq!(first.data, warm.data);
         eprintln!(
             "JPEG sandbox {operation:?}: cold={cold:?}, warm={:?}",
@@ -286,12 +316,15 @@ fn generated_jpeg_thumbnail_orientation_quality_fallback_and_timing() {
     }
     let tiny = thumbnail_pixels
         .scale_simple(96, 64, gdk_pixbuf::InterpType::Bilinear)
-        .unwrap()
+        .expect("expected test value from thumbnail_pixels .scale_simple(96, 64, gdk_pixbuf::InterpType::Bilinear)")
         .save_to_bufferv("jpeg", &[])
-        .unwrap();
-    std::fs::write(&path, jpeg_fixture(1, &source, &tiny)).unwrap();
+        .expect("expected test value from thumbnail_pixels .scale_simple(96, 64, gdk_pixbuf::InterpType::Bilinear) .unwrap() .save_to_bufferv(\"jpeg\", &[])");
+    std::fs::write(&path, jpeg_fixture(1, &source, &tiny)).expect("write generated fixture");
     assert!(thumbnail(&path, 256).is_none());
-    let fallback = pixels(&super::super::render_image(&path, 256).unwrap());
+    let fallback = pixels(
+        &super::super::render_image(&path, 256)
+            .expect("expected test value from super::super::render_image(&path, 256)"),
+    );
     assert!(fallback.read_pixel_bytes()[2] > 150);
     let refreshed = crate::sandbox::parse(
         &path,
@@ -299,24 +332,32 @@ fn generated_jpeg_thumbnail_orientation_quality_fallback_and_timing() {
         256,
         &crate::sandbox::Cancellation::default(),
     )
-    .unwrap();
+    .expect("expected test value from crate::sandbox::parse( &path, crate::sandbox::ParseOperation::ThumbnailImage, 256, &crate::sandbox::Cancellation::default(), )");
     assert_ne!(
         cached_thumbnail, refreshed.data,
         "Replacing the source invalidates cached thumbnails"
     );
-    std::fs::write(&path, &source).unwrap();
+    std::fs::write(&path, &source).expect("write generated fixture");
     assert!(thumbnail(&path, 256).is_none());
-    let large = Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 3600, 2400).unwrap();
+    let large = Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 3600, 2400).expect(
+        "expected test value from Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 3600, 2400)",
+    );
     large.fill(0x2040d0ff);
-    let large_data = large.save_to_bufferv("jpeg", &[("quality", "90")]).unwrap();
-    std::fs::write(&path, jpeg_fixture(1, &large_data, &thumbnail_data)).unwrap();
+    let large_data = large.save_to_bufferv("jpeg", &[("quality", "90")]).expect(
+        "expected test value from large.save_to_bufferv(\"jpeg\", &[(\"quality\", \"90\")])",
+    );
+    std::fs::write(&path, jpeg_fixture(1, &large_data, &thumbnail_data))
+        .expect("write generated fixture");
     assert!(sniff::exceeds_decoded_frame_budget(3600, 2400));
     assert!(thumbnail(&path, 256).is_some());
-    let large_preview = pixels(&super::super::render_image(&path, 1400).unwrap());
+    let large_preview = pixels(
+        &super::super::render_image(&path, 1400)
+            .expect("expected test value from super::super::render_image(&path, 1400)"),
+    );
     assert_eq!(large_preview.width(), 1400);
     assert!(
         large_preview.read_pixel_bytes()[2] > 150,
         "Over-budget JPEG previews still use bounded original-image decoding"
     );
-    std::fs::remove_dir_all(directory).unwrap();
+    std::fs::remove_dir_all(directory).expect("remove generated fixture");
 }

@@ -4,10 +4,7 @@ use std::{
     fs::File,
     io::{Read, Take},
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::AtomicBool,
-    },
+    sync::{Arc, atomic::AtomicBool},
 };
 
 use gio::glib;
@@ -15,12 +12,15 @@ use gio::glib;
 use super::{TextExtractor, capabilities_by_name};
 use crate::model::MusicTags;
 
-mod worker;
-mod scope;
 mod candidates;
 mod groups;
-pub(crate) use groups::{SearchCounts, SearchEntity, SearchEntityKey, SearchGroup, SearchGroups, SearchResult, SearchResultKey};
-pub(crate) use scope::{SearchScope, ScopedSearch};
+mod scope;
+mod worker;
+pub(crate) use groups::{
+    SearchCounts, SearchEntity, SearchEntityKey, SearchGroup, SearchGroups, SearchResult,
+    SearchResultKey,
+};
+pub(crate) use scope::{ScopedSearch, SearchScope};
 pub(crate) use worker::{SearchHandle, index_tree};
 
 const RESULT_LIMIT: usize = 100;
@@ -67,16 +67,48 @@ impl SearchItem {
             location: Location::local(&self.path),
             native_name: self.path.file_name().unwrap_or_default().to_owned(),
             display_name: self.name.clone(),
-            kind: if self.is_directory { EntryKind::Directory } else { EntryKind::File },
-            size: self.source_identity.as_ref().map_or(MetadataValue::Unknown, |identity| MetadataValue::Known(identity.size())),
-            modified_unix_seconds: self.modified_unix_seconds.map_or(MetadataValue::Unknown, MetadataValue::Known),
+            kind: if self.is_directory {
+                EntryKind::Directory
+            } else {
+                EntryKind::File
+            },
+            size: self
+                .source_identity
+                .as_ref()
+                .map_or(MetadataValue::Unknown, |identity| {
+                    MetadataValue::Known(identity.size())
+                }),
+            modified_unix_seconds: self
+                .modified_unix_seconds
+                .map_or(MetadataValue::Unknown, MetadataValue::Known),
         }))
     }
-    pub(crate) fn from_path(path: PathBuf, root: &Path, is_directory: bool, modified_unix_seconds: Option<i64>) -> Self {
-        let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
-        Self { search_name: name.to_lowercase(),
-            search_path: path.strip_prefix(root).unwrap_or(&path).to_string_lossy().to_lowercase(),
-            name, path, is_directory, modified_unix_seconds, music_tags: None, search_metadata: String::new(), source_identity: None }
+    pub(crate) fn from_path(
+        path: PathBuf,
+        root: &Path,
+        is_directory: bool,
+        modified_unix_seconds: Option<i64>,
+    ) -> Self {
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        Self {
+            search_name: name.to_lowercase(),
+            search_path: path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_lowercase(),
+            name,
+            path,
+            is_directory,
+            modified_unix_seconds,
+            music_tags: None,
+            search_metadata: String::new(),
+            source_identity: None,
+        }
     }
 }
 
@@ -242,7 +274,10 @@ pub fn search_filter_values(query: &str) -> (String, SearchFilterValues) {
             within: parsed.within.clone(),
             modified: parsed.modified_name.clone(),
             content: parsed.content.clone(),
-            artist: parsed.artist.clone().or_else(|| parsed.inferred_artist.clone()),
+            artist: parsed
+                .artist
+                .clone()
+                .or_else(|| parsed.inferred_artist.clone()),
             album: parsed.album.clone(),
             title: parsed.title.clone(),
             rating: parsed.rating,
@@ -282,17 +317,21 @@ impl SearchPage {
     }
 }
 
-
 fn insert_match(matches: &mut Vec<(i64, SearchItem)>, score: i64, item: SearchItem) {
     let position = matches
-        .binary_search_by(|candidate| candidate.0.cmp(&score).reverse().then_with(|| candidate.1.path.cmp(&item.path)))
+        .binary_search_by(|candidate| {
+            candidate
+                .0
+                .cmp(&score)
+                .reverse()
+                .then_with(|| candidate.1.path.cmp(&item.path))
+        })
         .unwrap_or_else(|position| position);
     if position < RESULT_LIMIT {
         matches.insert(position, (score, item));
         matches.truncate(RESULT_LIMIT);
     }
 }
-
 
 /// Scores ordered character matches, strongly preferring names, contiguous runs and word/path
 /// boundaries. Exact substrings rank ahead of looser fuzzy matches.
@@ -368,9 +407,10 @@ fn filter_bonus(item: &SearchItem, query: &ParsedSearchQuery) -> Option<i64> {
     }
     if let Some(within) = query.within.as_deref()
         && !item.search_path.contains(within)
-        && !item.path.parent().is_some_and(|parent| {
-            parent.to_string_lossy().to_lowercase().contains(within)
-        })
+        && !item
+            .path
+            .parent()
+            .is_some_and(|parent| parent.to_string_lossy().to_lowercase().contains(within))
     {
         return None;
     }
@@ -389,10 +429,16 @@ fn filter_bonus(item: &SearchItem, query: &ParsedSearchQuery) -> Option<i64> {
     let inferred_artist_bonus = if let Some(inferred_artist) = query.inferred_artist.as_deref() {
         let folded_artist = fold_diacritics(inferred_artist);
         let tag_artist = tags.and_then(|t| t.artist.as_deref()).map(fold_diacritics);
-        let tag_album_artist = tags.and_then(|t| t.album_artist.as_deref()).map(fold_diacritics);
-        if tag_artist.as_deref() == Some(&folded_artist) || tag_album_artist.as_deref() == Some(&folded_artist) {
+        let tag_album_artist = tags
+            .and_then(|t| t.album_artist.as_deref())
+            .map(fold_diacritics);
+        if tag_artist.as_deref() == Some(&folded_artist)
+            || tag_album_artist.as_deref() == Some(&folded_artist)
+        {
             15_000
-        } else if fold_diacritics(&item.search_metadata).contains(&folded_artist) || fold_diacritics(&item.search_name).contains(&folded_artist) {
+        } else if fold_diacritics(&item.search_metadata).contains(&folded_artist)
+            || fold_diacritics(&item.search_name).contains(&folded_artist)
+        {
             10_000
         } else {
             return None;
@@ -464,16 +510,22 @@ fn score_parsed_item(
         10_000 - position as i64 * 8 - folded_metadata.len() as i64
     } else {
         let term_words: Vec<&str> = folded_terms.split_whitespace().collect();
-        if term_words.len() > 1 && term_words.iter().all(|term| {
-            folded_metadata.contains(term) || folded_name.contains(term)
-        }) {
+        if term_words.len() > 1
+            && term_words
+                .iter()
+                .all(|term| folded_metadata.contains(term) || folded_name.contains(term))
+        {
             8_500 - folded_metadata.len() as i64
         } else if let Some(position) = folded_path.find(&folded_terms) {
             5_000 - position as i64 * 4 - folded_path.len() as i64
         } else if term_words.iter().all(|term| {
-            folded_metadata.contains(term) || folded_name.contains(term) || folded_path.contains(term)
+            folded_metadata.contains(term)
+                || folded_name.contains(term)
+                || folded_path.contains(term)
         }) {
-            let all_in_name_or_meta = term_words.iter().all(|t| folded_metadata.contains(t) || folded_name.contains(t));
+            let all_in_name_or_meta = term_words
+                .iter()
+                .all(|t| folded_metadata.contains(t) || folded_name.contains(t));
             if all_in_name_or_meta {
                 8_000 - folded_metadata.len() as i64
             } else {
@@ -481,16 +533,19 @@ fn score_parsed_item(
             }
         } else {
             let mut typos = 0;
-            let all_match_typo = !term_words.is_empty() && term_words.iter().all(|term| {
-                if folded_name.contains(term) || folded_metadata.contains(term) {
-                    true
-                } else if matches_word_with_typo(term, &folded_name) || matches_word_with_typo(term, &folded_metadata) {
-                    typos += 1;
-                    true
-                } else {
-                    false
-                }
-            });
+            let all_match_typo = !term_words.is_empty()
+                && term_words.iter().all(|term| {
+                    if folded_name.contains(term) || folded_metadata.contains(term) {
+                        true
+                    } else if matches_word_with_typo(term, &folded_name)
+                        || matches_word_with_typo(term, &folded_metadata)
+                    {
+                        typos += 1;
+                        true
+                    } else {
+                        false
+                    }
+                });
             if all_match_typo && typos > 0 {
                 7_500 - (typos as i64 * 400) - folded_metadata.len() as i64
             } else {
@@ -519,27 +574,33 @@ pub(crate) fn fold_diacritics(input: &str) -> String {
     let mut folded = String::with_capacity(input.len());
     for c in input.chars() {
         match c {
-            'a' | 'A' | 'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' | 'ă' | 'ą'
-            | 'À' | 'Á' | 'Â' | 'Ã' | 'Ä' | 'Å' | 'Ā' | 'Ă' | 'Ą' => folded.push('a'),
-            'c' | 'C' | 'ç' | 'ć' | 'ĉ' | 'ċ' | 'č' | 'Ç' | 'Ć' | 'Ĉ' | 'Ċ' | 'Č' => folded.push('c'),
+            'a' | 'A' | 'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' | 'ă' | 'ą' | 'À' | 'Á' | 'Â'
+            | 'Ã' | 'Ä' | 'Å' | 'Ā' | 'Ă' | 'Ą' => folded.push('a'),
+            'c' | 'C' | 'ç' | 'ć' | 'ĉ' | 'ċ' | 'č' | 'Ç' | 'Ć' | 'Ĉ' | 'Ċ' | 'Č' => {
+                folded.push('c')
+            }
             'd' | 'D' | 'ď' | 'đ' | 'Ď' | 'Đ' => folded.push('d'),
-            'e' | 'E' | 'è' | 'é' | 'ê' | 'ë' | 'ē' | 'ĕ' | 'ė' | 'ę' | 'ě'
-            | 'È' | 'É' | 'Ê' | 'Ë' | 'Ē' | 'Ĕ' | 'Ė' | 'Ę' | 'Ě' => folded.push('e'),
+            'e' | 'E' | 'è' | 'é' | 'ê' | 'ë' | 'ē' | 'ĕ' | 'ė' | 'ę' | 'ě' | 'È' | 'É' | 'Ê'
+            | 'Ë' | 'Ē' | 'Ĕ' | 'Ė' | 'Ę' | 'Ě' => folded.push('e'),
             'g' | 'G' | 'ĝ' | 'ğ' | 'ġ' | 'ģ' | 'Ĝ' | 'Ğ' | 'Ġ' | 'Ģ' => folded.push('g'),
             'h' | 'H' | 'ĥ' | 'ħ' | 'Ĥ' | 'Ħ' => folded.push('h'),
-            'i' | 'I' | 'ì' | 'í' | 'î' | 'ï' | 'ĩ' | 'ī' | 'ĭ' | 'į' | 'ı'
-            | 'Ì' | 'Í' | 'Î' | 'Ï' | 'Ĩ' | 'Ī' | 'Ĭ' | 'Į' | 'İ' => folded.push('i'),
+            'i' | 'I' | 'ì' | 'í' | 'î' | 'ï' | 'ĩ' | 'ī' | 'ĭ' | 'į' | 'ı' | 'Ì' | 'Í' | 'Î'
+            | 'Ï' | 'Ĩ' | 'Ī' | 'Ĭ' | 'Į' | 'İ' => folded.push('i'),
             'j' | 'J' | 'ĵ' | 'Ĵ' => folded.push('j'),
             'k' | 'K' | 'ķ' | 'ĸ' | 'Ķ' => folded.push('k'),
-            'l' | 'L' | 'ĺ' | 'ļ' | 'ľ' | 'ŀ' | 'ł' | 'Ĺ' | 'Ļ' | 'Ľ' | 'Ŀ' | 'Ł' => folded.push('l'),
-            'n' | 'N' | 'ñ' | 'ń' | 'ņ' | 'ň' | 'ŉ' | 'ŋ' | 'Ñ' | 'Ń' | 'Ņ' | 'Ň' | 'Ŋ' => folded.push('n'),
-            'o' | 'O' | 'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' | 'ō' | 'ŏ' | 'ő'
-            | 'Ò' | 'Ó' | 'Ô' | 'Õ' | 'Ö' | 'Ø' | 'Ō' | 'Ŏ' | 'Ő' => folded.push('o'),
+            'l' | 'L' | 'ĺ' | 'ļ' | 'ľ' | 'ŀ' | 'ł' | 'Ĺ' | 'Ļ' | 'Ľ' | 'Ŀ' | 'Ł' => {
+                folded.push('l')
+            }
+            'n' | 'N' | 'ñ' | 'ń' | 'ņ' | 'ň' | 'ŉ' | 'ŋ' | 'Ñ' | 'Ń' | 'Ņ' | 'Ň' | 'Ŋ' => {
+                folded.push('n')
+            }
+            'o' | 'O' | 'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' | 'ō' | 'ŏ' | 'ő' | 'Ò' | 'Ó' | 'Ô'
+            | 'Õ' | 'Ö' | 'Ø' | 'Ō' | 'Ŏ' | 'Ő' => folded.push('o'),
             'r' | 'R' | 'ŕ' | 'ŗ' | 'ř' | 'Ŕ' | 'Ŗ' | 'Ř' => folded.push('r'),
             's' | 'S' | 'ś' | 'ŝ' | 'ş' | 'š' | 'Ś' | 'Ŝ' | 'Ş' | 'Š' => folded.push('s'),
             't' | 'T' | 'ţ' | 'ť' | 'ŧ' | 'Ţ' | 'Ť' | 'Ŧ' => folded.push('t'),
-            'u' | 'U' | 'ù' | 'ú' | 'û' | 'ü' | 'ũ' | 'ū' | 'ŭ' | 'ů' | 'ű' | 'ų'
-            | 'Ù' | 'Ú' | 'Û' | 'Ü' | 'Ũ' | 'Ū' | 'Ŭ' | 'Ů' | 'Ű' | 'Ų' => folded.push('u'),
+            'u' | 'U' | 'ù' | 'ú' | 'û' | 'ü' | 'ũ' | 'ū' | 'ŭ' | 'ů' | 'ű' | 'ų' | 'Ù' | 'Ú'
+            | 'Û' | 'Ü' | 'Ũ' | 'Ū' | 'Ŭ' | 'Ů' | 'Ű' | 'Ų' => folded.push('u'),
             'w' | 'W' | 'ŵ' | 'Ŵ' => folded.push('w'),
             'y' | 'Y' | 'ý' | 'ÿ' | 'ŷ' | 'Ý' | 'Ÿ' | 'Ŷ' => folded.push('y'),
             'z' | 'Z' | 'ź' | 'ż' | 'ž' | 'Ź' | 'Ż' | 'Ž' => folded.push('z'),
@@ -587,12 +648,20 @@ fn edit_distance_at_most_1(a: &str, b: &str) -> bool {
         if diffs <= 1 {
             return true;
         }
-        if diffs == 2 && diff_pos > 0 && a_chars[diff_pos - 1] == b_chars[diff_pos] && a_chars[diff_pos] == b_chars[diff_pos - 1] {
+        if diffs == 2
+            && diff_pos > 0
+            && a_chars[diff_pos - 1] == b_chars[diff_pos]
+            && a_chars[diff_pos] == b_chars[diff_pos - 1]
+        {
             return true;
         }
         false
     } else {
-        let (shorter, longer) = if a_len < b_len { (&a_chars, &b_chars) } else { (&b_chars, &a_chars) };
+        let (shorter, longer) = if a_len < b_len {
+            (&a_chars, &b_chars)
+        } else {
+            (&b_chars, &a_chars)
+        };
         let mut i = 0;
         let mut j = 0;
         let mut skipped = false;
@@ -616,7 +685,10 @@ fn matches_word_with_typo(term: &str, target: &str) -> bool {
     if term_len < 4 {
         return false;
     }
-    for word in target.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()) {
+    for word in target
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+    {
         if word.chars().count() >= 4 && edit_distance_at_most_1(term, word) {
             return true;
         }
@@ -707,9 +779,8 @@ struct ParsedSearchQuery {
 
 impl ParsedSearchQuery {
     fn parse(query: &str) -> Self {
-        let now = glib::DateTime::now_local().unwrap_or_else(|_| {
-            glib::DateTime::from_unix_local(0).expect("unix epoch")
-        });
+        let now = glib::DateTime::now_local()
+            .unwrap_or_else(|_| glib::DateTime::from_unix_local(0).expect("unix epoch"));
         Self::parse_at(query, &now)
     }
 
@@ -773,20 +844,20 @@ impl ParsedSearchQuery {
                     remaining.push(token);
                 }
                 continue;
-            } else if let Some((field, value)) = lower.split_once(':') {
-                if matches!(field, "artist" | "album" | "title") {
-                    if value.is_empty() {
-                        remaining.push(token);
-                    } else {
-                        let constraint = match field {
-                            "artist" => &mut parsed.artist,
-                            "album" => &mut parsed.album,
-                            _ => &mut parsed.title,
-                        };
-                        *constraint = Some(value.to_owned());
-                    }
-                    continue;
+            } else if let Some((field, value)) = lower.split_once(':')
+                && matches!(field, "artist" | "album" | "title")
+            {
+                if value.is_empty() {
+                    remaining.push(token);
+                } else {
+                    let constraint = match field {
+                        "artist" => &mut parsed.artist,
+                        "album" => &mut parsed.album,
+                        _ => &mut parsed.title,
+                    };
+                    *constraint = Some(value.to_owned());
                 }
+                continue;
             }
             remaining.push(token);
         }
@@ -858,77 +929,94 @@ fn parse_date_phrases(
             && !tokens[i].quoted
             && !tokens[i + 1].quoted
             && !tokens[i + 2].quoted
-            && (tokens[i].text.eq_ignore_ascii_case("from") || tokens[i].text.eq_ignore_ascii_case("modified"))
+            && (tokens[i].text.eq_ignore_ascii_case("from")
+                || tokens[i].text.eq_ignore_ascii_case("modified"))
             && tokens[i + 1].text.eq_ignore_ascii_case("last")
             && tokens[i + 2].text.eq_ignore_ascii_case("week")
+            && let Some(bounds) = recent_bounds_at("modified:last-week", now)
         {
-            if let Some(bounds) = recent_bounds_at("modified:last-week", now) {
-                parsed.modified = Some(bounds);
-                parsed.modified_name = Some("last-week".to_owned());
-                parsed.inferred.push(InferredFilterChip::new("Modified: last week", &tokens[i..=i + 2]));
-                tokens.drain(i..=i + 2);
-                return;
-            }
+            parsed.modified = Some(bounds);
+            parsed.modified_name = Some("last-week".to_owned());
+            parsed.inferred.push(InferredFilterChip::new(
+                "Modified: last week",
+                &tokens[i..=i + 2],
+            ));
+            tokens.drain(i..=i + 2);
+            return;
         }
         if i + 3 < tokens.len()
             && !tokens[i].quoted
             && !tokens[i + 1].quoted
             && !tokens[i + 2].quoted
             && !tokens[i + 3].quoted
-            && (tokens[i].text.eq_ignore_ascii_case("from") || tokens[i].text.eq_ignore_ascii_case("the"))
-            && (tokens[i + 1].text.eq_ignore_ascii_case("past") || tokens[i + 1].text.eq_ignore_ascii_case("last"))
+            && (tokens[i].text.eq_ignore_ascii_case("from")
+                || tokens[i].text.eq_ignore_ascii_case("the"))
+            && (tokens[i + 1].text.eq_ignore_ascii_case("past")
+                || tokens[i + 1].text.eq_ignore_ascii_case("last"))
             && tokens[i + 2].text == "7"
             && tokens[i + 3].text.eq_ignore_ascii_case("days")
+            && let Some(bounds) = recent_bounds_at("modified:past-7-days", now)
         {
-            if let Some(bounds) = recent_bounds_at("modified:past-7-days", now) {
-                parsed.modified = Some(bounds);
-                parsed.modified_name = Some("past-7-days".to_owned());
-                parsed.inferred.push(InferredFilterChip::new("Modified: past 7 days", &tokens[i..=i + 3]));
-                tokens.drain(i..=i + 3);
-                return;
-            }
+            parsed.modified = Some(bounds);
+            parsed.modified_name = Some("past-7-days".to_owned());
+            parsed.inferred.push(InferredFilterChip::new(
+                "Modified: past 7 days",
+                &tokens[i..=i + 3],
+            ));
+            tokens.drain(i..=i + 3);
+            return;
         }
         if i + 2 < tokens.len()
             && !tokens[i].quoted
             && !tokens[i + 1].quoted
             && !tokens[i + 2].quoted
-            && (tokens[i].text.eq_ignore_ascii_case("past") || tokens[i].text.eq_ignore_ascii_case("last"))
+            && (tokens[i].text.eq_ignore_ascii_case("past")
+                || tokens[i].text.eq_ignore_ascii_case("last"))
             && tokens[i + 1].text == "7"
             && tokens[i + 2].text.eq_ignore_ascii_case("days")
+            && let Some(bounds) = recent_bounds_at("modified:past-7-days", now)
         {
-            if let Some(bounds) = recent_bounds_at("modified:past-7-days", now) {
-                parsed.modified = Some(bounds);
-                parsed.modified_name = Some("past-7-days".to_owned());
-                parsed.inferred.push(InferredFilterChip::new("Modified: past 7 days", &tokens[i..=i + 2]));
-                tokens.drain(i..=i + 2);
-                return;
-            }
+            parsed.modified = Some(bounds);
+            parsed.modified_name = Some("past-7-days".to_owned());
+            parsed.inferred.push(InferredFilterChip::new(
+                "Modified: past 7 days",
+                &tokens[i..=i + 2],
+            ));
+            tokens.drain(i..=i + 2);
+            return;
         }
         if i + 1 < tokens.len()
             && !tokens[i].quoted
             && !tokens[i + 1].quoted
             && tokens[i].text.eq_ignore_ascii_case("last")
             && tokens[i + 1].text.eq_ignore_ascii_case("week")
+            && let Some(bounds) = recent_bounds_at("modified:last-week", now)
         {
-            if let Some(bounds) = recent_bounds_at("modified:last-week", now) {
-                parsed.modified = Some(bounds);
-                parsed.modified_name = Some("last-week".to_owned());
-                parsed.inferred.push(InferredFilterChip::new("Modified: last week", &tokens[i..=i + 1]));
-                tokens.drain(i..=i + 1);
-                return;
-            }
+            parsed.modified = Some(bounds);
+            parsed.modified_name = Some("last-week".to_owned());
+            parsed.inferred.push(InferredFilterChip::new(
+                "Modified: last week",
+                &tokens[i..=i + 1],
+            ));
+            tokens.drain(i..=i + 1);
+            return;
         }
         if i + 1 < tokens.len()
             && !tokens[i].quoted
             && !tokens[i + 1].quoted
-            && (tokens[i].text.eq_ignore_ascii_case("from") || tokens[i].text.eq_ignore_ascii_case("modified"))
-            && (tokens[i + 1].text.eq_ignore_ascii_case("today") || tokens[i + 1].text.eq_ignore_ascii_case("yesterday"))
+            && (tokens[i].text.eq_ignore_ascii_case("from")
+                || tokens[i].text.eq_ignore_ascii_case("modified"))
+            && (tokens[i + 1].text.eq_ignore_ascii_case("today")
+                || tokens[i + 1].text.eq_ignore_ascii_case("yesterday"))
         {
             let target = tokens[i + 1].text.to_lowercase();
             if let Some(bounds) = recent_bounds_at(&format!("modified:{target}"), now) {
                 parsed.modified = Some(bounds);
                 parsed.modified_name = Some(target.clone());
-                parsed.inferred.push(InferredFilterChip::new(format!("Modified: {target}"), &tokens[i..=i + 1]));
+                parsed.inferred.push(InferredFilterChip::new(
+                    format!("Modified: {target}"),
+                    &tokens[i..=i + 1],
+                ));
                 tokens.drain(i..=i + 1);
                 return;
             }
@@ -942,15 +1030,22 @@ fn parse_location_phrases(tokens: &mut Vec<QueryToken>, parsed: &mut ParsedSearc
         return;
     }
     for i in 0..tokens.len() {
-        if (tokens[i].text.eq_ignore_ascii_case("in") || tokens[i].text.eq_ignore_ascii_case("within"))
+        if (tokens[i].text.eq_ignore_ascii_case("in")
+            || tokens[i].text.eq_ignore_ascii_case("within"))
             && !tokens[i].quoted
             && i + 2 == tokens.len()
             && !tokens[i + 1].quoted
-            && !matches!(tokens[i + 1].text.to_ascii_lowercase().as_str(), "the" | "a" | "an")
+            && !matches!(
+                tokens[i + 1].text.to_ascii_lowercase().as_str(),
+                "the" | "a" | "an"
+            )
         {
             let folder = tokens[i + 1].text.clone();
             parsed.within = Some(folder.to_lowercase());
-            parsed.inferred.push(InferredFilterChip::new(format!("In: {folder}"), &tokens[i..=i + 1]));
+            parsed.inferred.push(InferredFilterChip::new(
+                format!("In: {folder}"),
+                &tokens[i..=i + 1],
+            ));
             tokens.drain(i..=i + 1);
             return;
         }
@@ -962,11 +1057,20 @@ fn parse_artist_phrases(tokens: &mut Vec<QueryToken>, parsed: &mut ParsedSearchQ
         return;
     }
     for i in 0..tokens.len() {
-        if tokens[i].text.eq_ignore_ascii_case("by") && !tokens[i].quoted && i + 1 < tokens.len()
+        if tokens[i].text.eq_ignore_ascii_case("by")
+            && !tokens[i].quoted
+            && i + 1 < tokens.len()
             && tokens[i + 1..].iter().all(|token| !token.quoted)
         {
-            let artist_display = tokens[i + 1..].iter().map(|token| token.text.as_str()).collect::<Vec<_>>().join(" ");
-            parsed.inferred.push(InferredFilterChip::new(format!("Artist: {artist_display}"), &tokens[i..]));
+            let artist_display = tokens[i + 1..]
+                .iter()
+                .map(|token| token.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            parsed.inferred.push(InferredFilterChip::new(
+                format!("Artist: {artist_display}"),
+                &tokens[i..],
+            ));
             tokens.drain(i..);
             parsed.inferred_artist = Some(artist_display.to_lowercase());
             return;
@@ -982,18 +1086,36 @@ fn parse_type_and_format_phrases(tokens: &mut Vec<QueryToken>, parsed: &mut Pars
     }
     for i in 0..tokens.len() {
         let is_audio_ext = !tokens[i].quoted
-            && AUDIO_EXTS.iter().any(|ext| tokens[i].text.eq_ignore_ascii_case(ext));
-        if is_audio_ext && i + 1 < tokens.len() && !tokens[i + 1].quoted
-            && parsed.category.as_deref().is_none_or(|category| category == "audio")
-            && parsed.extension.as_deref().is_none_or(|extension| tokens[i].text.eq_ignore_ascii_case(extension))
+            && AUDIO_EXTS
+                .iter()
+                .any(|ext| tokens[i].text.eq_ignore_ascii_case(ext));
+        if is_audio_ext
+            && i + 1 < tokens.len()
+            && !tokens[i + 1].quoted
+            && parsed
+                .category
+                .as_deref()
+                .is_none_or(|category| category == "audio")
+            && parsed
+                .extension
+                .as_deref()
+                .is_none_or(|extension| tokens[i].text.eq_ignore_ascii_case(extension))
         {
             let next = &tokens[i + 1].text;
-            if matches!(next.to_ascii_lowercase().as_str(), "songs" | "song" | "tracks" | "track" | "audio") {
+            if matches!(
+                next.to_ascii_lowercase().as_str(),
+                "songs" | "song" | "tracks" | "track" | "audio"
+            ) {
                 let ext = tokens[i].text.to_lowercase();
                 parsed.extension = Some(ext.clone());
-                parsed.inferred.push(InferredFilterChip::new(format!("Format: {}", ext.to_uppercase()), &tokens[i..=i]));
+                parsed.inferred.push(InferredFilterChip::new(
+                    format!("Format: {}", ext.to_uppercase()),
+                    &tokens[i..=i],
+                ));
                 parsed.category = Some("audio".to_owned());
-                parsed.inferred.push(InferredFilterChip::new("Audio", &tokens[i + 1..=i + 1]));
+                parsed
+                    .inferred
+                    .push(InferredFilterChip::new("Audio", &tokens[i + 1..=i + 1]));
                 tokens.drain(i..=i + 1);
                 return;
             }
@@ -1003,11 +1125,20 @@ fn parse_type_and_format_phrases(tokens: &mut Vec<QueryToken>, parsed: &mut Pars
     if tokens.len() >= 2 || (tokens.len() == 1 && parsed.inferred_artist.is_some()) {
         let last_idx = tokens.len() - 1;
         let last = &tokens[last_idx];
-        if !last.quoted && matches!(last.text.to_ascii_lowercase().as_str(), "songs" | "song" | "tracks" | "track")
-            && parsed.category.as_deref().is_none_or(|category| category == "audio")
+        if !last.quoted
+            && matches!(
+                last.text.to_ascii_lowercase().as_str(),
+                "songs" | "song" | "tracks" | "track"
+            )
+            && parsed
+                .category
+                .as_deref()
+                .is_none_or(|category| category == "audio")
         {
             parsed.category = Some("audio".to_owned());
-            parsed.inferred.push(InferredFilterChip::new("Audio", &tokens[last_idx..]));
+            parsed
+                .inferred
+                .push(InferredFilterChip::new("Audio", &tokens[last_idx..]));
             tokens.pop();
             return;
         }
@@ -1015,22 +1146,35 @@ fn parse_type_and_format_phrases(tokens: &mut Vec<QueryToken>, parsed: &mut Pars
 
     for i in 0..tokens.len() {
         if !tokens[i].quoted
-            && parsed.category.as_deref().is_none_or(|category| category == "document")
-            && parsed.extension.as_deref().is_none_or(|extension| extension == "pdf")
+            && parsed
+                .category
+                .as_deref()
+                .is_none_or(|category| category == "document")
+            && parsed
+                .extension
+                .as_deref()
+                .is_none_or(|extension| extension == "pdf")
         {
             if tokens[i].text.eq_ignore_ascii_case("pdfs") {
                 parsed.extension = Some("pdf".to_owned());
-                parsed.inferred.push(InferredFilterChip::new("Format: PDF", &tokens[i..=i]));
+                parsed
+                    .inferred
+                    .push(InferredFilterChip::new("Format: PDF", &tokens[i..=i]));
                 if parsed.category.is_none() {
                     parsed.category = Some("document".to_owned());
                 }
                 tokens.remove(i);
                 return;
-            } else if tokens[i].text.eq_ignore_ascii_case("pdf") && i + 1 < tokens.len() && !tokens[i + 1].quoted {
+            } else if tokens[i].text.eq_ignore_ascii_case("pdf")
+                && i + 1 < tokens.len()
+                && !tokens[i + 1].quoted
+            {
                 let next = tokens[i + 1].text.to_ascii_lowercase();
                 if matches!(next.as_str(), "files" | "file" | "documents" | "document") {
                     parsed.extension = Some("pdf".to_owned());
-                    parsed.inferred.push(InferredFilterChip::new("Format: PDF", &tokens[i..=i + 1]));
+                    parsed
+                        .inferred
+                        .push(InferredFilterChip::new("Format: PDF", &tokens[i..=i + 1]));
                     if parsed.category.is_none() {
                         parsed.category = Some("document".to_owned());
                     }
@@ -1042,56 +1186,95 @@ fn parse_type_and_format_phrases(tokens: &mut Vec<QueryToken>, parsed: &mut Pars
     }
 
     for i in 0..tokens.len() {
-        if !tokens[i].quoted && (tokens[i].text.eq_ignore_ascii_case("videos") || tokens[i].text.eq_ignore_ascii_case("video"))
-            && parsed.category.as_deref().is_none_or(|category| category == "video")
+        if !tokens[i].quoted
+            && (tokens[i].text.eq_ignore_ascii_case("videos")
+                || tokens[i].text.eq_ignore_ascii_case("video"))
+            && parsed
+                .category
+                .as_deref()
+                .is_none_or(|category| category == "video")
         {
             parsed.category = Some("video".to_owned());
-            parsed.inferred.push(InferredFilterChip::new("Video", &tokens[i..=i]));
+            parsed
+                .inferred
+                .push(InferredFilterChip::new("Video", &tokens[i..=i]));
             tokens.remove(i);
             return;
         }
     }
 
     for i in 0..tokens.len() {
-        if !tokens[i].quoted && matches!(tokens[i].text.to_ascii_lowercase().as_str(), "photos" | "images")
-            && parsed.category.as_deref().is_none_or(|category| category == "image")
+        if !tokens[i].quoted
+            && matches!(
+                tokens[i].text.to_ascii_lowercase().as_str(),
+                "photos" | "images"
+            )
+            && parsed
+                .category
+                .as_deref()
+                .is_none_or(|category| category == "image")
         {
             parsed.category = Some("image".to_owned());
-            parsed.inferred.push(InferredFilterChip::new("Image", &tokens[i..=i]));
+            parsed
+                .inferred
+                .push(InferredFilterChip::new("Image", &tokens[i..=i]));
             tokens.remove(i);
             return;
         }
     }
 
     for i in 0..tokens.len() {
-        if !tokens[i].quoted && tokens[i].text.eq_ignore_ascii_case("documents")
-            && parsed.category.as_deref().is_none_or(|category| category == "document")
+        if !tokens[i].quoted
+            && tokens[i].text.eq_ignore_ascii_case("documents")
+            && parsed
+                .category
+                .as_deref()
+                .is_none_or(|category| category == "document")
         {
             parsed.category = Some("document".to_owned());
-            parsed.inferred.push(InferredFilterChip::new("Document", &tokens[i..=i]));
+            parsed
+                .inferred
+                .push(InferredFilterChip::new("Document", &tokens[i..=i]));
             tokens.remove(i);
             return;
         }
     }
 
     for i in 0..tokens.len() {
-        if !tokens[i].quoted && matches!(tokens[i].text.to_ascii_lowercase().as_str(), "archives" | "zips")
-            && parsed.category.as_deref().is_none_or(|category| category == "archive")
+        if !tokens[i].quoted
+            && matches!(
+                tokens[i].text.to_ascii_lowercase().as_str(),
+                "archives" | "zips"
+            )
+            && parsed
+                .category
+                .as_deref()
+                .is_none_or(|category| category == "archive")
         {
             parsed.category = Some("archive".to_owned());
-            parsed.inferred.push(InferredFilterChip::new("Archive", &tokens[i..=i]));
+            parsed
+                .inferred
+                .push(InferredFilterChip::new("Archive", &tokens[i..=i]));
             tokens.remove(i);
             return;
         }
     }
 
     for i in 0..tokens.len() {
-        if !tokens[i].quoted && matches!(tokens[i].text.to_ascii_lowercase().as_str(), "folders" | "directories")
-            && parsed.directory.is_none() && parsed.category.is_none() && parsed.extension.is_none()
+        if !tokens[i].quoted
+            && matches!(
+                tokens[i].text.to_ascii_lowercase().as_str(),
+                "folders" | "directories"
+            )
+            && parsed.directory.is_none()
+            && parsed.category.is_none()
+            && parsed.extension.is_none()
         {
             if parsed.directory.is_none() {
                 parsed.directory = Some(true);
-                parsed.inferred.push(InferredFilterChip::new("Folders", &tokens[i..=i]));
+                parsed
+                    .inferred
+                    .push(InferredFilterChip::new("Folders", &tokens[i..=i]));
             }
             tokens.remove(i);
             return;
@@ -1107,18 +1290,28 @@ fn matches_category(path: &Path, category: &str) -> bool {
         "video" => family == FormatFamily::Video,
         "image" => matches!(
             family,
-            FormatFamily::Image | FormatFamily::Svg | FormatFamily::Heif
-                | FormatFamily::RawImage | FormatFamily::GeoTiff
+            FormatFamily::Image
+                | FormatFamily::Svg
+                | FormatFamily::Heif
+                | FormatFamily::RawImage
+                | FormatFamily::GeoTiff
         ),
         "document" => matches!(
             family,
-            FormatFamily::Pdf | FormatFamily::OfficeDocument
-                | FormatFamily::Spreadsheet | FormatFamily::PlainText
+            FormatFamily::Pdf
+                | FormatFamily::OfficeDocument
+                | FormatFamily::Spreadsheet
+                | FormatFamily::PlainText
         ),
-        "application" => family == FormatFamily::DesktopEntry
-            || path.extension().is_some_and(|extension| matches!(
-                extension.to_string_lossy().to_ascii_lowercase().as_str(), "exe" | "appimage"
-            )),
+        "application" => {
+            family == FormatFamily::DesktopEntry
+                || path.extension().is_some_and(|extension| {
+                    matches!(
+                        extension.to_string_lossy().to_ascii_lowercase().as_str(),
+                        "exe" | "appimage"
+                    )
+                })
+        }
         "archive" => matches!(family, FormatFamily::Archive | FormatFamily::Comic),
         _ => false,
     }
@@ -1210,14 +1403,8 @@ impl TextExtractionProvider for UnavailableTextExtraction {
 
 pub(crate) fn recent_bounds_at(query: &str, now: &glib::DateTime) -> Option<(i64, i64)> {
     let name = query.strip_prefix("modified:")?;
-    let today = glib::DateTime::from_local(
-        now.year(),
-        now.month(),
-        now.day_of_month(),
-        0,
-        0,
-        0.0,
-    ).ok()?;
+    let today =
+        glib::DateTime::from_local(now.year(), now.month(), now.day_of_month(), 0, 0, 0.0).ok()?;
     let today_start = today.to_unix();
     match name {
         "today" => Some((today_start, today.add_days(1).ok()?.to_unix())),

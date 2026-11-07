@@ -114,7 +114,10 @@ fn shuffle_reorder_remove_and_play_next_share_the_displayed_order() {
     queue.play_next(vec![track(9)]);
     assert_eq!(queue.advance(false), Some(track(9)));
     queue.remove(8);
-    let expected = queue.playing().cloned().unwrap();
+    let expected = queue
+        .playing()
+        .cloned()
+        .expect("expected test value from queue.playing().cloned()");
     assert_eq!(queue.ordered()[1].1, &expected);
     assert_eq!(queue.order.len(), 8);
     assert_eq!(
@@ -177,7 +180,9 @@ fn shuffle_keeps_current_and_previous_uses_actual_history() {
     queue.replace((1..8).map(track).collect(), 3);
     queue.set_shuffle(true, 42);
     assert_eq!(queue.playing(), Some(&track(4)));
-    let next = queue.advance(false).unwrap();
+    let next = queue
+        .advance(false)
+        .expect("expected test value from queue.advance(false)");
     assert_ne!(next, track(4));
     assert_eq!(queue.previous(), Some(track(4)));
     assert_eq!(
@@ -193,8 +198,8 @@ fn shuffle_keeps_current_and_previous_uses_actual_history() {
 
 #[test]
 fn metadata_disc_track_order_wins_and_old_tags_still_deserialize() {
-    let tags: MusicTags =
-        serde_json::from_str(r#"{"album":"Example","disc":1,"track":2}"#).unwrap();
+    let tags: MusicTags = serde_json::from_str(r#"{"album":"Example","disc":1,"track":2}"#)
+        .expect("decode generated JSON fixture");
     assert_eq!(tags.title, None);
     let mut tracks = vec![track(10), track(2), track(1)];
     tracks.sort_by(compare_tracks);

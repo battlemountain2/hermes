@@ -1,0 +1,42 @@
+name: Native Arch package
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  arch:
+    name: Native Arch x86_64 test package
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Prepare disposable Arch build environment
+        run: |
+          pacman -Syu --noconfirm git rustup pkgconf python cairo fontconfig gdk-pixbuf2 glib2 gstreamer gst-plugins-base gtk4 gtksourceview5 libheif pango poppler-glib bubblewrap util-linux
+          useradd --create-home hermes-build
+          install -d -o hermes-build -g hermes-build /tmp/hermes-artifacts
+      - name: Check out immutable workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build as an unprivileged package builder
+        run: |
+          chown -R hermes-build:hermes-build "$GITHUB_WORKSPACE"
+          runuser -u hermes-build -- rustup toolchain install 1.99.0 --profile minimal
+          source_sha=$(git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD)
+          runuser -u hermes-build -- python3 scripts/build-arch-package.py --sha "$source_sha" --output /tmp/hermes-artifacts/candidate
+      - name: Preserve test package and provenance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hermes-arch-x86_64-test-candidate
+          path: |
+            /tmp/hermes-artifacts/candidate/*.pkg.tar.zst
+            /tmp/hermes-artifacts/candidate/PKGBUILD
+            /tmp/hermes-artifacts/candidate/.SRCINFO
+            /tmp/hermes-artifacts/candidate/BUILD-INFO.json
+            /tmp/hermes-artifacts/candidate/SHA256SUMS
+          include-hidden-files: true
+          if-no-files-found: error

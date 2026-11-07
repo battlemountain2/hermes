@@ -23,11 +23,13 @@ identity collisions; it does not by itself isolate saved settings.
 
 ## Saved-data compatibility
 
-This increment does not relocate or rewrite preferences, custom themes, queues, playlists, ratings
-or search databases. Several internal storage directories remain named `strata`. Do not delete
-those folders during cleanup, or assume Hermes and upstream Strata can safely share them. A later
-migration must identify existing Hermes data, back it up, preserve upstream installations and
-handle interruption before changing the storage namespace. No running window is restarted.
+Current code resolves separate `hermes` and `hermes-dev` config/data/state/cache
+roots through `src/paths.rs`. Stable first launch asks before importing the explicit
+legacy allowlist, with no-clobber backups and a recoverable journal; Development
+does not inspect/import legacy data. Original stores remain intact and are never
+shared writable aliases with Strata. Disposable caches rebuild. See
+[implemented migration behavior and limits](branding-and-migration.md) and the
+[release roadmap](1.0-roadmap.md) for remaining real-upgrade qualification.
 
 ## Icon assets
 

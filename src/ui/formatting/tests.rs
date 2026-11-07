@@ -2,7 +2,7 @@ use super::*;
 
 fn datetime(zone: &str, year: i32, month: i32, day: i32, hour: i32, minute: i32) -> glib::DateTime {
     let timezone = glib::TimeZone::from_identifier(Some(zone)).expect("fixture timezone");
-    glib::DateTime::new(&timezone, year, month, day, hour, minute, 0.0).unwrap()
+    glib::DateTime::new(&timezone, year, month, day, hour, minute, 0.0).expect("expected test value from glib::DateTime::new(&timezone, year, month, day, hour, minute, 0.0)")
 }
 
 #[test]

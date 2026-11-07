@@ -2,15 +2,10 @@
 
 //! Tier 4: Realistic Real-World Application Scenarios (>= 5 end-to-end user workflows).
 
+use super::common::{TestEnv, run_preview_helper, sniffer::*, status_bar::*};
+use super::fixtures::{archives::*, geotiff::*, models::*, spreadsheets::*};
 use std::fs;
 use std::path::Path;
-use super::common::{
-    run_preview_helper,
-    sniffer::*, status_bar::*, TestEnv,
-};
-use super::fixtures::{
-    archives::*, geotiff::*, models::*, spreadsheets::*,
-};
 
 /// Scenario 1: GIS Data Ingestion Workflow
 /// A geospatial scientist opens a directory containing remote-sensing satellite imagery
@@ -33,7 +28,10 @@ fn test_scenario_1_gis_analyst_ingestion_workflow() {
     let dem_dims = sniff_tiff_dimensions(&dem_bytes).expect("DEM dimensions sniffed");
     assert_eq!(dem_dims.width, 512);
     assert_eq!(dem_dims.height, 512);
-    assert!(!exceeds_decoded_frame_budget(dem_dims.width, dem_dims.height));
+    assert!(!exceeds_decoded_frame_budget(
+        dem_dims.width,
+        dem_dims.height
+    ));
 
     let cog_dims = sniff_tiff_dimensions(&cog_bytes).expect("COG dimensions sniffed");
     assert_eq!(cog_dims.width, 1024);
@@ -71,7 +69,11 @@ fn test_scenario_2_cad_3d_asset_management() {
     assert!(f1.exists() && f2.exists() && f3.exists());
 
     // Verify binary STL triangle count is 2 and size is within prlimit budget
-    let tri_count = u32::from_le_bytes(binary_stl[80..84].try_into().unwrap());
+    let tri_count = u32::from_le_bytes(
+        binary_stl[80..84]
+            .try_into()
+            .expect("expected test value from binary_stl[80..84].try_into()"),
+    );
     assert_eq!(tri_count, 2);
 
     // Verify 3MF contains [Content_Types].xml and mesh model
@@ -105,7 +107,8 @@ fn test_scenario_3_media_archive_and_comic_curation() {
     let out_cbz = env.file_path("cbz_listing.txt");
     let res = run_preview_helper("preview-archive", &cbz_path, &out_cbz, 50);
     assert!(res.status.success());
-    let listing = fs::read_to_string(&out_cbz).unwrap();
+    let listing = fs::read_to_string(&out_cbz)
+        .expect("expected test value from fs::read_to_string(&out_cbz)");
     assert!(listing.contains("page_001.png"));
     assert!(listing.contains("page_002.png"));
 
@@ -113,7 +116,8 @@ fn test_scenario_3_media_archive_and_comic_curation() {
     let out_epub = env.file_path("epub_listing.txt");
     let res = run_preview_helper("preview-archive", &epub_path, &out_epub, 50);
     assert!(res.status.success());
-    let listing_epub = fs::read_to_string(&out_epub).unwrap();
+    let listing_epub = fs::read_to_string(&out_epub)
+        .expect("expected test value from fs::read_to_string(&out_epub)");
     assert!(listing_epub.contains("META-INF/container.xml"));
     assert!(listing_epub.contains("OEBPS/content.opf"));
 }
@@ -135,7 +139,8 @@ fn test_scenario_4_financial_spreadsheet_analysis() {
     let out_text = env.file_path("q1_text.txt");
     let res = run_preview_helper("extract-office-text", &ods_path, &out_text, 1000);
     assert!(res.status.success());
-    let extracted = fs::read_to_string(&out_text).unwrap();
+    let extracted = fs::read_to_string(&out_text)
+        .expect("expected test value from fs::read_to_string(&out_text)");
     assert!(extracted.contains("Engineering"));
     assert!(extracted.contains("Operations"));
     assert!(extracted.contains("150000"));
@@ -144,7 +149,8 @@ fn test_scenario_4_financial_spreadsheet_analysis() {
     let out_xlsx_list = env.file_path("xlsx_list.txt");
     let res = run_preview_helper("preview-archive", &xlsx_path, &out_xlsx_list, 100);
     assert!(res.status.success());
-    let list_txt = fs::read_to_string(&out_xlsx_list).unwrap();
+    let list_txt = fs::read_to_string(&out_xlsx_list)
+        .expect("expected test value from fs::read_to_string(&out_xlsx_list)");
     assert!(list_txt.contains("xl/workbook.xml"));
 }
 

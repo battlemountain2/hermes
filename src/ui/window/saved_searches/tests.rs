@@ -57,11 +57,11 @@ fn smart_folder_label(sidebar: &SidebarView, location: &Location) -> Option<Stri
         .find(|(entry, _)| entry == location)
         .map(|(_, row)| {
             row.child()
-                .unwrap()
+                .expect("expected test value from row.child()")
                 .last_child()
-                .unwrap()
+                .expect("expected test value from row.child() .unwrap() .last_child()")
                 .downcast::<gtk::Label>()
-                .unwrap()
+                .expect("expected test value from row.child() .unwrap() .last_child() .unwrap() .downcast::<gtk::Label>()")
                 .text()
                 .to_string()
         })
@@ -70,8 +70,8 @@ fn smart_folder_label(sidebar: &SidebarView, location: &Location) -> Option<Stri
 #[test]
 #[ignore = "Private GTK/XDG; hidden Smart Folders acknowledge store changes without rebuilding idle rows"]
 fn desktop_hidden_smart_folders_acknowledge_updates_without_rebuilding_rows() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let theme_manager = ThemeManager::shared();
     theme_manager.set_show_smart_folders(false);
     let root = std::env::temp_dir().join(format!("hermes-sidebar-hidden-{}", std::process::id()));
@@ -95,7 +95,7 @@ fn desktop_hidden_smart_folders_acknowledge_updates_without_rebuilding_rows() {
             name: "Photos".into(),
             uri: request.to_uri(),
         })
-        .unwrap();
+        .expect("expected test value from store .send(Command::Create { name: \"Photos\".into(), uri: request.to_uri(), })");
     assert!(store.flush(Duration::from_secs(3)));
     let previous = store.snapshot().entries[0].clone();
     for command in [
@@ -112,7 +112,9 @@ fn desktop_hidden_smart_folders_acknowledge_updates_without_rebuilding_rows() {
         assert_eq!(sidebar_children(&sidebar), children);
         assert_eq!(smart_folder_label(&sidebar, &location), None);
         assert_sidebar_idle(&sidebar);
-        store.send(command).unwrap();
+        store
+            .send(command)
+            .expect("expected test value from store.send(command)");
         assert!(store.flush(Duration::from_secs(3)));
     }
     wait_for_sidebar_revision(&sidebar, &store);
@@ -121,14 +123,14 @@ fn desktop_hidden_smart_folders_acknowledge_updates_without_rebuilding_rows() {
     sidebar.disconnect();
     drop(sidebar);
     drop(store);
-    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(root).expect("remove generated fixture");
 }
 
 #[test]
 #[ignore = "Private GTK/XDG; Smart Folder toggles render current snapshots and retain concurrent updates for polling"]
 fn desktop_smart_folders_toggle_visibility_and_poll_snapshot_revisions() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let theme_manager = ThemeManager::shared();
     theme_manager.set_show_smart_folders(false);
     let root = std::env::temp_dir().join(format!("hermes-sidebar-toggle-{}", std::process::id()));
@@ -144,7 +146,7 @@ fn desktop_smart_folders_toggle_visibility_and_poll_snapshot_revisions() {
             name: "Photos".into(),
             uri: request.to_uri(),
         })
-        .unwrap();
+        .expect("expected test value from store .send(Command::Create { name: \"Photos\".into(), uri: request.to_uri(), })");
     assert!(store.flush(Duration::from_secs(3)));
     let location = Location::uri(request.to_uri());
     let view = BrowserView::new(Rc::new(EmptySource), PeekBehavior::default());
@@ -170,7 +172,7 @@ fn desktop_smart_folders_toggle_visibility_and_poll_snapshot_revisions() {
                         name: "New photos".into(),
                         uri: previous.uri.clone(),
                     })
-                    .unwrap();
+                    .expect("expected test value from concurrent_store .send(Command::Update { previous: previous.clone(), name: \"New photos\".into(), uri: previous.uri.clone(), })");
                 assert!(concurrent_store.flush(Duration::from_secs(3)));
             }
         }
@@ -204,7 +206,7 @@ fn desktop_smart_folders_toggle_visibility_and_poll_snapshot_revisions() {
             name: "Latest photos".into(),
             uri: previous.uri,
         })
-        .unwrap();
+        .expect("expected test value from store .send(Command::Update { previous: previous.clone(), name: \"Latest photos\".into(), uri: previous.uri, })");
     assert!(store.flush(Duration::from_secs(3)));
     wait_for_sidebar_revision(&sidebar, &store);
     assert_eq!(sidebar_children(&sidebar), hidden_children);
@@ -221,7 +223,7 @@ fn desktop_smart_folders_toggle_visibility_and_poll_snapshot_revisions() {
     sidebar.disconnect();
     drop(sidebar);
     drop(store);
-    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(root).expect("remove generated fixture");
 }
 
 #[test]
@@ -243,8 +245,8 @@ fn desktop_search_save_opens_manager_and_dismisses_without_stacked_modals() {
         }
         None
     }
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let theme_manager = ThemeManager::shared();
     theme_manager.set_show_smart_folders(true);
     let root = std::env::temp_dir().join(format!("hermes-saved-layers-{}", std::process::id()));
@@ -273,13 +275,13 @@ fn desktop_search_save_opens_manager_and_dismisses_without_stacked_modals() {
     window.present();
     search.widget().set_visible(true);
     find_button(&search.widget(), "Save search")
-        .unwrap()
+        .expect("expected test value from find_button(&search.widget(), \"Save search\")")
         .emit_clicked();
     assert!(!search.is_visible());
     assert!(manager.is_visible());
     assert_eq!(store.snapshot().entries.len(), 0);
     find_button(manager.upcast_ref(), "Close saved searches (Esc)")
-        .unwrap()
+        .expect("expected test value from find_button(manager.upcast_ref(), \"Close saved searches (Esc)\")")
         .emit_clicked();
     assert!(!manager.is_visible());
     assert!(!search.is_visible());
@@ -288,14 +290,14 @@ fn desktop_search_save_opens_manager_and_dismisses_without_stacked_modals() {
     window.close();
     drop(sidebar);
     drop(store);
-    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(root).expect("remove generated fixture");
 }
 
 #[test]
 #[ignore = "Private GTK/XDG; Smart Folder rows open current queries, update, reject file drops and clean up"]
 fn desktop_smart_folders_follow_store_updates_and_open_virtual_queries() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let theme_manager = ThemeManager::shared();
     theme_manager.set_show_smart_folders(true);
     let root = std::env::temp_dir().join(format!("hermes-sidebar-saved-{}", std::process::id()));
@@ -311,7 +313,7 @@ fn desktop_smart_folders_follow_store_updates_and_open_virtual_queries() {
             name: "Photos".into(),
             uri: request.to_uri(),
         })
-        .unwrap();
+        .expect("expected test value from store .send(Command::Create { name: \"Photos\".into(), uri: request.to_uri(), })");
     assert!(store.flush(Duration::from_secs(3)));
     let view = BrowserView::new(Rc::new(EmptySource), PeekBehavior::default());
     let sidebar = build_sidebar_with_searches(view.clone(), theme_manager, store.clone());
@@ -331,14 +333,16 @@ fn desktop_smart_folders_follow_store_updates_and_open_virtual_queries() {
         .borrow()
         .iter()
         .find(|(entry, _)| *entry == location)
-        .unwrap()
+        .expect("expected test value from sidebar .state .place_rows .borrow() .iter() .find(|(entry, _)| *entry == location)")
         .1
         .clone();
     let controllers = row.observe_controllers();
-    assert!(
-        (0..controllers.n_items())
-            .all(|position| !controllers.item(position).unwrap().is::<gtk::DropTarget>())
-    );
+    assert!((0..controllers.n_items()).all(|position| {
+        !controllers
+            .item(position)
+            .expect("expected test value from controllers.item(position)")
+            .is::<gtk::DropTarget>()
+    }));
     row.emit_clicked();
     assert_eq!(view.browser().active_location(), Some(location.clone()));
     let previous = store.snapshot().entries[0].clone();
@@ -348,7 +352,7 @@ fn desktop_smart_folders_follow_store_updates_and_open_virtual_queries() {
             name: "New photos".into(),
             uri: previous.uri.clone(),
         })
-        .unwrap();
+        .expect("expected test value from store .send(Command::Update { previous: previous.clone(), name: \"New photos\".into(), uri: previous.uri.clone(), })");
     assert!(store.flush(Duration::from_secs(3)));
     let wait_for = |name: &str| {
         let deadline = Instant::now() + Duration::from_secs(3);
@@ -371,21 +375,21 @@ fn desktop_smart_folders_follow_store_updates_and_open_virtual_queries() {
         .borrow()
         .iter()
         .find(|(entry, _)| *entry == location)
-        .unwrap()
+        .expect("expected test value from sidebar .state .place_rows .borrow() .iter() .find(|(entry, _)| *entry == location)")
         .1
         .clone();
     assert!(row.has_css_class("active"));
     let label = row
         .child()
-        .unwrap()
+        .expect("expected test value from row .child()")
         .last_child()
-        .unwrap()
+        .expect("expected test value from row .child() .unwrap() .last_child()")
         .downcast::<gtk::Label>()
-        .unwrap();
+        .expect("expected test value from row .child() .unwrap() .last_child() .unwrap() .downcast::<gtk::Label>()");
     assert_eq!(label.text(), "New photos");
     store
         .send(Command::Delete(store.snapshot().entries[0].clone()))
-        .unwrap();
+        .expect("expected test value from store .send(Command::Delete(store.snapshot().entries[0].clone()))");
     assert!(store.flush(Duration::from_secs(3)));
     wait_for("delete");
     assert!(
@@ -402,5 +406,5 @@ fn desktop_smart_folders_follow_store_updates_and_open_virtual_queries() {
     window.close();
     drop(sidebar);
     drop(store);
-    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(root).expect("remove generated fixture");
 }

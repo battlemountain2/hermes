@@ -3,11 +3,12 @@ use super::{anchored_offset, fit_zoom, scroll_zoom};
 #[test]
 fn repaint_clears_old_image_pixels_and_keeps_drawing_inside_the_viewport() {
     let pixels =
-        gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 40, 40).unwrap();
+        gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 40, 40).expect("expected test value from gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 40, 40)");
     pixels.fill(0xff0000ff);
     let mut surface =
-        gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 100, 100).unwrap();
-    let context = gtk::cairo::Context::new(&surface).unwrap();
+        gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 100, 100).expect("expected test value from gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 100, 100)");
+    let context = gtk::cairo::Context::new(&surface)
+        .expect("expected test value from gtk::cairo::Context::new(&surface)");
     let red = super::ImagePixels::new(pixels.clone());
     assert!(red.surface.is_some());
     let background = gtk::gdk::RGBA::new(0.0, 0.0, 0.0, 1.0);
@@ -24,7 +25,9 @@ fn repaint_clears_old_image_pixels_and_keeps_drawing_inside_the_viewport() {
     );
     drop(context);
     let stride = surface.stride() as usize;
-    let data = surface.data().unwrap();
+    let data = surface
+        .data()
+        .expect("expected test value from surface.data()");
     assert_eq!(
         &data[..4],
         &[0, 0, 0, 255],
@@ -32,7 +35,11 @@ fn repaint_clears_old_image_pixels_and_keeps_drawing_inside_the_viewport() {
     );
     let center = 50 * stride + 50 * 4;
     assert_eq!(
-        u32::from_ne_bytes(data[center..center + 4].try_into().unwrap()),
+        u32::from_ne_bytes(
+            data[center..center + 4]
+                .try_into()
+                .expect("expected test value from data[center..center + 4].try_into()")
+        ),
         0xff0000ff
     );
 }
@@ -68,9 +75,9 @@ fn thumbnail_and_full_image_start_with_the_same_fitted_geometry() {
 #[ignore = "Private GTK display; generated GSK/Cairo frames only"]
 fn desktop_image_letterbox_covers_the_previous_frame_instead_of_ghosting() {
     use gtk::prelude::*;
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
     let pixels =
-        gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 400, 200).unwrap();
+        gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 400, 200).expect("expected test value from gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 400, 200)");
     pixels.fill(0x2050e0ff);
     let texture = gtk::gdk::Texture::for_pixbuf(&pixels);
     let preview = super::ImagePreview::new(&texture, None);
@@ -90,7 +97,10 @@ fn desktop_image_letterbox_covers_the_previous_frame_instead_of_ghosting() {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
     window.present();
-    let viewport = preview.widget.first_child().unwrap();
+    let viewport = preview
+        .widget
+        .first_child()
+        .expect("expected test value from preview.widget.first_child()");
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
     while std::time::Instant::now() < deadline {
         for _ in 0..64 {
@@ -107,19 +117,26 @@ fn desktop_image_letterbox_covers_the_previous_frame_instead_of_ghosting() {
         f64::from(viewport.width()),
         f64::from(viewport.height()),
     );
-    let node = snapshot.to_node().unwrap();
+    let node = snapshot
+        .to_node()
+        .expect("expected test value from snapshot.to_node()");
     let mut surface = gtk::cairo::ImageSurface::create(
         gtk::cairo::Format::ARgb32,
         viewport.width(),
         viewport.height(),
     )
-    .unwrap();
-    let drawing = gtk::cairo::Context::new(&surface).unwrap();
+    .expect("expected test value from gtk::cairo::ImageSurface::create( gtk::cairo::Format::ARgb32, viewport.width(), viewport.height(), )");
+    let drawing = gtk::cairo::Context::new(&surface)
+        .expect("expected test value from gtk::cairo::Context::new(&surface)");
     drawing.set_source_rgb(1.0, 0.0, 0.0);
-    drawing.paint().unwrap();
+    drawing
+        .paint()
+        .expect("expected test value from drawing.paint()");
     node.draw(&drawing);
     drop(drawing);
-    let data = surface.data().unwrap();
+    let data = surface
+        .data()
+        .expect("expected test value from surface.data()");
     assert_eq!(
         &data[..4],
         &[32, 22, 12, 255],
@@ -158,7 +175,7 @@ fn desktop_image_zoom_and_fullscreen() {
     crate::assets::prepare().expect("Bundled icons load");
     let pixels =
         gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 2000, 1000)
-            .unwrap();
+            .expect("expected test value from gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 2000, 1000)");
     pixels.fill(0x90aabbff);
     let texture = gtk::gdk::Texture::for_pixbuf(&pixels);
     let preview = super::ImagePreview::new(&texture, None);
@@ -183,33 +200,40 @@ fn desktop_image_zoom_and_fullscreen() {
     let scroll = preview
         .widget
         .first_child()
-        .unwrap()
+        .expect("expected test value from preview .widget .first_child()")
         .downcast::<gtk::Overlay>()
-        .unwrap()
+        .expect("expected test value from preview .widget .first_child() .unwrap() .downcast::<gtk::Overlay>()")
         .child()
-        .unwrap()
+        .expect("expected test value from preview .widget .first_child() .unwrap() .downcast::<gtk::Overlay>() .unwrap() .child()")
         .downcast::<gtk::ScrolledWindow>()
-        .unwrap();
-    let controls = preview.widget.last_child().unwrap();
+        .expect("expected test value from preview .widget .first_child() .unwrap() .downcast::<gtk::Overlay>() .unwrap() .child() .unwrap() .downcast::<gtk::ScrolledWind...");
+    let controls = preview
+        .widget
+        .last_child()
+        .expect("expected test value from preview.widget.last_child()");
     let fit = controls
         .first_child()
-        .unwrap()
+        .expect("expected test value from controls .first_child()")
         .downcast::<gtk::Button>()
-        .unwrap();
+        .expect(
+            "expected test value from controls .first_child() .unwrap() .downcast::<gtk::Button>()",
+        );
     let actual = fit
         .next_sibling()
-        .unwrap()
+        .expect("expected test value from fit .next_sibling()")
         .downcast::<gtk::Button>()
-        .unwrap();
+        .expect(
+            "expected test value from fit .next_sibling() .unwrap() .downcast::<gtk::Button>()",
+        );
     let area = scroll
         .child()
-        .unwrap()
+        .expect("expected test value from scroll .child()")
         .downcast::<gtk::Viewport>()
-        .unwrap()
+        .expect("expected test value from scroll .child() .unwrap() .downcast::<gtk::Viewport>()")
         .child()
-        .unwrap()
+        .expect("expected test value from scroll .child() .unwrap() .downcast::<gtk::Viewport>() .unwrap() .child()")
         .downcast::<gtk::DrawingArea>()
-        .unwrap();
+        .expect("expected test value from scroll .child() .unwrap() .downcast::<gtk::Viewport>() .unwrap() .child() .unwrap() .downcast::<gtk::DrawingArea>()");
     assert!(scroll.hadjustment().upper() <= scroll.hadjustment().page_size() + 1.0);
     assert!(scroll.vadjustment().upper() <= scroll.vadjustment().page_size() + 1.0);
     window.set_default_size(700, 450);
@@ -279,7 +303,7 @@ fn desktop_image_zoom_and_fullscreen() {
                 .and_then(|controller| controller.downcast::<gtk::EventControllerScroll>().ok())
                 .filter(|controller| controller.name().as_deref() == Some("hermes-image-zoom"))
         })
-        .unwrap();
+        .expect("expected test value from (0..scroll.observe_controllers().n_items()) .find_map(|position| { scroll .observe_controllers() .item(position) .and_then(|con...");
     wheel.emit_by_name::<bool>("scroll", &[&0.0_f64, &-1.0_f64]);
     wheel.emit_by_name::<bool>("scroll", &[&0.0_f64, &-1.0_f64]);
     pump(Duration::from_millis(300));
@@ -291,10 +315,12 @@ fn desktop_image_zoom_and_fullscreen() {
     let viewport = preview
         .widget
         .first_child()
-        .unwrap()
+        .expect("expected test value from preview .widget .first_child()")
         .downcast::<gtk::Overlay>()
-        .unwrap();
-    let canvas = viewport.last_child().unwrap();
+        .expect("expected test value from preview .widget .first_child() .unwrap() .downcast::<gtk::Overlay>()");
+    let canvas = viewport
+        .last_child()
+        .expect("expected test value from viewport.last_child()");
     assert!(canvas.width() <= scroll.width());
     assert!(canvas.height() <= scroll.height());
     assert!(
@@ -308,7 +334,7 @@ fn desktop_image_zoom_and_fullscreen() {
                 .item(position)
                 .and_downcast::<gtk::GestureDrag>()
         })
-        .unwrap();
+        .expect("expected test value from (0..scroll.observe_controllers().n_items()) .find_map(|position| { scroll .observe_controllers() .item(position) .and_downcast:...");
     let start_x = scroll.hadjustment().value();
     drag.emit_by_name::<()>("drag-begin", &[&0.0_f64, &0.0_f64]);
     drag.emit_by_name::<()>("drag-update", &[&50.0_f64, &30.0_f64]);
@@ -343,7 +369,12 @@ fn desktop_image_zoom_and_fullscreen() {
     assert!(scroll.hadjustment().upper() <= scroll.hadjustment().page_size() + 1.0);
     assert!(preview.open_fullscreen());
     pump(Duration::from_millis(300));
-    let fullscreen = preview.fullscreen.borrow().as_ref().unwrap().clone();
+    let fullscreen = preview
+        .fullscreen
+        .borrow()
+        .as_ref()
+        .expect("expected test value from preview.fullscreen.borrow().as_ref()")
+        .clone();
     for position in 0..fullscreen.observe_controllers().n_items() {
         if let Some(keys) = fullscreen
             .observe_controllers()

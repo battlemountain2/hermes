@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#![allow(dead_code)]
 
 use gio::prelude::*;
 use std::path::Path;
@@ -52,7 +51,9 @@ pub fn format_free_space(free_bytes: u64) -> String {
 /// Synchronously queries the GIO filesystem free space for a path.
 pub fn query_gio_free_space(path: &Path) -> Option<u64> {
     let file = gio::File::for_path(path);
-    let info = file.query_filesystem_info("filesystem::free", gio::Cancellable::NONE).ok()?;
+    let info = file
+        .query_filesystem_info("filesystem::free", gio::Cancellable::NONE)
+        .ok()?;
     if info.has_attribute("filesystem::free") {
         Some(info.attribute_uint64("filesystem::free"))
     } else {

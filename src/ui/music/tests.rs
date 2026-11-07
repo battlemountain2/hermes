@@ -3,18 +3,30 @@ use super::*;
 #[test]
 #[ignore = "Requires an isolated GTK display; verifies idle transport ticks do not rebuild icons"]
 fn desktop_music_controller_ticks_reuse_hero_transport_icons() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let player = MusicPlayer::with_session(None);
-    let repeat = player.state.hero_repeat.child().unwrap();
-    let speaker = player.state.hero_speaker.child().unwrap();
+    let repeat = player
+        .state
+        .hero_repeat
+        .child()
+        .expect("expected test value from player.state.hero_repeat.child()");
+    let speaker = player
+        .state
+        .hero_speaker
+        .child()
+        .expect("expected test value from player.state.hero_speaker.child()");
     for _ in 0..50 {
         player.state.sync_controller();
         assert_eq!(player.state.hero_repeat.child().as_ref(), Some(&repeat));
         assert_eq!(player.state.hero_speaker.child().as_ref(), Some(&speaker));
     }
     player.controller().set_repeat(Repeat::One);
-    let changed = player.state.hero_repeat.child().unwrap();
+    let changed = player
+        .state
+        .hero_repeat
+        .child()
+        .expect("expected test value from player.state.hero_repeat.child()");
     assert_ne!(changed, repeat);
     for _ in 0..50 {
         player.state.sync_controller();
@@ -26,8 +38,8 @@ fn desktop_music_controller_ticks_reuse_hero_transport_icons() {
 #[test]
 #[ignore = "Requires an isolated GTK display and private settings; validates player disposal"]
 fn desktop_player_disposal_releases_immersive_callback_and_owned_views() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let player = MusicPlayer::with_session(None);
     let weak_player = player.downgrade();
     let weak_mini = player
@@ -35,7 +47,7 @@ fn desktop_player_disposal_releases_immersive_callback_and_owned_views() {
         .mini_player
         .borrow()
         .as_ref()
-        .unwrap()
+        .expect("expected test value from player .state .mini_player .borrow() .as_ref()")
         .window()
         .downgrade();
     let retained = Rc::new(());
@@ -145,8 +157,8 @@ fn album_tracks_empty_and_matching_keys() {
 #[test]
 #[ignore = "Requires isolated GTK display, FFmpeg and a built worker; generated media only, no personal library or session"]
 fn desktop_album_browse_activation_filtered_results_and_queue_visibility() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let _theme = super::super::theme::ThemeManager::shared();
     let provider = gtk::CssProvider::new();
     let css_errors = Rc::new(RefCell::new(Vec::new()));
@@ -155,7 +167,8 @@ fn desktop_album_browse_activation_filtered_results_and_queue_visibility() {
     provider.load_from_string(include_str!("../../style.css"));
     assert!(css_errors.borrow().is_empty(), "{css_errors:?}");
     gtk::style_context_add_provider_for_display(
-        &gtk::gdk::Display::default().unwrap(),
+        &gtk::gdk::Display::default()
+            .expect("expected test value from gtk::gdk::Display::default()"),
         &provider,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
@@ -164,7 +177,7 @@ fn desktop_album_browse_activation_filtered_results_and_queue_visibility() {
     let album = root.join("Album");
     let other_album = root.join("Other");
     for directory in [&empty_library, &album, &other_album] {
-        std::fs::create_dir_all(directory).unwrap();
+        std::fs::create_dir_all(directory).expect("create generated fixture directory");
     }
     let specs = [
         ("z.flac", 1, 1, "First"),
@@ -201,7 +214,7 @@ fn desktop_album_browse_activation_filtered_results_and_queue_visibility() {
                 ])
                 .arg(&track.path)
                 .status()
-                .unwrap()
+                .expect("expected test value from std::process::Command::new(\"ffmpeg\") .args([ \"-v\", \"error\", \"-nostdin\", \"-y\", \"-f\", \"lavfi\", \"-i\", \"anullsrc=r=48000:cl=stereo\"...")
                 .success()
         );
     }
@@ -262,7 +275,12 @@ fn desktop_album_browse_activation_filtered_results_and_queue_visibility() {
         player.state.queue_indices.borrow().as_slice(),
         &[0, 1, 2, 3]
     );
-    let stream = player.state.stream.borrow().clone().unwrap();
+    let stream = player
+        .state
+        .stream
+        .borrow()
+        .clone()
+        .expect("expected test value from player.state.stream.borrow().clone()");
     assert!(player.state.bar.is_visible());
     desktop_pump(&player, || {
         track_view.width() > 0 && player.state.queue_panel.width() > 0
@@ -293,7 +311,7 @@ fn desktop_album_browse_activation_filtered_results_and_queue_visibility() {
             .state
             .selection_options
             .popover()
-            .unwrap()
+            .expect("expected test value from player .state .selection_options .popover()")
             .is_visible()
     });
     desktop_screenshot(
@@ -307,7 +325,7 @@ fn desktop_album_browse_activation_filtered_results_and_queue_visibility() {
             .state
             .selection_options
             .popover()
-            .unwrap()
+            .expect("expected test value from player .state .selection_options .popover()")
             .upcast_ref(),
         "music-selection-popover.png",
     );
@@ -317,7 +335,7 @@ fn desktop_album_browse_activation_filtered_results_and_queue_visibility() {
             .state
             .selection_options
             .popover()
-            .unwrap()
+            .expect("expected test value from player .state .selection_options .popover()")
             .is_visible()
     );
     assert_eq!(player.state.queue.borrow().tracks.last(), Some(&tracks[4]));
@@ -384,25 +402,36 @@ fn desktop_album_browse_activation_filtered_results_and_queue_visibility() {
     desktop_screenshot(&player, contents.upcast_ref(), "music-no-waveform.png");
     player.state.queue_toggle.set_active(true);
     assert!(player.state.queue_panel.is_visible());
-    let stream = player.state.stream.borrow().clone().unwrap();
+    let stream = player
+        .state
+        .stream
+        .borrow()
+        .clone()
+        .expect("expected test value from player.state.stream.borrow().clone()");
     let more = descendants(player.state.bar.upcast_ref())
         .into_iter()
         .filter_map(|widget| widget.downcast::<gtk::MenuButton>().ok())
         .find(|button| button.has_css_class("music-transport-more"))
-        .unwrap();
+        .expect("expected test value from descendants(player.state.bar.upcast_ref()) .into_iter() .filter_map(|widget| widget.downcast::<gtk::MenuButton>().ok()) .find(|...");
     more.popup();
-    desktop_pump(&player, || more.popover().unwrap().is_visible());
+    desktop_pump(&player, || {
+        more.popover()
+            .expect("expected test value from more.popover()")
+            .is_visible()
+    });
     desktop_screenshot(&player, contents.upcast_ref(), "music-transport-more.png");
     desktop_screenshot(
         &player,
-        more.popover().unwrap().upcast_ref(),
+        more.popover()
+            .expect("expected test value from more.popover()")
+            .upcast_ref(),
         "music-transport-stop-popover.png",
     );
     assert_eq!(player.state.stream.borrow().as_ref(), Some(&stream));
     player.state.view.set_visible(false);
     assert_eq!(player.state.stream.borrow().as_ref(), Some(&stream));
     assert!(player.state.bar.is_visible());
-    let stop = descendants(more.popover().unwrap().upcast_ref())
+    let stop = descendants(more.popover().expect("expected test value from more.popover()").upcast_ref())
         .into_iter()
         .filter_map(|widget| widget.downcast::<gtk::Button>().ok())
         .find(|button| {
@@ -410,16 +439,21 @@ fn desktop_album_browse_activation_filtered_results_and_queue_visibility() {
                 .tooltip_text()
                 .is_some_and(|text| text.starts_with("Stop music"))
         })
-        .unwrap();
+        .expect("expected test value from descendants(more.popover().unwrap().upcast_ref()) .into_iter() .filter_map(|widget| widget.downcast::<gtk::Button>().ok()) .fin...");
     stop.emit_clicked();
-    assert!(!more.popover().unwrap().is_visible());
+    assert!(
+        !more
+            .popover()
+            .expect("expected test value from more.popover()")
+            .is_visible()
+    );
     assert!(player.state.stream.borrow().is_none());
     assert!(!player.state.bar.is_visible());
     assert!(!player.state.waveform.is_visible());
     player.shutdown();
     window.close();
     drop(player);
-    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(root).expect("remove generated fixture");
 }
 
 pub(super) fn descendants(widget: &gtk::Widget) -> Vec<gtk::Widget> {
@@ -517,10 +551,10 @@ fn desktop_pump(player: &MusicPlayer, predicate: impl Fn() -> bool) {
 #[test]
 #[ignore = "Requires desktop, FFmpeg and a built worker; uses only generated media and temporary session state"]
 fn desktop_queue_drag_buttons_removal_and_restart_resume() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let folder = std::env::temp_dir().join(format!("hermes-queue-desktop-{}", std::process::id()));
-    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::create_dir_all(&folder).expect("create generated fixture directory");
     let session_path = folder.join("session.json");
     let tracks: Vec<_> = (1..=3)
         .map(|number| {
@@ -541,7 +575,7 @@ fn desktop_queue_drag_buttons_removal_and_restart_resume() {
                     ])
                     .arg(&path)
                     .status()
-                    .unwrap()
+                    .expect("expected test value from std::process::Command::new(\"ffmpeg\") .args([ \"-v\", \"error\", \"-nostdin\", \"-y\", \"-f\", \"lavfi\", \"-i\", \"sine=frequency=440\", \"-t\", ...")
                     .success()
             );
             Track {
@@ -578,7 +612,7 @@ fn desktop_queue_drag_buttons_removal_and_restart_resume() {
             .state
             .repeat
             .tooltip_text()
-            .unwrap()
+            .expect("expected test value from player .state .repeat .tooltip_text()")
             .starts_with("Repeat: all")
     );
     assert_eq!(player.state.queue_indices.borrow().as_slice(), &[1, 2, 0]);
@@ -593,12 +627,29 @@ fn desktop_queue_drag_buttons_removal_and_restart_resume() {
                 .as_ref()
                 .is_some_and(|stream| !stream.is_seeking() && stream.timestamp() > 12_000_000)
     });
-    let stream = player.state.stream.borrow().clone().unwrap();
+    let stream = player
+        .state
+        .stream
+        .borrow()
+        .clone()
+        .expect("expected test value from player.state.stream.borrow().clone()");
     player.state.cover_button.emit_clicked();
     assert!(opened.get());
-    assert_eq!(player.state.stream.borrow().as_ref().unwrap(), &stream);
+    assert_eq!(
+        player
+            .state
+            .stream
+            .borrow()
+            .as_ref()
+            .expect("expected test value from player.state.stream.borrow().as_ref()"),
+        &stream
+    );
     player.state.queue_button.popup();
-    let popover = player.state.queue_button.popover().unwrap();
+    let popover = player
+        .state
+        .queue_button
+        .popover()
+        .expect("expected test value from player.state.queue_button.popover()");
     desktop_pump(&player, || {
         descendants(popover.upcast_ref())
             .iter()
@@ -613,22 +664,28 @@ fn desktop_queue_drag_buttons_removal_and_restart_resume() {
             .collect::<Vec<_>>()
     };
     let first_rows = rows();
-    let handle = first_rows[1].first_child().unwrap();
+    let handle = first_rows[1]
+        .first_child()
+        .expect("expected test value from first_rows[1].first_child()");
     let source = handle
         .observe_controllers()
         .item(0)
         .and_downcast::<gtk::DragSource>()
-        .unwrap();
+        .expect("expected test value from handle .observe_controllers() .item(0) .and_downcast::<gtk::DragSource>()");
     let provider = source
         .emit_by_name::<Option<gtk::gdk::ContentProvider>>("prepare", &[&0.0_f64, &0.0_f64])
-        .unwrap();
-    let value = provider.value(String::static_type()).unwrap();
-    let stale_token = value.get::<String>().unwrap();
+        .expect("expected test value from source .emit_by_name::<Option<gtk::gdk::ContentProvider>>(\"prepare\", &[&0.0_f64, &0.0_f64])");
+    let value = provider
+        .value(String::static_type())
+        .expect("expected test value from provider.value(String::static_type())");
+    let stale_token = value
+        .get::<String>()
+        .expect("expected test value from value.get::<String>()");
     let target = first_rows[2]
         .observe_controllers()
         .item(0)
         .and_downcast::<gtk::DropTarget>()
-        .unwrap();
+        .expect("expected test value from first_rows[2] .observe_controllers() .item(0) .and_downcast::<gtk::DropTarget>()");
     assert!(target.emit_by_name::<bool>(
         "drop",
         &[
@@ -638,60 +695,92 @@ fn desktop_queue_drag_buttons_removal_and_restart_resume() {
         ]
     ));
     assert_eq!(player.state.queue_indices.borrow().as_slice(), &[1, 0, 2]);
-    assert_eq!(player.state.stream.borrow().as_ref().unwrap(), &stream);
+    assert_eq!(
+        player
+            .state
+            .stream
+            .borrow()
+            .as_ref()
+            .expect("expected test value from player.state.stream.borrow().as_ref()"),
+        &stream
+    );
     assert!(stream.is_playing());
     assert!(player.state.drag_index(&stale_token).is_none());
     let after_move = rows();
     let remove = after_move[1]
         .last_child()
-        .unwrap()
+        .expect("expected test value from after_move[1] .last_child()")
         .downcast::<gtk::Button>()
-        .unwrap();
+        .expect("expected test value from after_move[1] .last_child() .unwrap() .downcast::<gtk::Button>()");
     remove.emit_clicked();
     assert_eq!(player.state.queue_model.n_items(), 2);
     assert_eq!(
-        player.state.queue.borrow().playing().unwrap().path,
+        player
+            .state
+            .queue
+            .borrow()
+            .playing()
+            .expect("expected test value from player.state.queue.borrow().playing()")
+            .path,
         tracks[1].path
     );
-    assert_eq!(player.state.stream.borrow().as_ref().unwrap(), &stream);
+    assert_eq!(
+        player
+            .state
+            .stream
+            .borrow()
+            .as_ref()
+            .expect("expected test value from player.state.stream.borrow().as_ref()"),
+        &stream
+    );
     let after_remove = rows();
     let down = after_remove[0]
         .last_child()
-        .unwrap()
+        .expect("expected test value from after_remove[0] .last_child()")
         .prev_sibling()
-        .unwrap()
+        .expect("expected test value from after_remove[0] .last_child() .unwrap() .prev_sibling()")
         .downcast::<gtk::Button>()
-        .unwrap();
+        .expect("expected test value from after_remove[0] .last_child() .unwrap() .prev_sibling() .unwrap() .downcast::<gtk::Button>()");
     down.emit_clicked();
     assert_eq!(player.state.queue_indices.borrow().as_slice(), &[1, 0]);
     let after_down = rows();
     let up = after_down[1]
         .last_child()
-        .unwrap()
+        .expect("expected test value from after_down[1] .last_child()")
         .prev_sibling()
-        .unwrap()
+        .expect("expected test value from after_down[1] .last_child() .unwrap() .prev_sibling()")
         .prev_sibling()
-        .unwrap()
+        .expect("expected test value from after_down[1] .last_child() .unwrap() .prev_sibling() .unwrap() .prev_sibling()")
         .downcast::<gtk::Button>()
-        .unwrap();
+        .expect("expected test value from after_down[1] .last_child() .unwrap() .prev_sibling() .unwrap() .prev_sibling() .unwrap() .downcast::<gtk::Button>()");
     up.emit_clicked();
     assert_eq!(player.state.queue_indices.borrow().as_slice(), &[0, 1]);
-    assert_eq!(player.state.stream.borrow().as_ref().unwrap(), &stream);
+    assert_eq!(
+        player
+            .state
+            .stream
+            .borrow()
+            .as_ref()
+            .expect("expected test value from player.state.stream.borrow().as_ref()"),
+        &stream
+    );
     let queue_view = descendants(popover.upcast_ref())
         .into_iter()
         .find_map(|widget| widget.downcast::<gtk::ListView>().ok())
-        .unwrap();
+        .expect("expected test value from descendants(popover.upcast_ref()) .into_iter() .find_map(|widget| widget.downcast::<gtk::ListView>().ok())");
     let selection = queue_view
         .model()
         .and_downcast::<gtk::SingleSelection>()
-        .unwrap();
+        .expect(
+            "expected test value from queue_view .model() .and_downcast::<gtk::SingleSelection>()",
+        );
     let keys = queue_view
         .observe_controllers()
         .iter::<glib::Object>()
         .filter_map(Result::ok)
         .filter_map(|controller| controller.downcast::<gtk::EventControllerKey>().ok())
         .find(|keys| keys.name().as_deref() == Some("hermes-queue-keys"))
-        .unwrap();
+        .expect("expected test value from queue_view .observe_controllers() .iter::<glib::Object>() .filter_map(Result::ok) .filter_map(|controller| controller.downcast:...");
     selection.set_selected(1);
     assert!(keys.emit_by_name::<bool>(
         "key-pressed",
@@ -727,14 +816,22 @@ fn desktop_queue_drag_buttons_removal_and_restart_resume() {
         ]
     ));
     assert_eq!(player.state.queue_model.n_items(), 2);
-    assert_eq!(player.state.stream.borrow().as_ref().unwrap(), &stream);
+    assert_eq!(
+        player
+            .state
+            .stream
+            .borrow()
+            .as_ref()
+            .expect("expected test value from player.state.stream.borrow().as_ref()"),
+        &stream
+    );
     player.state.play.emit_clicked();
     let paused_rows = rows();
     paused_rows[0]
         .last_child()
-        .unwrap()
+        .expect("expected test value from paused_rows[0] .last_child()")
         .downcast::<gtk::Button>()
-        .unwrap()
+        .expect("expected test value from paused_rows[0] .last_child() .unwrap() .downcast::<gtk::Button>()")
         .emit_clicked();
     desktop_pump(&player, || {
         player
@@ -746,7 +843,13 @@ fn desktop_queue_drag_buttons_removal_and_restart_resume() {
     });
     assert!(!player.is_playing());
     assert_eq!(
-        player.state.queue.borrow().playing().unwrap().path,
+        player
+            .state
+            .queue
+            .borrow()
+            .playing()
+            .expect("expected test value from player.state.queue.borrow().playing()")
+            .path,
         tracks[2].path
     );
     player.state.play.emit_clicked();
@@ -767,7 +870,12 @@ fn desktop_queue_drag_buttons_removal_and_restart_resume() {
                 .playing()
                 .is_some_and(|track| track.path == tracks[0].path)
     });
-    let next = player.state.stream.borrow().clone().unwrap();
+    let next = player
+        .state
+        .stream
+        .borrow()
+        .clone()
+        .expect("expected test value from player.state.stream.borrow().clone()");
     next.seek(20_000_000);
     desktop_pump(&player, || {
         !next.is_seeking() && next.timestamp() > 20_000_000
@@ -780,28 +888,34 @@ fn desktop_queue_drag_buttons_removal_and_restart_resume() {
     assert!(!restored.state.bar.is_visible());
     assert!(restored.state.resume_position.get() > 20_000_000);
     assert_eq!(
-        restored.state.queue.borrow().playing().unwrap().path,
+        restored
+            .state
+            .queue
+            .borrow()
+            .playing()
+            .expect("expected test value from restored.state.queue.borrow().playing()")
+            .path,
         tracks[0].path
     );
     restored.state.queue_clear.emit_clicked();
     assert_eq!(restored.state.queue_model.n_items(), 0);
     restored.shutdown();
     let final_session = crate::music::session::load(&session_path)
-        .unwrap()
-        .unwrap()
+        .expect("expected test value from crate::music::session::load(&session_path)")
+        .expect("expected test value from crate::music::session::load(&session_path) .unwrap()")
         .into_queue();
     assert!(final_session.tracks.is_empty());
-    std::fs::remove_dir_all(folder).unwrap();
+    std::fs::remove_dir_all(folder).expect("remove generated fixture");
 }
 
 #[test]
 #[ignore = "Requires desktop, FFmpeg and a built target/debug/hermes sandbox worker"]
 fn desktop_full_track_queue_navigation_seek_and_stop() {
     use std::time::Instant;
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let folder = std::env::temp_dir().join(format!("hermes-music-{}", std::process::id()));
-    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::create_dir_all(&folder).expect("create generated fixture directory");
     let earlier = folder.join("01.flac");
     let first = folder.join("03.flac");
     let second = folder.join("04.mp3");
@@ -825,7 +939,7 @@ fn desktop_full_track_queue_navigation_seek_and_stop() {
             ])
             .arg(path)
             .status()
-            .unwrap();
+            .expect("expected test value from std::process::Command::new(\"ffmpeg\") .args([ \"-v\", \"error\", \"-nostdin\", \"-y\", \"-f\", \"lavfi\", \"-i\", \"sine=frequency=440\", \"-t\", ...");
         assert!(status.success());
     }
     let player = MusicPlayer::with_session(None);
@@ -863,10 +977,23 @@ fn desktop_full_track_queue_navigation_seek_and_stop() {
             library.root.clone(),
         )));
     pump(&|| player.state.library.borrow().len() == 1);
-    let playing = player.state.stream.borrow().clone().unwrap();
+    let playing = player
+        .state
+        .stream
+        .borrow()
+        .clone()
+        .expect("expected test value from player.state.stream.borrow().clone()");
     library.song("Second/01.flac", "Second library fixture");
     pump(&|| player.state.library.borrow().len() == 2);
-    assert_eq!(player.state.stream.borrow().as_ref().unwrap(), &playing);
+    assert_eq!(
+        player
+            .state
+            .stream
+            .borrow()
+            .as_ref()
+            .expect("expected test value from player.state.stream.borrow().as_ref()"),
+        &playing
+    );
     assert!(
         playing.is_playing(),
         "Library updates must not interrupt playback"
@@ -876,7 +1003,7 @@ fn desktop_full_track_queue_navigation_seek_and_stop() {
         .selected_album
         .replace(Some(library.root.join("Second")));
     player.state.render_library();
-    std::fs::rename(library.root.join("Second"), library.root.join("Renamed")).unwrap();
+    std::fs::rename(library.root.join("Second"), library.root.join("Renamed")).expect("expected test value from std::fs::rename(library.root.join(\"Second\"), library.root.join(\"Renamed\"))");
     pump(&|| {
         player
             .state
@@ -920,25 +1047,51 @@ fn desktop_full_track_queue_navigation_seek_and_stop() {
     assert!(!player.state.queue_empty.is_visible());
     assert!(player.state.queue_summary.text().contains("2 songs"));
     player.state.queue_button.popup();
-    pump(&|| player.state.queue_button.popover().unwrap().is_visible());
-    let queue_popup = player.state.queue_button.popover().unwrap();
-    let queue_contents = queue_popup.child().unwrap();
+    pump(&|| {
+        player
+            .state
+            .queue_button
+            .popover()
+            .expect("expected test value from player.state.queue_button.popover()")
+            .is_visible()
+    });
+    let queue_popup = player
+        .state
+        .queue_button
+        .popover()
+        .expect("expected test value from player.state.queue_button.popover()");
+    let queue_contents = queue_popup
+        .child()
+        .expect("expected test value from queue_popup.child()");
     let queue_scroll = queue_contents
         .last_child()
-        .unwrap()
+        .expect("expected test value from queue_contents .last_child()")
         .downcast::<gtk::ScrolledWindow>()
-        .unwrap();
+        .expect("expected test value from queue_contents .last_child() .unwrap() .downcast::<gtk::ScrolledWindow>()");
     let queue_view = queue_scroll
         .child()
-        .unwrap()
+        .expect("expected test value from queue_scroll .child()")
         .downcast::<gtk::ListView>()
-        .unwrap();
-    assert_eq!(queue_view.model().unwrap().n_items(), 2);
+        .expect(
+            "expected test value from queue_scroll .child() .unwrap() .downcast::<gtk::ListView>()",
+        );
+    assert_eq!(
+        queue_view
+            .model()
+            .expect("expected test value from queue_view.model()")
+            .n_items(),
+        2
+    );
     assert!(!queue_view.is_single_click_activate());
     queue_view.emit_by_name::<()>("activate", &[&0_u32]);
     pump(&|| player.is_playing());
     assert!(!queue_popup.is_visible());
-    let stream = player.state.stream.borrow().clone().unwrap();
+    let stream = player
+        .state
+        .stream
+        .borrow()
+        .clone()
+        .expect("expected test value from player.state.stream.borrow().clone()");
     assert!(stream.has_audio() && !stream.has_video());
     assert!(stream.duration() > 44_000_000);
     stream.seek(31_000_000);
@@ -951,14 +1104,35 @@ fn desktop_full_track_queue_navigation_seek_and_stop() {
     stream.seek(43_500_000);
     pump(&|| player.state.queue.borrow().current == Some(1));
     pump(&|| player.is_playing());
-    assert!(player.state.stream.borrow().as_ref().unwrap().duration() > 44_000_000);
-    let failed_stream = player.state.stream.borrow().clone().unwrap();
+    assert!(
+        player
+            .state
+            .stream
+            .borrow()
+            .as_ref()
+            .expect("expected test value from player.state.stream.borrow().as_ref()")
+            .duration()
+            > 44_000_000
+    );
+    let failed_stream = player
+        .state
+        .stream
+        .borrow()
+        .clone()
+        .expect("expected test value from player.state.stream.borrow().clone()");
     failed_stream.stop();
     failed_stream.set_error(glib::Error::new(
         gtk::gio::IOErrorEnum::Failed,
         "Injected decoder failure",
     ));
-    assert!(player.state.play.tooltip_text().unwrap().contains("Retry"));
+    assert!(
+        player
+            .state
+            .play
+            .tooltip_text()
+            .expect("expected test value from player.state.play.tooltip_text()")
+            .contains("Retry")
+    );
     player.state.play.emit_clicked();
     pump(&|| player.is_playing());
     assert_eq!(player.state.queue.borrow().current, Some(1));
@@ -969,18 +1143,18 @@ fn desktop_full_track_queue_navigation_seek_and_stop() {
     assert!(player.state.stream.borrow().is_none());
     assert!(player.state.peaks.borrow().is_empty());
     window.close();
-    std::fs::remove_file(earlier).unwrap();
-    std::fs::remove_file(first).unwrap();
-    std::fs::remove_file(second).unwrap();
-    std::fs::remove_dir(folder).unwrap();
+    std::fs::remove_file(earlier).expect("remove generated fixture");
+    std::fs::remove_file(first).expect("remove generated fixture");
+    std::fs::remove_file(second).expect("remove generated fixture");
+    std::fs::remove_dir(folder).expect("remove generated fixture");
 }
 
 #[test]
 #[ignore = "Requires HERMES_AUDIO_TEST_FILE, desktop and a built worker; plays the entire track silently"]
 fn desktop_real_folder_full_song_and_auto_next() {
     use std::time::Instant;
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let path = std::env::var_os("HERMES_AUDIO_TEST_FILE").expect("Audio path");
     let player = MusicPlayer::with_session(None);
     player.state.volume.set_value(0.0);
@@ -1029,7 +1203,9 @@ fn desktop_real_folder_full_song_and_auto_next() {
 #[test]
 #[ignore = "Requires isolated GTK display"]
 fn desktop_workspace_switching_and_layout_changes_update_bar_visibility() {
-    gtk::init().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    // The application window owns this shared manager for its whole lifetime.
+    let manager = super::super::theme::ThemeManager::shared();
     let player = MusicPlayer::with_session(None);
     player.controller().transport_visible.set(true);
 
@@ -1041,7 +1217,7 @@ fn desktop_workspace_switching_and_layout_changes_update_bar_visibility() {
     );
 
     // Switching to music with top layout hides bottom dock and shows hero deck
-    super::super::theme::ThemeManager::shared().set_music_player_layout("top");
+    manager.set_music_player_layout("top");
     player.set_workspace("music");
     assert!(
         !player.bar().is_visible(),
@@ -1053,7 +1229,7 @@ fn desktop_workspace_switching_and_layout_changes_update_bar_visibility() {
     );
 
     // Switching to bottom layout shows bottom dock and hides hero deck
-    super::super::theme::ThemeManager::shared().set_music_player_layout("bottom");
+    manager.set_music_player_layout("bottom");
     assert!(
         player.bar().is_visible(),
         "bottom dock visible with bottom layout"
@@ -1071,15 +1247,15 @@ fn desktop_workspace_switching_and_layout_changes_update_bar_visibility() {
     );
 
     // Restore top layout
-    super::super::theme::ThemeManager::shared().set_music_player_layout("top");
+    manager.set_music_player_layout("top");
     player.shutdown();
 }
 
 #[test]
 #[ignore = "Private GTK display/preferences; synthetic pending stream without decoding or audio"]
 fn desktop_browsing_preserves_playback_intent_and_transport_after_preview_pause() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let manager = super::super::theme::ThemeManager::shared();
     let player = MusicPlayer::with_session(None);
     let controller = player.controller();

@@ -2,7 +2,10 @@
 
 /// Generates a valid minimal single-page PDF with selectable text stream.
 pub fn sample_text_pdf(text: &str) -> Vec<u8> {
-    let stream_content = format!("BT /F1 24 Tf 100 700 Td ({}) Tj ET", text.replace('(', "\\(").replace(')', "\\)"));
+    let stream_content = format!(
+        "BT /F1 24 Tf 100 700 Td ({}) Tj ET",
+        text.replace('(', "\\(").replace(')', "\\)")
+    );
     let stream_len = stream_content.len();
 
     let mut out = Vec::new();
@@ -16,7 +19,10 @@ pub fn sample_text_pdf(text: &str) -> Vec<u8> {
     let o4 = out.len();
     out.extend_from_slice(b"4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\n");
     let o5 = out.len();
-    let content_obj = format!("5 0 obj<</Length {}>>stream\n{}\nendstream\nendobj\n", stream_len, stream_content);
+    let content_obj = format!(
+        "5 0 obj<</Length {}>>stream\n{}\nendstream\nendobj\n",
+        stream_len, stream_content
+    );
     out.extend_from_slice(content_obj.as_bytes());
 
     let xref_offset = out.len();
@@ -48,7 +54,11 @@ pub fn sample_multipage_pdf(page_count: usize) -> Vec<u8> {
     for i in 0..pages {
         kids.push_str(&format!("{} 0 R ", 3 + i * 2));
     }
-    let pages_obj = format!("2 0 obj<</Type/Pages/Count {}/Kids[{}]>>endobj\n", pages, kids.trim());
+    let pages_obj = format!(
+        "2 0 obj<</Type/Pages/Count {}/Kids[{}]>>endobj\n",
+        pages,
+        kids.trim()
+    );
     out.extend_from_slice(pages_obj.as_bytes());
 
     for i in 0..pages {
@@ -58,13 +68,21 @@ pub fn sample_multipage_pdf(page_count: usize) -> Vec<u8> {
 
         let p_off = out.len();
         offsets.push(p_off);
-        let page_obj = format!("{} 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents {} 0 R>>endobj\n", p_obj_id, c_obj_id);
+        let page_obj = format!(
+            "{} 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents {} 0 R>>endobj\n",
+            p_obj_id, c_obj_id
+        );
         out.extend_from_slice(page_obj.as_bytes());
 
         let stream_text = format!("BT /F1 12 Tf 50 700 Td (Page {}) Tj ET", page_num);
         let c_off = out.len();
         offsets.push(c_off);
-        let contents_obj = format!("{} 0 obj<</Length {}>>stream\n{}\nendstream\nendobj\n", c_obj_id, stream_text.len(), stream_text);
+        let contents_obj = format!(
+            "{} 0 obj<</Length {}>>stream\n{}\nendstream\nendobj\n",
+            c_obj_id,
+            stream_text.len(),
+            stream_text
+        );
         out.extend_from_slice(contents_obj.as_bytes());
     }
 
@@ -74,7 +92,11 @@ pub fn sample_multipage_pdf(page_count: usize) -> Vec<u8> {
     for off in &offsets {
         xref.push_str(&format!("{:010} 00000 n \n", off));
     }
-    xref.push_str(&format!("trailer<</Size {}/Root 1 0 R>>\nstartxref\n{}\n%%EOF\n", total_objs + 1, xref_offset));
+    xref.push_str(&format!(
+        "trailer<</Size {}/Root 1 0 R>>\nstartxref\n{}\n%%EOF\n",
+        total_objs + 1,
+        xref_offset
+    ));
     out.extend_from_slice(xref.as_bytes());
 
     out

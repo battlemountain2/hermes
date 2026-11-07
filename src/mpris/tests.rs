@@ -36,7 +36,7 @@ fn metadata_has_standard_types_and_is_deterministic_without_position_updates() {
     let properties = player_properties(&state);
     let metadata = properties["Metadata"]
         .get::<BTreeMap<String, glib::Variant>>()
-        .unwrap();
+        .expect("expected test value from properties[\"Metadata\"] .get::<BTreeMap<String, glib::Variant>>()");
     assert_eq!(metadata["mpris:trackid"].type_().as_str(), "o");
     assert_eq!(metadata["mpris:length"].get::<i64>(), Some(60_000_000));
     assert_eq!(
@@ -87,7 +87,8 @@ fn methods_validate_argument_signatures_and_only_allow_local_audio_uris() {
         Ok(Command::Seek(-1_000_000))
     );
     assert!(parse_method("Seek", &(1_i32,).to_variant()).is_err());
-    let track = glib::variant::ObjectPath::try_from("/track/one").unwrap();
+    let track = glib::variant::ObjectPath::try_from("/track/one")
+        .expect("expected test value from glib::variant::ObjectPath::try_from(\"/track/one\")");
     assert_eq!(
         parse_method("SetPosition", &(track, 12_i64).to_variant()),
         Ok(Command::SetPosition("/track/one".into(), 12))
@@ -109,9 +110,16 @@ fn methods_validate_argument_signatures_and_only_allow_local_audio_uris() {
 
 #[test]
 fn advertised_property_signatures_match_implementation() {
-    let node = gio::DBusNodeInfo::for_xml(include_str!("interfaces.xml")).unwrap();
+    let node = gio::DBusNodeInfo::for_xml(include_str!("interfaces.xml")).expect(
+        "expected test value from gio::DBusNodeInfo::for_xml(include_str!(\"interfaces.xml\"))",
+    );
     assert_eq!(node.interfaces().len(), 2);
-    assert_eq!(root_properties()["DesktopEntry"].get::<String>().unwrap(), crate::identity::APPLICATION_ID);
+    assert_eq!(
+        root_properties()["DesktopEntry"]
+            .get::<String>()
+            .expect("expected test value from root_properties()[\"DesktopEntry\"].get::<String>()"),
+        crate::identity::APPLICATION_ID
+    );
     assert_eq!(
         root_properties()["SupportedUriSchemes"].type_().as_str(),
         "as"
@@ -165,11 +173,11 @@ fn private_bus_exports_controls_properties_signals_and_cleanup() {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .unwrap());
+        .expect("expected test value from Process::new(\"dbus-daemon\") .args([\"--session\", \"--nofork\", \"--print-address=1\"]) .stdout(Stdio::piped()) .stderr(Stdio::null()..."));
     let mut address = String::new();
-    BufReader::new(bus.0.stdout.take().unwrap())
+    BufReader::new(bus.0.stdout.take().expect("expected test value from bus.0.stdout.take()"))
         .read_line(&mut address)
-        .unwrap();
+        .expect("expected test value from BufReader::new(bus.0.stdout.take().unwrap()) .read_line(&mut address)");
     let context = glib::MainContext::new();
     context
         .with_thread_default(|| {
@@ -181,14 +189,14 @@ fn private_bus_exports_controls_properties_signals_and_cleanup() {
                 None,
                 None::<&gio::Cancellable>,
             )
-            .unwrap();
+            .expect("expected test value from gio::DBusConnection::for_address_sync( address.trim(), flags, None, None::<&gio::Cancellable>, )");
             let client = gio::DBusConnection::for_address_sync(
                 address.trim(),
                 flags,
                 None,
                 None::<&gio::Cancellable>,
             )
-            .unwrap();
+            .expect("expected test value from gio::DBusConnection::for_address_sync( address.trim(), flags, None, None::<&gio::Cancellable>, )");
             server.set_exit_on_close(false);
             client.set_exit_on_close(false);
             let fake = Rc::new(Fake {
@@ -204,11 +212,11 @@ fn private_bus_exports_controls_properties_signals_and_cleanup() {
                 Rc::new(|| {}),
                 false,
             )
-            .unwrap();
+            .expect("expected test value from Export::new( &server, fake.clone(), Rc::new(move || raise_count.set(raise_count.get() + 1)), Rc::new(|| {}), false, )");
             let signals = Rc::new(RefCell::new(Vec::new()));
             let captured = signals.clone();
             let subscription = client.subscribe_to_signal(
-                Some(server.unique_name().unwrap().as_str()),
+                Some(server.unique_name().expect("expected test value from server.unique_name()").as_str()),
                 None,
                 None,
                 Some(PATH),
@@ -237,25 +245,25 @@ fn private_bus_exports_controls_properties_signals_and_cleanup() {
                 "GetAll",
                 (PLAYER,).to_variant(),
             )
-            .unwrap();
-            let (properties,) = all.get::<(BTreeMap<String, glib::Variant>,)>().unwrap();
+            .expect("expected test value from call( \"org.freedesktop.DBus.Properties\", \"GetAll\", (PLAYER,).to_variant(), )");
+            let (properties,) = all.get::<(BTreeMap<String, glib::Variant>,)>().expect("expected test value from all.get::<(BTreeMap<String, glib::Variant>,)>()");
             assert_eq!(properties["PlaybackStatus"].str(), Some("Paused"));
             assert_eq!(properties["Position"].get::<i64>(), Some(3_000_000));
-            call(PLAYER, "Play", ().to_variant()).unwrap();
-            call(PLAYER, "Pause", ().to_variant()).unwrap();
+            call(PLAYER, "Play", ().to_variant()).expect("expected test value from call(PLAYER, \"Play\", ().to_variant())");
+            call(PLAYER, "Pause", ().to_variant()).expect("expected test value from call(PLAYER, \"Pause\", ().to_variant())");
             call(
                 "org.freedesktop.DBus.Properties",
                 "Set",
                 (PLAYER, "Volume", 0.7_f64.to_variant()).to_variant(),
             )
-            .unwrap();
+            .expect("expected test value from call( \"org.freedesktop.DBus.Properties\", \"Set\", (PLAYER, \"Volume\", 0.7_f64.to_variant()).to_variant(), )");
             assert_eq!(fake.state.borrow().volume, 0.7);
             call(
                 "org.freedesktop.DBus.Properties",
                 "Set",
                 (PLAYER, "Rate", 1_f64.to_variant()).to_variant(),
             )
-            .unwrap();
+            .expect("expected test value from call( \"org.freedesktop.DBus.Properties\", \"Set\", (PLAYER, \"Rate\", 1_f64.to_variant()).to_variant(), )");
             assert_eq!(fake.state.borrow().volume, 0.7);
             assert!(
                 call(
@@ -281,19 +289,19 @@ fn private_bus_exports_controls_properties_signals_and_cleanup() {
                 )
                 .is_err()
             );
-            call(ROOT, "Raise", ().to_variant()).unwrap();
+            call(ROOT, "Raise", ().to_variant()).expect("expected test value from call(ROOT, \"Raise\", ().to_variant())");
             assert_eq!(raised.get(), 1);
-            call(PLAYER, "Seek", (-5_i64,).to_variant()).unwrap();
+            call(PLAYER, "Seek", (-5_i64,).to_variant()).expect("expected test value from call(PLAYER, \"Seek\", (-5_i64,).to_variant())");
             call(
                 PLAYER,
                 "SetPosition",
                 (
-                    glib::variant::ObjectPath::try_from("/stale").unwrap(),
+                    glib::variant::ObjectPath::try_from("/stale").expect("expected test value from glib::variant::ObjectPath::try_from(\"/stale\")"),
                     6_i64,
                 )
                     .to_variant(),
             )
-            .unwrap();
+            .expect("expected test value from call( PLAYER, \"SetPosition\", ( glib::variant::ObjectPath::try_from(\"/stale\").unwrap(), 6_i64, ) .to_variant(), )");
             assert!(fake.commands.borrow().contains(&Command::Seek(-5)));
             let deadline = std::time::Instant::now() + Duration::from_secs(2);
             while signals.borrow().len() < 3 && std::time::Instant::now() < deadline {
@@ -316,7 +324,7 @@ fn private_bus_exports_controls_properties_signals_and_cleanup() {
                 "Get",
                 (PLAYER, "Position").to_variant(),
             )
-            .unwrap();
+            .expect("expected test value from call( \"org.freedesktop.DBus.Properties\", \"Get\", (PLAYER, \"Position\").to_variant(), )");
             while context.pending() {
                 context.iteration(false);
             }
@@ -335,8 +343,8 @@ fn private_bus_exports_controls_properties_signals_and_cleanup() {
             drop(export);
             assert!(call(PLAYER, "Play", ().to_variant()).is_err());
             drop(subscription);
-            client.close_sync(None::<&gio::Cancellable>).unwrap();
-            server.close_sync(None::<&gio::Cancellable>).unwrap();
+            client.close_sync(None::<&gio::Cancellable>).expect("expected test value from client.close_sync(None::<&gio::Cancellable>)");
+            server.close_sync(None::<&gio::Cancellable>).expect("expected test value from server.close_sync(None::<&gio::Cancellable>)");
         })
-        .unwrap();
+        .expect("expected test value from context .with_thread_default(|| { let flags = gio::DBusConnectionFlags::AUTHENTICATION_CLIENT | gio::DBusConnectionFlags::MESSA...");
 }

@@ -129,7 +129,8 @@ impl GtkFixture {
         );
         gtk::init().expect("Private GTK display available");
         let theme_manager = ThemeManager::shared();
-        let settings = gtk::Settings::default().unwrap();
+        let settings =
+            gtk::Settings::default().expect("expected test value from gtk::Settings::default()");
         let original_animations = settings.is_gtk_enable_animations();
         let original_options = audio_preferences::current();
         audio_preferences::configure(true, 32, "studio");
@@ -419,7 +420,7 @@ fn gtk_vinyl_live_options_observer_releases_on_stop_and_drop() {
                 .preferences_observer
                 .borrow()
                 .as_ref()
-                .unwrap(),
+                .expect("expected test value from disc.animation .preferences_observer .borrow() .as_ref()"),
         );
         let animation = disc.animation.clone();
         let widget = disc.widget().clone();

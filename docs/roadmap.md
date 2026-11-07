@@ -1,4 +1,9 @@
-# Strata Roadmap
+# Historical architecture roadmap (Strata / early Hermes)
+
+The authoritative Hermes release plan is [the 1.0 roadmap](1.0-roadmap.md).
+The milestones below are historical design notes, not current completion claims.
+See [automated gates](ci-and-release-gates.md) and [native package qualification](native-packages.md)
+for current implementation and remaining acceptance evidence.
 
 The roadmap is ordered by risk and dependency rather than by visual prominence. Each milestone should leave Strata usable and measurable.
 

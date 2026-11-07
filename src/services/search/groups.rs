@@ -1,6 +1,8 @@
 use std::{collections::BTreeMap, mem::size_of, path::PathBuf};
 
-use super::{ParsedSearchQuery, SearchItem, fold_diacritics, fuzzy_subsequence_score, matches_category};
+use super::{
+    ParsedSearchQuery, SearchItem, fold_diacritics, fuzzy_subsequence_score, matches_category,
+};
 
 const MAX_METADATA_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ENTITIES: usize = 40_000;
@@ -160,7 +162,10 @@ impl GroupIndex {
         let mut metadata_bytes = size_of::<Self>();
         let mut album_count = 0;
         let terms = parsed.terms.trim().to_lowercase();
-        let literal_terms = parsed.literal.as_ref().map(|literal| literal.terms.to_lowercase());
+        let literal_terms = parsed
+            .literal
+            .as_ref()
+            .map(|literal| literal.terms.to_lowercase());
         for &(_, position) in ranked {
             check_cancelled(cancelled)?;
             let item = items
@@ -174,7 +179,8 @@ impl GroupIndex {
             let Some(labels) = entity_labels(item) else {
                 continue;
             };
-            let inferred_matches = parsed.literal.is_none() || super::filter_bonus(item, parsed).is_some();
+            let inferred_matches =
+                parsed.literal.is_none() || super::filter_bonus(item, parsed).is_some();
             for key in [album_key(&labels), artist_key(&labels)]
                 .into_iter()
                 .flatten()
@@ -185,7 +191,9 @@ impl GroupIndex {
                         .map(|score| score.saturating_add(super::LITERAL_MATCH_PRIORITY))
                 });
                 let Some(score) = literal_score.or_else(|| {
-                    inferred_matches.then(|| entity_score(&key, &terms, &parsed.quoted_terms)).flatten()
+                    inferred_matches
+                        .then(|| entity_score(&key, &terms, &parsed.quoted_terms))
+                        .flatten()
                 }) else {
                     continue;
                 };
@@ -406,7 +414,10 @@ fn label_score(label: &str, terms: &str, quoted_terms: &[String]) -> Option<i64>
     }
     let folded_label = fold_diacritics(label);
     let folded_terms = fold_diacritics(terms);
-    if quoted_terms.iter().any(|term| !folded_label.contains(&fold_diacritics(term))) {
+    if quoted_terms
+        .iter()
+        .any(|term| !folded_label.contains(&fold_diacritics(term)))
+    {
         return None;
     }
     if label == terms || folded_label == folded_terms {
@@ -415,7 +426,10 @@ fn label_score(label: &str, terms: &str, quoted_terms: &[String]) -> Option<i64>
     if let Some(position) = folded_label.find(&folded_terms) {
         return Some(10_000 - position as i64 * 12 - label.len() as i64);
     }
-    if folded_terms.split_whitespace().all(|term| folded_label.contains(term)) {
+    if folded_terms
+        .split_whitespace()
+        .all(|term| folded_label.contains(term))
+    {
         return Some(8_000 - label.len() as i64);
     }
     let mut score = 0i64;

@@ -208,7 +208,23 @@ fn show(
     }
     crate::ui::context_menu::tidy_separators(&content);
     menu.set_child(Some(&content));
-    menu.connect_closed(|menu| {
+    let weak_anchor = anchor.downgrade();
+    menu.connect_closed(move |menu| {
+        // Older GTK can retain a detached popup through the window's focus.
+        // Clear that reference before unparenting and return focus to preview.
+        if let Some(root) = menu.root()
+            && root
+                .focus()
+                .is_some_and(|focus| focus == *menu || focus.is_ancestor(menu))
+        {
+            root.set_focus(None::<&gtk::Widget>);
+            if let Some(anchor) = weak_anchor.upgrade() {
+                anchor.grab_focus();
+            }
+        }
+        // Every invocation creates a fresh menu. Release its focused action
+        // widgets before detaching the popup, including on older GTK runtimes.
+        menu.set_child(None::<&gtk::Widget>);
         if menu.parent().is_some() {
             menu.unparent();
         }

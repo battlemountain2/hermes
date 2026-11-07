@@ -248,11 +248,16 @@ fn odf_hyperlinks_preserve_labels_without_reading_external_targets() {
             "<office:document xmlns:office=\"office\" xmlns:text=\"text\" xmlns:xlink=\"xlink\"><text:p>Read <text:a xlink:href=\"{target}\">this label</text:a> here.</text:p></office:document>"
         );
         let fixture = Fixture::new(&[("content.xml", &xml)]);
-        assert_eq!(fixture.text(100).unwrap(), "Read this label here.");
-        Package::open(File::open(&fixture.0).unwrap())
-            .unwrap()
+        assert_eq!(
+            fixture
+                .text(100)
+                .expect("expected test value from fixture.text(100)"),
+            "Read this label here."
+        );
+        Package::open(File::open(&fixture.0).expect("expected test value from File::open(&fixture.0)"))
+            .expect("expected test value from Package::open(File::open(&fixture.0).unwrap())")
             .validate_spreadsheet_xml()
-            .unwrap();
+            .expect("expected test value from Package::open(File::open(&fixture.0).unwrap()) .unwrap() .validate_spreadsheet_xml()");
     }
 }
 
@@ -269,10 +274,12 @@ fn worksheet_bounds_include_implicit_cells_and_nonstandard_part_names() {
                 "<worksheet><sheetData><row><c><v>1</v></c></row><row><c r=\"XFD1048576\"><v>2</v></c></row></sheetData></worksheet>",
             ),
         ]);
-        let error = Package::open(File::open(&fixture.0).unwrap())
-            .unwrap()
-            .validate_spreadsheet_xml()
-            .unwrap_err();
+        let error = Package::open(
+            File::open(&fixture.0).expect("expected test value from File::open(&fixture.0)"),
+        )
+        .expect("expected test value from Package::open(File::open(&fixture.0).unwrap())")
+        .validate_spreadsheet_xml()
+        .expect_err("invalid or cancelled fixture must fail");
         assert!(error.contains("allocation budget"), "{error}");
     }
     let fixture = Fixture::new(&[(
@@ -280,10 +287,12 @@ fn worksheet_bounds_include_implicit_cells_and_nonstandard_part_names() {
         "<worksheet><sheetData><row r=\"1048576\"/><row><c><v>1</v></c></row></sheetData></worksheet>",
     )]);
     assert!(
-        Package::open(File::open(&fixture.0).unwrap())
-            .unwrap()
-            .validate_spreadsheet_xml()
-            .is_err()
+        Package::open(
+            File::open(&fixture.0).expect("expected test value from File::open(&fixture.0)")
+        )
+        .expect("expected test value from Package::open(File::open(&fixture.0).unwrap())")
+        .validate_spreadsheet_xml()
+        .is_err()
     );
 }
 

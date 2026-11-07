@@ -111,8 +111,8 @@ impl VideoFocusFixture {
 #[ignore = "Requires isolated GTK display; fake streams only, no decoder, audio or source files"]
 fn desktop_fake_video_focus_coordinates_both_directions_even_when_muted() {
     use gtk::prelude::*;
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let fixture = VideoFocusFixture::new();
     fixture.music.play();
     let video = fixture.video(true);
@@ -145,8 +145,8 @@ fn desktop_fake_video_focus_coordinates_both_directions_even_when_muted() {
 #[ignore = "Requires isolated GTK display; fake streams only, no decoder, audio or source files"]
 fn desktop_fake_video_focus_waits_for_preparation_and_ignores_silent_video() {
     use gtk::{glib, prelude::*};
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     for has_audio in [true, false] {
         let fixture = VideoFocusFixture::new();
         fixture.music.play();
@@ -199,8 +199,8 @@ fn desktop_fake_video_focus_never_resumes_music_and_releases_replaced_previews()
     use crate::model::{EntryKind, FileEntry, FileEntryInner, Location, MetadataValue};
     use gtk::{glib, prelude::*};
     use std::rc::Rc;
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     for action in ["pause", "end", "error", "close", "replace"] {
         let fixture = VideoFocusFixture::new();
         fixture.music.play();
@@ -256,9 +256,12 @@ fn desktop_fake_video_focus_never_resumes_music_and_releases_replaced_previews()
 #[test]
 #[ignore = "Requires isolated GTK display and private preferences; no real media or decoding"]
 fn desktop_preview_metadata_reformats_without_reloading_and_clears_recycled_values() {
-    use std::{cell::Cell, rc::Rc};
+    use crate::{
+        model::{EntryKind, FileEntry, FileEntryInner, Location, MetadataValue},
+        services::{LoadHandle, PreviewEvent, PreviewProvider, PreviewRequest},
+    };
     use gtk::prelude::*;
-    use crate::{model::{EntryKind, FileEntry, FileEntryInner, Location, MetadataValue}, services::{LoadHandle, PreviewEvent, PreviewProvider, PreviewRequest}};
+    use std::{cell::Cell, rc::Rc};
     struct Pending(Rc<Cell<usize>>);
     impl PreviewProvider for Pending {
         fn load(&self, _: PreviewRequest, _: Rc<dyn Fn(PreviewEvent)>) -> LoadHandle {
@@ -266,20 +269,33 @@ fn desktop_preview_metadata_reformats_without_reloading_and_clears_recycled_valu
             LoadHandle::new(|| {})
         }
     }
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let manager = crate::ui::theme::ThemeManager::shared();
     manager.set_date_format("relative");
     manager.set_size_unit("decimal");
     let loads = Rc::new(Cell::new(0));
     let drawer = super::PreviewDrawer::new(Rc::new(Pending(loads.clone())));
-    let timestamp = gtk::glib::DateTime::now_local().unwrap().to_unix() - 240;
-    let entry = |name: &str, size, modified| FileEntry(Rc::new(FileEntryInner {
-        location: Location::local(format!("/generated-formatting/{name}")),
-        native_name: name.into(), display_name: name.into(), kind: EntryKind::File,
-        size, modified_unix_seconds: modified, music_tags: None,
-    }));
-    let known = entry("known.txt", MetadataValue::Known(1_500_000), MetadataValue::Known(timestamp));
+    let timestamp = gtk::glib::DateTime::now_local()
+        .expect("expected test value from gtk::glib::DateTime::now_local()")
+        .to_unix()
+        - 240;
+    let entry = |name: &str, size, modified| {
+        FileEntry(Rc::new(FileEntryInner {
+            location: Location::local(format!("/generated-formatting/{name}")),
+            native_name: name.into(),
+            display_name: name.into(),
+            kind: EntryKind::File,
+            size,
+            modified_unix_seconds: modified,
+            music_tags: None,
+        }))
+    };
+    let known = entry(
+        "known.txt",
+        MetadataValue::Known(1_500_000),
+        MetadataValue::Known(timestamp),
+    );
     drawer.show(known.clone());
     assert_eq!(loads.get(), 1);
     assert_eq!(drawer.state.size.text(), "1.5 MB");
@@ -287,11 +303,25 @@ fn desktop_preview_metadata_reformats_without_reloading_and_clears_recycled_valu
     manager.set_size_unit("binary");
     manager.set_date_format("iso");
     assert_eq!(drawer.state.size.text(), "1.4 MiB");
-    assert_eq!(drawer.state.modified.text().as_str(), crate::ui::formatting::format_timestamp(timestamp));
+    assert_eq!(
+        drawer.state.modified.text().as_str(),
+        crate::ui::formatting::format_timestamp(timestamp)
+    );
     assert_eq!(loads.get(), 1);
     assert_eq!(drawer.state.current.borrow().as_ref(), Some(&known));
-    assert!(drawer.state.modified.tooltip_text().unwrap().contains("("));
-    drawer.show(entry("unknown.txt", MetadataValue::Unknown, MetadataValue::Unavailable));
+    assert!(
+        drawer
+            .state
+            .modified
+            .tooltip_text()
+            .expect("expected test value from drawer.state.modified.tooltip_text()")
+            .contains("(")
+    );
+    drawer.show(entry(
+        "unknown.txt",
+        MetadataValue::Unknown,
+        MetadataValue::Unavailable,
+    ));
     assert_eq!(loads.get(), 2);
     manager.set_date_format("relative");
     manager.set_size_unit("decimal");
@@ -317,10 +347,18 @@ fn desktop_large_streaming_previews_reach_provider_without_lifting_image_limits(
     use std::{cell::Cell, rc::Rc};
     struct Pending(Rc<Cell<usize>>);
     impl PreviewProvider for Pending {
-        fn load(&self, request: PreviewRequest, emit: Rc<dyn Fn(crate::services::PreviewEvent)>) -> LoadHandle {
-            if let Err(message) = crate::adapters::LocalPreviewProvider::check_policy(&request.entry, None) {
+        fn load(
+            &self,
+            request: PreviewRequest,
+            emit: Rc<dyn Fn(crate::services::PreviewEvent)>,
+        ) -> LoadHandle {
+            if let Err(message) =
+                crate::adapters::LocalPreviewProvider::check_policy(&request.entry, None)
+            {
                 emit(crate::services::PreviewEvent::Failed {
-                    request_id: request.id, entry: request.entry, message,
+                    request_id: request.id,
+                    entry: request.entry,
+                    message,
                 });
                 return LoadHandle::new(|| {});
             }
@@ -328,20 +366,25 @@ fn desktop_large_streaming_previews_reach_provider_without_lifting_image_limits(
             LoadHandle::new(|| {})
         }
     }
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let manager = crate::ui::theme::ThemeManager::shared();
     manager.set_max_preview_size_mb(50);
     manager.set_preview_audio(true);
     manager.set_preview_videos(true);
     let loads = Rc::new(Cell::new(0));
     let drawer = super::PreviewDrawer::new(Rc::new(Pending(loads.clone())));
-    let entry = |name: &str, size| FileEntry(Rc::new(FileEntryInner {
-        music_tags: None,
-        location: Location::local(format!("/generated-large-preview/{name}")),
-        native_name: name.into(), display_name: name.into(), kind: EntryKind::File,
-        size: MetadataValue::Known(size), modified_unix_seconds: MetadataValue::Unknown,
-    }));
+    let entry = |name: &str, size| {
+        FileEntry(Rc::new(FileEntryInner {
+            music_tags: None,
+            location: Location::local(format!("/generated-large-preview/{name}")),
+            native_name: name.into(),
+            display_name: name.into(),
+            kind: EntryKind::File,
+            size: MetadataValue::Known(size),
+            modified_unix_seconds: MetadataValue::Unknown,
+        }))
+    };
     drawer.show(entry("song.flac", 75_400_000));
     assert_eq!(loads.get(), 1);
     drawer.show(entry("clip.mp4", 172_400_000));
@@ -357,16 +400,25 @@ fn desktop_large_streaming_previews_reach_provider_without_lifting_image_limits(
 #[test]
 #[ignore = "Requires an isolated GTK display and private preferences; validates late preview policy changes"]
 fn desktop_completed_previews_recheck_format_and_size_settings_before_rendering() {
+    use crate::{
+        model::{EntryKind, FileEntry, FileEntryInner, Location, MetadataValue},
+        services::{
+            LoadHandle, Preview, PreviewContent, PreviewProvider, PreviewRequest, PreviewRequestId,
+        },
+    };
     use gtk::prelude::*;
-    use crate::{model::{EntryKind, FileEntry, FileEntryInner, Location, MetadataValue}, services::{LoadHandle, Preview, PreviewContent, PreviewProvider, PreviewRequest, PreviewRequestId}};
     struct Pending;
     impl PreviewProvider for Pending {
-        fn load(&self, _: PreviewRequest, _: std::rc::Rc<dyn Fn(crate::services::PreviewEvent)>) -> LoadHandle {
+        fn load(
+            &self,
+            _: PreviewRequest,
+            _: std::rc::Rc<dyn Fn(crate::services::PreviewEvent)>,
+        ) -> LoadHandle {
             LoadHandle::new(|| {})
         }
     }
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let manager = crate::ui::theme::ThemeManager::shared();
     let drawer = super::PreviewDrawer::new(std::rc::Rc::new(Pending));
     let ready = |size| Preview {
@@ -381,9 +433,13 @@ fn desktop_completed_previews_recheck_format_and_size_settings_before_rendering(
             modified_unix_seconds: MetadataValue::Unknown,
         })),
         content_type: "image/png".into(),
-        content: PreviewContent::Rasterized { png: b"not image data".to_vec() },
+        content: PreviewContent::Rasterized {
+            png: b"not image data".to_vec(),
+        },
     };
-    let feedback = || drawer.state.content.first_child().unwrap().last_child().and_downcast::<gtk::Label>().unwrap().text().to_string();
+    let feedback = || {
+        drawer.state.content.first_child().expect("expected test value from drawer.state.content.first_child()").last_child().and_downcast::<gtk::Label>().expect("expected test value from drawer.state.content.first_child().unwrap().last_child().and_downcast::<gtk::Label>()").text().to_string()
+    };
     manager.set_preview_images(false);
     drawer.state.render(ready(10));
     assert!(feedback().contains("disabled"));
@@ -438,8 +494,8 @@ fn desktop_preview_fills_remaining_space_and_preserves_manual_divider_position()
             std::thread::sleep(Duration::from_millis(5));
         }
     };
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let drawer = super::PreviewDrawer::new(Rc::new(Pending));
     let split = gtk::Paned::new(gtk::Orientation::Horizontal);
     split.set_shrink_start_child(true);
@@ -526,7 +582,11 @@ fn desktop_preview_preserves_request_lifecycle() {
         music_tags: None,
     }));
     drawer.show(entry.clone());
-    let request_id = drawer.state.current_request.get().unwrap();
+    let request_id = drawer
+        .state
+        .current_request
+        .get()
+        .expect("expected test value from drawer.state.current_request.get()");
     let deliver = |id| {
         drawer.state.handle_event(
             request_id,
@@ -547,20 +607,35 @@ fn desktop_preview_preserves_request_lifecycle() {
             .state
             .content
             .first_child()
-            .unwrap()
+            .expect("expected test value from drawer .state .content .first_child()")
             .is::<gtk::Spinner>()
     );
     assert!(!cancelled.get());
     deliver(request_id);
     assert_eq!(drawer.state.current_request.get(), None);
     assert!(cancelled.get());
-    let ready = drawer.state.content.first_child().unwrap();
+    let ready = drawer
+        .state
+        .content
+        .first_child()
+        .expect("expected test value from drawer.state.content.first_child()");
     deliver(request_id);
-    assert_eq!(drawer.state.content.first_child().unwrap(), ready);
+    assert_eq!(
+        drawer
+            .state
+            .content
+            .first_child()
+            .expect("expected test value from drawer.state.content.first_child()"),
+        ready
+    );
     drawer.close();
     assert!(drawer.state.content.first_child().is_none());
     drawer.show(entry.clone());
-    let second_request = drawer.state.current_request.get().unwrap();
+    let second_request = drawer
+        .state
+        .current_request
+        .get()
+        .expect("expected test value from drawer.state.current_request.get()");
     cancelled.set(false);
     drawer.close();
     assert!(cancelled.get());

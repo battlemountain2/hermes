@@ -8,11 +8,8 @@ use crate::{
     ui::browser::{BrowserView, PeekBehavior},
 };
 
-fn setup_test_gtk() -> bool {
-    if std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_err() {
-        return false;
-    }
-    gtk::init().is_ok()
+fn setup_test_gtk() {
+    gtk::init().expect("initialize the isolated GTK display");
 }
 
 fn create_test_browser() -> BrowserView {
@@ -28,9 +25,7 @@ fn test_active_pane_state_and_equality() {
 #[test]
 #[ignore = "Requires isolated GTK display; tests SplitView single pane mode"]
 fn test_split_view_starts_in_single_pane_mode() {
-    if !setup_test_gtk() {
-        return;
-    }
+    setup_test_gtk();
     let left = create_test_browser();
     let right = create_test_browser();
     let split = SplitView::new(left, right);
@@ -42,9 +37,7 @@ fn test_split_view_starts_in_single_pane_mode() {
 #[test]
 #[ignore = "Requires isolated GTK display; exercises SplitView dual pane toggle and switching"]
 fn test_split_view_toggle_and_pane_switching() {
-    if !setup_test_gtk() {
-        return;
-    }
+    setup_test_gtk();
     let left = create_test_browser();
     let right = create_test_browser();
     let split = SplitView::new(left, right);

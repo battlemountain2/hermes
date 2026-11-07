@@ -166,24 +166,24 @@ pub(crate) fn render_image(path: &Path, size: i32) -> Result<Vec<u8>, String> {
     {
         return Ok(png);
     }
-    if let Some((width, height)) = sniff::image_dimensions(path) {
-        if sniff::exceeds_decoded_frame_budget(width, height) {
-            if let Some(png) = sniff::read_exif_thumbnail(path, size) {
+    if let Some((width, height)) = sniff::image_dimensions(path)
+        && sniff::exceeds_decoded_frame_budget(width, height)
+    {
+        if let Some(png) = sniff::read_exif_thumbnail(path, size) {
+            return Ok(png);
+        }
+        if size > 256
+            && u64::from(width) * u64::from(height) <= sniff::MAX_PIXELS_CEILING
+            && sniff::is_jpeg(path)
+        {
+            if jpeg::external_preview_safe(path)
+                && let Ok(png) = scaled::render(path, size)
+            {
                 return Ok(png);
             }
-            if size > 256
-                && u64::from(width) * u64::from(height) <= sniff::MAX_PIXELS_CEILING
-                && sniff::is_jpeg(path)
-            {
-                if jpeg::external_preview_safe(path)
-                    && let Ok(png) = scaled::render(path, size)
-                {
-                    return Ok(png);
-                }
-                return render_imagemagick(path, size);
-            }
-            return Err("Image dimensions exceed the decoded frame budget".to_owned());
+            return render_imagemagick(path, size);
         }
+        return Err("Image dimensions exceed the decoded frame budget".to_owned());
     }
     if size > 256
         && let Some(png) = jpeg::scaled_preview(path, size)
@@ -196,13 +196,13 @@ pub(crate) fn render_image(path: &Path, size: i32) -> Result<Vec<u8>, String> {
 }
 
 pub(crate) fn render_raw(path: &Path, size: i32) -> Result<Vec<u8>, String> {
-    if let Some((width, height)) = sniff::image_dimensions(path) {
-        if sniff::exceeds_decoded_frame_budget(width, height) {
-            if let Some(png) = sniff::read_exif_thumbnail(path, size) {
-                return Ok(png);
-            }
-            return Err("Image dimensions exceed the decoded frame budget".to_owned());
+    if let Some((width, height)) = sniff::image_dimensions(path)
+        && sniff::exceeds_decoded_frame_budget(width, height)
+    {
+        if let Some(png) = sniff::read_exif_thumbnail(path, size) {
+            return Ok(png);
         }
+        return Err("Image dimensions exceed the decoded frame budget".to_owned());
     }
     render_image(path, size).or_else(|_| render_dcraw(path, size))
 }
@@ -308,10 +308,9 @@ pub(crate) fn render_pdf_thumbnail(path: &Path, size: i32) -> Result<Vec<u8>, St
     )
 }
 
-pub(crate) fn render_pdf_page(
-    path: &Path,
-    requested_page: i32,
-) -> Result<(Vec<u8>, i32, i32, Option<Vec<u8>>), String> {
+type RenderedPdfPage = (Vec<u8>, i32, i32, Option<Vec<u8>>);
+
+pub(crate) fn render_pdf_page(path: &Path, requested_page: i32) -> Result<RenderedPdfPage, String> {
     let uri = gio::File::for_path(path).uri();
     let document = poppler::Document::from_file(&uri, None).map_err(|error| error.to_string())?;
     let pages = document.n_pages();

@@ -315,7 +315,11 @@ impl Card {
             }
 
             self.badge.set_text(&kind(&entry).to_uppercase());
-            super::thumbnail::show_fallback_icon(&self.image, super::browser::entry_icon(&entry), 26);
+            super::thumbnail::show_fallback_icon(
+                &self.image,
+                super::browser::entry_icon(&entry),
+                26,
+            );
         }
 
         self.entry.replace(Some(entry));
@@ -371,7 +375,10 @@ impl Card {
                 })
                 .await;
 
-                let Some(card) = weak.upgrade().filter(|c| c.generation.get() == generation && c.widget.is_mapped()) else {
+                let Some(card) = weak
+                    .upgrade()
+                    .filter(|c| c.generation.get() == generation && c.widget.is_mapped())
+                else {
                     return;
                 };
 
@@ -389,7 +396,10 @@ impl Card {
                             tile.container.set_visible(true);
                             tile.label.set_text(name);
                             if *is_dir {
-                                crate::assets::set_primary_icon(&tile.image, crate::assets::icons::FOLDER);
+                                crate::assets::set_primary_icon(
+                                    &tile.image,
+                                    crate::assets::icons::FOLDER,
+                                );
                             } else {
                                 let icon_name = super::browser::icon_for_name(name);
                                 crate::assets::set_primary_icon(&tile.image, icon_name);

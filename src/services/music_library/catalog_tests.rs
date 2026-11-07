@@ -70,11 +70,13 @@ fn generated_catalog_restart_and_query_timings() {
         samples.sort();
         eprintln!(
             "Generated catalog restart={restart}: first={:?}, complete={complete:?}, synthetic tag reads={}, query p50={:?}, p95={:?}, SQLite bytes={}",
-            first.unwrap(),
+            first.expect("generated fixture must provide the expected value"),
             fixture.calls.load(Ordering::Relaxed),
             samples[10],
             samples[19],
-            fs::metadata(&fixture.catalog_path).unwrap().len()
+            fs::metadata(&fixture.catalog_path)
+                .expect("generated fixture must provide the expected value")
+                .len()
         );
         if restart > 0 {
             assert_eq!(fixture.calls.load(Ordering::Relaxed), 0);
@@ -105,7 +107,7 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         let root = root.unwrap_or_else(|| parent.join("Home fixture"));
-        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&root).expect("generated fixture must provide the expected value");
         Self {
             root,
             catalog_path: parent.join(".cache/general.sqlite"),
@@ -117,8 +119,12 @@ impl Fixture {
 
     fn file(&self, name: impl AsRef<Path>, data: impl AsRef<[u8]>) -> PathBuf {
         let path = self.root.join(name);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, data).unwrap();
+        fs::create_dir_all(
+            path.parent()
+                .expect("generated fixture must provide the expected value"),
+        )
+        .expect("generated fixture must provide the expected value");
+        fs::write(&path, data).expect("generated fixture must provide the expected value");
         path
     }
 
@@ -133,7 +139,7 @@ impl Fixture {
                 track: Some(2),
                 ..MusicTags::default()
             })
-            .unwrap(),
+            .expect("generated fixture must provide the expected value"),
         )
     }
 
@@ -160,7 +166,7 @@ impl Fixture {
         let subscription = subscribe_with(configuration);
         self.instances
             .lock()
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .push(Arc::downgrade(&subscription.library));
         subscription
     }
@@ -177,13 +183,16 @@ impl Fixture {
             MAX_INDEX_BYTES,
             &Cancellation::default(),
         )
-        .unwrap()
+        .expect("generated fixture must provide the expected value")
     }
 }
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let instances = self.instances.lock().unwrap();
+        let instances = self
+            .instances
+            .lock()
+            .expect("generated fixture must provide the expected value");
         for weak in instances.iter() {
             if let Some(library) = weak.upgrade() {
                 library.cancellation.cancel();
@@ -248,7 +257,7 @@ fn stop(subscription: Subscription) {
     until(|| weak.strong_count() == 0, "catalog worker shutdown");
 }
 
-fn title<'entry>(entry: &'entry Entry) -> Option<&'entry str> {
+fn title(entry: &Entry) -> Option<&str> {
     entry.music_tags.as_ref()?.title.as_deref()
 }
 
@@ -293,7 +302,7 @@ fn general_subscribers_share_names_types_and_live_add_move_remove_updates() {
             .entries
             .iter()
             .find(|entry| &entry.path == path)
-            .unwrap();
+            .expect("generated fixture must provide the expected value");
         assert!(!entry.is_directory && !entry.is_audio());
         assert_eq!(classify_by_name(entry.path.as_os_str()), family);
         assert!(entry.identity.is_some() && entry.music_tags.is_none());
@@ -311,7 +320,8 @@ fn general_subscribers_share_names_types_and_live_add_move_remove_updates() {
     let second_added = ready(&mut second, |current| paths(current).contains(&added));
     assert_eq!(paths(&first_added), paths(&second_added));
     let moved_directory = fixture.root.join("Moved folder");
-    fs::rename(fixture.root.join("New folder"), &moved_directory).unwrap();
+    fs::rename(fixture.root.join("New folder"), &moved_directory)
+        .expect("generated fixture must provide the expected value");
     let moved = moved_directory.join("added.pdf");
     let moved_snapshot = ready(&mut second, |current| {
         paths(current).contains(&moved)
@@ -321,7 +331,8 @@ fn general_subscribers_share_names_types_and_live_add_move_remove_updates() {
                 .all(|entry| !entry.path.starts_with(fixture.root.join("New folder")))
     });
     assert_eq!(moved_snapshot.entries.len(), 8);
-    fs::remove_dir_all(&moved_directory).unwrap();
+    fs::remove_dir_all(&moved_directory)
+        .expect("generated fixture must provide the expected value");
     ready(&mut first, |current| current.entries.len() == 6);
     ready(&mut second, |current| current.entries.len() == 6);
     assert_eq!(fixture.calls.load(Ordering::Relaxed), 1);
@@ -345,7 +356,7 @@ fn sqlite_restart_reuses_unchanged_tags_and_native_filenames_without_decoding() 
     stop(subscription);
     assert!(
         fs::read(&fixture.catalog_path)
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .starts_with(b"SQLite format 3\0")
     );
     assert!(!fixture.parent.join(".cache/unused-tags.json").exists());
@@ -421,11 +432,18 @@ fn saved_identities_reject_same_size_edits_and_deletions_then_restart_and_refres
     });
     until(|| fixture.catalog_path.is_file(), "saved tag identities");
     stop(subscription);
-    let original = fs::metadata(&edited).unwrap().len();
+    let original = fs::metadata(&edited)
+        .expect("generated fixture must provide the expected value")
+        .len();
     std::thread::sleep(Duration::from_millis(2));
     fixture.song("edited.flac", "New title");
-    assert_eq!(fs::metadata(&edited).unwrap().len(), original);
-    fs::remove_file(&deleted).unwrap();
+    assert_eq!(
+        fs::metadata(&edited)
+            .expect("generated fixture must provide the expected value")
+            .len(),
+        original
+    );
+    fs::remove_file(&deleted).expect("generated fixture must provide the expected value");
     let (saved, notice) = fixture.saved();
     assert_eq!(saved.len(), 1);
     assert_eq!(saved[0].path, unchanged);
@@ -454,7 +472,8 @@ fn saved_identities_reject_same_size_edits_and_deletions_then_restart_and_refres
 fn disk_read_carries_partial_coverage_notice_with_validated_entries() {
     let fixture = Fixture::new();
     let path = fixture.file("searchable.txt", b"Synthetic file");
-    let identity = FileIdentity::read(&path).unwrap();
+    let identity =
+        FileIdentity::read(&path).expect("generated fixture must provide the expected value");
     let entries = vec![Entry {
         path,
         is_directory: false,
@@ -470,7 +489,7 @@ fn disk_read_carries_partial_coverage_notice_with_validated_entries() {
         Some(notice),
         &Cancellation::default(),
     )
-    .unwrap();
+    .expect("generated fixture must provide the expected value");
     let (saved, saved_notice) = fixture.saved();
     assert_eq!(saved, entries);
     assert_eq!(saved_notice.as_deref(), Some(notice));
@@ -499,10 +518,20 @@ fn disk_read_carries_partial_coverage_notice_with_validated_entries() {
 #[test]
 fn simultaneous_home_and_music_share_one_tag_reader_and_home_drop_preserves_music() {
     let mut music = tests::Fixture::new();
-    music.cache_path = music.root.parent().unwrap().join(".cache/tags.json");
+    music.cache_path = music
+        .root
+        .parent()
+        .expect("generated fixture must provide the expected value")
+        .join(".cache/tags.json");
     music.song("song.flac", "Shared original");
     let song = music.root.join("song.flac");
-    let fixture = Fixture::at(Some(music.root.parent().unwrap().to_path_buf()));
+    let fixture = Fixture::at(Some(
+        music
+            .root
+            .parent()
+            .expect("generated fixture must provide the expected value")
+            .to_path_buf(),
+    ));
     let document = fixture.file("Documents/note.txt", b"Synthetic home document");
     let mut music_subscription = music.subscribe();
     let mut configuration = fixture.configuration();
@@ -536,7 +565,7 @@ fn simultaneous_home_and_music_share_one_tag_reader_and_home_drop_preserves_musi
             .library
             .shared
             .lock()
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .subscribers,
         2
     );
@@ -556,7 +585,7 @@ fn simultaneous_home_and_music_share_one_tag_reader_and_home_drop_preserves_musi
     );
     assert_eq!(music.calls.load(Ordering::Relaxed), 2);
     assert_eq!(fixture.calls.load(Ordering::Relaxed), 0);
-    fs::remove_file(&song).unwrap();
+    fs::remove_file(&song).expect("generated fixture must provide the expected value");
     ready(&mut music_subscription, |current| {
         !paths(current).contains(&song)
     });
@@ -567,7 +596,7 @@ fn simultaneous_home_and_music_share_one_tag_reader_and_home_drop_preserves_musi
             .library
             .shared
             .lock()
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .subscribers,
         1
     );
@@ -587,10 +616,20 @@ fn simultaneous_home_and_music_share_one_tag_reader_and_home_drop_preserves_musi
 fn composed_home_prioritizes_music_and_honors_entry_and_byte_limits() {
     for byte_limited in [false, true] {
         let mut music = tests::Fixture::new();
-        music.cache_path = music.root.parent().unwrap().join(".cache/tags.json");
+        music.cache_path = music
+            .root
+            .parent()
+            .expect("generated fixture must provide the expected value")
+            .join(".cache/tags.json");
         music.song("song.flac", "Priority song");
         let song = music.root.join("song.flac");
-        let fixture = Fixture::at(Some(music.root.parent().unwrap().to_path_buf()));
+        let fixture = Fixture::at(Some(
+            music
+                .root
+                .parent()
+                .expect("generated fixture must provide the expected value")
+                .to_path_buf(),
+        ));
         fixture.file("ordinary.txt", b"Synthetic ordinary file");
         let mut music_subscription = music.subscribe();
         ready(&mut music_subscription, |current| {
@@ -604,7 +643,13 @@ fn composed_home_prioritizes_music_and_honors_entry_and_byte_limits() {
         }
         let mut home = fixture.start(configuration);
         let current = ready(&mut home, |current| current.notice.is_some());
-        assert!(current.notice.as_deref().unwrap().contains("limit"));
+        assert!(
+            current
+                .notice
+                .as_deref()
+                .expect("generated fixture must provide the expected value")
+                .contains("limit")
+        );
         if byte_limited {
             assert!(current.entries.is_empty());
         } else {
@@ -631,18 +676,19 @@ fn unmonitored_general_catalog_reconciles_synthetic_changes_periodically() {
         initial
             .notice
             .as_deref()
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .contains("cannot be watched")
     );
     let added = fixture.file("Added folder/file.txt", b"Periodic fixture");
     ready(&mut subscription, |current| paths(current).contains(&added));
-    fs::remove_dir_all(fixture.root.join("Added folder")).unwrap();
+    fs::remove_dir_all(fixture.root.join("Added folder"))
+        .expect("generated fixture must provide the expected value");
     let removed = ready(&mut subscription, |current| current.entries.is_empty());
     assert!(
         removed
             .notice
             .as_deref()
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .contains("cannot be watched")
     );
 }
@@ -664,7 +710,13 @@ fn entry_byte_and_tag_limits_report_partial_coverage_without_losing_audio_names(
         }
         let mut subscription = fixture.start(configuration);
         let current = ready(&mut subscription, |current| current.notice.is_some());
-        assert!(current.notice.as_deref().unwrap().contains("limit"));
+        assert!(
+            current
+                .notice
+                .as_deref()
+                .expect("generated fixture must provide the expected value")
+                .contains("limit")
+        );
         match limit {
             0 => assert_eq!(current.entries.len(), 1),
             1 => {
@@ -682,7 +734,13 @@ fn entry_byte_and_tag_limits_report_partial_coverage_without_losing_audio_names(
                     1
                 );
                 assert_eq!(fixture.calls.load(Ordering::Relaxed), 1);
-                assert!(current.notice.as_deref().unwrap().contains("filename"));
+                assert!(
+                    current
+                        .notice
+                        .as_deref()
+                        .expect("generated fixture must provide the expected value")
+                        .contains("filename")
+                );
             }
         }
     }
@@ -713,7 +771,13 @@ fn metadata_byte_budget_keeps_all_filenames_and_reports_discarded_tags() {
             .iter()
             .all(|entry| entry.music_tags.is_none())
     );
-    assert!(current.notice.as_deref().unwrap().contains("metadata"));
+    assert!(
+        current
+            .notice
+            .as_deref()
+            .expect("generated fixture must provide the expected value")
+            .contains("metadata")
+    );
     assert_eq!(fixture.calls.load(Ordering::Relaxed), 2);
 }
 
@@ -780,11 +844,15 @@ fn general_scan_and_saved_catalog_exclude_hidden_paths_and_symlink_targets() {
     fixture.file(".secret.txt", b"Hidden file");
     let visible = fixture.song("Visible/song.flac", "Visible song");
     let outside = fixture.parent.join("outside");
-    fs::create_dir_all(&outside).unwrap();
-    fs::write(outside.join("secret.txt"), b"Outside fixture").unwrap();
-    std::os::unix::fs::symlink(&outside, fixture.root.join("linked-directory")).unwrap();
-    std::os::unix::fs::symlink(&visible, fixture.root.join("linked.flac")).unwrap();
-    std::os::unix::fs::symlink(&fixture.root, fixture.root.join("loop")).unwrap();
+    fs::create_dir_all(&outside).expect("generated fixture must provide the expected value");
+    fs::write(outside.join("secret.txt"), b"Outside fixture")
+        .expect("generated fixture must provide the expected value");
+    std::os::unix::fs::symlink(&outside, fixture.root.join("linked-directory"))
+        .expect("generated fixture must provide the expected value");
+    std::os::unix::fs::symlink(&visible, fixture.root.join("linked.flac"))
+        .expect("generated fixture must provide the expected value");
+    std::os::unix::fs::symlink(&fixture.root, fixture.root.join("loop"))
+        .expect("generated fixture must provide the expected value");
     let mut subscription = fixture.subscribe();
     let current = ready(&mut subscription, |current| {
         has_title(current, &visible, "Visible song")
@@ -803,8 +871,10 @@ fn general_scan_and_saved_catalog_exclude_hidden_paths_and_symlink_targets() {
     stop(subscription);
     let (saved, _) = fixture.saved();
     assert_eq!(saved.len(), 2);
-    fs::remove_dir_all(fixture.root.join("Visible")).unwrap();
-    std::os::unix::fs::symlink(&outside, fixture.root.join("Visible")).unwrap();
+    fs::remove_dir_all(fixture.root.join("Visible"))
+        .expect("generated fixture must provide the expected value");
+    std::os::unix::fs::symlink(&outside, fixture.root.join("Visible"))
+        .expect("generated fixture must provide the expected value");
     let (saved, notice) = fixture.saved();
     assert!(saved.is_empty());
     assert!(
@@ -822,20 +892,30 @@ fn missing_or_corrupt_sqlite_catalog_falls_back_to_usable_names_with_honest_noti
         let mut configuration = fixture.configuration();
         let corruption = b"This is deliberately not a SQLite database";
         if corrupt {
-            fs::create_dir_all(fixture.catalog_path.parent().unwrap()).unwrap();
+            fs::create_dir_all(
+                fixture
+                    .catalog_path
+                    .parent()
+                    .expect("generated fixture must provide the expected value"),
+            )
+            .expect("generated fixture must provide the expected value");
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(
-                fixture.catalog_path.parent().unwrap(),
+                fixture
+                    .catalog_path
+                    .parent()
+                    .expect("generated fixture must provide the expected value"),
                 fs::Permissions::from_mode(0o700),
             )
-            .unwrap();
+            .expect("generated fixture must provide the expected value");
             let mut file = fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .mode(0o600)
                 .open(&fixture.catalog_path)
-                .unwrap();
-            file.write_all(corruption).unwrap();
+                .expect("generated fixture must provide the expected value");
+            file.write_all(corruption)
+                .expect("generated fixture must provide the expected value");
         } else {
             assert!(!fixture.catalog_path.exists());
         }
@@ -847,7 +927,11 @@ fn missing_or_corrupt_sqlite_catalog_falls_back_to_usable_names_with_honest_noti
         assert_eq!(current.entries.len(), 1);
         assert_eq!(fixture.calls.load(Ordering::Relaxed), 0);
         if corrupt {
-            let notice = current.notice.as_deref().unwrap().to_ascii_lowercase();
+            let notice = current
+                .notice
+                .as_deref()
+                .expect("generated fixture must provide the expected value")
+                .to_ascii_lowercase();
             assert!(notice.contains("index") || notice.contains("catalog"));
             assert!(
                 notice.contains("unavailable")
@@ -866,7 +950,9 @@ fn missing_or_corrupt_sqlite_catalog_falls_back_to_usable_names_with_honest_noti
                 .is_err()
             );
             assert_eq!(
-                fs::read(&fixture.catalog_path).unwrap().as_slice(),
+                fs::read(&fixture.catalog_path)
+                    .expect("generated fixture must provide the expected value")
+                    .as_slice(),
                 corruption.as_slice()
             );
         } else {
@@ -884,7 +970,7 @@ fn missing_or_corrupt_sqlite_catalog_falls_back_to_usable_names_with_honest_noti
 #[test]
 fn missing_general_root_reports_unavailability_and_recovers_without_manual_refresh() {
     let fixture = Fixture::new();
-    fs::remove_dir(&fixture.root).unwrap();
+    fs::remove_dir(&fixture.root).expect("generated fixture must provide the expected value");
     let mut subscription = fixture.subscribe();
     let missing = ready(&mut subscription, |current| {
         current.entries.is_empty()
@@ -897,8 +983,13 @@ fn missing_general_root_reports_unavailability_and_recovers_without_manual_refre
         missing
             .notice
             .as_deref()
-            .unwrap()
-            .contains(fixture.root.to_str().unwrap())
+            .expect("generated fixture must provide the expected value")
+            .contains(
+                fixture
+                    .root
+                    .to_str()
+                    .expect("generated fixture must provide the expected value")
+            )
     );
     let recovered = fixture.file("Recovered/file.txt", b"Recovered synthetic root");
     ready(&mut subscription, |current| {

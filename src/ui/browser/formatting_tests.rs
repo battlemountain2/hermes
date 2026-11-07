@@ -28,9 +28,17 @@ impl FileSource for GeneratedMetadataSource {
 
 impl GeneratedMetadataSource {
     fn replace(&self, entries: Vec<FileEntry>) {
-        let emit = self.emit.borrow().as_ref().unwrap().clone();
+        let emit = self
+            .emit
+            .borrow()
+            .as_ref()
+            .expect("generated fixture must provide the expected value")
+            .clone();
         emit(DirectoryEvent::Snapshot {
-            request_id: self.request.get().unwrap(),
+            request_id: self
+                .request
+                .get()
+                .expect("generated fixture must provide the expected value"),
             entries,
         });
     }
@@ -67,14 +75,38 @@ fn find_list(widget: &gtk::Widget, class: &str) -> Option<gtk::ListView> {
 }
 
 fn metadata_labels(item: &gtk::ListItem, mode: BrowserMode) -> (gtk::Label, Option<gtk::Label>) {
-    let row = item.child().unwrap();
+    let row = item
+        .child()
+        .expect("generated fixture must provide the expected value");
     if mode == BrowserMode::Columns {
-        let size = row.last_child().unwrap().prev_sibling().unwrap();
-        (size.downcast().unwrap(), None)
+        let size = row
+            .last_child()
+            .expect("generated fixture must provide the expected value")
+            .prev_sibling()
+            .expect("generated fixture must provide the expected value");
+        (
+            size.downcast()
+                .expect("generated fixture must provide the expected value"),
+            None,
+        )
     } else {
-        let size = row.first_child().unwrap().next_sibling().unwrap();
-        let modified = row.last_child().unwrap();
-        (size.downcast().unwrap(), Some(modified.downcast().unwrap()))
+        let size = row
+            .first_child()
+            .expect("generated fixture must provide the expected value")
+            .next_sibling()
+            .expect("generated fixture must provide the expected value");
+        let modified = row
+            .last_child()
+            .expect("generated fixture must provide the expected value");
+        (
+            size.downcast()
+                .expect("generated fixture must provide the expected value"),
+            Some(
+                modified
+                    .downcast()
+                    .expect("generated fixture must provide the expected value"),
+            ),
+        )
     }
 }
 
@@ -104,9 +136,9 @@ fn assert_current_metadata(
             formatting::format_timestamp(seconds)
         );
         let absolute = glib::DateTime::from_unix_local(seconds)
-            .unwrap()
+            .expect("generated fixture must provide the expected value")
             .format("%Y-%m-%d %H:%M:%S %Z (%z)")
-            .unwrap();
+            .expect("generated fixture must provide the expected value");
         assert_eq!(modified.tooltip_text().as_deref(), Some(absolute.as_str()));
     }
 }
@@ -125,16 +157,18 @@ fn exercise_recycled_metadata_row(mode: BrowserMode) {
             "explorer-list"
         },
     )
-    .unwrap();
+    .expect("generated fixture must provide the expected value");
     let factory = list
         .factory()
-        .unwrap()
+        .expect("generated fixture must provide the expected value")
         .downcast::<gtk::SignalListItemFactory>()
-        .unwrap();
+        .expect("generated fixture must provide the expected value");
     let captured_item = Rc::new(RefCell::new(None));
     let captured_for_bind = captured_item.clone();
     factory.connect_bind(move |_, item| {
-        let item = item.downcast_ref::<gtk::ListItem>().unwrap();
+        let item = item
+            .downcast_ref::<gtk::ListItem>()
+            .expect("generated fixture must provide the expected value");
         if item.position() == 0 {
             captured_for_bind.replace(Some(item.clone()));
         }
@@ -142,7 +176,12 @@ fn exercise_recycled_metadata_row(mode: BrowserMode) {
     source.replace(vec![generated_entry(
         EntryKind::File,
         MetadataValue::Known(2_048),
-        MetadataValue::Known(glib::DateTime::now_local().unwrap().to_unix() - 120),
+        MetadataValue::Known(
+            glib::DateTime::now_local()
+                .expect("generated fixture must provide the expected value")
+                .to_unix()
+                - 120,
+        ),
     )]);
     let window = gtk::Window::builder()
         .default_width(800)
@@ -151,15 +190,26 @@ fn exercise_recycled_metadata_row(mode: BrowserMode) {
         .build();
     window.present();
     pump_until(|| captured_item.borrow().is_some());
-    let item = captured_item.borrow().as_ref().unwrap().clone();
+    let item = captured_item
+        .borrow()
+        .as_ref()
+        .expect("generated fixture must provide the expected value")
+        .clone();
     let (size, modified) = metadata_labels(&item, mode);
-    let entry = view.browser().entry_at(0, 0).unwrap();
+    let entry = view
+        .browser()
+        .entry_at(0, 0)
+        .expect("generated fixture must provide the expected value");
     let MetadataValue::Known(initial_seconds) = entry.modified_unix_seconds else {
         panic!("Generated date must be known");
     };
     assert_current_metadata(&size, modified.as_ref(), 2_048, initial_seconds);
-    let model = list.model().unwrap();
-    let original_item = model.item(0).unwrap();
+    let model = list
+        .model()
+        .expect("generated fixture must provide the expected value");
+    let original_item = model
+        .item(0)
+        .expect("generated fixture must provide the expected value");
     let model_changes = Rc::new(Cell::new(0));
     let changes_for_signal = model_changes.clone();
     model.connect_items_changed(move |_, _, _, _| {
@@ -168,11 +218,19 @@ fn exercise_recycled_metadata_row(mode: BrowserMode) {
     formatting::configure("relative", "binary");
     assert_current_metadata(&size, modified.as_ref(), 2_048, initial_seconds);
     assert_eq!(size.text(), "2 KiB");
-    assert_eq!(model.item(0).unwrap(), original_item);
+    assert_eq!(
+        model
+            .item(0)
+            .expect("generated fixture must provide the expected value"),
+        original_item
+    );
     assert_eq!(model_changes.get(), 0);
     assert_eq!(source.requests.get(), 1);
     assert_eq!(
-        view.browser().entry_at(0, 0).unwrap().size,
+        view.browser()
+            .entry_at(0, 0)
+            .expect("generated fixture must provide the expected value")
+            .size,
         MetadataValue::Known(2_048)
     );
 
@@ -246,8 +304,8 @@ fn exercise_recycled_metadata_row(mode: BrowserMode) {
 #[test]
 #[ignore = "Requires private GTK display and private HOME/XDG; generated metadata only"]
 fn desktop_recycled_browser_metadata_rows_follow_current_values_and_preferences() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("generated fixture must provide the expected value");
+    crate::assets::prepare().expect("generated fixture must provide the expected value");
     let _manager = super::super::theme::ThemeManager::shared();
     for mode in [BrowserMode::Columns, BrowserMode::Explorer] {
         exercise_recycled_metadata_row(mode);
@@ -258,7 +316,7 @@ fn desktop_recycled_browser_metadata_rows_follow_current_values_and_preferences(
 #[test]
 #[ignore = "Requires private GTK display; in-memory properties metadata and tooltips only"]
 fn desktop_properties_metadata_rebinds_without_losing_folder_total_tooltips() {
-    gtk::init().unwrap();
+    gtk::init().expect("generated fixture must provide the expected value");
     formatting::configure("iso", "decimal");
     let size = gtk::Label::new(None);
     let modified = gtk::Label::new(None);
@@ -272,7 +330,10 @@ fn desktop_properties_metadata_rebinds_without_losing_folder_total_tooltips() {
     assert_current_metadata(&size, Some(&modified), 2_048, 0);
     let info = gio::FileInfo::new();
     info.set_size(8_192);
-    info.set_modification_date_time(&glib::DateTime::from_unix_utc(123_456).unwrap());
+    info.set_modification_date_time(
+        &glib::DateTime::from_unix_utc(123_456)
+            .expect("generated fixture must provide the expected value"),
+    );
     bind_properties_metadata(&size, &modified, &info, false);
     formatting::configure("relative", "binary");
     assert_current_metadata(&size, Some(&modified), 8_192, 123_456);

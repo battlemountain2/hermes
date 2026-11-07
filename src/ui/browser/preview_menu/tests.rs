@@ -31,7 +31,7 @@ fn button(widget: &gtk::Widget, label: &str) -> gtk::Button {
     })
     .unwrap_or_else(|| panic!("Missing button {label}"))
     .downcast()
-    .unwrap()
+    .expect("expected test value from find(widget, &|widget| { widget.downcast_ref::<gtk::Button>().is_some_and(|button| { button.label().is_some_and(|title| title =...")
 }
 
 fn pump(window: &gtk::Window) {
@@ -67,9 +67,9 @@ fn released(menu: &glib::WeakRef<gtk::Popover>) {
 
 fn viewport(root: &gtk::Widget) -> gtk::Widget {
     find(root, &|widget| widget.has_css_class("hermes-image-player"))
-        .unwrap()
+        .expect("expected test value from find(root, &|widget| widget.has_css_class(\"hermes-image-player\"))")
         .first_child()
-        .unwrap()
+        .expect("expected test value from find(root, &|widget| widget.has_css_class(\"hermes-image-player\")) .unwrap() .first_child()")
 }
 
 fn popup(viewport: &gtk::Widget, window: &gtk::Window) -> gtk::Popover {
@@ -81,7 +81,7 @@ fn popup(viewport: &gtk::Widget, window: &gtk::Window) -> gtk::Popover {
                 .and_downcast::<gtk::GestureClick>()
         })
         .find(|click| click.name().as_deref() == Some("hermes-image-context-menu"))
-        .unwrap();
+        .expect("expected test value from (0..controllers.n_items()) .filter_map(|position| { controllers .item(position) .and_downcast::<gtk::GestureClick>() }) .find(|...");
     assert_eq!(click.button(), 3);
     assert_eq!(click.propagation_phase(), gtk::PropagationPhase::Capture);
     click.emit_by_name::<()>("pressed", &[&1_i32, &24.0_f64, &24.0_f64]);
@@ -89,9 +89,9 @@ fn popup(viewport: &gtk::Widget, window: &gtk::Window) -> gtk::Popover {
     find(viewport, &|widget| {
         widget.has_css_class("image-context-menu")
     })
-    .unwrap()
+    .expect("expected test value from find(viewport, &|widget| { widget.has_css_class(\"image-context-menu\") })")
     .downcast()
-    .unwrap()
+    .expect("expected test value from find(viewport, &|widget| { widget.has_css_class(\"image-context-menu\") }) .unwrap() .downcast()")
 }
 
 struct GeneratedPhoto(Vec<u8>);
@@ -114,38 +114,46 @@ impl PreviewProvider for GeneratedPhoto {
 #[ignore = "Requires a private GTK display/session and private XDG directories; generated photos only"]
 #[expect(deprecated, reason = "Exercise the application's GTK rename dialog")]
 fn desktop_photo_menu_targets_snapshot_and_cleans_up_drawer_and_fullscreen() {
-    let config = PathBuf::from(std::env::var_os("XDG_CONFIG_HOME").unwrap());
+    let config = PathBuf::from(
+        std::env::var_os("XDG_CONFIG_HOME")
+            .expect("expected test value from std::env::var_os(\"XDG_CONFIG_HOME\")"),
+    );
     assert!(
         config.starts_with(std::env::temp_dir()),
         "Use a private XDG config"
     );
-    let data = PathBuf::from(std::env::var_os("XDG_DATA_HOME").unwrap());
+    let data = PathBuf::from(
+        std::env::var_os("XDG_DATA_HOME")
+            .expect("expected test value from std::env::var_os(\"XDG_DATA_HOME\")"),
+    );
     assert!(
         data.starts_with(std::env::temp_dir()),
         "Use private trash storage"
     );
     let root = config
         .parent()
-        .unwrap()
+        .expect("expected test value from config .parent()")
         .join(format!("preview-menu-{}", std::process::id()));
     assert!(!root.exists());
-    std::fs::create_dir_all(&root).unwrap();
-    gtk::init().unwrap();
+    std::fs::create_dir_all(&root).expect("create generated fixture directory");
+    gtk::init().expect("initialize the isolated GTK display");
     gtk::Settings::default()
-        .unwrap()
+        .expect("expected test value from gtk::Settings::default()")
         .set_gtk_enable_animations(false);
-    crate::assets::prepare().unwrap();
+    crate::assets::prepare().expect("register embedded test assets");
     let manager = crate::ui::theme::ThemeManager::shared();
     manager.set_context_menu_options(crate::ui::context_menu::Options::default());
     let pixels =
         gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 1600, 1000)
-            .unwrap();
+            .expect("expected test value from gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, true, 8, 1600, 1000)");
     pixels.fill(0x40a0c0ff);
-    let png = pixels.save_to_bufferv("png", &[]).unwrap();
+    let png = pixels
+        .save_to_bufferv("png", &[])
+        .expect("expected test value from pixels.save_to_bufferv(\"png\", &[])");
     let photo = root.join("a-preview.png");
     let other = root.join("z-selection.png");
-    std::fs::write(&photo, &png).unwrap();
-    std::fs::write(&other, &png).unwrap();
+    std::fs::write(&photo, &png).expect("write generated fixture");
+    std::fs::write(&other, &png).expect("write generated fixture");
     let view = BrowserView::new(
         Rc::new(crate::adapters::LocalFileSource),
         PeekBehavior::default(),
@@ -166,7 +174,10 @@ fn desktop_photo_menu_targets_snapshot_and_cleans_up_drawer_and_fullscreen() {
     window.present();
     view.browser().navigate(Location::local(&root));
     pump(&window);
-    let target = view.browser().entry_at(0, 0).unwrap();
+    let target = view
+        .browser()
+        .entry_at(0, 0)
+        .expect("expected test value from view.browser().entry_at(0, 0)");
     assert_eq!(target.location, Location::local(&photo));
     view.browser().select(0, 1);
     let selection = view.browser().selected_entries();
@@ -200,17 +211,24 @@ fn desktop_photo_menu_targets_snapshot_and_cleans_up_drawer_and_fullscreen() {
     drop(menu);
     pump(&window);
     released(&weak_menu);
-    let clipboard = gtk::gdk::Display::default().unwrap().clipboard();
+    let clipboard = gtk::gdk::Display::default()
+        .expect("expected test value from gtk::gdk::Display::default()")
+        .clipboard();
     let files = glib::MainContext::default()
         .block_on(
             clipboard.read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT),
         )
-        .unwrap()
+        .expect("expected test value from glib::MainContext::default() .block_on( clipboard.read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT)...")
         .get::<gtk::gdk::FileList>()
-        .unwrap()
+        .expect("expected test value from glib::MainContext::default() .block_on( clipboard.read_value_future(gtk::gdk::FileList::static_type(), glib::Priority::DEFAULT)...")
         .files();
     assert_eq!(files.len(), 1);
-    assert_eq!(files[0].path().unwrap(), photo);
+    assert_eq!(
+        files[0]
+            .path()
+            .expect("expected test value from files[0].path()"),
+        photo
+    );
     button(popup(&image, &window).upcast_ref(), "Cut").emit_clicked();
     assert_eq!(
         *view.state.cut_locations.borrow(),
@@ -220,10 +238,10 @@ fn desktop_photo_menu_targets_snapshot_and_cleans_up_drawer_and_fullscreen() {
     assert_eq!(
         glib::MainContext::default()
             .block_on(clipboard.read_text_future())
-            .unwrap()
-            .unwrap()
+            .expect("expected test value from glib::MainContext::default() .block_on(clipboard.read_text_future())")
+            .expect("expected test value from glib::MainContext::default() .block_on(clipboard.read_text_future()) .unwrap()")
             .as_str(),
-        photo.to_str().unwrap()
+        photo.to_str().expect("expected test value from photo.to_str()")
     );
     assert_eq!(view.browser().selected_entries(), selection);
     let mut options = manager.context_menu_options();
@@ -241,20 +259,20 @@ fn desktop_photo_menu_targets_snapshot_and_cleans_up_drawer_and_fullscreen() {
     let scroll = image
         .clone()
         .downcast::<gtk::Overlay>()
-        .unwrap()
+        .expect("expected test value from image .clone() .downcast::<gtk::Overlay>()")
         .child()
-        .unwrap()
+        .expect("expected test value from image .clone() .downcast::<gtk::Overlay>() .unwrap() .child()")
         .downcast::<gtk::ScrolledWindow>()
-        .unwrap();
+        .expect("expected test value from image .clone() .downcast::<gtk::Overlay>() .unwrap() .child() .unwrap() .downcast::<gtk::ScrolledWindow>()");
     let area = scroll
         .child()
-        .unwrap()
+        .expect("expected test value from scroll .child()")
         .downcast::<gtk::Viewport>()
-        .unwrap()
+        .expect("expected test value from scroll .child() .unwrap() .downcast::<gtk::Viewport>()")
         .child()
-        .unwrap()
+        .expect("expected test value from scroll .child() .unwrap() .downcast::<gtk::Viewport>() .unwrap() .child()")
         .downcast::<gtk::DrawingArea>()
-        .unwrap();
+        .expect("expected test value from scroll .child() .unwrap() .downcast::<gtk::Viewport>() .unwrap() .child() .unwrap() .downcast::<gtk::DrawingArea>()");
     assert_eq!(area.content_width(), 1600);
     let drag = (0..scroll.observe_controllers().n_items())
         .find_map(|position| {
@@ -263,7 +281,7 @@ fn desktop_photo_menu_targets_snapshot_and_cleans_up_drawer_and_fullscreen() {
                 .item(position)
                 .and_downcast::<gtk::GestureDrag>()
         })
-        .unwrap();
+        .expect("expected test value from (0..scroll.observe_controllers().n_items()) .find_map(|position| { scroll .observe_controllers() .item(position) .and_downcast:...");
     assert_eq!(
         drag.button(),
         1,
@@ -279,7 +297,7 @@ fn desktop_photo_menu_targets_snapshot_and_cleans_up_drawer_and_fullscreen() {
                 .item(position)
                 .and_downcast::<gtk::EventControllerKey>()
         })
-        .unwrap();
+        .expect("expected test value from (0..image.observe_controllers().n_items()) .find_map(|position| { image .observe_controllers() .item(position) .and_downcast::<...");
     assert!(!keys.emit_by_name::<bool>(
         "key-pressed",
         &[
@@ -296,7 +314,7 @@ fn desktop_photo_menu_targets_snapshot_and_cleans_up_drawer_and_fullscreen() {
             &gtk::gdk::ModifierType::SHIFT_MASK
         ]
     ));
-    let keyboard_menu = find(&image, &|widget| widget.has_css_class("image-context-menu")).unwrap();
+    let keyboard_menu = find(&image, &|widget| widget.has_css_class("image-context-menu")).expect("expected test value from find(&image, &|widget| widget.has_css_class(\"image-context-menu\"))");
     assert!(button(&keyboard_menu, "Copy").is_visible());
     let replaced_menu = keyboard_menu.downgrade();
     button(popup(&image, &window).upcast_ref(), "Fullscreen").emit_clicked();
@@ -306,24 +324,33 @@ fn desktop_photo_menu_targets_snapshot_and_cleans_up_drawer_and_fullscreen() {
     );
     drop(keyboard_menu);
     assert!(
-        replaced_menu.upgrade().is_none() || replaced_menu.upgrade().unwrap().parent().is_none()
+        replaced_menu.upgrade().is_none()
+            || replaced_menu
+                .upgrade()
+                .expect("expected test value from replaced_menu.upgrade()")
+                .parent()
+                .is_none()
     );
     pump(&window);
     let fullscreen = gtk::Window::list_toplevels()
         .into_iter()
         .filter_map(|widget| widget.downcast::<gtk::Window>().ok())
         .find(|window| window.title().as_deref() == Some("Hermes — Image preview"))
-        .unwrap();
-    let fullscreen_image = viewport(&fullscreen.child().unwrap());
+        .expect("expected test value from gtk::Window::list_toplevels() .into_iter() .filter_map(|widget| widget.downcast::<gtk::Window>().ok()) .find(|window| window.ti...");
+    let fullscreen_image = viewport(
+        &fullscreen
+            .child()
+            .expect("expected test value from fullscreen.child()"),
+    );
     let menu = popup(&fullscreen_image, &fullscreen);
     button(menu.upcast_ref(), "Copy location").emit_clicked();
     assert_eq!(
         glib::MainContext::default()
             .block_on(clipboard.read_text_future())
-            .unwrap()
-            .unwrap()
+            .expect("expected test value from glib::MainContext::default() .block_on(clipboard.read_text_future())")
+            .expect("expected test value from glib::MainContext::default() .block_on(clipboard.read_text_future()) .unwrap()")
             .as_str(),
-        photo.to_str().unwrap()
+        photo.to_str().expect("expected test value from photo.to_str()")
     );
     let menu = popup(&fullscreen_image, &fullscreen);
     let weak_fullscreen_menu = menu.downgrade();
@@ -339,11 +366,11 @@ fn desktop_photo_menu_targets_snapshot_and_cleans_up_drawer_and_fullscreen() {
         .into_iter()
         .filter_map(|widget| widget.downcast::<gtk::Dialog>().ok())
         .find(|dialog| dialog.title().as_deref() == Some("Rename"))
-        .unwrap();
+        .expect("expected test value from gtk::Window::list_toplevels() .into_iter() .filter_map(|widget| widget.downcast::<gtk::Dialog>().ok()) .find(|dialog| dialog.ti...");
     let field = find(dialog.upcast_ref(), &|widget| widget.is::<gtk::Entry>())
-        .unwrap()
+        .expect("expected test value from find(dialog.upcast_ref(), &|widget| widget.is::<gtk::Entry>())")
         .downcast::<gtk::Entry>()
-        .unwrap();
+        .expect("expected test value from find(dialog.upcast_ref(), &|widget| widget.is::<gtk::Entry>()) .unwrap() .downcast::<gtk::Entry>()");
     assert_eq!(field.text(), "a-preview.png");
     field.set_text("../invalid.png");
     dialog.response(gtk::ResponseType::Accept);
@@ -364,10 +391,10 @@ fn desktop_photo_menu_targets_snapshot_and_cleans_up_drawer_and_fullscreen() {
     let target = view
         .browser()
         .column_entries(0)
-        .unwrap()
+        .expect("expected test value from view .browser() .column_entries(0)")
         .into_iter()
         .find(|entry| entry.display_name == "renamed.png")
-        .unwrap();
+        .expect("expected test value from view .browser() .column_entries(0) .unwrap() .into_iter() .find(|entry| entry.display_name == \"renamed.png\")");
     drawer.show(target);
     pump(&window);
     let image = viewport(&drawer.widget());
@@ -377,8 +404,12 @@ fn desktop_photo_menu_targets_snapshot_and_cleans_up_drawer_and_fullscreen() {
         .into_iter()
         .filter_map(|widget| widget.downcast::<gtk::Window>().ok())
         .find(|window| window.title().as_deref() == Some("Hermes — Image preview"))
-        .unwrap();
-    let fullscreen_image = viewport(&fullscreen.child().unwrap());
+        .expect("expected test value from gtk::Window::list_toplevels() .into_iter() .filter_map(|widget| widget.downcast::<gtk::Window>().ok()) .find(|window| window.ti...");
+    let fullscreen_image = viewport(
+        &fullscreen
+            .child()
+            .expect("expected test value from fullscreen.child()"),
+    );
     button(
         popup(&fullscreen_image, &fullscreen).upcast_ref(),
         "Properties",
@@ -394,26 +425,27 @@ fn desktop_photo_menu_targets_snapshot_and_cleans_up_drawer_and_fullscreen() {
     assert!(
         find(overlay.upcast_ref(), &|widget| widget
             .downcast_ref::<gtk::Label>()
-            .is_some_and(
-                |label| label.text() == root.join("renamed.png").to_str().unwrap()
-            ))
+            .is_some_and(|label| label.text()
+                == root.join("renamed.png").to_str().expect(
+                    "expected test value from root.join(\"renamed.png\").to_str()"
+                )))
         .is_some()
     );
     find(overlay.upcast_ref(), &|widget| {
         widget.has_css_class("properties-close")
     })
-    .unwrap()
+    .expect("expected test value from find(overlay.upcast_ref(), &|widget| { widget.has_css_class(\"properties-close\") })")
     .downcast::<gtk::Button>()
-    .unwrap()
+    .expect("expected test value from find(overlay.upcast_ref(), &|widget| { widget.has_css_class(\"properties-close\") }) .unwrap() .downcast::<gtk::Button>()")
     .emit_clicked();
     button(popup(&image, &window).upcast_ref(), "Move to Trash").emit_clicked();
     pump(&window);
     let confirm = find(overlay.upcast_ref(), &|widget| {
         widget.has_css_class("delete-confirmation-delete")
     })
-    .unwrap()
+    .expect("expected test value from find(overlay.upcast_ref(), &|widget| { widget.has_css_class(\"delete-confirmation-delete\") })")
     .downcast::<gtk::Button>()
-    .unwrap();
+    .expect("expected test value from find(overlay.upcast_ref(), &|widget| { widget.has_css_class(\"delete-confirmation-delete\") }) .unwrap() .downcast::<gtk::Button>()");
     view.browser().select(0, 1);
     confirm.emit_clicked();
     pump(&window);
@@ -435,5 +467,5 @@ fn desktop_photo_menu_targets_snapshot_and_cleans_up_drawer_and_fullscreen() {
         weak_state.upgrade().is_none(),
         "Menu handlers must not retain the browser state"
     );
-    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(root).expect("remove generated fixture");
 }

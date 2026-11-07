@@ -89,9 +89,15 @@ fn pooled_pdf_thumbnail_is_small_without_reducing_selected_page_or_text() {
     .expect("PDF thumbnail uses pooled renderer")
     .expect("rendered thumbnail");
     let loader = gtk::gdk_pixbuf::PixbufLoader::new();
-    loader.write(&thumbnail).unwrap();
-    loader.close().unwrap();
-    let pixels = loader.pixbuf().unwrap();
+    loader
+        .write(&thumbnail)
+        .expect("generated fixture must provide the expected value");
+    loader
+        .close()
+        .expect("generated fixture must provide the expected value");
+    let pixels = loader
+        .pixbuf()
+        .expect("generated fixture must provide the expected value");
     assert_eq!((pixels.width(), pixels.height()), (256, 256));
     let full = crate::sandbox::parse(
         &path,
@@ -99,11 +105,17 @@ fn pooled_pdf_thumbnail_is_small_without_reducing_selected_page_or_text() {
         0,
         &Cancellation::default(),
     )
-    .unwrap();
+    .expect("generated fixture must provide the expected value");
     let loader = gtk::gdk_pixbuf::PixbufLoader::new();
-    loader.write(&full.data).unwrap();
-    loader.close().unwrap();
-    let pixels = loader.pixbuf().unwrap();
+    loader
+        .write(&full.data)
+        .expect("generated fixture must provide the expected value");
+    loader
+        .close()
+        .expect("generated fixture must provide the expected value");
+    let pixels = loader
+        .pixbuf()
+        .expect("generated fixture must provide the expected value");
     assert_eq!((pixels.width(), pixels.height()), (1400, 1400));
     assert_eq!((full.page, full.pages), (0, 1));
     assert!(full.text_layer.is_some());

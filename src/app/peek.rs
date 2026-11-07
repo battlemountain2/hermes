@@ -42,8 +42,12 @@ impl PeekState {
 
     pub fn sort(&mut self) {
         let mut preferences = ViewPreferences::default();
-        if super::music_order::is_album(&self.entries) { preferences.sort_key = SortKey::Track; }
-        self.entries.sort_unstable_by(|left, right| super::navigation::compare_entries(left, right, preferences));
+        if super::music_order::is_album(&self.entries) {
+            preferences.sort_key = SortKey::Track;
+        }
+        self.entries.sort_unstable_by(|left, right| {
+            super::navigation::compare_entries(left, right, preferences)
+        });
     }
 
     pub fn finish(&mut self) {

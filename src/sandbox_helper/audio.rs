@@ -26,15 +26,16 @@ pub(crate) fn read_audio_metadata(input: &Path) -> Result<String, String> {
         "2000000",
     )?;
     let mut metadata = parse_audio_details(&output)?;
-    if metadata.properties.duration_seconds.is_none() || metadata.properties.duration_seconds == Some(0.0) {
-        if let Some(duration) = sniff_wav_duration(input) {
-            metadata.properties.duration_seconds = Some(duration);
-            if metadata.properties.container.is_none() {
-                metadata.properties.container = Some("wav".to_string());
-            }
-            if metadata.properties.codec.is_none() {
-                metadata.properties.codec = Some("pcm_s16le".to_string());
-            }
+    if (metadata.properties.duration_seconds.is_none()
+        || metadata.properties.duration_seconds == Some(0.0))
+        && let Some(duration) = sniff_wav_duration(input)
+    {
+        metadata.properties.duration_seconds = Some(duration);
+        if metadata.properties.container.is_none() {
+            metadata.properties.container = Some("wav".to_string());
+        }
+        if metadata.properties.codec.is_none() {
+            metadata.properties.codec = Some("pcm_s16le".to_string());
         }
     }
     serde_json::to_string(&metadata).map_err(|error| error.to_string())
@@ -65,7 +66,8 @@ pub(crate) fn sniff_wav_duration(input: &Path) -> Option<f64> {
             data_size = chunk_size;
             break;
         } else {
-            file.seek(std::io::SeekFrom::Current(chunk_size as i64)).ok()?;
+            file.seek(std::io::SeekFrom::Current(chunk_size as i64))
+                .ok()?;
         }
     }
     if byte_rate > 0 && data_size > 0 {
@@ -366,27 +368,25 @@ fn extract_metadata(input: &Path) -> Option<AudioMetadata> {
             .and_then(|s| s.parse::<f64>().ok())
             .unwrap_or(0.0);
 
-        if duration <= 0.0 {
-            if let Some(d) = stream_obj
+        if duration <= 0.0
+            && let Some(d) = stream_obj
                 .and_then(|s| s.get("duration"))
                 .and_then(|v| v.as_str())
                 .and_then(|s| s.parse::<f64>().ok())
-            {
-                duration = d;
-            }
+        {
+            duration = d;
         }
 
-        if duration <= 0.0 {
-            if let Ok(bytes) = fs::read(input)
-                && bytes.len() >= 44
-                && &bytes[0..4] == b"RIFF"
-                && &bytes[8..12] == b"WAVE"
-            {
-                let byte_rate = u32::from_le_bytes(bytes[28..32].try_into().unwrap_or([0; 4]));
-                let data_len = bytes.len().saturating_sub(44) as u64;
-                if byte_rate > 0 {
-                    duration = data_len as f64 / byte_rate as f64;
-                }
+        if duration <= 0.0
+            && let Ok(bytes) = fs::read(input)
+            && bytes.len() >= 44
+            && &bytes[0..4] == b"RIFF"
+            && &bytes[8..12] == b"WAVE"
+        {
+            let byte_rate = u32::from_le_bytes(bytes[28..32].try_into().unwrap_or([0; 4]));
+            let data_len = bytes.len().saturating_sub(44) as u64;
+            if byte_rate > 0 {
+                duration = data_len as f64 / byte_rate as f64;
             }
         }
 

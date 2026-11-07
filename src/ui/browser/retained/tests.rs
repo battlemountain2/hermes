@@ -3,15 +3,16 @@ use super::*;
 #[test]
 #[ignore = "Requires isolated GTK; retained tab widgets, selection, scroll and live changes"]
 fn desktop_retained_tabs_preserve_presentations_and_release_closed_views() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let root = std::env::temp_dir().join(format!("hermes-retained-tabs-{}", std::process::id()));
     let first = root.join("First");
     let second = root.join("Second");
     for folder in [&first, &second] {
-        std::fs::create_dir_all(folder).unwrap();
+        std::fs::create_dir_all(folder).expect("create generated fixture directory");
         for index in 0..1000 {
-            std::fs::write(folder.join(format!("entry-{index:04}.txt")), b"fixture").unwrap();
+            std::fs::write(folder.join(format!("entry-{index:04}.txt")), b"fixture")
+                .expect("write generated fixture");
         }
     }
     let view = BrowserView::new(
@@ -20,17 +21,17 @@ fn desktop_retained_tabs_preserve_presentations_and_release_closed_views() {
     );
     let browser = view.browser();
     let mut first_tab = Trail::new(
-        TrailId::new("first").unwrap(),
+        TrailId::new("first").expect("expected test value from TrailId::new(\"first\")"),
         "First",
         Location::local(&first).breadcrumbs(),
     )
-    .unwrap();
+    .expect("expected test value from Trail::new( TrailId::new(\"first\").unwrap(), \"First\", Location::local(&first).breadcrumbs(), )");
     let mut second_tab = Trail::new(
-        TrailId::new("second").unwrap(),
+        TrailId::new("second").expect("expected test value from TrailId::new(\"second\")"),
         "Second",
         Location::local(&second).breadcrumbs(),
     )
-    .unwrap();
+    .expect("expected test value from Trail::new( TrailId::new(\"second\").unwrap(), \"Second\", Location::local(&second).breadcrumbs(), )");
     let window = gtk::Window::builder()
         .default_width(1000)
         .default_height(600)
@@ -54,7 +55,12 @@ fn desktop_retained_tabs_preserve_presentations_and_release_closed_views() {
             glib::MainContext::default().iteration(false);
             std::thread::sleep(Duration::from_millis(1));
         }
-        assert!(!browser.column_snapshot(0).unwrap().loading);
+        assert!(
+            !browser
+                .column_snapshot(0)
+                .expect("expected test value from browser.column_snapshot(0)")
+                .loading
+        );
     };
     for mode in [
         crate::model::TrailBrowserMode::Columns,
@@ -75,6 +81,12 @@ fn desktop_retained_tabs_preserve_presentations_and_release_closed_views() {
         let model = view.state.columns.borrow()[0].model.clone();
         let shell = view.state.columns.borrow()[0].shell.clone();
         let mode_widget = view.state.mode_views.borrow().widget();
+        let context_menu = view
+            .state
+            .active_context_menu
+            .borrow()
+            .clone()
+            .expect("active tab has a keyboard context menu");
         view.show_filter();
         view.state.columns.borrow()[0]
             .filter_entry
@@ -107,12 +119,23 @@ fn desktop_retained_tabs_preserve_presentations_and_release_closed_views() {
         assert_eq!(view.state.columns.borrow()[0].model, model);
         assert_eq!(view.state.columns.borrow()[0].shell, shell);
         assert_eq!(view.state.mode_views.borrow().widget(), mode_widget);
+        assert!(Rc::ptr_eq(
+            view.state
+                .active_context_menu
+                .borrow()
+                .as_ref()
+                .expect("restored context menu"),
+            &context_menu,
+        ));
         assert_eq!(
             view.state.columns.borrow()[0].filter_entry.text(),
             "entry-04"
         );
         assert_eq!(
-            browser.focused_entry().unwrap().display_name,
+            browser
+                .focused_entry()
+                .expect("expected test value from browser.focused_entry()")
+                .display_name,
             "entry-0400.txt"
         );
         pump(150);
@@ -127,16 +150,25 @@ fn desktop_retained_tabs_preserve_presentations_and_release_closed_views() {
         view.activate_tab(&second_tab);
         pump(30);
         let inactive = first.join("added.txt");
-        std::fs::write(&inactive, b"inactive change").unwrap();
+        std::fs::write(&inactive, b"inactive change").expect("write generated fixture");
         pump(250);
         view.activate_tab(&first_tab);
         loaded();
-        assert_eq!(browser.column_entries(0).unwrap().len(), 1001);
         assert_eq!(
-            browser.focused_entry().unwrap().display_name,
+            browser
+                .column_entries(0)
+                .expect("expected test value from browser.column_entries(0)")
+                .len(),
+            1001
+        );
+        assert_eq!(
+            browser
+                .focused_entry()
+                .expect("expected test value from browser.focused_entry()")
+                .display_name,
             "entry-0400.txt"
         );
-        std::fs::remove_file(inactive).unwrap();
+        std::fs::remove_file(inactive).expect("remove generated fixture");
         pump(250);
         let weak_second = view
             .state
@@ -144,7 +176,7 @@ fn desktop_retained_tabs_preserve_presentations_and_release_closed_views() {
             .borrow()
             .iter()
             .find(|(id, _)| id == &second_tab.id)
-            .unwrap()
+            .expect("expected test value from view .state .retained_tabs .borrow() .iter() .find(|(id, _)| id == &second_tab.id)")
             .1
             .columns[0]
             .model
@@ -158,5 +190,5 @@ fn desktop_retained_tabs_preserve_presentations_and_release_closed_views() {
     window.close();
     drop((window, view, browser));
     pump(200);
-    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(root).expect("remove generated fixture");
 }

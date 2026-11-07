@@ -19,9 +19,12 @@ impl Fixture {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        fs::DirBuilder::new().mode(0o700).create(&parent).unwrap();
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&parent)
+            .expect("expected test value from fs::DirBuilder::new().mode(0o700).create(&parent)");
         let root = parent.join("Library");
-        fs::create_dir(&root).unwrap();
+        fs::create_dir(&root).expect("create generated fixture directory");
         Self {
             cache: parent.join("cache/general.sqlite"),
             parent,
@@ -31,9 +34,14 @@ impl Fixture {
 
     fn entry(&self, name: impl AsRef<Path>) -> Entry {
         let path = self.root.join(name);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, b"synthetic catalog source").unwrap();
-        let metadata = fs::symlink_metadata(&path).unwrap();
+        fs::create_dir_all(
+            path.parent()
+                .expect("expected test value from path.parent()"),
+        )
+        .expect("create generated fixture directory");
+        fs::write(&path, b"synthetic catalog source").expect("write generated fixture");
+        let metadata = fs::symlink_metadata(&path)
+            .expect("expected test value from fs::symlink_metadata(&path)");
         Entry {
             path,
             is_directory: false,
@@ -51,7 +59,7 @@ impl Fixture {
             notice,
             &Cancellation::default(),
         )
-        .unwrap();
+        .expect("expected test value from write( &self.cache, &self.root, entries, notice, &Cancellation::default(), )");
     }
 
     fn load(&self) -> Result<(Vec<Entry>, Option<String>), String> {
@@ -69,15 +77,27 @@ impl Fixture {
             &self.cache,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
         )
-        .unwrap()
+        .expect("expected test value from Connection::open_with_flags( &self.cache, OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW, )")
     }
 
     fn assert_no_stages(&self) {
-        let names: Vec<_> = fs::read_dir(self.cache.parent().unwrap())
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect();
-        assert_eq!(names, vec![self.cache.file_name().unwrap().to_owned()]);
+        let names: Vec<_> = fs::read_dir(
+            self.cache
+                .parent()
+                .expect("expected test value from self.cache.parent()"),
+        )
+        .expect("expected test value from fs::read_dir(self.cache.parent().unwrap())")
+        .map(|entry| entry.expect("expected test value from entry").file_name())
+        .collect();
+        assert_eq!(
+            names,
+            vec![
+                self.cache
+                    .file_name()
+                    .expect("expected test value from self.cache.file_name()")
+                    .to_owned()
+            ]
+        );
     }
 }
 
@@ -101,7 +121,8 @@ fn restart_preserves_unicode_native_paths_types_identities_tags_and_notice() {
     });
     let native = fixture.entry(OsString::from_vec(b"opaque-\xff.txt".to_vec()));
     let directory_path = fixture.root.join("Bj\u{f6}rk");
-    let metadata = fs::symlink_metadata(&directory_path).unwrap();
+    let metadata = fs::symlink_metadata(&directory_path)
+        .expect("expected test value from fs::symlink_metadata(&directory_path)");
     let directory = Entry {
         path: directory_path,
         is_directory: true,
@@ -115,21 +136,40 @@ fn restart_preserves_unicode_native_paths_types_identities_tags_and_notice() {
         Some("Partial scan: unreadable folders \u{b7} entry limit"),
     );
     assert_eq!(
-        fixture.load().unwrap(),
+        fixture
+            .load()
+            .expect("expected test value from fixture.load()"),
         (
             entries.clone(),
             Some("Partial scan: unreadable folders \u{b7} entry limit".into())
         )
     );
-    assert_eq!(fixture.load().unwrap().0, entries);
     assert_eq!(
-        fs::metadata(fixture.cache.parent().unwrap())
-            .unwrap()
-            .mode()
+        fixture
+            .load()
+            .expect("expected test value from fixture.load()")
+            .0,
+        entries
+    );
+    assert_eq!(
+        fs::metadata(
+            fixture
+                .cache
+                .parent()
+                .expect("expected test value from fixture.cache.parent()")
+        )
+        .expect("expected test value from fs::metadata(fixture.cache.parent().unwrap())")
+        .mode()
             & 0o777,
         0o700
     );
-    assert_eq!(fs::metadata(&fixture.cache).unwrap().mode() & 0o777, 0o600);
+    assert_eq!(
+        fs::metadata(&fixture.cache)
+            .expect("expected test value from fs::metadata(&fixture.cache)")
+            .mode()
+            & 0o777,
+        0o600
+    );
     fixture.assert_no_stages();
 }
 
@@ -137,7 +177,12 @@ fn restart_preserves_unicode_native_paths_types_identities_tags_and_notice() {
 fn empty_snapshot_and_absent_notice_survive_restart() {
     let fixture = Fixture::new();
     fixture.save(&[], None);
-    assert_eq!(fixture.load().unwrap(), (Vec::new(), None));
+    assert_eq!(
+        fixture
+            .load()
+            .expect("expected test value from fixture.load()"),
+        (Vec::new(), None)
+    );
     fixture.assert_no_stages();
 }
 
@@ -161,11 +206,13 @@ fn changed_and_deleted_sources_are_removed_with_an_additional_notice() {
         &[changed.clone(), kept.clone(), deleted.clone()],
         Some("Original partial scan"),
     );
-    fs::write(&changed.path, b"different fixture data").unwrap();
-    fs::remove_file(&deleted.path).unwrap();
-    let (entries, notice) = fixture.load().unwrap();
+    fs::write(&changed.path, b"different fixture data").expect("write generated fixture");
+    fs::remove_file(&deleted.path).expect("remove generated fixture");
+    let (entries, notice) = fixture
+        .load()
+        .expect("expected test value from fixture.load()");
     assert_eq!(entries, vec![kept]);
-    let notice = notice.unwrap();
+    let notice = notice.expect("expected test value from notice");
     assert!(notice.contains("Original partial scan"));
     assert!(notice.contains("Cached sources changed"));
 }
@@ -175,9 +222,16 @@ fn same_size_source_replacement_is_rejected_by_identity() {
     let fixture = Fixture::new();
     let entry = fixture.entry("replaced.txt");
     fixture.save(std::slice::from_ref(&entry), None);
-    fs::rename(&entry.path, fixture.root.join("old.txt")).unwrap();
-    fs::write(&entry.path, b"synthetic catalog source").unwrap();
-    assert!(fixture.load().unwrap().0.is_empty());
+    fs::rename(&entry.path, fixture.root.join("old.txt"))
+        .expect("expected test value from fs::rename(&entry.path, fixture.root.join(\"old.txt\"))");
+    fs::write(&entry.path, b"synthetic catalog source").expect("write generated fixture");
+    assert!(
+        fixture
+            .load()
+            .expect("expected test value from fixture.load()")
+            .0
+            .is_empty()
+    );
 }
 
 #[test]
@@ -195,12 +249,20 @@ fn changed_root_and_mismatched_root_cannot_reuse_a_snapshot() {
         )
         .is_err()
     );
-    fs::rename(&fixture.root, fixture.parent.join("OldLibrary")).unwrap();
-    fs::create_dir(&fixture.root).unwrap();
+    fs::rename(&fixture.root, fixture.parent.join("OldLibrary")).expect(
+        "expected test value from fs::rename(&fixture.root, fixture.parent.join(\"OldLibrary\"))",
+    );
+    fs::create_dir(&fixture.root).expect("create generated fixture directory");
     assert!(fixture.load().is_err());
     let replacement = fixture.entry("replacement.txt");
     fixture.save(std::slice::from_ref(&replacement), None);
-    assert_eq!(fixture.load().unwrap().0, vec![replacement]);
+    assert_eq!(
+        fixture
+            .load()
+            .expect("expected test value from fixture.load()")
+            .0,
+        vec![replacement]
+    );
 }
 
 #[test]
@@ -208,14 +270,24 @@ fn malformed_and_oversized_databases_fall_back_without_deleting_them() {
     let fixture = Fixture::new();
     let entry = fixture.entry("source.txt");
     fixture.save(&[entry], None);
-    fs::write(&fixture.cache, b"not sqlite").unwrap();
-    assert!(fixture.load().is_err());
-    assert_eq!(fs::read(&fixture.cache).unwrap(), b"not sqlite");
-    let output = OpenOptions::new().write(true).open(&fixture.cache).unwrap();
-    output.set_len(MAX_DATABASE_BYTES + 1).unwrap();
+    fs::write(&fixture.cache, b"not sqlite").expect("write generated fixture");
     assert!(fixture.load().is_err());
     assert_eq!(
-        fs::metadata(&fixture.cache).unwrap().len(),
+        fs::read(&fixture.cache).expect("read generated fixture"),
+        b"not sqlite"
+    );
+    let output = OpenOptions::new()
+        .write(true)
+        .open(&fixture.cache)
+        .expect("expected test value from OpenOptions::new().write(true).open(&fixture.cache)");
+    output
+        .set_len(MAX_DATABASE_BYTES + 1)
+        .expect("expected test value from output.set_len(MAX_DATABASE_BYTES + 1)");
+    assert!(fixture.load().is_err());
+    assert_eq!(
+        fs::metadata(&fixture.cache)
+            .expect("expected test value from fs::metadata(&fixture.cache)")
+            .len(),
         MAX_DATABASE_BYTES + 1
     );
     fixture.assert_no_stages();
@@ -226,7 +298,10 @@ fn entry_and_memory_limits_fail_instead_of_silently_truncating() {
     let fixture = Fixture::new();
     let entries = vec![fixture.entry("one.txt"), fixture.entry("two.txt")];
     fixture.save(&entries, None);
-    let loaded = fixture.load().unwrap().0;
+    let loaded = fixture
+        .load()
+        .expect("expected test value from fixture.load()")
+        .0;
     let cost: usize = loaded.iter().map(super::super::entry_bytes).sum();
     assert!(
         read(
@@ -256,7 +331,7 @@ fn entry_and_memory_limits_fail_instead_of_silently_truncating() {
             cost,
             &Cancellation::default()
         )
-        .unwrap()
+        .expect("expected test value from read( &fixture.cache, &fixture.root, 2, cost, &Cancellation::default() )")
         .0,
         entries
     );
@@ -298,7 +373,7 @@ fn oversized_rows_invalid_tags_and_notice_are_rejected() {
             "UPDATE entries SET title=?1, tagged=1",
             ["x".repeat(MAX_ROW_BYTES + 1)],
         )
-        .unwrap();
+        .expect("expected test value from connection .execute( \"UPDATE entries SET title=?1, tagged=1\", [\"x\".repeat(MAX_ROW_BYTES + 1)], )");
     drop(connection);
     assert!(fixture.load().is_err());
 }
@@ -310,13 +385,13 @@ fn malformed_identity_and_directory_values_are_rejected() {
     let connection = fixture.database();
     connection
         .execute("UPDATE entries SET identity=?1", [b"invalid".as_slice()])
-        .unwrap();
+        .expect("expected test value from connection .execute(\"UPDATE entries SET identity=?1\", [b\"invalid\".as_slice()])");
     drop(connection);
     assert!(fixture.load().is_err());
     let connection = fixture.database();
     connection
         .execute_batch("PRAGMA ignore_check_constraints=ON; UPDATE entries SET directory=9;")
-        .unwrap();
+        .expect("expected test value from connection .execute_batch(\"PRAGMA ignore_check_constraints=ON; UPDATE entries SET directory=9;\")");
     drop(connection);
     assert!(fixture.load().is_err());
 }
@@ -327,10 +402,12 @@ fn stored_sql_triggers_views_and_altered_schema_are_never_executed() {
     let entry = fixture.entry("source.txt");
     fixture.save(std::slice::from_ref(&entry), None);
     let connection = fixture.database();
-    connection.execute_batch("CREATE TRIGGER trap BEFORE DELETE ON entries BEGIN SELECT RAISE(ABORT, 'stored trigger executed'); END;").unwrap();
+    connection.execute_batch("CREATE TRIGGER trap BEFORE DELETE ON entries BEGIN SELECT RAISE(ABORT, 'stored trigger executed'); END;").expect("expected test value from connection.execute_batch(\"CREATE TRIGGER trap BEFORE DELETE ON entries BEGIN SELECT RAISE(ABORT, 'stored trigger executed'); EN...");
     drop(connection);
-    let original = fs::read(&fixture.cache).unwrap();
-    let failure = fixture.load().unwrap_err();
+    let original = fs::read(&fixture.cache).expect("read generated fixture");
+    let failure = fixture
+        .load()
+        .expect_err("invalid or cancelled fixture must fail");
     assert!(failure.contains("schema"));
     assert!(!failure.contains("stored trigger executed"));
     assert!(
@@ -343,9 +420,12 @@ fn stored_sql_triggers_views_and_altered_schema_are_never_executed() {
         )
         .is_err()
     );
-    assert_eq!(fs::read(&fixture.cache).unwrap(), original);
+    assert_eq!(
+        fs::read(&fixture.cache).expect("read generated fixture"),
+        original
+    );
     let connection = fixture.database();
-    connection.execute_batch("DROP TRIGGER trap; ALTER TABLE entries RENAME TO old_entries; CREATE VIEW entries AS SELECT * FROM old_entries;").unwrap();
+    connection.execute_batch("DROP TRIGGER trap; ALTER TABLE entries RENAME TO old_entries; CREATE VIEW entries AS SELECT * FROM old_entries;").expect("expected test value from connection.execute_batch(\"DROP TRIGGER trap; ALTER TABLE entries RENAME TO old_entries; CREATE VIEW entries AS SELECT * FROM ol...");
     drop(connection);
     assert!(fixture.load().is_err());
 }
@@ -356,10 +436,15 @@ fn future_version_is_preserved_on_both_read_and_write() {
     let entry = fixture.entry("source.txt");
     fixture.save(std::slice::from_ref(&entry), Some("Future notice"));
     let connection = fixture.database();
-    connection.execute_batch("PRAGMA user_version=2; CREATE TABLE future_data (value TEXT); INSERT INTO future_data VALUES('must survive');").unwrap();
+    connection.execute_batch("PRAGMA user_version=2; CREATE TABLE future_data (value TEXT); INSERT INTO future_data VALUES('must survive');").expect("expected test value from connection.execute_batch(\"PRAGMA user_version=2; CREATE TABLE future_data (value TEXT); INSERT INTO future_data VALUES('must su...");
     drop(connection);
-    let original = fs::read(&fixture.cache).unwrap();
-    assert!(fixture.load().unwrap_err().contains("newer version"));
+    let original = fs::read(&fixture.cache).expect("read generated fixture");
+    assert!(
+        fixture
+            .load()
+            .expect_err("invalid or cancelled fixture must fail")
+            .contains("newer version")
+    );
     assert!(
         write(
             &fixture.cache,
@@ -368,10 +453,13 @@ fn future_version_is_preserved_on_both_read_and_write() {
             None,
             &Cancellation::default()
         )
-        .unwrap_err()
+        .expect_err("invalid or cancelled fixture must fail")
         .contains("newer version")
     );
-    assert_eq!(fs::read(&fixture.cache).unwrap(), original);
+    assert_eq!(
+        fs::read(&fixture.cache).expect("read generated fixture"),
+        original
+    );
     fixture.assert_no_stages();
 }
 
@@ -381,8 +469,10 @@ fn symlink_fifo_hardlink_and_insecure_cache_permissions_are_rejected() {
     let entry = fixture.entry("source.txt");
     fixture.save(std::slice::from_ref(&entry), None);
     let target = fixture.parent.join("original.sqlite");
-    fs::rename(&fixture.cache, &target).unwrap();
-    symlink(&target, &fixture.cache).unwrap();
+    fs::rename(&fixture.cache, &target)
+        .expect("expected test value from fs::rename(&fixture.cache, &target)");
+    symlink(&target, &fixture.cache)
+        .expect("expected test value from symlink(&target, &fixture.cache)");
     assert!(fixture.load().is_err());
     assert!(
         write(
@@ -394,17 +484,18 @@ fn symlink_fifo_hardlink_and_insecure_cache_permissions_are_rejected() {
         )
         .is_err()
     );
-    fs::remove_file(&fixture.cache).unwrap();
-    fs::hard_link(&target, &fixture.cache).unwrap();
+    fs::remove_file(&fixture.cache).expect("remove generated fixture");
+    fs::hard_link(&target, &fixture.cache)
+        .expect("expected test value from fs::hard_link(&target, &fixture.cache)");
     assert!(fixture.load().is_err());
-    fs::remove_file(&fixture.cache).unwrap();
+    fs::remove_file(&fixture.cache).expect("remove generated fixture");
     assert!(
         std::process::Command::new("mkfifo")
             .arg("-m")
             .arg("600")
             .arg(&fixture.cache)
             .status()
-            .unwrap()
+            .expect("expected test value from std::process::Command::new(\"mkfifo\") .arg(\"-m\") .arg(\"600\") .arg(&fixture.cache) .status()")
             .success()
     );
     assert!(fixture.load().is_err());
@@ -418,16 +509,17 @@ fn symlink_fifo_hardlink_and_insecure_cache_permissions_are_rejected() {
         )
         .is_err()
     );
-    fs::remove_file(&fixture.cache).unwrap();
-    fs::rename(&target, &fixture.cache).unwrap();
-    fs::set_permissions(&fixture.cache, fs::Permissions::from_mode(0o644)).unwrap();
+    fs::remove_file(&fixture.cache).expect("remove generated fixture");
+    fs::rename(&target, &fixture.cache)
+        .expect("expected test value from fs::rename(&target, &fixture.cache)");
+    fs::set_permissions(&fixture.cache, fs::Permissions::from_mode(0o644)).expect("expected test value from fs::set_permissions(&fixture.cache, fs::Permissions::from_mode(0o644))");
     assert!(fixture.load().is_err());
-    fs::set_permissions(&fixture.cache, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::set_permissions(&fixture.cache, fs::Permissions::from_mode(0o600)).expect("expected test value from fs::set_permissions(&fixture.cache, fs::Permissions::from_mode(0o600))");
     fs::set_permissions(
-        fixture.cache.parent().unwrap(),
+        fixture.cache.parent().expect("expected test value from fixture.cache.parent()"),
         fs::Permissions::from_mode(0o755),
     )
-    .unwrap();
+    .expect("expected test value from fs::set_permissions( fixture.cache.parent().unwrap(), fs::Permissions::from_mode(0o755), )");
     assert!(fixture.load().is_err());
     assert!(
         write(
@@ -447,7 +539,14 @@ fn symlink_cache_ancestor_and_root_are_rejected() {
     let entry = fixture.entry("source.txt");
     fixture.save(&[entry], None);
     let alias = fixture.parent.join("alias");
-    symlink(fixture.cache.parent().unwrap(), &alias).unwrap();
+    symlink(
+        fixture
+            .cache
+            .parent()
+            .expect("expected test value from fixture.cache.parent()"),
+        &alias,
+    )
+    .expect("expected test value from symlink(fixture.cache.parent().unwrap(), &alias)");
     assert!(
         read(
             &alias.join("general.sqlite"),
@@ -459,7 +558,8 @@ fn symlink_cache_ancestor_and_root_are_rejected() {
         .is_err()
     );
     let root_alias = fixture.parent.join("LibraryAlias");
-    symlink(&fixture.root, &root_alias).unwrap();
+    symlink(&fixture.root, &root_alias)
+        .expect("expected test value from symlink(&fixture.root, &root_alias)");
     assert!(
         read(
             &fixture.cache,
@@ -501,7 +601,7 @@ fn hidden_escaped_and_symlinked_sources_cannot_be_published() {
         .is_err()
     );
     let actual = fixture.entry("actual/source.txt");
-    symlink(fixture.root.join("actual"), fixture.root.join("alias")).unwrap();
+    symlink(fixture.root.join("actual"), fixture.root.join("alias")).expect("expected test value from symlink(fixture.root.join(\"actual\"), fixture.root.join(\"alias\"))");
     let mut linked = actual.clone();
     linked.path = fixture.root.join("alias/source.txt");
     assert!(
@@ -515,7 +615,8 @@ fn hidden_escaped_and_symlinked_sources_cannot_be_published() {
         .is_err()
     );
     let mut linked = actual;
-    symlink(&linked.path, fixture.root.join("link.txt")).unwrap();
+    symlink(&linked.path, fixture.root.join("link.txt"))
+        .expect("expected test value from symlink(&linked.path, fixture.root.join(\"link.txt\"))");
     linked.path = fixture.root.join("link.txt");
     assert!(
         write(
@@ -527,7 +628,13 @@ fn hidden_escaped_and_symlinked_sources_cannot_be_published() {
         )
         .is_err()
     );
-    assert_eq!(fixture.load().unwrap().0, vec![kept]);
+    assert_eq!(
+        fixture
+            .load()
+            .expect("expected test value from fixture.load()")
+            .0,
+        vec![kept]
+    );
 }
 
 #[test]
@@ -543,7 +650,7 @@ fn injected_hidden_and_escape_rows_fail_closed() {
         let connection = fixture.database();
         connection
             .execute("UPDATE entries SET path=?1", [path.as_os_str().as_bytes()])
-            .unwrap();
+            .expect("expected test value from connection .execute(\"UPDATE entries SET path=?1\", [path.as_os_str().as_bytes()])");
         drop(connection);
         assert!(fixture.load().is_err());
     }
@@ -555,19 +662,29 @@ fn source_turning_into_symlink_or_symlink_ancestor_is_not_restored() {
     let file = fixture.entry("source.txt");
     let nested = fixture.entry("folder/nested.txt");
     fixture.save(&[file.clone(), nested], None);
-    fs::rename(&file.path, fixture.root.join("original.txt")).unwrap();
-    symlink(fixture.root.join("original.txt"), &file.path).unwrap();
+    fs::rename(&file.path, fixture.root.join("original.txt")).expect(
+        "expected test value from fs::rename(&file.path, fixture.root.join(\"original.txt\"))",
+    );
+    symlink(fixture.root.join("original.txt"), &file.path).expect(
+        "expected test value from symlink(fixture.root.join(\"original.txt\"), &file.path)",
+    );
     fs::rename(
         fixture.root.join("folder"),
         fixture.root.join("real-folder"),
     )
-    .unwrap();
+    .expect("expected test value from fs::rename( fixture.root.join(\"folder\"), fixture.root.join(\"real-folder\"), )");
     symlink(
         fixture.root.join("real-folder"),
         fixture.root.join("folder"),
     )
-    .unwrap();
-    assert!(fixture.load().unwrap().0.is_empty());
+    .expect("expected test value from symlink( fixture.root.join(\"real-folder\"), fixture.root.join(\"folder\"), )");
+    assert!(
+        fixture
+            .load()
+            .expect("expected test value from fixture.load()")
+            .0
+            .is_empty()
+    );
 }
 
 #[test]
@@ -575,7 +692,7 @@ fn cancelled_operations_and_mid_transaction_failure_leave_old_snapshot_unchanged
     let fixture = Fixture::new();
     let original = fixture.entry("original.txt");
     fixture.save(std::slice::from_ref(&original), Some("Original notice"));
-    let bytes = fs::read(&fixture.cache).unwrap();
+    let bytes = fs::read(&fixture.cache).expect("read generated fixture");
     let cancellation = Cancellation::default();
     cancellation.cancel();
     assert!(
@@ -591,7 +708,7 @@ fn cancelled_operations_and_mid_transaction_failure_leave_old_snapshot_unchanged
     assert!(write(&fixture.cache, &fixture.root, &[], None, &cancellation).is_err());
     let first = fixture.entry("first.txt");
     let stale = fixture.entry("stale.txt");
-    fs::remove_file(&stale.path).unwrap();
+    fs::remove_file(&stale.path).expect("remove generated fixture");
     assert!(
         write(
             &fixture.cache,
@@ -602,9 +719,14 @@ fn cancelled_operations_and_mid_transaction_failure_leave_old_snapshot_unchanged
         )
         .is_err()
     );
-    assert_eq!(fs::read(&fixture.cache).unwrap(), bytes);
     assert_eq!(
-        fixture.load().unwrap(),
+        fs::read(&fixture.cache).expect("read generated fixture"),
+        bytes
+    );
+    assert_eq!(
+        fixture
+            .load()
+            .expect("expected test value from fixture.load()"),
         (vec![original], Some("Original notice".into()))
     );
     fixture.assert_no_stages();
@@ -615,7 +737,7 @@ fn cancellation_during_transaction_does_not_publish_or_leave_staging_files() {
     let fixture = Fixture::new();
     let original = fixture.entry("original.txt");
     fixture.save(std::slice::from_ref(&original), None);
-    let bytes = fs::read(&fixture.cache).unwrap();
+    let bytes = fs::read(&fixture.cache).expect("read generated fixture");
     let entries: Vec<_> = (0..1024)
         .map(|index| fixture.entry(format!("replacement-{index}.txt")))
         .collect();
@@ -626,10 +748,15 @@ fn cancellation_during_transaction_does_not_publish_or_leave_staging_files() {
     let writer = std::thread::spawn(move || write(&cache, &root, &entries, None, &cancellation));
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let journal = fs::read_dir(fixture.cache.parent().unwrap())
-            .unwrap()
-            .filter_map(Result::ok)
-            .any(|entry| entry.path().join("snapshot.sqlite-journal").is_file());
+        let journal = fs::read_dir(
+            fixture
+                .cache
+                .parent()
+                .expect("expected test value from fixture.cache.parent()"),
+        )
+        .expect("expected test value from fs::read_dir(fixture.cache.parent().unwrap())")
+        .filter_map(Result::ok)
+        .any(|entry| entry.path().join("snapshot.sqlite-journal").is_file());
         if journal {
             cancelled.store(true, Ordering::Release);
             break;
@@ -641,9 +768,23 @@ fn cancellation_during_transaction_does_not_publish_or_leave_staging_files() {
         assert!(Instant::now() < deadline, "Transaction did not start");
         std::thread::yield_now();
     }
-    assert!(writer.join().unwrap().is_err());
-    assert_eq!(fs::read(&fixture.cache).unwrap(), bytes);
-    assert_eq!(fixture.load().unwrap().0, vec![original]);
+    assert!(
+        writer
+            .join()
+            .expect("expected test value from writer.join()")
+            .is_err()
+    );
+    assert_eq!(
+        fs::read(&fixture.cache).expect("read generated fixture"),
+        bytes
+    );
+    assert_eq!(
+        fixture
+            .load()
+            .expect("expected test value from fixture.load()")
+            .0,
+        vec![original]
+    );
     fixture.assert_no_stages();
 }
 
@@ -651,33 +792,43 @@ fn cancellation_during_transaction_does_not_publish_or_leave_staging_files() {
 fn connection_uses_small_cache_and_disables_stored_code_and_attachments() {
     let fixture = Fixture::new();
     fixture.save(&[], None);
-    let (directory, _) = location(&fixture.cache, false).unwrap();
-    let stage = Stage::new(&directory).unwrap();
-    let connection = stage.connect(true).unwrap();
+    let (directory, _) = location(&fixture.cache, false)
+        .expect("expected test value from location(&fixture.cache, false)");
+    let stage = Stage::new(&directory).expect("expected test value from Stage::new(&directory)");
+    let connection = stage
+        .connect(true)
+        .expect("expected test value from stage.connect(true)");
     assert_eq!(
-        connection.limit(Limit::SQLITE_LIMIT_LENGTH).unwrap(),
+        connection
+            .limit(Limit::SQLITE_LIMIT_LENGTH)
+            .expect("expected test value from connection.limit(Limit::SQLITE_LIMIT_LENGTH)"),
         MAX_ROW_BYTES as i32
     );
-    assert_eq!(connection.limit(Limit::SQLITE_LIMIT_ATTACHED).unwrap(), 0);
+    assert_eq!(
+        connection
+            .limit(Limit::SQLITE_LIMIT_ATTACHED)
+            .expect("expected test value from connection.limit(Limit::SQLITE_LIMIT_ATTACHED)"),
+        0
+    );
     assert!(
         !connection
             .db_config(DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA)
-            .unwrap()
+            .expect("expected test value from connection .db_config(DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA)")
     );
     assert!(
         !connection
             .db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER)
-            .unwrap()
+            .expect("expected test value from connection .db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER)")
     );
     assert!(
         !connection
             .db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_VIEW)
-            .unwrap()
+            .expect("expected test value from connection .db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_VIEW)")
     );
     assert_eq!(
         connection
             .query_row("PRAGMA cache_size", [], |row| row.get::<_, i64>(0))
-            .unwrap(),
+            .expect("expected test value from connection .query_row(\"PRAGMA cache_size\", [], |row| row.get::<_, i64>(0))"),
         -2048
     );
     assert!(

@@ -19,9 +19,11 @@ impl TrailStore for MemoryStore {
     }
 }
 
+type DeferredRequest = (DirectoryRequest, Rc<dyn Fn(DirectoryEvent)>);
+
 #[derive(Default)]
 struct DeferredSource {
-    requests: RefCell<Vec<(DirectoryRequest, Rc<dyn Fn(DirectoryEvent)>)>>,
+    requests: RefCell<Vec<DeferredRequest>>,
 }
 
 impl FileSource for DeferredSource {
@@ -39,11 +41,14 @@ impl FileSource for DeferredSource {
 #[ignore = "Run alone with an isolated GLib main context; synthetic source and store only"]
 fn startup_failure_fallback_is_deferred_and_cannot_override_manual_navigation() {
     let context = glib::MainContext::default();
-    let _guard = context.acquire().unwrap();
+    let _guard = context
+        .acquire()
+        .expect("generated fixture must provide the expected value");
     for interruption in ["none", "navigate", "return", "tab", "dispose"] {
         let home = Location::local("/startup-fixture/home");
         let offline = Location::local("/startup-fixture/offline");
-        let trails = Trails::load(Rc::new(MemoryStore::default())).unwrap();
+        let trails = Trails::load(Rc::new(MemoryStore::default()))
+            .expect("generated fixture must provide the expected value");
         let view = fresh_view(
             TrailBrowserMode::Columns,
             TrailBrowserDensity::Compact,
@@ -51,7 +56,7 @@ fn startup_failure_fallback_is_deferred_and_cannot_override_manual_navigation() 
         );
         let failed_id = trails
             .create("Offline", offline.clone(), view.clone())
-            .unwrap();
+            .expect("generated fixture must provide the expected value");
         let selected = select(&trails, None, "last", &home, &view);
         let restore = Rc::new(RefCell::new(Restore::new(&selected.trail)));
         let source = Rc::new(DeferredSource::default());
@@ -68,7 +73,10 @@ fn startup_failure_fallback_is_deferred_and_cannot_override_manual_navigation() 
             Rc::new(move |trail| {
                 recorded.borrow_mut().push(trail.clone());
                 if let Some(browser) = weak_browser.upgrade() {
-                    let location = trail.active_location().unwrap().clone();
+                    let location = trail
+                        .active_location()
+                        .expect("generated fixture must provide the expected value")
+                        .clone();
                     browser.activate_tab(trail.id, location, trail.view.preferences);
                 }
             }),
@@ -91,7 +99,7 @@ fn startup_failure_fallback_is_deferred_and_cannot_override_manual_navigation() 
             "tab" => {
                 trails
                     .create("Another tab", offline.clone(), view.clone())
-                    .unwrap();
+                    .expect("generated fixture must provide the expected value");
             }
             _ => {}
         }
@@ -120,7 +128,7 @@ fn startup_failure_fallback_is_deferred_and_cannot_override_manual_navigation() 
                 .all()
                 .into_iter()
                 .find(|trail| trail.id == failed_id)
-                .unwrap()
+                .expect("generated fixture must provide the expected value")
                 .active_location(),
             Some(&offline)
         );

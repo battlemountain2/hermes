@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#![allow(dead_code)]
 
 use std::io::{self, Read};
 
@@ -33,8 +32,16 @@ pub fn decode_header(header: &[u8]) -> Result<(u32, u32), WireError> {
     if header.len() < HEADER_SIZE {
         return Err(WireError::IncompleteHeader);
     }
-    let png_len = u32::from_le_bytes(header[0..4].try_into().unwrap());
-    let meta_len = u32::from_le_bytes(header[4..8].try_into().unwrap());
+    let png_len = u32::from_le_bytes(
+        header[0..4]
+            .try_into()
+            .expect("expected test value from header[0..4].try_into()"),
+    );
+    let meta_len = u32::from_le_bytes(
+        header[4..8]
+            .try_into()
+            .expect("expected test value from header[4..8].try_into()"),
+    );
 
     if png_len > MAX_PAYLOAD_SIZE {
         return Err(WireError::PayloadTooLarge {

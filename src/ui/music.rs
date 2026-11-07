@@ -446,10 +446,7 @@ impl MusicPlayer {
         let queue_empty = text("No songs queued yet", "music-detail");
         let popup_contents = gtk::Box::new(gtk::Orientation::Vertical, 8);
         popup_contents.append(&queue_summary);
-        popup_contents.append(&text(
-            "Drag to arrange · click to play",
-            "music-detail",
-        ));
+        popup_contents.append(&text("Drag to arrange · click to play", "music-detail"));
         popup_contents.append(&queue_empty);
         popup_contents.append(&popup_queue_scroll);
         let queue_popover = gtk::Popover::builder().child(&popup_contents).build();
@@ -1131,22 +1128,24 @@ impl MusicPlayer {
                 let layout = super::theme::ThemeManager::shared().music_player_layout();
                 let is_top = layout == "top";
                 let ws = state.current_workspace.borrow();
-                state.hero_deck.set_visible(
-                    is_top && state.transport_visible.get() && ws.as_str() == "music",
-                );
+                state
+                    .hero_deck
+                    .set_visible(is_top && state.transport_visible.get() && ws.as_str() == "music");
             }
         });
         Self { state }
     }
 
     pub fn set_workspace(&self, workspace_name: &str) {
-        self.state.current_workspace.replace(workspace_name.to_owned());
+        self.state
+            .current_workspace
+            .replace(workspace_name.to_owned());
         self.state.sync_bar_visibility();
         let layout = super::theme::ThemeManager::shared().music_player_layout();
         let is_top = layout == "top";
-        self.state.hero_deck.set_visible(
-            is_top && self.state.transport_visible.get() && workspace_name == "music",
-        );
+        self.state
+            .hero_deck
+            .set_visible(is_top && self.state.transport_visible.get() && workspace_name == "music");
     }
 
     #[expect(dead_code, reason = "Public layout refresh hook")]
@@ -1155,9 +1154,9 @@ impl MusicPlayer {
         let layout = super::theme::ThemeManager::shared().music_player_layout();
         let is_top = layout == "top";
         let ws = self.state.current_workspace.borrow();
-        self.state.hero_deck.set_visible(
-            is_top && self.state.transport_visible.get() && ws.as_str() == "music",
-        );
+        self.state
+            .hero_deck
+            .set_visible(is_top && self.state.transport_visible.get() && ws.as_str() == "music");
     }
 
     pub fn bar(&self) -> gtk::Widget {
@@ -1524,7 +1523,11 @@ impl State {
                 17,
             )));
             self.hero_repeat.set_child(Some(&assets::primary_icon(
-                if repeat == Repeat::One { icons::REPEAT_ONE } else { icons::REPEAT },
+                if repeat == Repeat::One {
+                    icons::REPEAT_ONE
+                } else {
+                    icons::REPEAT
+                },
                 16,
             )));
         }
@@ -1547,11 +1550,13 @@ impl State {
         let layout = super::theme::ThemeManager::shared().music_player_layout();
         let is_top = layout == "top";
         let is_music_ws = self.current_workspace.borrow().as_str() == "music";
-        self.hero_deck.set_visible(is_top && self.transport_visible.get() && is_music_ws);
+        self.hero_deck
+            .set_visible(is_top && self.transport_visible.get() && is_music_ws);
         if track_changed {
             if let Some(track) = track.as_ref() {
                 self.hero_title.set_text(&track.title());
-                self.hero_detail.set_text(&format!("{} · {}", track.artist(), track.album()));
+                self.hero_detail
+                    .set_text(&format!("{} · {}", track.artist(), track.album()));
                 let ext = track
                     .path
                     .extension()
@@ -1682,11 +1687,8 @@ impl State {
                 0.0
             };
             self.hero_seek.set_value(frac);
-            self.hero_clock.set_text(&format!(
-                "{} / {}",
-                time_label(pos),
-                time_label(dur)
-            ));
+            self.hero_clock
+                .set_text(&format!("{} / {}", time_label(pos), time_label(dur)));
         } else {
             self.clock.set_text("0:00 / 0:00");
             self.hero_seek.set_value(0.0);
@@ -1738,22 +1740,26 @@ fn read_folder_queue(
             if crate::services::classify_by_name(path.as_os_str())
                 == crate::services::FormatFamily::Audio
             {
-                let tags =
-                    crate::adapters::music_metadata::read_tags(&path, cancellation).unwrap_or_default();
+                let tags = crate::adapters::music_metadata::read_tags(&path, cancellation)
+                    .unwrap_or_default();
                 tracks.push(Track { path, tags });
             }
-        } else if path.is_dir() && selected.is_dir() {
-            if let Ok(sub_entries) = std::fs::read_dir(&path) {
-                for sub_entry in sub_entries.flatten() {
-                    let sub_path = sub_entry.path();
-                    if sub_path.is_file()
-                        && crate::services::classify_by_name(sub_path.as_os_str())
-                            == crate::services::FormatFamily::Audio
-                    {
-                        let tags = crate::adapters::music_metadata::read_tags(&sub_path, cancellation)
-                            .unwrap_or_default();
-                        tracks.push(Track { path: sub_path, tags });
-                    }
+        } else if path.is_dir()
+            && selected.is_dir()
+            && let Ok(sub_entries) = std::fs::read_dir(&path)
+        {
+            for sub_entry in sub_entries.flatten() {
+                let sub_path = sub_entry.path();
+                if sub_path.is_file()
+                    && crate::services::classify_by_name(sub_path.as_os_str())
+                        == crate::services::FormatFamily::Audio
+                {
+                    let tags = crate::adapters::music_metadata::read_tags(&sub_path, cancellation)
+                        .unwrap_or_default();
+                    tracks.push(Track {
+                        path: sub_path,
+                        tags,
+                    });
                 }
             }
         }
@@ -1854,7 +1860,8 @@ fn album_factory(state: std::rc::Weak<State>) -> gtk::SignalListItemFactory {
             let weak_cover = setup_state.clone();
             let weak_cover_item = item.downgrade();
             cover_click.connect_pressed(move |_, _, _, _| {
-                if let (Some(state), Some(item)) = (weak_cover.upgrade(), weak_cover_item.upgrade()) {
+                if let (Some(state), Some(item)) = (weak_cover.upgrade(), weak_cover_item.upgrade())
+                {
                     state.play_album(item.position() as usize);
                 }
             });
@@ -1982,10 +1989,17 @@ fn track_factory(state: std::rc::Weak<State>) -> gtk::SignalListItemFactory {
             return;
         };
         if let Some(num) = row.first_child().and_downcast::<gtk::Label>() {
-            let num_text = track.tags.track.map_or_else(String::new, |n| format!("{n:02}"));
+            let num_text = track
+                .tags
+                .track
+                .map_or_else(String::new, |n| format!("{n:02}"));
             num.set_text(&num_text);
         }
-        if let Some(label) = row.first_child().and_then(|w| w.next_sibling()).and_downcast::<gtk::Label>() {
+        if let Some(label) = row
+            .first_child()
+            .and_then(|w| w.next_sibling())
+            .and_downcast::<gtk::Label>()
+        {
             let title = track.title();
             let detail = format!("{} · {}", track.artist(), track.album());
             label.set_text(&format!("{title}\n{detail}"));
@@ -2037,7 +2051,10 @@ fn replace_model(model: &gtk::StringList, values: &[String]) {
     if old_len > new_len {
         model.splice(new_len, old_len - new_len, &[]);
     } else if new_len > old_len {
-        let added: Vec<&str> = values[(old_len as usize)..].iter().map(String::as_str).collect();
+        let added: Vec<&str> = values[(old_len as usize)..]
+            .iter()
+            .map(String::as_str)
+            .collect();
         model.splice(old_len, 0, &added);
     }
 }

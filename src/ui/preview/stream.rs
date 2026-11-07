@@ -247,8 +247,12 @@ impl PlaybackStream {
         let path = path.to_owned();
         let stream = self.downgrade();
         glib::MainContext::default().spawn_local(async move {
-            let Some(bytes) = crate::ui::thumbnail::cached_preview_bytes(&path).await else { return; };
-            let Some(stream) = stream.upgrade().filter(Self::needs_poster) else { return; };
+            let Some(bytes) = crate::ui::thumbnail::cached_preview_bytes(&path).await else {
+                return;
+            };
+            let Some(stream) = stream.upgrade().filter(Self::needs_poster) else {
+                return;
+            };
             if let Ok(texture) = gtk::gdk::Texture::from_bytes(&bytes) {
                 stream.imp().poster_cancellation.cancel();
                 stream.imp().poster.replace(Some(texture));

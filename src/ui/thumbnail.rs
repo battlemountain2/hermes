@@ -16,7 +16,10 @@ mod scheduling;
 use crate::{
     model::{FileEntry, MetadataValue},
     sandbox::{Cancellation, ParseOperation},
-    services::{FormatCapabilities, FormatFamily, ThumbnailHandler, capabilities_by_name, classify_by_name, classify_by_mime},
+    services::{
+        FormatCapabilities, FormatFamily, ThumbnailHandler, capabilities_by_name, classify_by_mime,
+        classify_by_name,
+    },
 };
 
 #[derive(Clone, Copy)]
@@ -79,7 +82,11 @@ impl PreviewPolicy {
         Ok(())
     }
 
-    pub(crate) fn check_entry(self, entry: &FileEntry, content_type: Option<&str>) -> Result<(), String> {
+    pub(crate) fn check_entry(
+        self,
+        entry: &FileEntry,
+        content_type: Option<&str>,
+    ) -> Result<(), String> {
         if entry.is_directory() {
             return Ok(());
         }
@@ -99,16 +106,17 @@ impl PreviewPolicy {
         let named = classify_by_name(&entry.native_name);
         let detected = content_type.map(|content_type| {
             let family = classify_by_mime(content_type);
-            if family == FormatFamily::Unknown && gio::content_type_is_a(content_type, "text/plain") {
+            if family == FormatFamily::Unknown && gio::content_type_is_a(content_type, "text/plain")
+            {
                 FormatFamily::PlainText
             } else {
                 family
             }
         });
         let streamed = self.streaming_media
-            && std::iter::once(named).chain(detected).any(|family| {
-                matches!(family, FormatFamily::Audio | FormatFamily::Video)
-            });
+            && std::iter::once(named)
+                .chain(detected)
+                .any(|family| matches!(family, FormatFamily::Audio | FormatFamily::Video));
         for family in std::iter::once(named).chain(detected) {
             let deferred_size = family == FormatFamily::Unknown
                 && (streamed || (self.streaming_media && content_type.is_none()));
@@ -127,7 +135,8 @@ impl PreviewPolicy {
         if entry.is_directory() {
             return Ok(());
         }
-        let size = size.ok_or_else(|| "File size is unavailable; preview was not loaded".to_owned())?;
+        let size =
+            size.ok_or_else(|| "File size is unavailable; preview was not loaded".to_owned())?;
         self.check_formats(entry, Some(content_type), Some(size))
     }
 }
@@ -169,7 +178,8 @@ pub(super) async fn clear_cache() -> Result<usize, String> {
         return Err("Thumbnail cache clear is already running".into());
     }
     invalidate_memory_cache();
-    let result = gio::spawn_blocking(disk::clear).await
+    let result = gio::spawn_blocking(disk::clear)
+        .await
         .map_err(|_| "Thumbnail cache worker did not complete".to_owned())
         .and_then(|result| result);
     CLEARING_CACHE.with(|clearing| clearing.set(false));
@@ -326,11 +336,13 @@ async fn cached_preview_bytes_with_policy(
     let policy = current_policy();
     let (bytes, size) = gio::spawn_blocking(move || {
         let size = SourceIdentity::read(&worker_path)?.size;
-        policy.check(classify_by_name(worker_path.as_os_str()), Some(size)).ok()?;
+        policy
+            .check(classify_by_name(worker_path.as_os_str()), Some(size))
+            .ok()?;
         Some((disk::preview(&worker_path)?, size))
     })
-        .await
-        .ok()??;
+    .await
+    .ok()??;
     if CACHE_GENERATION.with(Cell::get) != generation {
         return None;
     }

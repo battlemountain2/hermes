@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{
-    cell::RefCell,
-    cmp::Ordering,
-    rc::Rc,
-};
+use std::{cell::RefCell, cmp::Ordering, rc::Rc};
 
 use gtk::{gio, glib, prelude::*};
 
@@ -131,7 +127,11 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
         data.sheets.clone()
     } else {
         vec![SheetData {
-            name: data.sheet_names.first().cloned().unwrap_or_else(|| "Sheet1".to_string()),
+            name: data
+                .sheet_names
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "Sheet1".to_string()),
             headers: data.headers.clone(),
             rows: data.rows.clone(),
             total_rows: data.total_rows,
@@ -141,7 +141,8 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
     });
 
     let dim_label_for_tabs = dim_label.clone();
-    let sheet_buttons: Rc<RefCell<Vec<glib::WeakRef<gtk::Button>>>> = Rc::new(RefCell::new(Vec::new()));
+    let sheet_buttons: Rc<RefCell<Vec<glib::WeakRef<gtk::Button>>>> =
+        Rc::new(RefCell::new(Vec::new()));
 
     if sheets.len() > 1 {
         let sheet_bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -164,7 +165,9 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
             let sheets_for_tab = sheets.clone();
             let buttons = sheet_buttons.clone();
             let dim_lbl = dim_label_for_tabs.clone();
-            let s_rows = sheet.total_rows.max(sheet.rows.len() + if sheet.headers.is_empty() { 0 } else { 1 });
+            let s_rows = sheet
+                .total_rows
+                .max(sheet.rows.len() + if sheet.headers.is_empty() { 0 } else { 1 });
             let s_cols = sheet.total_cols.max(sheet.headers.len());
             let sheets_count = sheets.len();
 
@@ -182,7 +185,10 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
                 stack.set_visible_child_name(&sheet_name);
                 let dimensions = format!(
                     "{} rows · {} cols · Sheet {} of {}",
-                    s_rows, s_cols, idx + 1, sheets_count
+                    s_rows,
+                    s_cols,
+                    idx + 1,
+                    sheets_count
                 );
                 dim_lbl.set_text(&dimensions);
                 dim_lbl.set_tooltip_text(Some(&dimensions));
@@ -205,12 +211,16 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
 
     // Set initial dimension label
     if let Some(first) = sheets.first() {
-        let s_rows = first.total_rows.max(first.rows.len() + if first.headers.is_empty() { 0 } else { 1 });
+        let s_rows = first
+            .total_rows
+            .max(first.rows.len() + if first.headers.is_empty() { 0 } else { 1 });
         let s_cols = first.total_cols.max(first.headers.len());
         if sheets.len() > 1 {
             dim_label.set_text(&format!(
                 "{} rows · {} cols · Sheet 1 of {}",
-                s_rows, s_cols, sheets.len()
+                s_rows,
+                s_cols,
+                sheets.len()
             ));
         } else {
             dim_label.set_text(&format!("{} rows · {} cols", s_rows, s_cols));
@@ -226,7 +236,7 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
 
     if data.truncated {
         let warning = gtk::Label::new(Some(
-            "Table preview capped at 200 rows and 256 columns; open file for complete data."
+            "Table preview capped at 200 rows and 256 columns; open file for complete data.",
         ));
         warning.add_css_class("spreadsheet-note");
         warning.set_wrap(true);
@@ -258,7 +268,7 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
             return;
         };
         let window = gtk::Window::builder()
-            .title(&format!("Hermes — {}", title_string))
+            .title(format!("Hermes — {}", title_string))
             .destroy_with_parent(true)
             .build();
         if let Some(parent) = home.root().and_downcast::<gtk::Window>() {
@@ -278,10 +288,10 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
         window.connect_close_request(move |window| {
             let viewer = weak_viewer.upgrade();
             window.set_child(None::<&gtk::Widget>);
-            if let (Some(home), Some(viewer)) = (weak_home.upgrade(), viewer) {
-                if viewer.parent().is_none() {
-                    home.append(&viewer);
-                }
+            if let (Some(home), Some(viewer)) = (weak_home.upgrade(), viewer)
+                && viewer.parent().is_none()
+            {
+                home.append(&viewer);
             }
             if let Some(button) = weak_button.upgrade() {
                 button.set_child(Some(&assets::primary_icon(icons::MAXIMIZE, 16)));
@@ -293,7 +303,13 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
             glib::Propagation::Proceed
         });
 
-        attach_table_key_controller(&window, &stack_for_keys, &sheet_buttons_for_keys, sheets_count, Some(window.downgrade()));
+        attach_table_key_controller(
+            &window,
+            &stack_for_keys,
+            &sheet_buttons_for_keys,
+            sheets_count,
+            Some(window.downgrade()),
+        );
         shared_slot.replace(Some(window.clone()));
         window.fullscreen();
         window.present();
@@ -311,9 +327,10 @@ pub fn build_spreadsheet_view(data: &SpreadsheetData, title: &str) -> Spreadshee
 
 fn build_sheet_table_page(sheet: &SheetData) -> gtk::Widget {
     let rows_rc = Rc::new(sheet.rows.clone());
-    let cols = sheet.headers.len().max(
-        rows_rc.iter().map(Vec::len).max().unwrap_or(0)
-    );
+    let cols = sheet
+        .headers
+        .len()
+        .max(rows_rc.iter().map(Vec::len).max().unwrap_or(0));
 
     let store = gio::ListStore::new::<glib::BoxedAnyObject>();
     for i in 0..rows_rc.len() {
@@ -350,7 +367,9 @@ fn build_sheet_table_page(sheet: &SheetData) -> gtk::Widget {
         factory.connect_bind(move |_, item| {
             if let Some(cell) = item.downcast_ref::<gtk::ColumnViewCell>()
                 && let Some(label) = cell.child().and_then(|c| c.downcast::<gtk::Label>().ok())
-                && let Some(row_obj) = cell.item().and_then(|it| it.downcast::<glib::BoxedAnyObject>().ok())
+                && let Some(row_obj) = cell
+                    .item()
+                    .and_then(|it| it.downcast::<glib::BoxedAnyObject>().ok())
             {
                 let row_idx = *row_obj.borrow::<usize>();
                 if let Some(row) = rows_for_factory.get(row_idx) {
@@ -371,11 +390,25 @@ fn build_sheet_table_page(sheet: &SheetData) -> gtk::Widget {
         // Custom Sorter
         let rows_for_sorter = rows_rc.clone();
         let custom_sorter = gtk::CustomSorter::new(move |a, b| {
-            let idx_a = a.downcast_ref::<glib::BoxedAnyObject>().map(|o| *o.borrow::<usize>()).unwrap_or(0);
-            let idx_b = b.downcast_ref::<glib::BoxedAnyObject>().map(|o| *o.borrow::<usize>()).unwrap_or(0);
+            let idx_a = a
+                .downcast_ref::<glib::BoxedAnyObject>()
+                .map(|o| *o.borrow::<usize>())
+                .unwrap_or(0);
+            let idx_b = b
+                .downcast_ref::<glib::BoxedAnyObject>()
+                .map(|o| *o.borrow::<usize>())
+                .unwrap_or(0);
 
-            let val_a = rows_for_sorter.get(idx_a).and_then(|r| r.get(col_idx)).map(String::as_str).unwrap_or("");
-            let val_b = rows_for_sorter.get(idx_b).and_then(|r| r.get(col_idx)).map(String::as_str).unwrap_or("");
+            let val_a = rows_for_sorter
+                .get(idx_a)
+                .and_then(|r| r.get(col_idx))
+                .map(String::as_str)
+                .unwrap_or("");
+            let val_b = rows_for_sorter
+                .get(idx_b)
+                .and_then(|r| r.get(col_idx))
+                .map(String::as_str)
+                .unwrap_or("");
 
             let key_a = SortKey::new(val_a);
             let key_b = SortKey::new(val_b);
@@ -440,17 +473,15 @@ fn attach_table_key_controller(
 
     controller.connect_key_pressed(move |_, keyval, _keycode, state| {
         // Fullscreen exit shortcuts: Escape, F/f (without Ctrl/Alt)
-        if let Some(ref weak_window) = window_to_close {
-            if keyval == gtk::gdk::Key::Escape
+        if let Some(ref weak_window) = window_to_close
+            && (keyval == gtk::gdk::Key::Escape
                 || (!state.contains(gtk::gdk::ModifierType::CONTROL_MASK)
                     && !state.contains(gtk::gdk::ModifierType::ALT_MASK)
-                    && (keyval == gtk::gdk::Key::f || keyval == gtk::gdk::Key::F))
-            {
-                if let Some(window) = weak_window.upgrade() {
-                    window.close();
-                    return glib::Propagation::Stop;
-                }
-            }
+                    && (keyval == gtk::gdk::Key::f || keyval == gtk::gdk::Key::F)))
+            && let Some(window) = weak_window.upgrade()
+        {
+            window.close();
+            return glib::Propagation::Stop;
         }
 
         // Sheet tab navigation
@@ -461,81 +492,81 @@ fn attach_table_key_controller(
             let next_tab = (ctrl && keyval == gtk::gdk::Key::Page_Down)
                 || (ctrl && !shift && keyval == gtk::gdk::Key::Tab);
             let prev_tab = (ctrl && keyval == gtk::gdk::Key::Page_Up)
-                || (ctrl && (keyval == gtk::gdk::Key::ISO_Left_Tab || (shift && keyval == gtk::gdk::Key::Tab)));
+                || (ctrl
+                    && (keyval == gtk::gdk::Key::ISO_Left_Tab
+                        || (shift && keyval == gtk::gdk::Key::Tab)));
 
-            if next_tab || prev_tab {
-                if let Some(current_name) = stack.visible_child_name() {
-                    if let Some(idx_str) = current_name.strip_prefix("sheet_") {
-                        if let Ok(idx) = idx_str.parse::<usize>() {
-                            let target_idx = if next_tab {
-                                (idx + 1) % sheets_count
-                            } else if idx == 0 {
-                                sheets_count - 1
-                            } else {
-                                idx - 1
-                            };
-                            let buttons = sheet_buttons.borrow();
-                            if let Some(Some(btn)) = buttons.get(target_idx).map(glib::WeakRef::upgrade) {
-                                btn.emit_clicked();
-                                return glib::Propagation::Stop;
-                            }
-                        }
-                    }
+            if (next_tab || prev_tab)
+                && let Some(current_name) = stack.visible_child_name()
+                && let Some(idx_str) = current_name.strip_prefix("sheet_")
+                && let Ok(idx) = idx_str.parse::<usize>()
+            {
+                let target_idx = if next_tab {
+                    (idx + 1) % sheets_count
+                } else if idx == 0 {
+                    sheets_count - 1
+                } else {
+                    idx - 1
+                };
+                let buttons = sheet_buttons.borrow();
+                if let Some(Some(btn)) = buttons.get(target_idx).map(glib::WeakRef::upgrade) {
+                    btn.emit_clicked();
+                    return glib::Propagation::Stop;
                 }
             }
         }
 
         // Table scrolling with arrow keys / PageUp / PageDown / Home / End
-        if let Some(child) = stack.visible_child() {
-            if let Some(scrolled) = child.downcast_ref::<gtk::ScrolledWindow>() {
-                let vadj = scrolled.vadjustment();
-                let hadj = scrolled.hadjustment();
+        if let Some(child) = stack.visible_child()
+            && let Some(scrolled) = child.downcast_ref::<gtk::ScrolledWindow>()
+        {
+            let vadj = scrolled.vadjustment();
+            let hadj = scrolled.hadjustment();
 
-                let step_v = vadj.step_increment().max(32.0);
-                let page_v = vadj.page_increment().max(200.0);
-                let step_h = hadj.step_increment().max(40.0);
+            let step_v = vadj.step_increment().max(32.0);
+            let page_v = vadj.page_increment().max(200.0);
+            let step_h = hadj.step_increment().max(40.0);
 
-                match keyval {
-                    gtk::gdk::Key::Up => {
-                        vadj.set_value((vadj.value() - step_v).max(vadj.lower()));
-                        return glib::Propagation::Stop;
-                    }
-                    gtk::gdk::Key::Down => {
-                        vadj.set_value((vadj.value() + step_v).min(vadj.upper() - vadj.page_size()));
-                        return glib::Propagation::Stop;
-                    }
-                    gtk::gdk::Key::Left => {
-                        hadj.set_value((hadj.value() - step_h).max(hadj.lower()));
-                        return glib::Propagation::Stop;
-                    }
-                    gtk::gdk::Key::Right => {
-                        hadj.set_value((hadj.value() + step_h).min(hadj.upper() - hadj.page_size()));
-                        return glib::Propagation::Stop;
-                    }
-                    gtk::gdk::Key::Page_Up => {
-                        vadj.set_value((vadj.value() - page_v).max(vadj.lower()));
-                        return glib::Propagation::Stop;
-                    }
-                    gtk::gdk::Key::Page_Down => {
-                        vadj.set_value((vadj.value() + page_v).min(vadj.upper() - vadj.page_size()));
-                        return glib::Propagation::Stop;
-                    }
-                    gtk::gdk::Key::Home => {
-                        if state.contains(gtk::gdk::ModifierType::CONTROL_MASK) {
-                            hadj.set_value(hadj.lower());
-                        }
-                        vadj.set_value(vadj.lower());
-                        return glib::Propagation::Stop;
-                    }
-                    gtk::gdk::Key::End => {
-                        if state.contains(gtk::gdk::ModifierType::CONTROL_MASK) {
-                            hadj.set_value((hadj.upper() - hadj.page_size()).max(hadj.lower()));
-                        }
-                        vadj.set_value((vadj.upper() - vadj.page_size()).max(vadj.lower()));
-                        return glib::Propagation::Stop;
-                    }
-                    _ => {}
+            match keyval {
+                gtk::gdk::Key::Up => {
+                    vadj.set_value((vadj.value() - step_v).max(vadj.lower()));
+                    return glib::Propagation::Stop;
                 }
+                gtk::gdk::Key::Down => {
+                    vadj.set_value((vadj.value() + step_v).min(vadj.upper() - vadj.page_size()));
+                    return glib::Propagation::Stop;
+                }
+                gtk::gdk::Key::Left => {
+                    hadj.set_value((hadj.value() - step_h).max(hadj.lower()));
+                    return glib::Propagation::Stop;
+                }
+                gtk::gdk::Key::Right => {
+                    hadj.set_value((hadj.value() + step_h).min(hadj.upper() - hadj.page_size()));
+                    return glib::Propagation::Stop;
+                }
+                gtk::gdk::Key::Page_Up => {
+                    vadj.set_value((vadj.value() - page_v).max(vadj.lower()));
+                    return glib::Propagation::Stop;
+                }
+                gtk::gdk::Key::Page_Down => {
+                    vadj.set_value((vadj.value() + page_v).min(vadj.upper() - vadj.page_size()));
+                    return glib::Propagation::Stop;
+                }
+                gtk::gdk::Key::Home => {
+                    if state.contains(gtk::gdk::ModifierType::CONTROL_MASK) {
+                        hadj.set_value(hadj.lower());
+                    }
+                    vadj.set_value(vadj.lower());
+                    return glib::Propagation::Stop;
+                }
+                gtk::gdk::Key::End => {
+                    if state.contains(gtk::gdk::ModifierType::CONTROL_MASK) {
+                        hadj.set_value((hadj.upper() - hadj.page_size()).max(hadj.lower()));
+                    }
+                    vadj.set_value((vadj.upper() - vadj.page_size()).max(vadj.lower()));
+                    return glib::Propagation::Stop;
+                }
+                _ => {}
             }
         }
 

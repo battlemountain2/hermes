@@ -30,7 +30,7 @@ fn actual_playing_time_counts_once_per_instance_and_not_by_position() {
             240_000_000,
             true,
         )
-        .unwrap();
+        .expect("expected test value from listening .sample( start + Duration::from_secs(30), 90_000_000, 240_000_000, true, )");
     assert_eq!(record.0, path);
     assert_eq!(record.1, 30_000_000);
     listening.counted = true;
@@ -100,7 +100,7 @@ fn short_track_half_duration_and_each_queue_continuation_get_separate_instances(
                 20_000_000,
                 true,
             )
-            .unwrap();
+            .expect("expected test value from listening .sample( start + Duration::from_secs(10), 10_000_000, 20_000_000, true, )");
         assert_eq!(record.0, PathBuf::from(path));
         listening.counted = true;
     }
@@ -108,8 +108,10 @@ fn short_track_half_duration_and_each_queue_continuation_get_separate_instances(
 
 #[test]
 fn unstarted_or_preview_streams_have_no_main_player_path_to_record() {
-    let mut listening = Listening::default();
-    listening.elapsed = 40_000_000;
+    let mut listening = Listening {
+        elapsed: 40_000_000,
+        ..Listening::default()
+    };
     assert!(
         listening
             .sample(Instant::now(), 40_000_000, 120_000_000, true)

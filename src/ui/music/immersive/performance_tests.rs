@@ -18,12 +18,15 @@ fn profile_immersive_cairo_drawing_and_spectrum_analysis() {
         ] {
             let surface =
                 gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, width, height)
-                    .unwrap();
-            let context = gtk::cairo::Context::new(&surface).unwrap();
+                    .expect("generated fixture must provide the expected value");
+            let context = gtk::cairo::Context::new(&surface)
+                .expect("generated fixture must provide the expected value");
             let mut samples = Vec::new();
             for frame in 0..20 {
                 context.set_operator(gtk::cairo::Operator::Clear);
-                context.paint().unwrap();
+                context
+                    .paint()
+                    .expect("generated fixture must provide the expected value");
                 context.set_operator(gtk::cairo::Operator::Over);
                 let started = std::time::Instant::now();
                 draw_generative_visualizer(
@@ -49,7 +52,7 @@ fn profile_immersive_cairo_drawing_and_spectrum_analysis() {
         }
     }
     let mut pcm = vec![0u8; crate::playback::spectrum::ANALYSIS_SAMPLES * 8];
-    for (index, frame) in pcm.chunks_exact_mut(8).enumerate() {
+    for (index, frame) in pcm.as_chunks_mut::<8>().0.iter_mut().enumerate() {
         let sample = ((index as f32 * 0.1).sin() * 0.4).to_le_bytes();
         frame[..4].copy_from_slice(&sample);
         frame[4..].copy_from_slice(&sample);
@@ -101,17 +104,24 @@ impl Drop for RendererGuard {
 #[test]
 #[ignore = "Isolated GTK offscreen renderer profile; never presents a window or opens media"]
 fn profile_immersive_offscreen_renderer_cairo_and_native_nodes() {
-    gtk::init().unwrap();
+    gtk::init().expect("generated fixture must provide the expected value");
     let window = gtk::Window::new();
     gtk::prelude::WidgetExt::realize(&window);
     assert!(!window.is_mapped());
     assert!(!window.is_visible());
     let renderer = RendererGuard(if std::env::var_os("HERMES_PROFILE_SOFTWARE").is_some() {
         let renderer = gtk::gsk::CairoRenderer::new();
-        renderer.realize(window.surface().as_ref()).unwrap();
+        renderer
+            .realize(window.surface().as_ref())
+            .expect("generated fixture must provide the expected value");
         renderer.upcast()
     } else {
-        gtk::gsk::Renderer::for_surface(&window.surface().unwrap()).unwrap()
+        gtk::gsk::Renderer::for_surface(
+            &window
+                .surface()
+                .expect("generated fixture must provide the expected value"),
+        )
+        .expect("generated fixture must provide the expected value")
     });
     println!(
         "renderer={} display={}",
@@ -157,7 +167,9 @@ fn profile_immersive_offscreen_renderer_cairo_and_native_nodes() {
                         );
                         drop(context);
                     }
-                    let node = snapshot.to_node().unwrap();
+                    let node = snapshot
+                        .to_node()
+                        .expect("generated fixture must provide the expected value");
                     let record_ms = started.elapsed().as_secs_f64() * 1000.0;
                     let texture = renderer.0.render_texture(&node, Some(&bounds));
                     let downloader = gdk::TextureDownloader::new(&texture);
@@ -166,15 +178,16 @@ fn profile_immersive_offscreen_renderer_cairo_and_native_nodes() {
                         recording.push(record_ms);
                         completed.push(started.elapsed().as_secs_f64() * 1000.0);
                     }
-                    if frame == 14 && width == 1280 {
-                        if let Ok(directory) = std::env::var("HERMES_RENDER_SHOTS") {
-                            texture
-                                .save_to_png(std::path::Path::new(&directory).join(format!(
-                                    "{style:?}-{}.png",
-                                    if native { "native" } else { "cairo" }
-                                )))
-                                .unwrap();
-                        }
+                    if frame == 14
+                        && width == 1280
+                        && let Ok(directory) = std::env::var("HERMES_RENDER_SHOTS")
+                    {
+                        texture
+                            .save_to_png(std::path::Path::new(&directory).join(format!(
+                                "{style:?}-{}.png",
+                                if native { "native" } else { "cairo" }
+                            )))
+                            .expect("generated fixture must provide the expected value");
                     }
                 }
                 println!(

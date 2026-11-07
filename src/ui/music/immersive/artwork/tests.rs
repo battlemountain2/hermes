@@ -1,22 +1,33 @@
 use super::*;
 
 fn png(color: u32) -> Vec<u8> {
-    let pixels = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, 64, 64).unwrap();
+    let pixels = gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, 64, 64).expect("expected test value from gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, 64, 64)");
     pixels.fill(color);
-    pixels.save_to_bufferv("png", &[]).unwrap()
+    pixels
+        .save_to_bufferv("png", &[])
+        .expect("expected test value from pixels.save_to_bufferv(\"png\", &[])")
 }
 
 #[test]
 fn artwork_palette_follows_warm_and_cool_covers_without_theme_blue() {
-    let (blurred, warm) = presentation(&png(0xf08020ff)).unwrap();
+    let (blurred, warm) = presentation(&png(0xf08020ff))
+        .expect("expected test value from presentation(&png(0xf08020ff))");
     assert!(warm.0.0 > warm.0.1 && warm.0.1 > warm.0.2);
-    let (_, cool) = presentation(&png(0x2080f0ff)).unwrap();
+    let (_, cool) = presentation(&png(0x2080f0ff))
+        .expect("expected test value from presentation(&png(0x2080f0ff))");
     assert!(cool.0.2 > cool.0.1 && cool.0.1 > cool.0.0);
     assert_ne!(warm, cool);
-    let loader = PixbufLoader::with_type("png").unwrap();
-    loader.write(&blurred).unwrap();
-    loader.close().unwrap();
-    let pixels = loader.pixbuf().unwrap();
+    let loader = PixbufLoader::with_type("png")
+        .expect("expected test value from PixbufLoader::with_type(\"png\")");
+    loader
+        .write(&blurred)
+        .expect("expected test value from loader.write(&blurred)");
+    loader
+        .close()
+        .expect("expected test value from loader.close()");
+    let pixels = loader
+        .pixbuf()
+        .expect("expected test value from loader.pixbuf()");
     assert_eq!((pixels.width(), pixels.height()), (64, 64));
 }
 
@@ -35,7 +46,8 @@ fn artwork_analysis_rejects_bad_bounds_and_fully_transparent_pixels() {
 
 #[test]
 fn opaque_grayscale_artwork_remains_a_valid_neutral_palette() {
-    let (_, colors) = presentation(&png(0x808080ff)).unwrap();
+    let (_, colors) = presentation(&png(0x808080ff))
+        .expect("expected test value from presentation(&png(0x808080ff))");
     for color in [colors.0, colors.1] {
         assert_eq!(color.0, color.1);
         assert_eq!(color.1, color.2);
@@ -58,7 +70,8 @@ fn artwork_tints_the_base_instead_of_retaining_a_blue_theme_hue() {
 #[test]
 fn extreme_covers_keep_visualizer_and_metadata_legible_in_light_and_dark_themes() {
     let color = |value: &str| {
-        let parsed = gtk::gdk::RGBA::parse(value).unwrap();
+        let parsed = gtk::gdk::RGBA::parse(value)
+            .expect("expected test value from gtk::gdk::RGBA::parse(value)");
         (
             f64::from(parsed.red()),
             f64::from(parsed.green()),
@@ -69,7 +82,8 @@ fn extreme_covers_keep_visualizer_and_metadata_legible_in_light_and_dark_themes(
         include_str!("../../../../../data/themes/graphite.toml"),
         include_str!("../../../../../data/themes/paper.toml"),
     ] {
-        let tokens: crate::ui::theme::ThemeTokens = toml::from_str(source).unwrap();
+        let tokens: crate::ui::theme::ThemeTokens =
+            toml::from_str(source).expect("expected test value from toml::from_str(source)");
         let background = color(&tokens.background);
         let foreground = color(&tokens.text);
         for cover in [(0.0, 0.0, 0.0), (1.0, 1.0, 1.0)] {

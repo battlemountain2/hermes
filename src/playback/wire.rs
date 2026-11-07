@@ -61,8 +61,16 @@ pub(super) fn write_event(writer: &mut impl Write, event: &Event, data: &[u8]) -
 pub(super) fn read_event(reader: &mut impl Read) -> io::Result<(Event, Vec<u8>)> {
     let mut sizes = [0_u8; 8];
     reader.read_exact(&mut sizes)?;
-    let header_size = u32::from_le_bytes(sizes[..4].try_into().unwrap()) as usize;
-    let data_size = u32::from_le_bytes(sizes[4..].try_into().unwrap()) as usize;
+    let header_size = u32::from_le_bytes(
+        sizes[..4]
+            .try_into()
+            .expect("Packet header-size field is four bytes"),
+    ) as usize;
+    let data_size = u32::from_le_bytes(
+        sizes[4..]
+            .try_into()
+            .expect("Packet payload-size field is four bytes"),
+    ) as usize;
     if header_size == 0 || header_size > MAX_HEADER || data_size > MAX_FRAME {
         return Err(invalid("Invalid playback packet size"));
     }
