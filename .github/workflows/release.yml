@@ -3,87 +3,82 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      bump:
-        description: Version component to increment
+      source_sha:
+        description: Approved full lowercase 40-character commit SHA reachable from the default branch
         required: true
-        default: patch
+        type: string
+      version:
+        description: Version already committed in Cargo.toml and Cargo.lock (no leading v)
+        required: true
+        type: string
+      channel:
+        description: Deliberate release channel (no automatic promotion)
+        required: true
         type: choice
         options:
-          - patch
-          - minor
-          - major
+          - preview
+          - rc
+          - stable
+      confirmation:
+        description: 'Type exactly: release CHANNEL vVERSION FULL_SHA'
+        required: true
+        type: string
 
 concurrency:
   group: release
   cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: read
 
 env:
-  RELEASE_RUST_VERSION: 1.98.0
+  RELEASE_RUST_VERSION: '1.99.0'
+  SOURCE_SHA: ${{ inputs.source_sha }}
+  VERSION: ${{ inputs.version }}
+  CHANNEL: ${{ inputs.channel }}
+  CONFIRMATION: ${{ inputs.confirmation }}
 
 jobs:
   prepare:
-    name: Determine release version
+    name: Validate approved source and exact-commit CI
     runs-on: ubuntu-24.04
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      source_sha: ${{ steps.source.outputs.sha }}
-
+      source_sha: ${{ steps.gate.outputs.source_sha }}
+      version: ${{ steps.gate.outputs.version }}
+      channel: ${{ steps.gate.outputs.channel }}
+      tag: ${{ steps.gate.outputs.tag }}
+      ci_run: ${{ steps.gate.outputs.ci_run }}
     steps:
-      - name: Require the default branch
-        env:
-          BRANCH: ${{ github.ref_name }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          if [[ "$BRANCH" != "$DEFAULT_BRANCH" ]]; then
-            echo "Releases must be run from $DEFAULT_BRANCH (selected: $BRANCH)." >&2
-            exit 1
-          fi
-
-      - name: Check out repository
+      # Control code is taken from the dispatched default-branch workflow commit.
+      # The approved source may be an older ancestor and is never executed here.
+      - name: Check out release control code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
+          path: pipeline
           persist-credentials: false
-
-      - name: Record source commit
-        id: source
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Calculate version
-        id: version
+      - name: Check out requested source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run release validator tests
+        run: python3 -m unittest discover -s pipeline/scripts -p 'release_test*.py' -v
+      - name: Validate immutable source, CI, and required reviewer configuration
+        id: gate
         env:
-          BUMP: ${{ inputs.bump }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python3 - <<'PY'
-          import os
-          import pathlib
-          import re
-
-          manifest = pathlib.Path("Cargo.toml").read_text()
-          match = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"$', manifest, re.MULTILINE)
-          if match is None:
-              raise SystemExit("Cargo.toml must contain a plain major.minor.patch package version")
-
-          major, minor, patch = map(int, match.groups())
-          bump = os.environ["BUMP"]
-          if bump == "major":
-              major, minor, patch = major + 1, 0, 0
-          elif bump == "minor":
-              minor, patch = minor + 1, 0
-          elif bump == "patch":
-              patch += 1
-          else:
-              raise SystemExit(f"unsupported version bump: {bump}")
-
-          version = f"{major}.{minor}.{patch}"
-          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-              output.write(f"version={version}\n")
-          PY
+          python3 pipeline/scripts/release.py gate --source source \
+            --sha "$SOURCE_SHA" --version "$VERSION" --channel "$CHANNEL" \
+            --confirmation "$CONFIRMATION" --evidence "$RUNNER_TEMP/preparation.json"
+          cat "$RUNNER_TEMP/preparation.json" >> "$GITHUB_STEP_SUMMARY"
 
   build:
-    name: Build ${{ matrix.target }}
+    name: Build Linux ${{ matrix.target }}
     needs: prepare
     strategy:
       fail-fast: false
@@ -94,168 +89,123 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-
+    env:
+      RUSTUP_TOOLCHAIN: '1.99.0'
     steps:
-      - name: Check out source commit
+      - name: Check out release control code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: pipeline
+          persist-credentials: false
+      - name: Check out approved source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.source_sha }}
+          path: source
           persist-credentials: false
-
-      - name: Set release version
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
+      - name: Validate committed versions before building
         run: |
-          python3 - <<'PY'
-          import os
-          import pathlib
-          import re
-
-          version = os.environ["VERSION"]
-          manifest_path = pathlib.Path("Cargo.toml")
-          manifest = manifest_path.read_text()
-          manifest, count = re.subn(
-              r'(^version = ")\d+\.\d+\.\d+("$)',
-              rf'\g<1>{version}\2',
-              manifest,
-              count=1,
-              flags=re.MULTILINE,
-          )
-          if count != 1:
-              raise SystemExit("could not update Cargo.toml package version")
-          manifest_path.write_text(manifest)
-
-          lock_path = pathlib.Path("Cargo.lock")
-          lock = lock_path.read_text()
-          lock, count = re.subn(
-              r'(\[\[package\]\]\nname = "hermes"\nversion = ")\d+\.\d+\.\d+("\n)',
-              rf'\g<1>{version}\2',
-              lock,
-              count=1,
-          )
-          if count != 1:
-              raise SystemExit("could not update the Hermes version in Cargo.lock")
-          lock_path.write_text(lock)
-          PY
-
-      - name: Install native development libraries
+          python3 pipeline/scripts/release.py source --source source \
+            --sha "$SOURCE_SHA" --version "$VERSION" --channel "$CHANNEL" \
+            --confirmation "$CONFIRMATION"
+      - name: Install native development libraries on the disposable runner
         run: >-
           sudo apt-get update &&
           sudo apt-get install --yes libfontconfig1-dev libgtk-4-dev libgtksourceview-5-dev libpoppler-glib-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libheif-dev
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+      - name: Install pinned Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # pinned action; explicit compiler below
         with:
           toolchain: ${{ env.RELEASE_RUST_VERSION }}
           targets: ${{ matrix.target }}
-
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: release-${{ matrix.target }}
-
-      - name: Build release binary
-        run: cargo build --release --locked --target "${{ matrix.target }}"
-
-      - name: Package binary
+          workspaces: source -> target
+          key: release-1.99.0-${{ matrix.target }}
+      - name: Build committed version and resolve locked dependency inventory
+        working-directory: source
         env:
-          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
           TARGET: ${{ matrix.target }}
-          VERSION: ${{ needs.prepare.outputs.version }}
+          HERMES_BUILD_COMMIT: ${{ needs.prepare.outputs.source_sha }}
         run: |
-          package="hermes-${VERSION}-${TARGET}"
-          mkdir -p "dist/$package"
-          install -m 755 "target/$TARGET/release/hermes" "dist/$package/hermes"
-          cp packaging/linux/io.github.battlemountain2.Hermes.desktop "dist/$package/"
-          cp packaging/linux/io.github.battlemountain2.Hermes.Dev.desktop "dist/$package/"
-          cp data/icons/scalable/apps/io.github.battlemountain2.Hermes.svg "dist/$package/"
-          mkdir -p "dist/$package/scripts" "dist/$package/docs"
-          cp scripts/desktop-integration.py "dist/$package/scripts/"
-          cp docs/desktop-integration.md "dist/$package/docs/"
-          printf '%s\n' "$SOURCE_SHA" > "dist/$package/SOURCE_COMMIT"
-          cp README.md LICENSE THIRD_PARTY_LICENSES.md "dist/$package/"
-          tar -C dist -czf "dist/$package.tar.gz" "$package"
-          (cd dist && sha256sum "$package.tar.gz" > "$package.tar.gz.sha256")
-
-      - name: Upload release artifact
+          cargo +1.99.0 build --release --locked --target "$TARGET" --bin hermes
+          cargo +1.99.0 metadata --locked --format-version 1 --filter-platform "$TARGET" > "$RUNNER_TEMP/cargo-metadata.json"
+      - name: Bundle Linux binary and dependency license inventory
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          python3 pipeline/scripts/release_artifacts.py bundle --source source \
+            --sha "$SOURCE_SHA" --version "$VERSION" --channel "$CHANNEL" \
+            --target "$TARGET" --metadata "$RUNNER_TEMP/cargo-metadata.json" --output dist
+      - name: Upload target-specific assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: hermes-${{ matrix.target }}
-          path: |
-            dist/*.tar.gz
-            dist/*.sha256
+          name: release-${{ matrix.target }}
+          path: dist/*
           if-no-files-found: error
 
   release:
-    name: Tag and publish release
+    name: Approve, attest, tag, and publish immutable source
     needs: [prepare, build]
     runs-on: ubuntu-24.04
     environment: release
     permissions:
+      actions: read
       attestations: write
       contents: write
       id-token: write
-
+    env:
+      CI_RUN: ${{ needs.prepare.outputs.ci_run }}
     steps:
-      - name: Check out source commit
+      - name: Check out trusted release control code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: pipeline
+          persist-credentials: false
+      - name: Check out approved source for tag-only publication
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.source_sha }}
+          path: source
           fetch-depth: 0
-
-      - name: Download binaries
+          # Only this approved job has repository write credentials. No build or
+          # package hooks from the source checkout execute in this job.
+          persist-credentials: true
+      - name: Recheck CI, default-branch reachability, and recorded approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 pipeline/scripts/release.py gate --source source \
+            --sha "$SOURCE_SHA" --version "$VERSION" --channel "$CHANNEL" \
+            --confirmation "$CONFIRMATION" --ci-run "$CI_RUN" --require-approval \
+            --evidence "$RUNNER_TEMP/approval.json"
+      - name: Download only this run's Linux build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
+          pattern: release-*
           path: dist
           merge-multiple: true
-
-      - name: Attest release artifacts
+      - name: Validate build identities and seal source, inventories, and checksums
+        run: |
+          python3 pipeline/scripts/release_artifacts.py assemble --source source \
+            --sha "$SOURCE_SHA" --version "$VERSION" --channel "$CHANNEL" \
+            --evidence "$RUNNER_TEMP/approval.json" --output dist
+      - name: Attest workflow provenance for sealed assets
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/*
-
-      - name: Commit version and push tag
-        env:
-          BRANCH: ${{ github.event.repository.default_branch }}
-          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          git fetch origin "$BRANCH" --tags
-          if [[ "$(git rev-parse "origin/$BRANCH")" != "$SOURCE_SHA" ]]; then
-            echo "The default branch changed while release binaries were building. Run the workflow again." >&2
-            exit 1
-          fi
-          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
-            echo "Tag v$VERSION already exists." >&2
-            exit 1
-          fi
-
-          python3 - <<'PY'
-          import os
-          import pathlib
-          import re
-
-          version = os.environ["VERSION"]
-          for filename, pattern in (
-              ("Cargo.toml", r'(^version = ")\d+\.\d+\.\d+("$)'),
-              ("Cargo.lock", r'(\[\[package\]\]\nname = "hermes"\nversion = ")\d+\.\d+\.\d+("\n)'),
-          ):
-              path = pathlib.Path(filename)
-              text, count = re.subn(pattern, rf'\g<1>{version}\2', path.read_text(), count=1, flags=re.MULTILINE)
-              if count != 1:
-                  raise SystemExit(f"could not update version in {filename}")
-              path.write_text(text)
-          PY
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml Cargo.lock
-          git commit -m "chore: release v$VERSION"
-          git tag -a "v$VERSION" -m "Hermes v$VERSION"
-          git push --atomic origin "HEAD:$BRANCH" "v$VERSION"
-
-      - name: Create GitHub release
+      - name: Attest approved source and per-target build identities
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+          predicate-type: https://github.com/battlemountain2/hermes/attestations/release/v1
+          predicate-path: dist/release-manifest.json
+      - name: Revalidate and publish only the approved immutable tag
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: gh release create "v$VERSION" dist/* --verify-tag --generate-notes --title "Hermes v$VERSION"
+        run: |
+          python3 pipeline/scripts/release.py publish --source source \
+            --sha "$SOURCE_SHA" --version "$VERSION" --channel "$CHANNEL" \
+            --confirmation "$CONFIRMATION" --ci-run "$CI_RUN" --require-approval --dist dist
