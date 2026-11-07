@@ -209,6 +209,9 @@ fn show(
     crate::ui::context_menu::tidy_separators(&content);
     menu.set_child(Some(&content));
     menu.connect_closed(|menu| {
+        // Every invocation creates a fresh menu. Release its focused action
+        // widgets before detaching the popup, including on older GTK runtimes.
+        menu.set_child(None::<&gtk::Widget>);
         if menu.parent().is_some() {
             menu.unparent();
         }
