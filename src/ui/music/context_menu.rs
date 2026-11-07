@@ -329,11 +329,7 @@ fn show(
         }
     }
     popover.set_child(Some(&contents));
-    popover.connect_closed(|menu| {
-        if menu.parent().is_some() {
-            menu.unparent();
-        }
-    });
+    crate::ui::context_menu::release_ephemeral_on_close(&popover, anchor);
     popover.popup();
     popover
 }

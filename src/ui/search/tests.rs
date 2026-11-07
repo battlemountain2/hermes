@@ -1103,7 +1103,7 @@ fn desktop_grouped_search_pages_entities_and_back_preserve_context() {
             panel.compute_bounds(&window).expect("expected test value from panel.compute_bounds(&window)"),
             footer.compute_bounds(&window).expect("expected test value from footer.compute_bounds(&window)"),
             dialog.state.more_button.compute_bounds(&window).expect("expected test value from dialog.state.more_button.compute_bounds(&window)"),
-            dialog.state.back_button.compute_bounds(&window).expect("expected test value from dialog.state.back_button.compute_bounds(&window)"),
+            dialog.state.back_button.compute_bounds(&dialog.state.filters.popover).expect("Back control bounds inside its native popover"),
             dialog
                 .state
                 .notice

@@ -1,5 +1,31 @@
 # Next agent: Hermes performance, file features and media polish
 
+## November 7 compatibility qualification — current
+
+The release-foundation follow-up is backed up in draft PR #8 on
+`ci/6-release-qualification`, stacked on safety PR #7. Its current status and
+source SHA are recorded in the PR. Durable evidence remains under
+`/home/bry/hermes-validation/2026-11-06/` because that run began on November 6.
+
+- The hosted Ubuntu runner explicitly prepares Bubblewrap user/network
+  namespaces before executing private tests. Spelling, dependency policy and
+  disposable Arch package builds have passed on GitHub.
+- GTK 4.14 exposed focus ownership retaining closed native popups. Photo and
+  music menus now share cleanup that clears an internal menu focus, returns it
+  to the anchor and releases ephemeral action widgets before detaching.
+- Search geometry checks measure controls inside their native filter popover,
+  which works across GTK runtime versions.
+- Both helper launch paths bound OpenBLAS/OpenMP worker threads to one. Media
+  metadata failures retain a bounded diagnostic and exit status for diagnosis.
+- The complete local suite passed 1,350 ordinary tests and 116 isolated GTK
+  checks before the final compatibility fixes. Targeted photo/music/search/hover
+  checks exercise those fixes with system GTK and private GTK 4.14 libraries.
+  Hosted full-suite results and the final candidate identity belong in PR #8.
+
+Next release gates still include real clean-package installation/upgrade/removal,
+physical Wayland/browser/audio acceptance, Asahi and Mac qualification, and
+reviewing the 115 explicitly excluded dependency/corpus/platform checks.
+
 ## November 6 CI/package follow-up — current
 
 Worktree: `/home/bry/hermes-worktrees/safety`, branch
