@@ -2,7 +2,7 @@ use rusqlite::{
     Connection, config::DbConfig, limits::Limit, params, params_from_iter, types::Value,
 };
 
-use super::{ParsedSearchQuery, SearchItem, matches_category};
+use super::{ParsedSearchQuery, SearchItem, matches_category, source::Source};
 
 const MAX_DATABASE_BYTES: usize = 32 * 1024 * 1024;
 const PAGE_SIZE: usize = 4096;
@@ -25,13 +25,43 @@ pub(super) struct Candidates {
 }
 
 impl Candidates {
+    pub(super) fn build_source(
+        source: &Source,
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<Self, String> {
+        Self::build_stream(source.len(), cancelled, |visit| {
+            source.for_each_page(cancelled, |page| {
+                for (position, item) in page {
+                    visit(*position, item)?;
+                }
+                Ok(())
+            })
+        })
+    }
+
+    #[cfg(test)]
     pub(super) fn build(
         items: &[SearchItem],
         cancelled: &impl Fn() -> bool,
     ) -> Result<Self, String> {
+        Self::build_stream(items.len(), cancelled, |visit| {
+            for (position, item) in items.iter().enumerate() {
+                visit(position, item)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn build_stream(
+        item_count: usize,
+        cancelled: &impl Fn() -> bool,
+        mut for_each: impl FnMut(
+            &mut dyn FnMut(usize, &SearchItem) -> Result<(), String>,
+        ) -> Result<(), String>,
+    ) -> Result<Self, String> {
         check_cancelled(cancelled)?;
         let mut input_bytes = 0usize;
-        for item in items {
+        for_each(&mut |_, item| {
             check_cancelled(cancelled)?;
             let row_bytes = item_bytes(item)?;
             if row_bytes > MAX_ROW_BYTES {
@@ -41,7 +71,8 @@ impl Candidates {
             if input_bytes > MAX_DATABASE_BYTES {
                 return Err("Search candidates exceed the input byte limit".into());
             }
-        }
+            Ok(())
+        })?;
         let mut connection = Connection::open("").map_err(error)?;
         configure(&connection)?;
         check_cancelled(cancelled)?;
@@ -74,8 +105,9 @@ impl Candidates {
             let mut insert_category = transaction
                 .prepare("INSERT INTO categories(category, sequence) VALUES (?1, ?2)")
                 .map_err(error)?;
-            for (sequence, item) in items.iter().enumerate() {
+            for_each(&mut |sequence, item| {
                 check_cancelled(cancelled)?;
+                let sequence = i64::try_from(sequence).map_err(error)?;
                 let extension = if item.is_directory {
                     None
                 } else {
@@ -103,7 +135,7 @@ impl Candidates {
                 }
                 insert
                     .execute(params![
-                        sequence as i64,
+                        sequence,
                         item.is_directory,
                         extension,
                         artist,
@@ -116,12 +148,13 @@ impl Candidates {
                         check_cancelled(cancelled)?;
                         if matches_category(&item.path, category) {
                             insert_category
-                                .execute(params![category, sequence as i64])
+                                .execute(params![category, sequence])
                                 .map_err(error)?;
                         }
                     }
                 }
-            }
+                Ok(())
+            })?;
             drop(insert_category);
             drop(insert);
             check_cancelled(cancelled)?;
@@ -139,7 +172,7 @@ impl Candidates {
         check_cancelled(cancelled)?;
         Ok(Self {
             connection,
-            item_count: items.len(),
+            item_count,
             #[cfg(test)]
             fail_after_page: std::cell::Cell::new(None),
         })
