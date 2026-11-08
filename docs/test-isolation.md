@@ -39,3 +39,8 @@ frame pacing, fractional scaling, accessibility or actual Asahi hardware.
 
 The retained-tab regression also checks that the keyboard context-menu handler is
 restored with its tab, and that closing a retained tab releases its file model.
+
+The empirical descriptor-passing worker test performs one cold decode before
+timing twenty warm requests. Cold process/decoder startup is logged separately;
+the existing 150 ms limit still applies to each of the twenty warm requests.
+Hosted qualification exposed the original first-request classification at 216 ms.

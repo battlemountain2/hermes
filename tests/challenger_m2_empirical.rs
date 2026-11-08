@@ -384,7 +384,8 @@ fn test_scm_rights_live_worker_pipeline_under_rapid_requests() {
         .spawn()
         .expect("spawn browser worker");
 
-    for i in 0..20 {
+    // Complete one cold decode before measuring twenty requests on the live worker.
+    for i in 0..=20 {
         let start = Instant::now();
         let file = File::open(&img_path).expect("open image file");
         let (pipe_read, pipe_write) = create_cloexec_pipe().expect("pipe");
@@ -409,11 +410,15 @@ fn test_scm_rights_live_worker_pipeline_under_rapid_requests() {
         drop(host_sock_clone);
 
         let duration = start.elapsed();
-        assert!(
-            duration < Duration::from_millis(150),
-            "Warm request took too long ({:?}) on iteration {i}",
-            duration
-        );
+        if i == 0 {
+            eprintln!("Cold worker request completed in {duration:?}");
+        } else {
+            assert!(
+                duration < Duration::from_millis(150),
+                "Warm request took too long ({:?}) on iteration {i}",
+                duration
+            );
+        }
     }
 
     drop(host_sock);
