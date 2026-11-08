@@ -1,6 +1,29 @@
 # Next agent: Hermes performance, file features and media polish
 
-## November 8 disk-backed query ranks — current
+## November 8 paged search source access — current
+
+Integration checkout `/home/bry/hermes-worktrees/safety`, branch
+`refactor/6-paged-search-source`, follows PR #15 and issue #6.
+Read `docs/search-source-access.md` for ownership and remaining architecture.
+
+- The shared worker retains a source adapter over the library's original immutable
+  `Arc<Vec<Entry>>`, removing its second complete `SearchItem` snapshot.
+- Scoring and candidate construction consume bounded source pages. Source IDs
+  remain original snapshot positions, including out-of-scope holes. Results and
+  grouped representatives resolve the same admitted source on demand.
+- Fallible materialization and cancellation feed the existing newer-revision
+  failure withdrawal. Replacement sources rebuild ranks/candidates and reject
+  old cursors. Content extraction retains its same-revision replay rules.
+- Production grouping uses the source interface. Test-only item sources preserve
+  crafted scorer fixtures. Group position/entity collections remain in memory.
+
+A source/candidate implementation agent and read-only reviewer support one parent
+integration owner. Local/hosted/package evidence belongs in this batch PR.
+The library still retains full Entry snapshots. Direct persistent SQL source reads
+and atomic producer/publication integration, scan/group caps, 100k reference-
+machine latency and physical Linux/Asahi/Mac acceptance remain release gates.
+
+## November 8 disk-backed query ranks — previous checkpoint
 
 Integration checkout `/home/bry/hermes-worktrees/safety`, branch
 `perf/6-disk-backed-query-ranking`, follows PR #14 and issue #6.

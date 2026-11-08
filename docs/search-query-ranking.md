@@ -36,8 +36,9 @@ separate from the persistent catalog and candidate database. It is not a setting
 for the total process resident-memory or disk budget. Rows and reads are bounded,
 and failed/unfinished databases cannot expose a readable prefix.
 
-The worker still owns complete `SearchItem` snapshots. Grouped file/song source
-positions and bounded entity metadata also remain in memory. Export/result-tab
+The [source adapter](search-source-access.md) retains the library's original
+`Entry` snapshot and materializes search items on demand. Grouped file/song
+positions and bounded entity metadata remain in memory. Export/result-tab
 APIs may deliberately request and materialize every result. Scanner/metadata/group
 caps and source reconciliation are unchanged by this increment. The persistent
 catalog as the sole paged source and the two-reference-machine 100k-file/latency

@@ -22,7 +22,9 @@ fn disk_rank_order_matches_the_full_scorer_across_pages() {
     worker.query.text = "match".into();
     worker.query.limit = 100;
     let parsed = ParsedSearchQuery::parse(&worker.query.text);
-    let source = worker.shared_items.clone();
+    let source: Vec<_> = (0..worker.source.len())
+        .filter_map(|position| worker.source.get(position).expect("source read"))
+        .collect();
     let mut expected: Vec<_> = source
         .iter()
         .enumerate()
@@ -132,6 +134,7 @@ fn failed_rank_stream_does_not_return_partial_groups() {
     }
     ranked.finish(&|| false).expect("finish ranks");
     ranked.fail_after_page_for_test(1);
+    let source = super::super::source::Source::from_items(source);
     let result = super::super::groups::GroupIndex::build_paged(
         &source,
         &ranked,

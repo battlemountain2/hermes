@@ -371,7 +371,7 @@ fn start_worker(
             grouping: None,
         },
         matches: Vec::new(),
-        shared_items: Arc::new(Vec::new()),
+        source: Arc::new(super::source::Source::empty()),
         candidates: None,
         candidate_attempted: false,
         shared_indexing: true,
@@ -420,7 +420,7 @@ struct Worker {
     extraction: Arc<dyn TextExtractionProvider>,
     query: Query,
     matches: Vec<(i64, SearchItem)>,
-    shared_items: Arc<Vec<SearchItem>>,
+    source: Arc<super::source::Source>,
     candidates: Option<super::candidates::Candidates>,
     candidate_attempted: bool,
     shared_indexing: bool,
@@ -451,63 +451,26 @@ impl Worker {
             if let Some(snapshot) = library.poll() {
                 indexing = snapshot.indexing;
                 self.scan_notice = snapshot.notice.clone();
-                let mut items = Vec::new();
-                let mut bytes = items.capacity() * size_of::<SearchItem>();
-                if root.is_dir() {
-                    for entry in snapshot
-                        .entries
-                        .iter()
-                        .filter(|entry| entry.path != root && entry.path.starts_with(&root))
-                    {
+                let source = match super::source::Source::new(
+                    root.clone(),
+                    snapshot.entries.clone(),
+                    self.limits.entries,
+                    self.limits.bytes,
+                    &|| self.cancellation.is_cancelled(),
+                ) {
+                    Ok(source) => source,
+                    Err(error) => {
                         if self.cancellation.is_cancelled() {
                             return;
                         }
-                        let mut item = SearchItem::from_path(
-                            entry.path.clone(),
-                            &root,
-                            entry.is_directory,
-                            entry.modified_unix_seconds,
-                        );
-                        item.source_identity = entry.identity.clone();
-                        item.music_tags = entry.music_tags.clone();
-                        item.search_metadata = entry
-                            .music_tags
-                            .as_ref()
-                            .map(|tags| {
-                                [&tags.title, &tags.artist, &tags.album_artist, &tags.album]
-                                    .into_iter()
-                                    .filter_map(|field| field.as_deref())
-                                    .collect::<Vec<_>>()
-                                    .join(" ")
-                                    .to_lowercase()
-                            })
-                            .unwrap_or_default();
-                        let cost = item_bytes(&item) - size_of::<SearchItem>();
-                        let capacity = if items.len() == items.capacity() {
-                            (items.capacity() + 256).min(self.limits.entries)
-                        } else {
-                            items.capacity()
-                        };
-                        let allocation = (capacity - items.capacity()) * size_of::<SearchItem>();
-                        if items.len() >= self.limits.entries
-                            || bytes + cost + allocation > self.limits.bytes
-                        {
-                            self.warn("Search index limited to 100,000 entries / 512 MiB".into());
-                            break;
-                        }
-                        if allocation > 0 {
-                            items.reserve_exact(capacity - items.len());
-                        }
-                        bytes += cost + allocation;
-                        items.push(item);
+                        self.warn(error);
+                        super::source::Source::empty()
                     }
-                } else {
-                    self.warn(format!(
-                        "Cannot search {}: folder unavailable",
-                        root.display()
-                    ));
+                };
+                if let Some(notice) = source.notice() {
+                    self.warn(notice.to_owned());
                 }
-                self.shared_items = Arc::new(items);
+                self.source = Arc::new(source);
                 self.candidates = None;
                 self.candidate_attempted = false;
                 self.shared_indexing = indexing;
@@ -617,9 +580,9 @@ impl Worker {
         self.ranked = None;
         self.rank_notice = None;
         self.groups = None;
-        let items = self.shared_items.clone();
+        let source = self.source.clone();
         let parsed = ParsedSearchQuery::parse(&self.query.text.to_lowercase());
-        match self.build_ranking(&items, &parsed) {
+        match self.build_ranking(&source, &parsed) {
             Ok(ranked) => {
                 if let Err(error) = self.rebuild_groups(&ranked, &parsed) {
                     self.rank_notice = Some(error);
@@ -633,7 +596,7 @@ impl Worker {
 
     fn build_ranking(
         &mut self,
-        items: &[SearchItem],
+        source: &super::source::Source,
         parsed: &ParsedSearchQuery,
     ) -> Result<super::ranked::Ranked, String> {
         let cancellation = self.cancellation.clone();
@@ -658,7 +621,7 @@ impl Worker {
         if let Some(candidates) = self.candidates.take() {
             let mut rank_error = None;
             let result = candidates.for_each_page(parsed, &cancelled, |page| {
-                self.rank_positions(items, page.iter().copied(), parsed, &mut ranked)
+                self.rank_positions(source, page.iter().copied(), parsed, &mut ranked)
                     .inspect_err(|error| rank_error = Some(error.clone()))
             });
             self.candidates = Some(candidates);
@@ -674,7 +637,12 @@ impl Worker {
             }
         }
         if !used_candidates {
-            self.rank_positions(items, 0..items.len(), parsed, &mut ranked)?;
+            source.for_each_page(&cancelled, |page| {
+                for (position, item) in page {
+                    self.rank_item(*position, item, parsed, &mut ranked)?;
+                }
+                Ok(())
+            })?;
         }
         ranked.finish(&cancelled)?;
         Ok(ranked)
@@ -682,45 +650,56 @@ impl Worker {
 
     fn rank_positions(
         &mut self,
-        items: &[SearchItem],
+        source: &super::source::Source,
         positions: impl Iterator<Item = usize>,
         parsed: &ParsedSearchQuery,
         ranked: &mut super::ranked::Ranked,
     ) -> Result<(), String> {
         for position in positions {
-            if self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire) {
-                return Err("Search query cancelled".into());
-            }
-            let item = items
-                .get(position)
+            let item = source
+                .get(position)?
                 .ok_or_else(|| "Search ranking contains an invalid source position".to_owned())?;
-            if let Some(grouping) = &self.query.grouping {
-                if grouping
-                    .entity
-                    .as_ref()
-                    .is_some_and(|entity| !super::groups::matches_entity(item, entity))
+            self.rank_item(position, &item, parsed, ranked)?;
+        }
+        Ok(())
+    }
+
+    fn rank_item(
+        &mut self,
+        position: usize,
+        item: &SearchItem,
+        parsed: &ParsedSearchQuery,
+        ranked: &mut super::ranked::Ranked,
+    ) -> Result<(), String> {
+        if self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire) {
+            return Err("Search query cancelled".into());
+        }
+        if let Some(grouping) = &self.query.grouping {
+            if grouping
+                .entity
+                .as_ref()
+                .is_some_and(|entity| !super::groups::matches_entity(item, entity))
+            {
+                return Ok(());
+            }
+            if !grouping.virtual_results {
+                let audio = !item.is_directory
+                    && classify_by_name(item.path.as_os_str()) == FormatFamily::Audio;
+                if (grouping.group == SearchGroup::Files && audio)
+                    || (grouping.group == SearchGroup::Songs && !audio)
                 {
-                    continue;
-                }
-                if !grouping.virtual_results {
-                    let audio = !item.is_directory
-                        && classify_by_name(item.path.as_os_str()) == FormatFamily::Audio;
-                    if (grouping.group == SearchGroup::Files && audio)
-                        || (grouping.group == SearchGroup::Songs && !audio)
-                    {
-                        continue;
-                    }
+                    return Ok(());
                 }
             }
-            if let Some(score) = if parsed.is_empty() {
-                Some(0)
-            } else {
-                self.score(item, parsed)
-            } {
-                ranked.push(score, position, item, &|| {
-                    self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire)
-                })?;
-            }
+        }
+        if let Some(score) = if parsed.is_empty() {
+            Some(0)
+        } else {
+            self.score(item, parsed)
+        } {
+            ranked.push(score, position, item, &|| {
+                self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire)
+            })?;
         }
         Ok(())
     }
@@ -737,7 +716,7 @@ impl Worker {
             .is_some_and(|grouping| grouping.virtual_results)
         {
             self.groups =
-                super::groups::GroupIndex::build_paged(&self.shared_items, ranked, parsed, &|| {
+                super::groups::GroupIndex::build_paged(&self.source, ranked, parsed, &|| {
                     self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire)
                 })
                 .map(Some)?;
@@ -768,7 +747,7 @@ impl Worker {
             || parsed.title.is_some();
         if filtered && !self.shared_indexing && !self.candidate_attempted {
             self.candidate_attempted = true;
-            self.candidates = super::candidates::Candidates::build(&self.shared_items, &|| {
+            self.candidates = super::candidates::Candidates::build_source(&self.source, &|| {
                 self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire)
             })
             .ok();
@@ -806,17 +785,40 @@ impl Worker {
                 self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire)
             }) {
                 Ok(rows) => {
-                    for (_, position) in rows {
-                        let Some(item) = self.shared_items.get(position) else {
-                            self.rank_notice = Some("Invalid search result position".into());
-                            break;
-                        };
-                        ranked_items.push(item.clone());
+                    match materialize_items(&self.source, rows, &|| {
+                        self.cancellation.is_cancelled()
+                            || self.query.cancelled.load(Ordering::Acquire)
+                    }) {
+                        Ok(items) => ranked_items = items,
+                        Err(error) => self.rank_notice = Some(error),
                     }
                 }
                 Err(error) => self.rank_notice = Some(error),
             }
         }
+        let mut grouped_results = self
+            .query
+            .grouping
+            .as_ref()
+            .filter(|grouping| grouping.virtual_results)
+            .zip(self.groups.as_ref())
+            .map(|(grouping, groups)| {
+                groups
+                    .page_source(&self.source, grouping.group, self.shown_limit, &|| {
+                        self.cancellation.is_cancelled()
+                            || self.query.cancelled.load(Ordering::Acquire)
+                    })
+                    .map(|results| SearchGroups {
+                        group: grouping.group,
+                        results,
+                        counts: groups.counts(),
+                    })
+            })
+            .transpose()
+            .unwrap_or_else(|error| {
+                self.rank_notice = Some(error);
+                None
+            });
         if self.rank_notice.is_some() {
             if self.ranked.is_some() || self.groups.is_some() {
                 // Consumers reject shrinking pages within one revision. Make
@@ -826,6 +828,7 @@ impl Worker {
             self.ranked = None;
             self.groups = None;
             ranked_items.clear();
+            grouped_results = None;
         }
         if self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire) {
             return;
@@ -854,17 +857,7 @@ impl Worker {
             shown: self.shown_limit.min(self.result_total()),
             total: self.result_total(),
         });
-        let groups = self
-            .query
-            .grouping
-            .as_ref()
-            .filter(|grouping| grouping.virtual_results)
-            .zip(self.groups.as_ref())
-            .map(|(grouping, groups)| SearchGroups {
-                group: grouping.group,
-                results: groups.page(&self.shared_items, grouping.group, self.shown_limit),
-                counts: groups.counts(),
-            });
+        let groups = grouped_results;
         let items = if groups.is_some() {
             Vec::new()
         } else if let Some(page) = page {
@@ -1195,6 +1188,28 @@ impl Worker {
     }
 }
 
+fn materialize_items(
+    source: &super::source::Source,
+    rows: Vec<(i64, usize)>,
+    cancelled: &impl Fn() -> bool,
+) -> Result<Vec<SearchItem>, String> {
+    let mut items = Vec::new();
+    for (_, position) in rows {
+        if cancelled() {
+            return Err("Search query cancelled".into());
+        }
+        items.push(
+            source
+                .get(position)?
+                .ok_or_else(|| "Invalid search result position".to_owned())?,
+        );
+    }
+    if cancelled() {
+        return Err("Search query cancelled".into());
+    }
+    Ok(items)
+}
+
 fn item_bytes(item: &SearchItem) -> usize {
     size_of::<SearchItem>()
         + item.path.capacity()
@@ -1222,3 +1237,6 @@ mod group_tests;
 
 #[cfg(test)]
 mod ranking_tests;
+
+#[cfg(test)]
+mod source_tests;

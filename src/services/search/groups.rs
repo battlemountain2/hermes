@@ -152,16 +152,24 @@ impl GroupIndex {
         max_bytes: usize,
         max_entities: usize,
     ) -> Result<Self, String> {
-        Self::build_streamed(items, parsed, cancelled, max_bytes, max_entities, |visit| {
-            for &(score, position) in ranked {
-                visit(score, position)?;
-            }
-            Ok(())
-        })
+        let source = super::source::Source::from_items(items.to_vec());
+        Self::build_streamed(
+            &source,
+            parsed,
+            cancelled,
+            max_bytes,
+            max_entities,
+            |visit| {
+                for &(score, position) in ranked {
+                    visit(score, position)?;
+                }
+                Ok(())
+            },
+        )
     }
 
     pub(super) fn build_paged(
-        items: &[SearchItem],
+        items: &super::source::Source,
         ranked: &super::ranked::Ranked,
         parsed: &ParsedSearchQuery,
         cancelled: &impl Fn() -> bool,
@@ -184,7 +192,7 @@ impl GroupIndex {
     }
 
     fn build_streamed(
-        items: &[SearchItem],
+        items: &super::source::Source,
         parsed: &ParsedSearchQuery,
         cancelled: &impl Fn() -> bool,
         max_bytes: usize,
@@ -210,18 +218,18 @@ impl GroupIndex {
         scan(&mut |_, position| {
             check_cancelled(cancelled)?;
             let item = items
-                .get(position)
+                .get(position)?
                 .ok_or_else(|| "Grouped search contains an invalid source position".to_owned())?;
-            if !is_song(item) {
+            if !is_song(&item) {
                 index.files.push(position);
                 return Ok(());
             }
             index.songs.push(position);
-            let Some(labels) = entity_labels(item) else {
+            let Some(labels) = entity_labels(&item) else {
                 return Ok(());
             };
             let inferred_matches =
-                parsed.literal.is_none() || super::filter_bonus(item, parsed).is_some();
+                parsed.literal.is_none() || super::filter_bonus(&item, parsed).is_some();
             for key in [album_key(&labels), artist_key(&labels)]
                 .into_iter()
                 .flatten()
@@ -240,7 +248,10 @@ impl GroupIndex {
                 };
                 if let Some(summary) = entities.get_mut(&key) {
                     summary.songs += 1;
-                    if item.path < items[summary.representative].path {
+                    let representative = items.get(summary.representative)?.ok_or_else(|| {
+                        "Grouped search contains an invalid representative".to_owned()
+                    })?;
+                    if item.path < representative.path {
                         summary.representative = position;
                     }
                     continue;
@@ -300,12 +311,30 @@ impl GroupIndex {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn page(
         &self,
         items: &[SearchItem],
         group: SearchGroup,
         limit: usize,
     ) -> Vec<SearchResult> {
+        self.page_source(
+            &super::source::Source::from_items(items.to_vec()),
+            group,
+            limit,
+            &|| false,
+        )
+        .expect("valid grouped fixture source")
+    }
+
+    pub(super) fn page_source(
+        &self,
+        items: &super::source::Source,
+        group: SearchGroup,
+        limit: usize,
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<Vec<SearchResult>, String> {
+        check_cancelled(cancelled)?;
         let lengths = [
             self.files.len(),
             self.songs.len(),
@@ -333,43 +362,49 @@ impl GroupIndex {
         }
         let mut results = Vec::with_capacity(quotas.iter().sum());
         for (positions, quota) in [(&self.files, quotas[0]), (&self.songs, quotas[1])] {
-            results.extend(
-                positions
-                    .iter()
-                    .take(quota)
-                    .map(|&position| SearchResult::File(items[position].clone())),
-            );
+            for &position in positions.iter().take(quota) {
+                check_cancelled(cancelled)?;
+                let item = items.get(position)?.ok_or_else(|| {
+                    "Grouped search contains an invalid source position".to_owned()
+                })?;
+                results.push(SearchResult::File(item));
+            }
         }
         for (positions, quota, album) in [
             (&self.albums, quotas[2], true),
             (&self.artists, quotas[3], false),
         ] {
-            results.extend(positions.iter().take(quota).map(|position| {
-                let representative = &items[position.summary.representative];
-                let labels = entity_labels(representative).expect("Indexed entity has valid tags");
+            for position in positions.iter().take(quota) {
+                check_cancelled(cancelled)?;
+                let representative =
+                    items.get(position.summary.representative)?.ok_or_else(|| {
+                        "Grouped search contains an invalid representative".to_owned()
+                    })?;
+                let labels = entity_labels(&representative)
+                    .ok_or_else(|| "Grouped search representative has invalid tags".to_owned())?;
                 let (title, artist) = if album {
-                    (
-                        labels.album.expect("Indexed album has a title"),
-                        labels.album_artist,
-                    )
+                    (labels.album, labels.album_artist)
                 } else {
-                    (labels.artist.expect("Indexed artist has a name"), None)
+                    (labels.artist, None)
                 };
+                let title =
+                    title.ok_or_else(|| "Grouped search representative has no label".to_owned())?;
                 let entity = SearchEntity {
                     key: position.key.clone(),
                     title: title.to_owned(),
                     artist: artist.map(str::to_owned),
                     songs: position.summary.songs,
-                    representative: representative.clone(),
+                    representative,
                 };
-                if album {
+                results.push(if album {
                     SearchResult::Album(entity)
                 } else {
                     SearchResult::Artist(entity)
-                }
-            }));
+                });
+            }
         }
-        results
+        check_cancelled(cancelled)?;
+        Ok(results)
     }
 
     pub(super) fn notice(&self) -> Option<&str> {

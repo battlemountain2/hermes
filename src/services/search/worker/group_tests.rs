@@ -22,7 +22,7 @@ fn literal_smart_queries_keep_grouped_and_result_tab_matches_with_sql_candidates
     worker.prepare_candidates();
     assert!(worker.candidates.is_none());
     worker.candidates = Some(
-        super::super::candidates::Candidates::build(&worker.shared_items, &|| false)
+        super::super::candidates::Candidates::build_source(&worker.source, &|| false)
             .expect("generated fixture must provide the expected value"),
     );
     for virtual_results in [true, false] {
@@ -47,7 +47,12 @@ fn literal_smart_queries_keep_grouped_and_result_tab_matches_with_sql_candidates
         } else {
             assert_eq!(super::pagination_tests::ranked_rows(&worker).len(), 1);
             assert_eq!(
-                worker.shared_items[super::pagination_tests::ranked_rows(&worker)[0].1].name,
+                worker
+                    .source
+                    .get(super::pagination_tests::ranked_rows(&worker)[0].1)
+                    .expect("source read")
+                    .expect("ranked item")
+                    .name,
                 "01.flac"
             );
         }
@@ -147,7 +152,14 @@ fn album_drilling_and_export_follow_disc_track_tags_before_filenames() {
         worker.rescore_shared();
         let names: Vec<_> = super::pagination_tests::ranked_rows(&worker)
             .iter()
-            .map(|(_, position)| worker.shared_items[*position].name.as_str())
+            .map(|(_, position)| {
+                worker
+                    .source
+                    .get(*position)
+                    .expect("source read")
+                    .expect("ranked item")
+                    .name
+            })
             .collect();
         assert_eq!(names, ["z.flac", "b.flac", "a.flac"]);
     }

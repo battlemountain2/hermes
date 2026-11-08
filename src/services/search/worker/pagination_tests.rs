@@ -299,7 +299,7 @@ pub(super) fn synthetic_worker(items: Vec<SearchItem>) -> Worker {
             grouping: None,
         },
         matches: Vec::new(),
-        shared_items: Arc::new(items),
+        source: Arc::new(super::super::source::Source::from_items(items)),
         candidates: None,
         candidate_attempted: false,
         shared_indexing: false,

@@ -44,8 +44,10 @@ concurrent publication, signed sparse sequences and stage cleanup. Integration
 fixtures change a later source after the early publication, reject an invalid
 tail with prefix withdrawal, and cancel/retry through the startup helper.
 
-The scanner still owns an in-memory library snapshot and the search worker still
-owns ranking vectors. Moving query/ranking to the persistent catalog, removing
+The scanner still owns an in-memory library snapshot. Query ranks now use
+[paged SQLite storage](search-query-ranking.md) and shared workers use the
+[paged source adapter](search-source-access.md). Moving source reads directly
+to persistent catalog revisions, removing
 scan/group limits and verifying full Home coverage and warm latency remain the
 next search architecture gates. First-result and completion timings need measured
 reference-machine evidence. Native Mac filesystem/profile and XPC qualification,
