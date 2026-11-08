@@ -3,6 +3,127 @@
 use super::*;
 
 #[test]
+#[ignore = "Requires isolated GTK display; verifies transfer byte telemetry, idle expiry and HUD disposal"]
+fn desktop_transfer_telemetry_keeps_unknown_totals_and_stalls_honest() {
+    struct EmptySource;
+    impl FileSource for EmptySource {
+        fn validate_location(
+            &self,
+            _: &Location,
+        ) -> Result<(), crate::services::LocationValidationError> {
+            Ok(())
+        }
+        fn enumerate(
+            &self,
+            _: crate::services::DirectoryRequest,
+            _: Rc<dyn Fn(crate::services::DirectoryEvent)>,
+        ) -> crate::services::LoadHandle {
+            crate::services::LoadHandle::new(|| {})
+        }
+    }
+    gtk::init().expect("initialize private GTK display");
+    crate::assets::prepare().expect("register embedded icons");
+    let view = BrowserView::new(Rc::new(EmptySource), PeekBehavior::default());
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(&view.widget()));
+    let window = gtk::Window::builder().child(&overlay).build();
+    window.present();
+    view.state.show_file_operation_progress(
+        2,
+        crate::assets::icons::COPY,
+        "Copying",
+        "Generated test data",
+    );
+    view.state
+        .update_transfer_progress(0, 2, 4096, 4096, Some(8192));
+    {
+        let borrowed = view.state.delete_progress.borrow();
+        let hud = borrowed.as_ref().expect("active transfer HUD");
+        hud.last_sample
+            .replace((Instant::now() - Duration::from_secs(1), 0));
+    }
+    view.state.refresh_transfer_telemetry();
+    {
+        let borrowed = view.state.delete_progress.borrow();
+        let hud = borrowed.as_ref().expect("active transfer HUD");
+        assert_eq!(hud.progress.fraction(), 0.5);
+        assert!(
+            hud.telemetry
+                .as_ref()
+                .expect("speed label")
+                .text()
+                .contains("/s")
+        );
+        assert!(
+            !hud.eta
+                .as_ref()
+                .expect("ETA label")
+                .text()
+                .contains("Estimating")
+        );
+        hud.last_sample
+            .replace((Instant::now() - Duration::from_secs(1), 4096));
+    }
+    // No backend event arrives during this stall. The view's own frame tick
+    // invokes the same refresh and expires the previous speed estimate.
+    view.state.refresh_transfer_telemetry();
+    {
+        let borrowed = view.state.delete_progress.borrow();
+        let hud = borrowed.as_ref().expect("active transfer HUD");
+        assert_eq!(hud.smoothed_speed.get(), 0.0);
+        assert_eq!(
+            hud.telemetry.as_ref().expect("speed label").text(),
+            "Waiting for data…"
+        );
+        assert_eq!(
+            hud.eta.as_ref().expect("ETA label").text(),
+            "Estimating time remaining…"
+        );
+    }
+    view.state.update_transfer_progress(1, 2, 6144, 4096, None);
+    {
+        let borrowed = view.state.delete_progress.borrow();
+        let hud = borrowed.as_ref().expect("active transfer HUD");
+        assert!(!hud.status.text().contains('%'));
+        hud.last_sample
+            .replace((Instant::now() - Duration::from_secs(1), 4096));
+    }
+    view.state.refresh_transfer_telemetry();
+    {
+        let borrowed = view.state.delete_progress.borrow();
+        let hud = borrowed.as_ref().expect("active transfer HUD");
+        assert_eq!(
+            hud.eta.as_ref().expect("ETA label").text(),
+            "Total size unavailable"
+        );
+        assert_eq!(
+            hud.smoothed_speed.get(),
+            0.0,
+            "logical rename bytes cannot increase copy speed"
+        );
+    }
+    let weak_bar = view
+        .state
+        .delete_progress
+        .borrow()
+        .as_ref()
+        .expect("active HUD")
+        .progress
+        .downgrade();
+    view.state.dismiss_delete_progress();
+    view.state.refresh_transfer_telemetry();
+    assert!(view.state.delete_progress.borrow().is_none());
+    while glib::MainContext::default().pending() {
+        glib::MainContext::default().iteration(false);
+    }
+    assert!(
+        weak_bar.upgrade().is_none(),
+        "frame callback must not retain a dismissed progress bar"
+    );
+    window.close();
+}
+
+#[test]
 #[ignore = "Requires isolated GTK display; synthetic deletion provider only"]
 fn desktop_permanent_delete_preference_preserves_trash_and_empty_trash_safety() {
     struct EmptySource;

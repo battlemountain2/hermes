@@ -158,7 +158,10 @@ pub enum OperationEvent {
         request_id: OperationRequestId,
         completed: usize,
         total: usize,
+        /// Logical bytes processed, including an unpublished staging attempt.
         bytes_transferred: u64,
+        /// Copy bytes reported by the backend, excluding rename-only completion.
+        bytes_copied: u64,
         total_bytes: Option<u64>,
     },
     TransferConflict {

@@ -134,6 +134,7 @@ pub enum BrowserEvent {
         completed: usize,
         total: usize,
         bytes_transferred: u64,
+        bytes_copied: u64,
         total_bytes: Option<u64>,
     },
     TransferConflict {
@@ -1224,6 +1225,7 @@ impl Browser {
                 completed,
                 total,
                 bytes_transferred,
+                bytes_copied,
                 total_bytes,
                 ..
             } = &event
@@ -1232,6 +1234,7 @@ impl Browser {
                     completed: *completed,
                     total: *total,
                     bytes_transferred: *bytes_transferred,
+                    bytes_copied: *bytes_copied,
                     total_bytes: *total_bytes,
                 });
                 return;

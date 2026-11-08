@@ -51,7 +51,7 @@ fn run(
                 }
             });
             let mut tree =
-                TransferTree::new(OperationRequestId(1), emit, gio::Cancellable::new(), moving);
+                TransferTree::new(OperationRequestId(1), emit.clone(), gio::Cancellable::new(), moving, Rc::new(super::Progress::new(OperationRequestId(1), emit, 1, None)));
             tree.relocation = Rc::new(move |source, target| {
                 output
                     .borrow_mut()
@@ -62,6 +62,7 @@ fn run(
                 gio::File::for_path(fixture.0.join("destination")),
                 false,
                 0,
+                None,
             ));
             let saved = relocations.borrow().clone();
             (result, tree.skipped, saved)
@@ -231,12 +232,19 @@ fn alias_back_into_source_is_rejected_before_creating_a_target() {
                 Rc::new(|_| panic!("must reject before any conflict prompt")),
                 gio::Cancellable::new(),
                 false,
+                Rc::new(super::Progress::new(
+                    OperationRequestId(1),
+                    Rc::new(|_| {}),
+                    1,
+                    None,
+                )),
             );
             let result = context.block_on(tree.transfer(
                 gio::File::for_path(fixture.0.join("source")),
                 gio::File::for_path(fixture.0.join("alias/source")),
                 false,
                 0,
+                None,
             ));
             assert!(result.is_err());
             assert!(!fixture.0.join("source/source").exists());

@@ -100,6 +100,9 @@ struct DeleteProgressView {
     eta: Option<gtk::Label>,
     last_sample: RefCell<(Instant, u64)>,
     smoothed_speed: Cell<f64>,
+    bytes_transferred: Cell<u64>,
+    bytes_copied: Cell<u64>,
+    total_bytes: Cell<Option<u64>>,
 }
 
 #[derive(Clone)]
@@ -1890,7 +1893,7 @@ impl ViewState {
             content.add_css_class("transfer-hud");
             let tbox = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             tbox.add_css_class("transfer-telemetry-box");
-            let tlabel = gtk::Label::new(Some("⚡ Calculating speed…"));
+            let tlabel = gtk::Label::new(Some("Preparing transfer…"));
             tlabel.add_css_class("transfer-speed-readout");
             tlabel.set_xalign(0.0);
             let elabel = gtk::Label::new(Some("Estimating time remaining…"));
@@ -1917,6 +1920,16 @@ impl ViewState {
 
         let layer = modal_layer(&content);
         window_overlay.add_overlay(&layer);
+        if telemetry.is_some() {
+            let weak = Rc::downgrade(self);
+            progress.add_tick_callback(move |_, _| {
+                let Some(state) = weak.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                state.refresh_transfer_telemetry();
+                glib::ControlFlow::Continue
+            });
+        }
         self.delete_progress.replace(Some(DeleteProgressView {
             layer,
             overlay: window_overlay,
@@ -1927,6 +1940,9 @@ impl ViewState {
             eta,
             last_sample: RefCell::new((Instant::now(), 0)),
             smoothed_speed: Cell::new(0.0),
+            bytes_transferred: Cell::new(0),
+            bytes_copied: Cell::new(0),
+            total_bytes: Cell::new(None),
         }));
         let browser = self.browser.clone();
         cancel.connect_clicked(move |_| browser.cancel_file_operation());
@@ -1957,30 +1973,36 @@ impl ViewState {
             .set_fraction(completed as f64 / total.max(1) as f64);
     }
 
-    fn update_transfer_progress(
-        &self,
-        completed: usize,
-        total: usize,
-        bytes_transferred: u64,
-        total_bytes: Option<u64>,
-    ) {
+    fn refresh_transfer_telemetry(&self) {
         let progress_view = self.delete_progress.borrow();
-        let Some(view) = progress_view.as_ref() else {
+        let Some(view) = progress_view
+            .as_ref()
+            .filter(|view| view.telemetry.is_some())
+        else {
             return;
         };
         let now = Instant::now();
         let (prev_time, prev_bytes) = *view.last_sample.borrow();
         let dt = now.duration_since(prev_time).as_secs_f64();
-        if dt >= 0.25 {
-            let inst_speed = (bytes_transferred.saturating_sub(prev_bytes) as f64) / dt;
+        if dt < 0.25 {
+            return;
+        }
+        let bytes_copied = view.bytes_copied.get();
+        let bytes_transferred = view.bytes_transferred.get();
+        let total_bytes = view.total_bytes.get();
+        if total_bytes.is_none() {
+            view.progress.pulse();
+        }
+        {
+            let inst_speed = (bytes_copied.saturating_sub(prev_bytes) as f64) / dt;
             let current_speed = view.smoothed_speed.get();
-            let new_speed = if current_speed <= 0.0 {
+            let new_speed = if inst_speed == 0.0 || current_speed <= 0.0 {
                 inst_speed
             } else {
                 current_speed * 0.7 + inst_speed * 0.3
             };
             view.smoothed_speed.set(new_speed);
-            view.last_sample.replace((now, bytes_transferred));
+            view.last_sample.replace((now, bytes_copied));
         }
 
         let speed = view.smoothed_speed.get();
@@ -1990,15 +2012,19 @@ impl ViewState {
                     "⚡ {}/s",
                     crate::ui::formatting::format_size(speed as u64)
                 ));
-            } else if bytes_transferred > 0 {
-                telemetry_label.set_text("⚡ Starting transfer…");
+            } else if bytes_copied > 0 {
+                telemetry_label.set_text("Waiting for data…");
             } else {
-                telemetry_label.set_text("⚡ Calculating speed…");
+                telemetry_label.set_text("Preparing transfer…");
             }
         }
 
         if let Some(eta_label) = view.eta.as_ref() {
-            if speed > 1024.0
+            if total_bytes.is_none() {
+                eta_label.set_text("Total size unavailable");
+            } else if total_bytes.is_some_and(|total| bytes_transferred >= total) {
+                eta_label.set_text("Finishing transfer…");
+            } else if speed > 1024.0
                 && let Some(total_b) = total_bytes.filter(|&b| b > bytes_transferred)
             {
                 let remaining_bytes = total_b - bytes_transferred;
@@ -2012,7 +2038,23 @@ impl ViewState {
                 eta_label.set_text("Estimating time remaining…");
             }
         }
+    }
 
+    fn update_transfer_progress(
+        &self,
+        completed: usize,
+        total: usize,
+        bytes_transferred: u64,
+        bytes_copied: u64,
+        total_bytes: Option<u64>,
+    ) {
+        let progress_view = self.delete_progress.borrow();
+        let Some(view) = progress_view.as_ref() else {
+            return;
+        };
+        view.bytes_transferred.set(bytes_transferred);
+        view.bytes_copied.set(bytes_copied);
+        view.total_bytes.set(total_bytes);
         if let Some(total_b) = total_bytes.filter(|&b| b > 0) {
             let pct =
                 ((bytes_transferred as f64 / total_b as f64) * 100.0).clamp(0.0, 100.0) as u32;
@@ -2028,13 +2070,11 @@ impl ViewState {
                 "{completed} of {total} items ({})",
                 crate::ui::formatting::format_size(bytes_transferred)
             ));
-            view.progress
-                .set_fraction(completed as f64 / total.max(1) as f64);
+            view.progress.pulse();
         } else {
             view.status
                 .set_text(&format!("{completed} of {total} items"));
-            view.progress
-                .set_fraction(completed as f64 / total.max(1) as f64);
+            view.progress.pulse();
         }
     }
 
@@ -3387,9 +3427,16 @@ impl ViewState {
                 completed,
                 total,
                 bytes_transferred,
+                bytes_copied,
                 total_bytes,
             } => {
-                self.update_transfer_progress(completed, total, bytes_transferred, total_bytes);
+                self.update_transfer_progress(
+                    completed,
+                    total,
+                    bytes_transferred,
+                    bytes_copied,
+                    total_bytes,
+                );
             }
             BrowserEvent::TransferItemCompleted {
                 source,

@@ -4,6 +4,7 @@
 mod tests;
 
 mod merge;
+mod progress;
 mod transfer;
 
 use std::{
@@ -269,8 +270,8 @@ impl OperationProvider for LocalOperationProvider {
         let task = glib::MainContext::default().spawn_local(async move {
             let destination = gio_file(&request.destination);
             let total = request.sources.len();
-            let mut total_bytes = 0u64;
-            let mut all_sizes_known = true;
+            let mut source_sizes = Vec::with_capacity(total);
+            let mut total_bytes = Some(0u64);
             for loc in &request.sources {
                 match gio_file(loc).query_info_future(
                     "standard::size,standard::type",
@@ -278,17 +279,30 @@ impl OperationProvider for LocalOperationProvider {
                     glib::Priority::DEFAULT,
                 ).await {
                     Ok(info) if info.file_type() == gio::FileType::Regular && info.has_attribute("standard::size") && info.size() >= 0 => {
-                        total_bytes = total_bytes.saturating_add(info.size() as u64);
+                        let size = info.size() as u64;
+                        source_sizes.push(Some(size));
+                        total_bytes = total_bytes.and_then(|total| total.checked_add(size));
                     },
-                    _ => all_sizes_known = false,
+                    _ => {
+                        source_sizes.push(None);
+                        total_bytes = None;
+                    },
                 }
             }
-            let total_bytes_opt = if all_sizes_known && total_bytes > 0 {
-                Some(total_bytes)
-            } else {
-                None
-            };
-            let mut tree = merge::TransferTree::new(request.id, emit.clone(), worker_cancellable.clone(), request.move_sources);
+            let progress = Rc::new(progress::Progress::new(
+                request.id,
+                emit.clone(),
+                total,
+                total_bytes,
+            ));
+            progress.report();
+            let mut tree = merge::TransferTree::new(
+                request.id,
+                emit.clone(),
+                worker_cancellable.clone(),
+                request.move_sources,
+                progress.clone(),
+            );
             let mut errors = Vec::new();
             for (completed, location) in request.sources.iter().enumerate() {
                 let source = gio_file(location);
@@ -301,30 +315,22 @@ impl OperationProvider for LocalOperationProvider {
                     && let Err(message) = validate_basename(name)
                 {
                     errors.push(message.to_owned());
+                    progress.invalidate_total();
+                    progress.finish_root(completed + 1);
                     continue;
                 }
                 let name = custom_name.map(std::ffi::OsString::from)
                     .or_else(|| source.basename().map(PathBuf::into_os_string));
                 let Some(name) = name else {
                     errors.push("A clipboard item has no file name".to_owned());
-                    emit(OperationEvent::TransferProgress {
-                        request_id: request.id,
-                        completed: completed + 1,
-                        total,
-                        bytes_transferred: tree.bytes_transferred,
-                        total_bytes: total_bytes_opt,
-                    });
+                    progress.invalidate_total();
+                    progress.finish_root(completed + 1);
                     continue;
                 };
                 let target = destination.child(&name);
                 if transfer_is_noop(&source, &destination, &target) {
-                    emit(OperationEvent::TransferProgress {
-                        request_id: request.id,
-                        completed: completed + 1,
-                        total,
-                        bytes_transferred: tree.bytes_transferred,
-                        total_bytes: total_bytes_opt,
-                    });
+                    progress.invalidate_total();
+                    progress.finish_root(completed + 1);
                     continue;
                 }
                 match tree.transfer(
@@ -332,6 +338,7 @@ impl OperationProvider for LocalOperationProvider {
                     target.clone(),
                     request.overwrite_existing,
                     0,
+                    source_sizes[completed],
                 )
                 .await
                 {
@@ -347,15 +354,12 @@ impl OperationProvider for LocalOperationProvider {
                         errors.push("Transfer cancelled; completed items were kept and remaining sources were retained".to_owned());
                         break;
                     },
-                    Err(error) => errors.push(format!("{}: {error}", name.to_string_lossy())),
+                    Err(error) => {
+                        progress.invalidate_total();
+                        errors.push(format!("{}: {error}", name.to_string_lossy()));
+                    },
                 }
-                emit(OperationEvent::TransferProgress {
-                    request_id: request.id,
-                    completed: completed + 1,
-                    total,
-                    bytes_transferred: tree.bytes_transferred,
-                    total_bytes: total_bytes_opt,
-                });
+                progress.finish_root(completed + 1);
             }
             if errors.is_empty() && tree.skipped == 0 {
                 emit(OperationEvent::Pasted {
