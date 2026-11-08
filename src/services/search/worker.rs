@@ -375,7 +375,8 @@ fn start_worker(
         candidates: None,
         candidate_attempted: false,
         shared_indexing: true,
-        ranked: Vec::new(),
+        ranked: None,
+        rank_notice: None,
         groups: None,
         revision: 0,
         shown_limit: RESULT_LIMIT,
@@ -423,7 +424,8 @@ struct Worker {
     candidates: Option<super::candidates::Candidates>,
     candidate_attempted: bool,
     shared_indexing: bool,
-    ranked: Vec<(i64, usize)>,
+    ranked: Option<super::ranked::Ranked>,
+    rank_notice: Option<String>,
     groups: Option<super::groups::GroupIndex>,
     revision: u64,
     shown_limit: usize,
@@ -612,10 +614,36 @@ impl Worker {
     fn rescore_shared(&mut self) {
         self.revision = self.revision.wrapping_add(1).max(1);
         self.shown_limit = self.query.limit;
-        self.ranked.clear();
+        self.ranked = None;
+        self.rank_notice = None;
         self.groups = None;
         let items = self.shared_items.clone();
         let parsed = ParsedSearchQuery::parse(&self.query.text.to_lowercase());
+        match self.build_ranking(&items, &parsed) {
+            Ok(ranked) => {
+                if let Err(error) = self.rebuild_groups(&ranked, &parsed) {
+                    self.rank_notice = Some(error);
+                } else {
+                    self.ranked = Some(ranked);
+                }
+            }
+            Err(error) => self.rank_notice = Some(error),
+        }
+    }
+
+    fn build_ranking(
+        &mut self,
+        items: &[SearchItem],
+        parsed: &ParsedSearchQuery,
+    ) -> Result<super::ranked::Ranked, String> {
+        let cancellation = self.cancellation.clone();
+        let query_cancelled = self.query.cancelled.clone();
+        let cancelled = || cancellation.is_cancelled() || query_cancelled.load(Ordering::Acquire);
+        let album_order =
+            self.query.grouping.as_ref().is_some_and(|grouping| {
+                matches!(grouping.entity, Some(SearchEntityKey::Album { .. }))
+            });
+        let mut ranked = super::ranked::Ranked::new(album_order, &cancelled)?;
         if parsed.is_empty()
             && self
                 .query
@@ -623,52 +651,33 @@ impl Worker {
                 .as_ref()
                 .is_none_or(|grouping| grouping.entity.is_none())
         {
-            self.rebuild_groups(&parsed);
-            return;
+            ranked.finish(&cancelled)?;
+            return Ok(ranked);
         }
         let mut used_candidates = false;
         if let Some(candidates) = self.candidates.take() {
-            let cancellation = self.cancellation.clone();
-            let query_cancelled = self.query.cancelled.clone();
-            let result = candidates.for_each_page(
-                &parsed,
-                &|| cancellation.is_cancelled() || query_cancelled.load(Ordering::Acquire),
-                |page| {
-                    if self.rank_positions(&items, page.iter().copied(), &parsed) {
-                        Ok(())
-                    } else {
-                        Err("Search query cancelled".to_owned())
-                    }
-                },
-            );
+            let mut rank_error = None;
+            let result = candidates.for_each_page(parsed, &cancelled, |page| {
+                self.rank_positions(items, page.iter().copied(), parsed, &mut ranked)
+                    .inspect_err(|error| rank_error = Some(error.clone()))
+            });
             self.candidates = Some(candidates);
+            if let Some(error) = rank_error {
+                return Err(error);
+            }
             used_candidates = result.is_ok();
             if !used_candidates {
-                // A failure after earlier pages must discard their ranking
-                // before using the full scorer, or rows could be duplicated.
-                self.ranked.clear();
+                // Discard the entire unpublished revision before retrying the
+                // scorer. Reserved content outcomes survive this replay.
+                drop(ranked);
+                ranked = super::ranked::Ranked::new(album_order, &cancelled)?;
             }
         }
-        if !used_candidates && !self.rank_positions(&items, 0..items.len(), &parsed) {
-            self.ranked.clear();
-            return;
+        if !used_candidates {
+            self.rank_positions(items, 0..items.len(), parsed, &mut ranked)?;
         }
-        let album_order =
-            self.query.grouping.as_ref().is_some_and(|grouping| {
-                matches!(grouping.entity, Some(SearchEntityKey::Album { .. }))
-            });
-        self.ranked.sort_unstable_by(|left, right| {
-            if album_order {
-                return album_numbers(&items[left.1])
-                    .cmp(&album_numbers(&items[right.1]))
-                    .then_with(|| items[left.1].path.cmp(&items[right.1].path));
-            }
-            right
-                .0
-                .cmp(&left.0)
-                .then_with(|| items[left.1].path.cmp(&items[right.1].path))
-        });
-        self.rebuild_groups(&parsed);
+        ranked.finish(&cancelled)?;
+        Ok(ranked)
     }
 
     fn rank_positions(
@@ -676,14 +685,15 @@ impl Worker {
         items: &[SearchItem],
         positions: impl Iterator<Item = usize>,
         parsed: &ParsedSearchQuery,
-    ) -> bool {
+        ranked: &mut super::ranked::Ranked,
+    ) -> Result<(), String> {
         for position in positions {
             if self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire) {
-                return false;
+                return Err("Search query cancelled".into());
             }
-            let Some(item) = items.get(position) else {
-                continue;
-            };
+            let item = items
+                .get(position)
+                .ok_or_else(|| "Search ranking contains an invalid source position".to_owned())?;
             if let Some(grouping) = &self.query.grouping {
                 if grouping
                     .entity
@@ -707,13 +717,19 @@ impl Worker {
             } else {
                 self.score(item, parsed)
             } {
-                self.ranked.push((score, position));
+                ranked.push(score, position, item, &|| {
+                    self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire)
+                })?;
             }
         }
-        true
+        Ok(())
     }
 
-    fn rebuild_groups(&mut self, parsed: &ParsedSearchQuery) {
+    fn rebuild_groups(
+        &mut self,
+        ranked: &super::ranked::Ranked,
+        parsed: &ParsedSearchQuery,
+    ) -> Result<(), String> {
         if self
             .query
             .grouping
@@ -721,11 +737,12 @@ impl Worker {
             .is_some_and(|grouping| grouping.virtual_results)
         {
             self.groups =
-                super::groups::GroupIndex::build(&self.shared_items, &self.ranked, parsed, &|| {
+                super::groups::GroupIndex::build_paged(&self.shared_items, ranked, parsed, &|| {
                     self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire)
                 })
-                .ok();
+                .map(Some)?;
         }
+        Ok(())
     }
 
     fn result_total(&self) -> usize {
@@ -734,9 +751,10 @@ impl Worker {
             .as_ref()
             .filter(|grouping| grouping.virtual_results)
             .zip(self.groups.as_ref())
-            .map_or(self.ranked.len(), |(grouping, groups)| {
-                groups.counts().total(grouping.group)
-            })
+            .map_or(
+                self.ranked.as_ref().map_or(0, |ranked| ranked.len()),
+                |(grouping, groups)| groups.counts().total(grouping.group),
+            )
     }
 
     fn prepare_candidates(&mut self) {
@@ -777,7 +795,45 @@ impl Worker {
         if self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire) {
             return;
         }
+        // Materialize only the displayed prefix. A failed read withdraws the
+        // whole revision, including group counts, before publishing any event.
+        let mut ranked_items = Vec::new();
+        if self.revision > 0
+            && self.groups.is_none()
+            && let Some(ranked) = &self.ranked
+        {
+            match ranked.first(self.shown_limit, &|| {
+                self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire)
+            }) {
+                Ok(rows) => {
+                    for (_, position) in rows {
+                        let Some(item) = self.shared_items.get(position) else {
+                            self.rank_notice = Some("Invalid search result position".into());
+                            break;
+                        };
+                        ranked_items.push(item.clone());
+                    }
+                }
+                Err(error) => self.rank_notice = Some(error),
+            }
+        }
+        if self.rank_notice.is_some() {
+            if self.ranked.is_some() || self.groups.is_some() {
+                // Consumers reject shrinking pages within one revision. Make
+                // withdrawal visible and invalidate every earlier More cursor.
+                self.revision = self.revision.wrapping_add(1).max(1);
+            }
+            self.ranked = None;
+            self.groups = None;
+            ranked_items.clear();
+        }
+        if self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire) {
+            return;
+        }
         let mut notices = Vec::new();
+        if let Some(error) = &self.rank_notice {
+            notices.push(format!("Search results unavailable: {error}"));
+        }
         if let Some(notice) = &self.scan_notice {
             notices.push(notice.clone());
         }
@@ -812,14 +868,14 @@ impl Worker {
         let items = if groups.is_some() {
             Vec::new()
         } else if let Some(page) = page {
-            self.ranked
-                .iter()
-                .take(page.shown)
-                .map(|(_, position)| self.shared_items[*position].clone())
-                .collect()
+            debug_assert_eq!(ranked_items.len(), page.shown);
+            ranked_items
         } else {
             self.matches.iter().map(|(_, item)| item.clone()).collect()
         };
+        if self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire) {
+            return;
+        }
         self.events.put(SearchEvent::Results {
             generation: self.query.generation,
             query: self.query.text.clone(),
@@ -1155,31 +1211,6 @@ fn item_bytes(item: &SearchItem) -> usize {
         })
 }
 
-fn album_numbers(item: &SearchItem) -> (u32, u32) {
-    let tags = item.music_tags.as_ref();
-    let disc = tags
-        .and_then(|tags| tags.disc)
-        .filter(|number| *number > 0)
-        .unwrap_or(1);
-    let track = tags
-        .and_then(|tags| tags.track)
-        .filter(|number| *number > 0)
-        .or_else(|| {
-            let name = item.name.trim_start();
-            let digits: String = name.chars().take_while(char::is_ascii_digit).collect();
-            let suffix = name.get(digits.len()..)?;
-            if !suffix.starts_with(['.', '-', '_', ' ']) {
-                return None;
-            }
-            digits
-                .parse::<u32>()
-                .ok()
-                .filter(|number| *number > 0 && *number <= 1_000_000)
-        })
-        .unwrap_or(u32::MAX);
-    (disc, track)
-}
-
 #[cfg(test)]
 mod tests;
 
@@ -1188,3 +1219,6 @@ mod pagination_tests;
 
 #[cfg(test)]
 mod group_tests;
+
+#[cfg(test)]
+mod ranking_tests;

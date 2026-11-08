@@ -547,6 +547,47 @@ fn desktop_search_pages_preserve_rows_selection_and_footer() {
         event(5, 100, false, None),
     );
     assert!(dialog.state.more_button.is_sensitive());
+    let withdrawal = SearchEvent::Results {
+        generation,
+        query: "needle".into(),
+        items: Vec::new(),
+        indexing: false,
+        notice: Some("Search results unavailable: generated rank read failure".into()),
+        page: Some(SearchPage {
+            generation,
+            revision: 6,
+            shown: 0,
+            total: 0,
+        }),
+        groups: None,
+    };
+    apply_search_event(
+        &dialog.state,
+        dialog.state.session_generation.get(),
+        withdrawal,
+    );
+    assert!(dialog.state.visible_results.borrow().is_empty());
+    assert!(
+        dialog
+            .state
+            .notice
+            .text()
+            .contains("Search results unavailable")
+    );
+    assert!(!dialog.state.more_button.is_sensitive());
+    apply_search_event(
+        &dialog.state,
+        dialog.state.session_generation.get(),
+        event(5, 200, false, None),
+    );
+    assert!(dialog.state.visible_results.borrow().is_empty());
+    assert!(
+        dialog
+            .state
+            .notice
+            .text()
+            .contains("Search results unavailable")
+    );
     dialog.hide();
     assert_eq!(dialog.state.page.get(), None);
     assert!(!dialog.state.more_button.is_sensitive());

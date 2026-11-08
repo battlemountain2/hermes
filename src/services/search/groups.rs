@@ -126,6 +126,7 @@ pub(super) struct GroupIndex {
 }
 
 impl GroupIndex {
+    #[cfg(test)]
     pub(super) fn build(
         items: &[SearchItem],
         ranked: &[(i64, usize)],
@@ -142,6 +143,7 @@ impl GroupIndex {
         )
     }
 
+    #[cfg(test)]
     fn build_with_limits(
         items: &[SearchItem],
         ranked: &[(i64, usize)],
@@ -149,6 +151,45 @@ impl GroupIndex {
         cancelled: &impl Fn() -> bool,
         max_bytes: usize,
         max_entities: usize,
+    ) -> Result<Self, String> {
+        Self::build_streamed(items, parsed, cancelled, max_bytes, max_entities, |visit| {
+            for &(score, position) in ranked {
+                visit(score, position)?;
+            }
+            Ok(())
+        })
+    }
+
+    pub(super) fn build_paged(
+        items: &[SearchItem],
+        ranked: &super::ranked::Ranked,
+        parsed: &ParsedSearchQuery,
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<Self, String> {
+        Self::build_streamed(
+            items,
+            parsed,
+            cancelled,
+            MAX_METADATA_BYTES,
+            MAX_ENTITIES,
+            |visit| {
+                ranked.for_each_page(cancelled, |page| {
+                    for &(score, position) in page {
+                        visit(score, position)?;
+                    }
+                    Ok(())
+                })
+            },
+        )
+    }
+
+    fn build_streamed(
+        items: &[SearchItem],
+        parsed: &ParsedSearchQuery,
+        cancelled: &impl Fn() -> bool,
+        max_bytes: usize,
+        max_entities: usize,
+        scan: impl FnOnce(&mut dyn FnMut(i64, usize) -> Result<(), String>) -> Result<(), String>,
     ) -> Result<Self, String> {
         check_cancelled(cancelled)?;
         let mut index = Self {
@@ -166,18 +207,18 @@ impl GroupIndex {
             .literal
             .as_ref()
             .map(|literal| literal.terms.to_lowercase());
-        for &(_, position) in ranked {
+        scan(&mut |_, position| {
             check_cancelled(cancelled)?;
             let item = items
                 .get(position)
                 .ok_or_else(|| "Grouped search contains an invalid source position".to_owned())?;
             if !is_song(item) {
                 index.files.push(position);
-                continue;
+                return Ok(());
             }
             index.songs.push(position);
             let Some(labels) = entity_labels(item) else {
-                continue;
+                return Ok(());
             };
             let inferred_matches =
                 parsed.literal.is_none() || super::filter_bonus(item, parsed).is_some();
@@ -224,7 +265,8 @@ impl GroupIndex {
                     },
                 );
             }
-        }
+            Ok(())
+        })?;
         index.albums = Vec::with_capacity(album_count);
         index.artists = Vec::with_capacity(entities.len() - album_count);
         for (key, summary) in entities {

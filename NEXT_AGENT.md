@@ -1,6 +1,29 @@
 # Next agent: Hermes performance, file features and media polish
 
-## November 8 paged saved-catalog restore — current
+## November 8 disk-backed query ranks — current
+
+Integration checkout `/home/bry/hermes-worktrees/safety`, branch
+`perf/6-disk-backed-query-ranking`, follows PR #14 and issue #6.
+Read `docs/search-query-ranking.md` for resource and publication semantics.
+
+- Shared queries replace the complete rank vector with one SQLite-owned temporary
+  database per revision. Scores are inserted incrementally and read through
+  indexed keyset pages. Only finished successful builds become visible.
+- Path-component order, score ties and album disc/track defaults preserve existing
+  behavior. Flat results materialize the displayed prefix. Group builders stream
+  rank pages and reject failed streams atomically.
+- Candidate-read failures discard unpublished ranks before full-scoring replay.
+  Reserved content outcomes retain their existing same-revision semantics.
+- Build/read failures withdraw results with a visible notice. Cancellation
+  suppresses publication. Query/source revisions retain stale-cursor protection.
+
+A separate storage implementation agent and read-only integration reviewer support
+one parent integration owner. Exact-source local/hosted/package results belong in
+the batch PR. Source snapshots, grouped positions/entities and scan limits remain
+in memory. Sole persistent-source querying, 100k reference-machine latency and
+physical Linux/Asahi/Mac qualification remain release gates.
+
+## November 8 paged saved-catalog restore — previous checkpoint
 
 Integration checkout `/home/bry/hermes-worktrees/safety`, branch
 `feat/6-paged-catalog-restore`, follows PR #13 and issue #6.
