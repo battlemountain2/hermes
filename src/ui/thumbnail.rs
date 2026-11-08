@@ -428,10 +428,7 @@ fn desktop_icon(path: &Path, cancellation: &Cancellation) -> Option<String> {
         return None;
     }
     let identity = SourceIdentity::read(path)?;
-    let icon = gio::DesktopAppInfo::from_filename(path)?
-        .icon()?
-        .to_string()?
-        .to_string();
+    let icon = crate::platform::desktop_file::icon(path)?;
     (!cancellation.is_cancelled() && SourceIdentity::read(path) == Some(identity)).then_some(icon)
 }
 
