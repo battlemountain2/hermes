@@ -98,6 +98,8 @@ publication, checksum failures, v1 recovery, concurrent import and size limits.
 A private GTK test exercises the first-launch choice before import; it uses
 generated files and isolated XDG roots.
 
-Clean package installation, upgrade/uninstall retention and physical desktop
-acceptance remain release gates. No installed app, actual user profile or
-desktop default was changed while preparing this batch.
+The November 7 [installed migration qualification](installed-migration-qualification.md)
+adds six native UI cases using the downloaded package and generated profiles.
+Package install/reinstall/removal retention also has separate userspace evidence.
+Positive previous-release upgrades, private crash-stage cleanup review, broader
+storage-pressure behavior and physical desktop acceptance remain release gates.

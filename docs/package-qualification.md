@@ -34,11 +34,12 @@ Automatically exercised checks cover the following workflows.
 - Removal clears package-owned files and preserves those data fixtures plus the
   recorded MIME and portal-default fixtures.
 
-The data checks cover package-transaction retention. App-level legacy import,
-consent, interrupted migration and recovery have their own source-level fixtures
-and require installed-artifact interactive qualification. An actual upgrade from
-an earlier supported release also remains open. Same-version reinstall has its
-own result in the evidence.
+The data checks cover package-transaction retention. The follow-up runtime stage
+also exercises native installed-app consent and recovery with separate profiles.
+See [installed migration qualification](installed-migration-qualification.md) for
+the six scenarios, crash-stage review and immutable-baseline upgrade arguments.
+An actual upgrade from an earlier supported release remains open. Same-version
+reinstall has its own result in the evidence.
 
 The first standalone GUI smoke recorded a window at 147 ms and the first rendered
 folder batch at 159 ms. This single generated-folder sample describes startup

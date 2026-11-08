@@ -79,6 +79,28 @@ def fixtures(root):
     return expected
 
 
+def upgrade_baseline(directory, expected_sha, candidate):
+    package, sha, digest = candidate_at(directory)
+    if sha != expected_sha:
+        raise ValueError("Baseline source does not match the requested commit")
+    verify(package, sha)
+    identities = []
+    for artifact in (package, candidate):
+        metadata = subprocess.check_output(["bsdtar", "-xOf", str(artifact), ".PKGINFO"], text=True)
+        fields = dict(re.findall(r"^(pkgname|pkgver|arch) = (.+)$", metadata, re.MULTILINE))
+        if fields.get("pkgname") != PACKAGE or not fields.get("pkgver") or not fields.get("arch"):
+            raise ValueError("Upgrade artifacts require matching Hermes package identities")
+        identities.append(fields)
+    previous, current = identities
+    if previous["arch"] != current["arch"]:
+        raise ValueError("Baseline and candidate architectures must match")
+    comparison = subprocess.check_output(["vercmp", previous["pkgver"], current["pkgver"]], text=True).strip()
+    if comparison != "-1":
+        raise ValueError("An upgrade requires a strictly older baseline package version")
+    return package, {"source_commit": sha, "package_sha256": digest,
+                     "previous_version": previous["pkgver"], "candidate_version": current["pkgver"]}
+
+
 def assert_retained(expected):
     for path, content in expected.items():
         if path.is_symlink() or not path.is_file() or path.read_bytes() != content:
@@ -177,11 +199,12 @@ class Qualification:
         self.report["checks"][name] = "passed"
         self.save()
 
-    def exercise(self, directory, expected_sha):
+    def exercise(self, directory, expected_sha, baseline=None, baseline_sha=None):
         package, sha, digest = candidate_at(directory)
         if sha != expected_sha:
             raise ValueError("Artifact source does not match the requested commit")
         verify(package, sha)
+        previous = upgrade_baseline(baseline, baseline_sha, package) if baseline else None
         self.report.update(source_commit=sha, package_sha256=digest,
                            architecture=os.uname().machine, scope="disposable Arch userspace")
         self.save()
@@ -205,9 +228,16 @@ class Qualification:
             metadata = subprocess.check_output(["bsdtar", "-xOf", str(package), ".PKGINFO"], text=True)
             dependencies = re.findall(r"^depend = (.+)$", metadata, re.MULTILINE)
             self.run("runtime-dependencies", ["pacman", "-Syu", "--needed", "--noconfirm", *dependencies])
+            if previous:
+                self.run("install-baseline", ["pacman", "-U", "--noconfirm", str(previous[0])])
+                baseline_version = self.run("baseline-version", ["/usr/bin/hermes", "--version"]).stdout
+                if previous[1]["source_commit"] not in baseline_version:
+                    raise ValueError("Installed baseline executable has an unexpected source identity")
+                assert_retained(expected)
+                self.report["upgrade_baseline"] = previous[1]
             self.run("install", ["pacman", "-U", "--noconfirm", str(package)])
             assert_retained(expected)
-            self.passed("clean installation and retained data")
+            self.passed("candidate installation and retained data" if previous else "clean installation and retained data")
             self.run("installed-file-integrity", ["pacman", "-Qkk", PACKAGE])
             files = self.run("installed-file-list", ["pacman", "-Qlq", PACKAGE]).stdout.splitlines()
             owned_files = [Path(name) for name in files if Path(name).is_file() or Path(name).is_symlink()]
@@ -221,6 +251,12 @@ class Qualification:
             version = self.run("version", ["/usr/bin/hermes", "--version"], env=env).stdout
             if sha not in version or not version.startswith("Hermes "):
                 raise ValueError("Installed executable does not match the source identity")
+            if previous:
+                installed = self.run("upgraded-version", ["pacman", "-Q", PACKAGE]).stdout.strip()
+                if installed != f"{PACKAGE} {previous[1]['candidate_version']}":
+                    raise ValueError("Pacman did not install the expected upgraded version")
+                self.report["pending"].remove("previous-release upgrade")
+                self.passed("older-version upgrade retention")
             diagnostics = self.run("diagnostics", ["/usr/bin/hermes", "--diagnostics"], env=env).stdout
             for label, directory in (("Config", "config"), ("Data", "data"),
                                      ("State", "state"), ("Cache", "cache")):
@@ -238,6 +274,19 @@ class Qualification:
             smoke_startup(self.output)
             assert_retained(expected)
             self.passed("installed application private-display startup and folder rendering")
+            self.run("migration-observers", ["pacman", "-S", "--needed", "--noconfirm",
+                                              "python-gobject", "xorg-server-xvfb"])
+            migration = self.output / "migration"
+            self.run("installed-migration", ["dbus-run-session", "--", "python3",
+                     str(Path(__file__).with_name("qualify_installed_migration.py")),
+                     "--source-commit", sha, "--output", str(migration)])
+            self.report["installed_migration"] = json.loads((migration / "RESULTS.json").read_text())
+            if self.report["installed_migration"].get("failure") or self.report["installed_migration"]["source_commit"] != sha:
+                raise ValueError("Installed migration evidence failed or has an unexpected source")
+            self.report["pending"].extend(self.report["installed_migration"]["pending"])
+            self.report["pending"].remove("interactive migration and recovery")
+            self.passed("installed import decisions and interruption recovery")
+            assert_retained(expected)
             self.run("reinstall", ["pacman", "-U", "--noconfirm", str(package)])
             assert_retained(expected)
             self.passed("same-version reinstall retention")
@@ -252,13 +301,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--source-commit", required=True, help="Expected full package source SHA")
+    parser.add_argument("--baseline", type=Path, help="Extracted immutable older package artifact")
+    parser.add_argument("--baseline-source-commit", help="Expected full baseline source SHA")
     parser.add_argument("--output", type=Path, required=True, help="New evidence directory")
     args = parser.parse_args()
+    if bool(args.baseline) != bool(args.baseline_source_commit):
+        parser.error("Provide both baseline and baseline-source-commit")
     require_disposable_root()
     args.output.mkdir(parents=True, exist_ok=False)
     qualification = Qualification(args.output)
     try:
-        qualification.exercise(args.candidate.resolve(strict=True), args.source_commit)
+        baseline = args.baseline.resolve(strict=True) if args.baseline else None
+        qualification.exercise(args.candidate.resolve(strict=True), args.source_commit,
+                               baseline, args.baseline_source_commit)
     except Exception as error:
         qualification.report["failure"] = str(error)
         raise

@@ -124,5 +124,48 @@ class CandidateTests(unittest.TestCase):
         self.assertEqual((self.root / "probe.log").read_text(), "failure evidence\n")
 
 
+class UpgradeBaselineTests(unittest.TestCase):
+    def setUp(self):
+        self.package = Path("/fixtures/old.pkg.tar.zst")
+        self.sha = "a" * 40
+        self.digest = "b" * 64
+        patch.object(qualification, "candidate_at", return_value=(self.package, self.sha, self.digest)).start()
+        self.verify = patch.object(qualification, "verify").start()
+        self.command = patch.object(qualification.subprocess, "check_output").start()
+        self.addCleanup(patch.stopall)
+
+    def check(self, previous="0.2.0-1", current="0.2.0-2", comparison="-1", previous_arch="x86_64"):
+        self.command.side_effect = [f"pkgname = hermes-file-manager\npkgver = {previous}\narch = {previous_arch}\n",
+                                    f"pkgname = hermes-file-manager\npkgver = {current}\narch = x86_64\n", comparison]
+        return qualification.upgrade_baseline(Path("/fixtures/baseline"), self.sha, Path("/fixtures/candidate.pkg.tar.zst"))
+
+    def test_older_immutable_baseline_keeps_both_identities(self):
+        package, info = self.check()
+        self.assertEqual(package, self.package)
+        self.assertEqual(info, {"source_commit": self.sha, "package_sha256": self.digest,
+                                "previous_version": "0.2.0-1", "candidate_version": "0.2.0-2"})
+        self.command.assert_called_with(["vercmp", "0.2.0-1", "0.2.0-2"], text=True)
+
+    def test_equal_version_and_downgrade_are_rejected(self):
+        for comparison in ("0", "1"):
+            with self.subTest(comparison=comparison), self.assertRaisesRegex(ValueError, "strictly older"):
+                self.check(comparison=comparison)
+
+    def test_architecture_mismatch_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "architectures"):
+            self.check(previous_arch="aarch64")
+
+    def test_other_source_is_rejected_before_metadata_commands(self):
+        with self.assertRaisesRegex(ValueError, "Baseline source"):
+            qualification.upgrade_baseline(Path("/fixtures/baseline"), "c" * 40, Path("/fixtures/new"))
+        self.command.assert_not_called()
+        self.verify.assert_not_called()
+
+    def test_foreign_package_name_is_rejected(self):
+        self.command.return_value = "pkgname = another-app\npkgver = 0.1.0-1\narch = x86_64\n"
+        with self.assertRaisesRegex(ValueError, "package identities"):
+            qualification.upgrade_baseline(Path("/fixtures/baseline"), self.sha, Path("/fixtures/new"))
+
+
 if __name__ == "__main__":
     unittest.main()

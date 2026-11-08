@@ -10,7 +10,7 @@ check. Existing rules have not been changed by these source edits.
 | Quality gates | Rust formatting, workflow lint, app identity, reversible setup fixtures, locked compilation, strict all-target/all-feature Clippy, isolated tests, offline release-control tests |
 | Dependency policy | Locked RustSec advisories, allowed licenses, dependency bans and source policy; no new advisory exceptions |
 | Spelling | Pinned typos, with explicit technical vocabulary |
-| Arch package | Native x86_64 build plus a separate clean runtime job exercising downloaded-artifact installation, CLI/private-display startup, reinstall, removal and fixture retention |
+| Arch package | Native x86_64 build plus a separate clean runtime job exercising downloaded-artifact installation, CLI/private-display startup, native import/recovery decisions, reinstall, removal and fixture retention |
 | Release gates | Aggregate failure if any of the preceding jobs fails or is skipped |
 
 `rust-toolchain.toml` pins Rust 1.99.0. `check-tools.toml` pins cargo-deny,
