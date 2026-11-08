@@ -172,7 +172,7 @@ fn paged_candidates_preserve_complete_ranking_above_the_old_item_cutoff() {
     let mut worker = synthetic_worker(items);
     worker.query.limit = 100;
     worker.rescore_shared();
-    let expected = worker.ranked.clone();
+    let expected = ranked_rows(&worker);
     assert_eq!(expected.len(), 40_257);
     worker.prepare_candidates();
     assert!(
@@ -180,7 +180,7 @@ fn paged_candidates_preserve_complete_ranking_above_the_old_item_cutoff() {
         "large eligible scopes must use indexed candidates"
     );
     worker.rescore_shared();
-    assert_eq!(worker.ranked, expected);
+    assert_eq!(ranked_rows(&worker), expected);
     worker.publish(false);
     let SearchEvent::Results { items, page, .. } = worker.events.take().expect("first ranked page");
     assert_eq!(items.len(), 100);
@@ -238,7 +238,7 @@ fn candidate_failure_replays_document_matches_without_spending_the_budget_twice(
         baseline.query.text = "type:file content:needle".into();
         baseline.extraction = Arc::new(Extraction(baseline_calls.clone()));
         baseline.rescore_shared();
-        assert_eq!(baseline.ranked.len(), 164);
+        assert_eq!(ranked_rows(&baseline).len(), 164);
         let calls = Arc::new(AtomicUsize::new(0));
         let mut worker = synthetic_worker(items);
         worker.query.text = baseline.query.text.clone();
@@ -250,7 +250,11 @@ fn candidate_failure_replays_document_matches_without_spending_the_budget_twice(
             .expect("prepared candidate index")
             .fail_after_page_for_test(1);
         worker.rescore_shared();
-        assert_eq!(worker.ranked, baseline.ranked, "identified={identified}");
+        assert_eq!(
+            ranked_rows(&worker),
+            ranked_rows(&baseline),
+            "identified={identified}"
+        );
         assert_eq!(worker.query_notice, baseline.query_notice);
         assert_eq!(
             calls.load(Ordering::Relaxed),
@@ -299,7 +303,8 @@ pub(super) fn synthetic_worker(items: Vec<SearchItem>) -> Worker {
         candidates: None,
         candidate_attempted: false,
         shared_indexing: false,
-        ranked: Vec::new(),
+        ranked: None,
+        rank_notice: None,
         groups: None,
         revision: 0,
         shown_limit: RESULT_LIMIT,
@@ -331,10 +336,10 @@ fn prepared_sql_candidates_preserve_the_full_scorer_ranking() {
     ] {
         worker.query.text = query.into();
         worker.rescore_shared();
-        let indexed = worker.ranked.clone();
+        let indexed = ranked_rows(&worker);
         let candidates = worker.candidates.take();
         worker.rescore_shared();
-        assert_eq!(indexed, worker.ranked, "{query}");
+        assert_eq!(indexed, ranked_rows(&worker), "{query}");
         worker.candidates = candidates;
     }
 }
@@ -370,4 +375,13 @@ fn more_cannot_overwrite_a_pending_query_with_the_same_generation() {
     assert_eq!(query.generation, generation);
     assert_eq!(query.text, "new query");
     assert!(!query.cancelled.load(Ordering::Acquire));
+}
+
+// Collecting all ranks is restricted to regression comparisons.
+pub(super) fn ranked_rows(worker: &Worker) -> Vec<(i64, usize)> {
+    worker.ranked.as_ref().map_or_else(Vec::new, |ranked| {
+        ranked
+            .first(usize::MAX, &|| false)
+            .expect("read verified test ranks")
+    })
 }

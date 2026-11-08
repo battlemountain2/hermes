@@ -32,10 +32,10 @@ fn literal_smart_queries_keep_grouped_and_result_tab_matches_with_sql_candidates
             virtual_results,
         });
         worker.rescore_shared();
-        let indexed = worker.ranked.clone();
+        let indexed = super::pagination_tests::ranked_rows(&worker);
         let candidates = worker.candidates.take();
         worker.rescore_shared();
-        assert_eq!(worker.ranked, indexed);
+        assert_eq!(super::pagination_tests::ranked_rows(&worker), indexed);
         worker.candidates = candidates;
         if virtual_results {
             let groups = worker
@@ -45,13 +45,16 @@ fn literal_smart_queries_keep_grouped_and_result_tab_matches_with_sql_candidates
             assert_eq!(groups.counts().songs, 1);
             assert_eq!(groups.counts().albums, 1);
         } else {
-            assert_eq!(worker.ranked.len(), 1);
-            assert_eq!(worker.shared_items[worker.ranked[0].1].name, "01.flac");
+            assert_eq!(super::pagination_tests::ranked_rows(&worker).len(), 1);
+            assert_eq!(
+                worker.shared_items[super::pagination_tests::ranked_rows(&worker)[0].1].name,
+                "01.flac"
+            );
         }
     }
     worker.query.text = "Video Games type:video".into();
     worker.rescore_shared();
-    assert!(worker.ranked.is_empty());
+    assert!(super::pagination_tests::ranked_rows(&worker).is_empty());
 }
 
 #[test]
@@ -142,8 +145,7 @@ fn album_drilling_and_export_follow_disc_track_tags_before_filenames() {
             virtual_results,
         });
         worker.rescore_shared();
-        let names: Vec<_> = worker
-            .ranked
+        let names: Vec<_> = super::pagination_tests::ranked_rows(&worker)
             .iter()
             .map(|(_, position)| worker.shared_items[*position].name.as_str())
             .collect();

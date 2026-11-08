@@ -14,6 +14,7 @@ use crate::model::MusicTags;
 
 mod candidates;
 mod groups;
+mod ranked;
 mod scope;
 mod worker;
 pub(crate) use groups::{
