@@ -1,5 +1,31 @@
 # Next agent: Hermes performance, file features and media polish
 
+## November 7 installed migration checkpoint — current
+
+Branch `test/6-installed-migration-recovery` is stacked on package PR #9 and
+tracks issue #6. Read `docs/installed-migration-qualification.md` for reproduction,
+exact downloaded package identity, scenario boundaries and remaining gates.
+
+- Six installed-app native UI scenarios passed locally through private X11,
+  D-Bus and AT-SPI controls. Consent, Continue, Resume and Retry use the actual
+  packaged buttons. Ordinary closes use the real window close action.
+- The resource-limit crash is applied after setup rendering, then triggers
+  SIGXFSZ during collection backup. The restarted app resumes intact originals
+  and collection data. Prepared checkpoint/corruption fixtures have separate cases.
+- One private partial staging folder remains after the abrupt crash. Its cleanup
+  ownership/recovery protocol is a pending release review, recorded by the runner.
+- The package runner supports a checksum/source-bound older baseline and rejects
+  equal versions, downgrades and architecture mismatches. Available candidates
+  share `0.2.0-1`; a positive previous-release upgrade still needs eligible artifacts.
+- Native runtime CI installs Python GObject/Xvfb observers after the clean runtime
+  checks, then exercises migration before reinstall/removal. Evidence excludes
+  disposable caches/IPC and retains generated profiles, journals and logs.
+
+Evidence lives under `/home/bry/hermes-validation/2026-11-07/migration/`.
+Final source/hosted CI results belong in this batch's PR. Physical Wayland,
+storage-pressure hardware, browser/audio, decoder corpus, Asahi and Mac gates
+remain open. Preserve Noctalia synchronization and private validation scope.
+
 ## November 7 downloaded-package qualification — current
 
 Branch `test/6-package-qualification` follows `ci/6-release-qualification` and

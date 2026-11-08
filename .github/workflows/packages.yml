@@ -62,7 +62,7 @@ jobs:
         with:
           name: hermes-arch-x86_64-test-candidate
           path: /tmp/hermes-candidate
-      - name: Exercise dependency refusal, installation, reinstall and removal
+      - name: Exercise installation, native migration, reinstall and removal
         run: |
           python3 scripts/qualify_arch_package.py --candidate /tmp/hermes-candidate --source-commit "$GITHUB_SHA" --output /tmp/hermes-runtime-evidence
       - name: Preserve runtime qualification evidence
@@ -70,5 +70,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: hermes-arch-x86_64-runtime-evidence
-          path: /tmp/hermes-runtime-evidence
+          path: |
+            /tmp/hermes-runtime-evidence
+            !/tmp/hermes-runtime-evidence/migration/*/cache/**
+            !/tmp/hermes-runtime-evidence/migration/runtime/**
           if-no-files-found: warn
