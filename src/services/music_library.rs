@@ -308,6 +308,69 @@ fn subscribe_with(configuration: Configuration) -> Subscription {
     }
 }
 
+/// Publish one bounded cached prefix while the remaining saved rows are
+/// validated. Every cached publication stays provisional until the live scan.
+fn read_saved_catalog(
+    configuration: &Configuration,
+    cancellation: &Cancellation,
+    mut publish: impl FnMut(Snapshot),
+) -> Result<Snapshot, String> {
+    let path = configuration
+        .catalog_path
+        .as_deref()
+        .ok_or("Saved search catalog is unavailable")?;
+    let mut reader = catalog_disk::PagedReader::open(
+        path,
+        &configuration.root,
+        configuration.entries,
+        configuration.bytes,
+        cancellation,
+    )?;
+    let mut entries = Vec::with_capacity(reader.entry_count());
+    let mut published = false;
+    loop {
+        let page = match reader.next_page(cancellation) {
+            Ok(Some(page)) => page,
+            Ok(None) => break,
+            Err(error) => {
+                if published && !cancellation.is_cancelled() {
+                    publish(Snapshot {
+                        indexing: true,
+                        notice: Some("Saved search index unavailable, rebuilding…".into()),
+                        ..Snapshot::default()
+                    });
+                }
+                return Err(error);
+            }
+        };
+        entries.extend(page.into_iter().filter(|entry| {
+            !configuration
+                .music_source
+                .as_ref()
+                .is_some_and(|music| entry.path.starts_with(music))
+        }));
+        if !published && !entries.is_empty() {
+            let mut notice = reader.notice().map(str::to_owned);
+            append_notice(&mut notice, "Verifying saved search index");
+            publish(Snapshot {
+                entries: Arc::new(entries.clone()),
+                indexing: true,
+                notice,
+            });
+            published = true;
+        }
+    }
+    let mut notice = reader.notice().map(str::to_owned);
+    if !entries.is_empty() {
+        append_notice(&mut notice, "Verifying saved search index");
+    }
+    Ok(Snapshot {
+        entries: Arc::new(entries),
+        indexing: true,
+        notice,
+    })
+}
+
 impl Library {
     fn request(&self, immediate: bool) {
         let mut shared = self
@@ -360,36 +423,13 @@ impl Library {
         } else {
             HashMap::new()
         };
-        if let Some(path) = &self.configuration.catalog_path {
-            match catalog_disk::read(
-                path,
-                &self.configuration.root,
-                self.configuration.entries,
-                self.configuration.bytes,
-                &self.cancellation,
-            ) {
-                Ok((entries, notice)) => {
-                    previous = Arc::new(
-                        entries
-                            .into_iter()
-                            .filter(|entry| {
-                                !self
-                                    .configuration
-                                    .music_source
-                                    .as_ref()
-                                    .is_some_and(|music| entry.path.starts_with(music))
-                            })
-                            .collect(),
-                    );
-                    if !previous.is_empty() {
-                        let mut notice = notice;
-                        append_notice(&mut notice, "Verifying saved search index");
-                        self.publish(Snapshot {
-                            entries: previous.clone(),
-                            indexing: true,
-                            notice,
-                        });
-                    }
+        if self.configuration.catalog_path.is_some() {
+            match read_saved_catalog(&self.configuration, &self.cancellation, |snapshot| {
+                self.publish(snapshot)
+            }) {
+                Ok(snapshot) => {
+                    previous = snapshot.entries.clone();
+                    self.publish(snapshot);
                 }
                 Err(error) => tracing::debug!(%error, "Saved search index unavailable; scanning"),
             }

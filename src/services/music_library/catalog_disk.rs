@@ -25,6 +25,7 @@ const MAX_DATABASE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_ROW_BYTES: usize = 16 * 1024;
 const MAX_PATH_BYTES: usize = 4096;
 const MAX_NOTICE_BYTES: usize = 4096;
+pub(super) const PAGE_ENTRIES: usize = 256;
 const NO_FOLLOW: i32 = 0x20000;
 const DIRECTORY: i32 = 0x10000;
 const NON_BLOCK: i32 = 0x800;
@@ -117,7 +118,7 @@ fn private_file(file: &File) -> Result<fs::Metadata, String> {
         || metadata.nlink() != 1
         || metadata.len() > MAX_DATABASE_BYTES
     {
-        return Err("Search catalog must be a private regular file of at most 64 MiB".into());
+        return Err("Search catalog must be a private regular file of at most 512 MiB".into());
     }
     Ok(metadata)
 }
@@ -181,7 +182,7 @@ impl Stage {
                 .checked_add(count as u64)
                 .ok_or("Search catalog size overflow")?;
             if total > MAX_DATABASE_BYTES {
-                return Err("Search catalog exceeds 64 MiB".into());
+                return Err("Search catalog exceeds 512 MiB".into());
             }
             output.write_all(&buffer[..count]).map_err(error)?;
         }
@@ -517,6 +518,199 @@ fn existing(directory: &DirectoryHandle, name: &OsStr) -> Result<File, String> {
     Ok(file)
 }
 
+/// A private, immutable copy of one persisted catalog. Its cursor and budgets
+/// belong to this reader, so replacement of the public cache cannot mix pages.
+/// Rows remain provisional until next_page returns None successfully.
+pub(super) struct PagedReader {
+    // Close SQLite before deleting its private staging directory.
+    connection: Connection,
+    _stage: Stage,
+    sources: Sources,
+    count: usize,
+    scanned: usize,
+    after: Option<i64>,
+    bytes: usize,
+    byte_limit: usize,
+    notice: Option<String>,
+    complete: bool,
+    failed: bool,
+}
+
+impl PagedReader {
+    pub(super) fn open(
+        path: &Path,
+        root: &Path,
+        entry_limit: usize,
+        byte_limit: usize,
+        cancellation: &Cancellation,
+    ) -> Result<Self, String> {
+        cancelled(cancellation)?;
+        let sources = Sources::new(root)?;
+        let (directory, name) = location(path, false)?;
+        let stage = Stage::new(&directory)?;
+        stage.copy(existing(&directory, &name)?, cancellation)?;
+        let connection = stage.connect(false)?;
+        let notice = metadata(&connection, &sources, true)?;
+        let entry_limit = entry_limit.min(super::MAX_ENTRIES);
+        let byte_limit = byte_limit.min(super::MAX_INDEX_BYTES);
+        let count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM (SELECT sequence FROM entries LIMIT ?1)",
+                [entry_limit as i64 + 1],
+                |row| row.get(0),
+            )
+            .map_err(error)?;
+        let count = usize::try_from(count).map_err(error)?;
+        let bytes = count
+            .checked_mul(size_of::<Entry>())
+            .ok_or("Search catalog memory budget overflow")?;
+        if count > entry_limit || bytes > byte_limit {
+            return Err("Search catalog exceeds the entry or memory budget".into());
+        }
+        sources.root_unchanged()?;
+        cancelled(cancellation)?;
+        // The private copy and its connection no longer depend on the public
+        // cache name. Parent cleanup handles share this lock description, so
+        // explicitly release it before handing out a long-lived reader.
+        directory.0.unlock().map_err(error)?;
+        Ok(Self {
+            connection,
+            _stage: stage,
+            sources,
+            count,
+            scanned: 0,
+            after: None,
+            bytes,
+            byte_limit,
+            notice,
+            complete: false,
+            failed: false,
+        })
+    }
+
+    pub(super) fn notice(&self) -> Option<&str> {
+        self.notice.as_deref()
+    }
+
+    pub(super) fn entry_count(&self) -> usize {
+        self.count
+    }
+
+    pub(super) fn next_page(
+        &mut self,
+        cancellation: &Cancellation,
+    ) -> Result<Option<Vec<Entry>>, String> {
+        if self.failed {
+            return Err("Search catalog reader failed. Reopen the saved snapshot to retry".into());
+        }
+        if self.complete {
+            return Ok(None);
+        }
+        let result = self.read_page(cancellation);
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+
+    fn read_page(&mut self, cancellation: &Cancellation) -> Result<Option<Vec<Entry>>, String> {
+        cancelled(cancellation)?;
+        self.sources.root_unchanged()?;
+        if self.scanned == self.count {
+            self.complete = true;
+            return Ok(None);
+        }
+        const COLUMNS: &str = "sequence, path, directory, modified, identity, title, artist, album_artist, album, disc, track, tagged";
+        let sql = if self.after.is_some() {
+            format!("SELECT {COLUMNS} FROM entries WHERE sequence > ?1 ORDER BY sequence LIMIT ?2")
+        } else {
+            format!("SELECT {COLUMNS} FROM entries ORDER BY sequence LIMIT ?1")
+        };
+        let mut statement = self.connection.prepare(&sql).map_err(error)?;
+        let mut rows = if let Some(after) = self.after {
+            statement.query(params![after, PAGE_ENTRIES as i64])
+        } else {
+            statement.query([PAGE_ENTRIES as i64])
+        }
+        .map_err(error)?;
+        let mut page = Vec::with_capacity(PAGE_ENTRIES.min(self.count - self.scanned));
+        let mut scanned = 0usize;
+        let mut after = self.after;
+        let mut bytes = self.bytes;
+        let mut stale = false;
+        while let Some(row) = rows.next().map_err(error)? {
+            cancelled(cancellation)?;
+            let sequence: i64 = row.get(0).map_err(error)?;
+            if after.is_some_and(|previous| sequence <= previous)
+                || scanned >= PAGE_ENTRIES
+                || self.scanned + scanned >= self.count
+            {
+                return Err("Search catalog returned an invalid page sequence".into());
+            }
+            let entry = decode_entry(row, &self.sources)?;
+            bytes = bytes
+                .checked_add(super::entry_bytes(&entry) - size_of::<Entry>())
+                .ok_or("Search catalog memory budget overflow")?;
+            if bytes > self.byte_limit {
+                return Err("Search catalog exceeds the entry or memory budget".into());
+            }
+            if self.sources.fresh(&entry)? {
+                page.push(entry);
+            } else {
+                stale = true;
+            }
+            scanned += 1;
+            after = Some(sequence);
+        }
+        if scanned == 0 {
+            return Err("Search catalog ended before all entries were accounted for".into());
+        }
+        self.sources.root_unchanged()?;
+        cancelled(cancellation)?;
+        self.scanned += scanned;
+        self.after = after;
+        self.bytes = bytes;
+        if stale {
+            super::append_notice(
+                &mut self.notice,
+                "Cached sources changed; refreshing search catalog",
+            );
+        }
+        Ok(Some(page))
+    }
+}
+
+fn decode_entry(row: &rusqlite::Row<'_>, sources: &Sources) -> Result<Entry, String> {
+    let native: Vec<u8> = row.get(1).map_err(error)?;
+    let directory: i64 = row.get(2).map_err(error)?;
+    let tagged: i64 = row.get(11).map_err(error)?;
+    let tags = MusicTags {
+        title: row.get(5).map_err(error)?,
+        artist: row.get(6).map_err(error)?,
+        album_artist: row.get(7).map_err(error)?,
+        album: row.get(8).map_err(error)?,
+        disc: row.get(9).map_err(error)?,
+        track: row.get(10).map_err(error)?,
+    };
+    if !(0..=1).contains(&directory)
+        || !(0..=1).contains(&tagged)
+        || tagged == 0 && tags != MusicTags::default()
+    {
+        return Err("Invalid search catalog entry type".into());
+    }
+    let identity: Vec<u8> = row.get(4).map_err(error)?;
+    let entry = Entry {
+        path: PathBuf::from(OsString::from_vec(native)),
+        is_directory: directory == 1,
+        modified_unix_seconds: row.get(3).map_err(error)?,
+        identity: Some(decode_identity(&identity)?),
+        music_tags: (tagged == 1).then_some(tags),
+    };
+    validate_entry(&entry, sources)?;
+    Ok(entry)
+}
+
+#[cfg(test)]
 pub(super) fn read(
     path: &Path,
     root: &Path,
@@ -524,87 +718,12 @@ pub(super) fn read(
     byte_limit: usize,
     cancellation: &Cancellation,
 ) -> Result<(Vec<Entry>, Option<String>), String> {
-    cancelled(cancellation)?;
-    let sources = Sources::new(root)?;
-    let (directory, name) = location(path, false)?;
-    let stage = Stage::new(&directory)?;
-    stage.copy(existing(&directory, &name)?, cancellation)?;
-    let connection = stage.connect(false)?;
-    let mut notice = metadata(&connection, &sources, true)?;
-    let entry_limit = entry_limit.min(super::MAX_ENTRIES);
-    let byte_limit = byte_limit.min(super::MAX_INDEX_BYTES);
-    let count: i64 = connection
-        .query_row(
-            "SELECT count(*) FROM (SELECT sequence FROM entries LIMIT ?1)",
-            [entry_limit as i64 + 1],
-            |row| row.get(0),
-        )
-        .map_err(error)?;
-    let count = usize::try_from(count).map_err(error)?;
-    if count > entry_limit || count.saturating_mul(size_of::<Entry>()) > byte_limit {
-        return Err("Search catalog exceeds the entry or memory budget".into());
+    let mut reader = PagedReader::open(path, root, entry_limit, byte_limit, cancellation)?;
+    let mut entries = Vec::with_capacity(reader.count);
+    while let Some(page) = reader.next_page(cancellation)? {
+        entries.extend(page);
     }
-    let mut entries = Vec::with_capacity(count);
-    let mut bytes = entries.capacity().saturating_mul(size_of::<Entry>());
-    let mut statement = connection.prepare("SELECT path, directory, modified, identity, title, artist, album_artist, album, disc, track, tagged FROM entries ORDER BY sequence LIMIT ?1").map_err(error)?;
-    let mut rows = statement.query([entry_limit as i64 + 1]).map_err(error)?;
-    while let Some(row) = rows.next().map_err(error)? {
-        cancelled(cancellation)?;
-        let native: Vec<u8> = row.get(0).map_err(error)?;
-        let directory: i64 = row.get(1).map_err(error)?;
-        let tagged: i64 = row.get(10).map_err(error)?;
-        let tags = MusicTags {
-            title: row.get(4).map_err(error)?,
-            artist: row.get(5).map_err(error)?,
-            album_artist: row.get(6).map_err(error)?,
-            album: row.get(7).map_err(error)?,
-            disc: row.get(8).map_err(error)?,
-            track: row.get(9).map_err(error)?,
-        };
-        if !(0..=1).contains(&directory)
-            || !(0..=1).contains(&tagged)
-            || tagged == 0 && tags != MusicTags::default()
-        {
-            return Err("Invalid search catalog entry type".into());
-        }
-        let identity: Vec<u8> = row.get(3).map_err(error)?;
-        let entry = Entry {
-            path: PathBuf::from(OsString::from_vec(native)),
-            is_directory: directory == 1,
-            modified_unix_seconds: row.get(2).map_err(error)?,
-            identity: Some(decode_identity(&identity)?),
-            music_tags: (tagged == 1).then_some(tags),
-        };
-        validate_entry(&entry, &sources)?;
-        bytes = bytes
-            .checked_add(super::entry_bytes(&entry) - size_of::<Entry>())
-            .ok_or("Search catalog memory budget overflow")?;
-        if bytes > byte_limit || entries.len() >= entry_limit {
-            return Err("Search catalog exceeds the entry or memory budget".into());
-        }
-        entries.push(entry);
-    }
-    let mut stale = false;
-    let mut kept = 0;
-    for index in 0..entries.len() {
-        cancelled(cancellation)?;
-        if sources.fresh(&entries[index])? {
-            entries.swap(kept, index);
-            kept += 1;
-        } else {
-            stale = true;
-        }
-    }
-    entries.truncate(kept);
-    sources.root_unchanged()?;
-    cancelled(cancellation)?;
-    if stale {
-        super::append_notice(
-            &mut notice,
-            "Cached sources changed; refreshing search catalog",
-        );
-    }
-    Ok((entries, notice))
+    Ok((entries, reader.notice().map(str::to_owned)))
 }
 
 pub(super) fn write(

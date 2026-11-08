@@ -1,5 +1,31 @@
 # Next agent: Hermes performance, file features and media polish
 
+## November 8 paged saved-catalog restore — current
+
+Integration checkout `/home/bry/hermes-worktrees/safety`, branch
+`feat/6-paged-catalog-restore`, follows PR #13 and issue #6.
+Read `docs/paged-catalog-restore.md` for semantics and remaining architecture.
+
+- `PagedReader` secures one private version-1 catalog copy, releases the public
+  acquisition lock and reads bounded 256-row pages with source/root checks and
+  cumulative budgets. Empty stale pages and successful EOF have distinct values.
+- Reader error/cancel state latches. SQLite closes before private-stage cleanup.
+  Concurrent publication can replace the public cache while a reader retains
+  its own original snapshot. Signed/sparse sequences retain compatibility.
+- Startup publishes one verified cached prefix and retains indexing/verification
+  status. A late error withdraws it before rebuilding. Cancellation stops later
+  publications. The normal live scan remains the completion authority.
+- Separate reader fixtures and parent restart-helper fixtures cover boundaries,
+  stale data, corruption, budgets, cancellation, root changes and cache replacement.
+  The reviewer identified retained directory-lock lifetime and accumulator capacity,
+  fixed before validation. The accumulator reserves the validated entry count.
+
+Exact source, final test/review results and downloaded artifact evidence belong
+in this batch PR. Persistent query/ranking still needs migration away from full
+snapshot/rank vectors. Scan/group caps, full Home coverage, latency and physical
+Linux/Asahi/Mac gates remain explicit. PR #13 is backed up with all hosted gates
+and native x86_64 package qualification passing.
+
 ## November 8 parallel release groundwork — current
 
 Integration branch `feat/6-search-candidate-paging` follows PR #12, issue #6.
