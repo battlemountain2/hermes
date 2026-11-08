@@ -44,3 +44,8 @@ The empirical descriptor-passing worker test performs one cold decode before
 timing twenty warm requests. Cold process/decoder startup is logged separately;
 the existing 150 ms limit still applies to each of the twenty warm requests.
 Hosted qualification exposed the original first-request classification at 216 ms.
+
+Home date-grouping fixtures use a fixed midday and explicitly exercise the
+previous-day boundary after midnight. Hosted runs can therefore cross midnight
+without changing the intended test inputs. Failed quality jobs preserve generated
+test/display logs and the coverage manifest as a seven-day CI artifact.

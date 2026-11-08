@@ -14,7 +14,8 @@ fn test_same_day_matching() {
 
 #[test]
 fn test_date_bucket_categorization() {
-    let now = glib::DateTime::now_local().expect("local time");
+    let now = glib::DateTime::new(&glib::TimeZone::utc(), 2026, 11, 7, 12, 0, 0.0)
+        .expect("fixed midday fixture");
     let now_unix = now.to_unix();
 
     // Now -> Today
@@ -55,6 +56,16 @@ fn test_date_bucket_categorization() {
             DateBucket::Older
         );
     }
+}
+
+#[test]
+fn date_bucket_categorizes_previous_day_across_midnight() {
+    let now = glib::DateTime::new(&glib::TimeZone::utc(), 2026, 11, 8, 0, 30, 0.0)
+        .expect("fixed midnight boundary fixture");
+    assert_eq!(
+        DateBucket::from_timestamp(now.to_unix() - 7200, &now),
+        DateBucket::Yesterday
+    );
 }
 
 #[test]

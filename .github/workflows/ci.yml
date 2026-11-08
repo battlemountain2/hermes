@@ -85,6 +85,18 @@ jobs:
       - name: Run tests
         run: python3 scripts/check-test-suite.py
 
+      - name: Preserve isolated test failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hermes-isolated-test-failure-evidence
+          path: |
+            /tmp/hermes-ci-tests-*/coverage.json
+            /tmp/hermes-ci-tests-*/case-*/test.log
+            /tmp/hermes-ci-tests-*/case-*/display.log
+          retention-days: 7
+          if-no-files-found: warn
+
   dependencies:
     name: Dependency policy
     runs-on: ubuntu-24.04
