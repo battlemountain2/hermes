@@ -1,5 +1,27 @@
 # Next agent: Hermes performance, file features and media polish
 
+## November 7 migration staging follow-up — current
+
+Branch `fix/6-migration-staging-lifecycle` is stacked on PR #10, issue #6.
+Read `docs/migration-staging.md` for the storage contract and test boundaries.
+
+- Supporting Linux filesystems use anonymous `O_TMPFILE` staging and safe Rustix
+  descriptor-based linking. Data sync/verification precede exclusive publication.
+- Named fallback reservations preserve compatibility. Cleanup checks held-file
+  and directory identities. Unknown/older stages remain available for ownership
+  review; unsupported-filesystem crash cleanup has a separate acceptance limit.
+- Reused verified backups and destinations are synced before retry checkpoints.
+  Regressions inject directory-sync failures after linking and during retry.
+- Bounded tmpfs fixtures produce genuine `ENOSPC` independently at config, data
+  and state roots, then free space and verify recovery and unrelated data.
+- The installed native fixture now interrupts the same import three times and
+  checks zero new named staging entries before the final successful resume.
+
+The review subagent is read-only. Integration, commits and tests use this checkout.
+Record final local/hosted source identities and results in this batch's PR.
+Keep prior previous-release, transfer/search, decoder, physical/platform and
+legacy/fallback stage-review gates explicit. Use private profiles/displays/buses.
+
 ## November 7 installed migration checkpoint — current
 
 Branch `test/6-installed-migration-recovery` is stacked on package PR #9 and

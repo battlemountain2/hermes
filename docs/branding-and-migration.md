@@ -56,7 +56,8 @@ The Linux implementation in `src/paths/legacy_import.rs` uses:
 - A private `legacy-import-v2/` transaction directory under Hermes's state root.
 - Immutable `journal-NNNN.json` generations written before publication.
 - Verified, private `backups/NNN.backup` files for entries that need copying.
-- Exclusive staging and no-clobber hard-link publication, with file/directory
+- Anonymous temporary files on supporting Linux filesystems, with private named
+  reservations as a compatibility path; exclusive linking, file/directory
   synchronization and descriptor-anchored traversal rejecting symbolic links.
 - A process-released directory lock; simultaneous imports fail visibly.
 - Limits of 16 MiB per file, 128 MiB total, 128 files, 128 KiB per journal and
@@ -66,6 +67,10 @@ A completed v1 journal remains compatible. An unfinished v1 journal prompts
 again; its bytes are backed up, but its stored paths are never executed.
 A resumed v2 import can recover a backed-up entry after its original disappears.
 Choosing Continue records that decision; it does not remove unfinished backups.
+Retry syncs reused publications before advancing their checkpoint. Anonymous
+staging reclaims partial unpublished bytes after a crash. Older unknown stages
+and unsupported-filesystem crash remnants retain their ownership-review gate.
+See [staging and storage failures](migration-staging.md).
 
 On an invalid journal, unsafe path, changed backup, permission failure or full
 storage, startup shows an error and retains originals and recovery records.
