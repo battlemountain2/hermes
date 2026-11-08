@@ -135,6 +135,179 @@ fn pages_hold_256_eligible_rows_across_scope_holes_and_reuse_the_buffer() {
 }
 
 #[test]
+fn ascii_page_slots_reuse_path_and_normalized_string_allocations() {
+    let fixture = Fixture::new();
+    let source = fixture.source(
+        Arc::new(
+            (0..512)
+                .map(|number| entry(fixture.0.join(format!("FILE-{number:04}.TXT"))))
+                .collect(),
+        ),
+        usize::MAX,
+        usize::MAX,
+    );
+    let mut buffers = Vec::new();
+    source
+        .for_each_page(&|| false, |page| {
+            let item = &page[0].1;
+            buffers.push((
+                item.path.as_os_str().as_encoded_bytes().as_ptr(),
+                item.name.as_ptr(),
+                item.search_name.as_ptr(),
+                item.search_path.as_ptr(),
+            ));
+            for (position, item) in page {
+                assert_eq!(
+                    item,
+                    &source.get(*position)?.expect("independent source read")
+                );
+            }
+            Ok(())
+        })
+        .expect("reused ASCII pages");
+    assert_eq!(buffers.len(), 2);
+    assert_eq!(buffers[0], buffers[1]);
+}
+
+#[test]
+fn reused_rows_clear_old_tags_identity_and_preserve_contextual_unicode() {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+    let fixture = Fixture::new();
+    let mut entries = Vec::new();
+    for number in 0..513 {
+        let mut row = entry(fixture.0.join(format!("FILE-{number:04}.TXT")));
+        if number == 0 {
+            row.path = fixture.0.join("ΟΣ/İSTANBUL.FLAC");
+            row.is_directory = true;
+            row.modified_unix_seconds = Some(123);
+            row.identity = Some(FileIdentity::from_metadata(
+                &fs::metadata(&fixture.0).expect("root metadata"),
+            ));
+            row.music_tags = Some(MusicTags {
+                title: Some("ΟΣ".into()),
+                artist: Some(String::new()),
+                album_artist: Some("İSTANBUL".into()),
+                ..MusicTags::default()
+            });
+        }
+        if number == 512 {
+            row.path = fixture
+                .0
+                .join(OsString::from_vec(b"STRANGE-\xff.TXT".to_vec()));
+        }
+        entries.push(row);
+        entries.push(entry(fixture.0.with_extension("outside").join("excluded")));
+    }
+    let source = fixture.source(Arc::new(entries), usize::MAX, usize::MAX);
+    let mut sizes = Vec::new();
+    source
+        .for_each_page(&|| false, |page| {
+            sizes.push(page.len());
+            for (position, item) in page {
+                assert_eq!(
+                    item,
+                    &source.get(*position)?.expect("independent source read")
+                );
+            }
+            if sizes.len() == 1 {
+                assert_eq!(page[0].1.search_metadata, "ΟΣ  İSTANBUL".to_lowercase());
+                assert_eq!(page[0].1.search_path, "ΟΣ/İSTANBUL.FLAC".to_lowercase());
+            } else {
+                assert!(!page[0].1.is_directory);
+                assert!(page[0].1.source_identity.is_none());
+                assert!(page[0].1.music_tags.is_none());
+                assert!(page[0].1.search_metadata.is_empty());
+                assert!(page[0].1.modified_unix_seconds.is_none());
+            }
+            Ok(())
+        })
+        .expect("reused mixed source pages");
+    assert_eq!(sizes, [256, 256, 1]);
+}
+
+#[test]
+fn page_reuse_preserves_the_original_fresh_conversion_admission_budget() {
+    let fixture = Fixture::new();
+    let entries = Arc::new(
+        ["a", "b", "ΟΣ.FLAC"]
+            .into_iter()
+            .map(|name| Entry {
+                music_tags: Some(MusicTags {
+                    title: Some("x".into()),
+                    artist: Some(String::new()),
+                    album_artist: Some("ΟΣ".into()),
+                    album: Some(String::new()),
+                    ..MusicTags::default()
+                }),
+                ..entry(fixture.0.join(name))
+            })
+            .collect::<Vec<_>>(),
+    );
+    let mut original_bytes = 0;
+    for row in entries.iter() {
+        let mut original = SearchItem::from_path(row.path.clone(), &fixture.0, false, None);
+        original.music_tags = row.music_tags.clone();
+        let tags = row.music_tags.as_ref().expect("fixture tags");
+        original.search_metadata = [&tags.title, &tags.artist, &tags.album_artist, &tags.album]
+            .into_iter()
+            .flatten()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase();
+        original_bytes += item_bytes(&original);
+    }
+    let exact = fixture.source(entries.clone(), usize::MAX, original_bytes);
+    assert_eq!(positions(&exact), [0, 1, 2]);
+    assert!(exact.notice().is_none());
+    let limited = fixture.source(entries, usize::MAX, original_bytes - 1);
+    assert_eq!(positions(&limited), [0, 1]);
+    assert!(limited.notice().is_some());
+}
+
+#[test]
+fn reused_scope_check_matches_fresh_lookup_for_path_component_aliases() {
+    let fixture = Fixture::new();
+    let entries = Arc::new(
+        [
+            fixture.0.clone(),
+            fixture.0.join("."),
+            fixture.0.join("./A.TXT"),
+            fixture.0.join("nested//B.TXT"),
+            fixture.0.join("nested/../C.TXT"),
+            fixture.0.with_extension("outside").join("D.TXT"),
+        ]
+        .into_iter()
+        .map(entry)
+        .collect(),
+    );
+    let source = fixture.source(entries, usize::MAX, usize::MAX);
+    let expected: Vec<_> = (0..source.len())
+        .filter_map(|position| {
+            source
+                .get(position)
+                .expect("fresh read")
+                .map(|item| (position, item))
+        })
+        .collect();
+    let mut observed = Vec::new();
+    source
+        .for_each_page(&|| false, |page| {
+            observed.extend_from_slice(page);
+            Ok(())
+        })
+        .expect("reused scoped read");
+    assert_eq!(observed, expected);
+    assert_eq!(
+        observed
+            .iter()
+            .map(|(position, _)| *position)
+            .collect::<Vec<_>>(),
+        [2, 3, 4]
+    );
+}
+
+#[test]
 fn entry_cap_counts_eligible_rows_and_reports_only_real_omissions() {
     let fixture = Fixture::new();
     let entries = Arc::new(vec![

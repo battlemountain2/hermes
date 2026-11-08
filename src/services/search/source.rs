@@ -125,6 +125,67 @@ impl Source {
         }
     }
 
+    fn read_into(&self, position: usize, item: &mut SearchItem) -> Result<bool, String> {
+        if position >= self.end {
+            return Ok(false);
+        }
+        match &self.backing {
+            Backing::Library(entries) => {
+                let Some(entry) = entries.get(position) else {
+                    return Ok(false);
+                };
+                let Ok(relative) = entry.path.strip_prefix(&self.root) else {
+                    return Ok(false);
+                };
+                if relative.as_os_str().is_empty() {
+                    return Ok(false);
+                }
+                item.path.clone_from(&entry.path);
+                entry
+                    .path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .as_ref()
+                    .clone_into(&mut item.name);
+                item.search_name.clone_from(&item.name);
+                lowercase(&mut item.search_name);
+                relative
+                    .to_string_lossy()
+                    .as_ref()
+                    .clone_into(&mut item.search_path);
+                lowercase(&mut item.search_path);
+                item.is_directory = entry.is_directory;
+                item.modified_unix_seconds = entry.modified_unix_seconds;
+                item.source_identity.clone_from(&entry.identity);
+                item.music_tags.clone_from(&entry.music_tags);
+                item.search_metadata.clear();
+                if let Some(tags) = &entry.music_tags {
+                    for (index, field) in
+                        [&tags.title, &tags.artist, &tags.album_artist, &tags.album]
+                            .into_iter()
+                            .flatten()
+                            .enumerate()
+                    {
+                        if index > 0 {
+                            item.search_metadata.push(' ');
+                        }
+                        item.search_metadata.push_str(field);
+                    }
+                    lowercase(&mut item.search_metadata);
+                }
+            }
+            #[cfg(test)]
+            Backing::Items(items) => {
+                let Some(original) = items.get(position) else {
+                    return Ok(false);
+                };
+                item.clone_from(original);
+            }
+        }
+        Ok(true)
+    }
+
     pub(super) fn len(&self) -> usize {
         self.end
     }
@@ -140,23 +201,41 @@ impl Source {
     ) -> Result<(), String> {
         check_cancelled(cancelled)?;
         let mut page = Vec::with_capacity(PAGE_SIZE);
+        let mut used = 0;
         for position in 0..self.end {
             check_cancelled(cancelled)?;
-            if let Some(item) = self.get(position)? {
-                page.push((position, item));
-                if page.len() == PAGE_SIZE {
+            if used == page.len() {
+                page.push((
+                    0,
+                    SearchItem::from_path(PathBuf::new(), &self.root, false, None),
+                ));
+            }
+            if self.read_into(position, &mut page[used].1)? {
+                page[used].0 = position;
+                used += 1;
+                if used == PAGE_SIZE {
                     check_cancelled(cancelled)?;
                     visit(&page)?;
                     check_cancelled(cancelled)?;
-                    page.clear();
+                    used = 0;
                 }
             }
         }
         check_cancelled(cancelled)?;
-        if !page.is_empty() {
-            visit(&page)?;
+        if used > 0 {
+            visit(&page[..used])?;
         }
         check_cancelled(cancelled)
+    }
+}
+
+// ASCII keeps its reusable buffer. Unicode uses Rust's contextual lowercase
+// rules, including final sigma and expanding case mappings.
+fn lowercase(value: &mut String) {
+    if value.is_ascii() {
+        value.make_ascii_lowercase();
+    } else {
+        *value = value.to_lowercase();
     }
 }
 

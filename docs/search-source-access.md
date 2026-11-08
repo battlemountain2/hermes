@@ -25,6 +25,9 @@ path, metadata normalization, tags and source identity as the previous worker.
 Full scoring and candidate construction consume at most 256 eligible items per
 source page. Single result and representative lookups materialize only the
 requested item. The worker retains no additional complete item or position list.
+Page slots reuse path and normalized ASCII string allocations. Unicode keeps
+Rust's whole-string contextual lowercasing. Admission continues to use the
+original fresh conversion, keeping its exact logical-budget boundaries.
 
 ## Failure and publication
 
@@ -53,6 +56,12 @@ machine 100k-file/latency gate and physical platform qualification remain open.
 
 Test-only item-backed sources preserve crafted legacy scorer fixtures. Their
 complete `SearchItem` vectors are excluded from the production adapter.
+
+The adapter trades retained duplicate data for repeated conversion work. Generated
+timing currently measures higher warm-query CPU/latency than the prior retained
+item snapshot. Page-slot reuse reduces allocation churn, but direct persistent
+normalized-row access remains a performance requirement. Exact comparative
+measurements and their debug/synthetic scope belong in the batch PR.
 
 ## Verification
 

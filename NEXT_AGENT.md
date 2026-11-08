@@ -16,6 +16,10 @@ Read `docs/search-source-access.md` for ownership and remaining architecture.
   old cursors. Content extraction retains its same-revision replay rules.
 - Production grouping uses the source interface. Test-only item sources preserve
   crafted scorer fixtures. Group position/entity collections remain in memory.
+- Source pages reuse 256 item slots and ASCII allocations while preserving fresh
+  admission accounting and Unicode semantics. Generated warm queries remain
+  slower than the prior retained-copy worker. Record the measured tradeoff in
+  this batch PR; direct normalized SQL source access remains a performance gate.
 
 A source/candidate implementation agent and read-only reviewer support one parent
 integration owner. Local/hosted/package evidence belongs in this batch PR.
