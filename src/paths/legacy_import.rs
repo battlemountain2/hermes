@@ -11,7 +11,7 @@
 use std::{
     collections::HashSet,
     fs::{self, File, OpenOptions},
-    io::{self, Read, Write},
+    io::{self, Read, Seek, Write},
     os::{
         fd::AsRawFd,
         unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
@@ -176,7 +176,7 @@ impl Directory {
         let path = self.path().join(name);
         if create {
             match fs::DirBuilder::new().mode(0o700).create(&path) {
-                Ok(()) => self.0.sync_all()?,
+                Ok(()) => self.sync()?,
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(error) => return Err(error.into()),
             }
@@ -201,6 +201,13 @@ impl Directory {
         if metadata.uid() != uid || metadata.mode() & 0o077 != 0 {
             return Err(Error::UnsafePath);
         }
+        Ok(())
+    }
+
+    fn sync(&self) -> Result<()> {
+        #[cfg(test)]
+        tests::check_directory_sync(self)?;
+        self.0.sync_all()?;
         Ok(())
     }
 
@@ -262,15 +269,101 @@ fn verified(bytes: &[u8], entry: &Entry) -> Result<()> {
     Ok(())
 }
 
-// Every staging directory is exclusively reserved and private. Never reuse or
-// clean up someone else's predictable temporary name (including the v1 name).
 struct Stage {
+    file: File,
+    // Own the fallback reservation until publication or failure has finished.
+    _reservation: Option<NamedStage>,
+}
+
+impl Stage {
+    fn new(parent: &Directory) -> Result<Self> {
+        #[cfg(target_os = "linux")]
+        {
+            use rustix::fs::{Mode, OFlags, openat};
+            use rustix::io::Errno;
+
+            match openat(
+                &parent.0,
+                ".",
+                OFlags::TMPFILE | OFlags::RDWR | OFlags::CLOEXEC,
+                Mode::RUSR | Mode::WUSR,
+            ) {
+                Ok(file) => {
+                    return Ok(Self {
+                        file: File::from(file),
+                        _reservation: None,
+                    });
+                }
+                // Preserve named staging on filesystems/kernels without O_TMPFILE.
+                Err(Errno::OPNOTSUPP | Errno::INVAL | Errno::ISDIR | Errno::NOENT) => {}
+                Err(error) => return Err(io::Error::from(error).into()),
+            }
+        }
+        Self::named(parent)
+    }
+
+    fn named(parent: &Directory) -> Result<Self> {
+        let reservation = NamedStage::new(parent)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(NO_FOLLOW | NON_BLOCK)
+            .open(reservation.directory.path().join("content"))?;
+        Ok(Self {
+            file,
+            _reservation: Some(reservation),
+        })
+    }
+
+    fn publish(&self, directory: &Directory, name: &Path) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        rustix::fs::linkat(
+            rustix::fs::CWD,
+            PathBuf::from(format!("/proc/self/fd/{}", self.file.as_raw_fd())),
+            &directory.0,
+            name,
+            rustix::fs::AtFlags::SYMLINK_FOLLOW,
+        )
+        .map_err(io::Error::from)?;
+        #[cfg(not(target_os = "linux"))]
+        {
+            let reservation = self._reservation.as_ref().ok_or(Error::UnsafePath)?;
+            fs::hard_link(
+                reservation.directory.path().join("content"),
+                directory.path().join(name),
+            )?;
+        }
+        directory.sync()?;
+        Ok(())
+    }
+}
+
+impl Drop for Stage {
+    fn drop(&mut self) {
+        if let Some(reservation) = self._reservation.as_ref() {
+            let path = reservation.directory.path().join("content");
+            if let (Ok(expected), Ok(actual)) = (self.file.metadata(), fs::symlink_metadata(&path))
+                && actual.is_file()
+                && actual.dev() == expected.dev()
+                && actual.ino() == expected.ino()
+            {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+}
+
+// Each fallback reservation is exclusively created and private. Legacy stages
+// retain their contents until ownership can be established independently.
+struct NamedStage {
     parent: Directory,
     name: PathBuf,
     directory: Directory,
 }
 
-impl Stage {
+impl NamedStage {
     fn new(parent: &Directory) -> Result<Self> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         for _ in 0..32 {
@@ -300,32 +393,31 @@ impl Stage {
     }
 }
 
-impl Drop for Stage {
+impl Drop for NamedStage {
     fn drop(&mut self) {
-        let _ = fs::remove_file(self.directory.path().join("content"));
-        let _ = fs::remove_dir(self.parent.path().join(&self.name));
+        let path = self.parent.path().join(&self.name);
+        if let (Ok(expected), Ok(actual)) =
+            (self.directory.0.metadata(), fs::symlink_metadata(&path))
+            && actual.is_dir()
+            && actual.dev() == expected.dev()
+            && actual.ino() == expected.ino()
+        {
+            let _ = fs::remove_dir(path);
+        }
     }
 }
 
 // Hard-link publication is atomic and fails if *anything* already occupies the
 // destination, even if it appeared after inspection. Stage on that filesystem.
 fn publish(directory: &Directory, name: &Path, bytes: &[u8]) -> Result<()> {
-    let stage = Stage::new(directory)?;
-    let staged = stage.directory.path().join("content");
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .custom_flags(NO_FOLLOW | NON_BLOCK)
-        .open(&staged)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    if read_bounded(stage.directory.file(Path::new("content"))?, MAX_FILE)? != bytes {
+    let mut stage = Stage::new(directory)?;
+    stage.file.write_all(bytes)?;
+    stage.file.sync_all()?;
+    stage.file.rewind()?;
+    if read_bounded(stage.file.try_clone()?, MAX_FILE)? != bytes {
         return Err(Error::Changed);
     }
-    fs::hard_link(&staged, directory.path().join(name))?;
-    directory.0.sync_all()?;
-    Ok(())
+    stage.publish(directory, name)
 }
 
 impl Roots {
@@ -510,6 +602,7 @@ impl Roots {
                         return Err(Error::UnsafePath);
                     }
                     journal.entries[index].state = EntryState::Preserved;
+                    target.sync()?;
                     save(&directory, generation, &journal)?;
                     generation += 1;
                     continue;
@@ -522,6 +615,7 @@ impl Roots {
                 Ok(file) => {
                     let bytes = read_bounded(file, MAX_FILE)?;
                     verified(&bytes, entry)?;
+                    backups.sync()?;
                     bytes
                 }
                 Err(error) if missing(&error) && entry.state == EntryState::Pending => {
@@ -544,6 +638,7 @@ impl Roots {
                 Err(Error::Io(io::ErrorKind::AlreadyExists)) => {
                     // Re-check the raced-in entry; never follow a symlink.
                     target.file(name)?;
+                    target.sync()?;
                     journal.entries[index].state = EntryState::Preserved;
                 }
                 Err(error) => return Err(error),

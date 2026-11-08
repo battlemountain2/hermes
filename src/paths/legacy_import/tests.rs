@@ -3,6 +3,24 @@
 use super::*;
 use std::os::unix::fs::{PermissionsExt, symlink};
 
+thread_local! {
+    static SYNC_FAILURE: std::cell::Cell<Option<(u64, u64)>> = const { std::cell::Cell::new(None) };
+}
+
+pub(super) fn check_directory_sync(directory: &Directory) -> Result<()> {
+    let metadata = directory.0.metadata()?;
+    if SYNC_FAILURE.get() == Some((metadata.dev(), metadata.ino())) {
+        SYNC_FAILURE.set(None);
+        return Err(Error::Io(io::ErrorKind::Other));
+    }
+    Ok(())
+}
+
+fn fail_next_sync(directory: &Directory) {
+    let metadata = directory.0.metadata().expect("fixture directory metadata");
+    SYNC_FAILURE.set(Some((metadata.dev(), metadata.ino())));
+}
+
 struct Fixture {
     path: PathBuf,
     roots: Roots,
@@ -88,6 +106,332 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+#[test]
+fn stage_lifetime_keeps_private_bytes_and_preserves_unrelated_entries() {
+    let fixture = Fixture::new();
+    let directory = fixture.transaction();
+    let sentinel = directory.path().join(".import-stage-old");
+    fs::create_dir(&sentinel).expect("create legacy stage sentinel");
+    fs::write(sentinel.join("content"), b"preserve legacy bytes").expect("write sentinel");
+    let mut stage = Stage::new(&directory).expect("create private stage");
+    let anonymous = stage._reservation.is_none();
+    assert_eq!(
+        stage.file.metadata().expect("stage metadata").mode() & 0o777,
+        0o600
+    );
+    assert_eq!(
+        stage.file.metadata().expect("stage metadata").nlink(),
+        u64::from(!anonymous)
+    );
+    stage
+        .file
+        .write_all(b"complete bytes")
+        .expect("write private stage");
+    stage.file.sync_all().expect("sync private stage");
+    stage
+        .publish(&directory, Path::new("published"))
+        .expect("publish stage without replacement");
+    drop(stage);
+    assert_eq!(
+        fs::read(directory.path().join("published")).expect("read published file"),
+        b"complete bytes"
+    );
+    assert_eq!(
+        fs::read(sentinel.join("content")).expect("read legacy sentinel"),
+        b"preserve legacy bytes"
+    );
+    assert_eq!(
+        fs::read_dir(directory.path())
+            .expect("list fixture")
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn named_fallback_cleans_only_its_own_reservation() {
+    let fixture = Fixture::new();
+    let directory = fixture.transaction();
+    let mut stage = Stage::named(&directory).expect("create named fallback");
+    stage
+        .file
+        .write_all(b"partial")
+        .expect("write partial fallback data");
+    assert_eq!(
+        fs::read_dir(directory.path())
+            .expect("list reserved stage")
+            .count(),
+        1
+    );
+    drop(stage);
+    assert_eq!(
+        fs::read_dir(directory.path())
+            .expect("list cleaned stage")
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn named_fallback_does_not_remove_a_replacement_directory() {
+    let fixture = Fixture::new();
+    let directory = fixture.transaction();
+    let stage = Stage::named(&directory).expect("create named fallback");
+    let reservation = stage._reservation.as_ref().expect("named reservation");
+    let path = directory.path().join(&reservation.name);
+    let moved = directory.path().join("moved-owned-reservation");
+    fs::rename(&path, &moved).expect("move owned directory");
+    fs::create_dir(&path).expect("create replacement directory");
+    drop(stage);
+    assert!(path.is_dir(), "replacement directory must survive cleanup");
+    assert!(
+        !moved.join("content").exists(),
+        "owned partial bytes should be cleaned through the retained handle"
+    );
+}
+
+#[test]
+fn named_fallback_publication_preserves_an_existing_destination() {
+    let fixture = Fixture::new();
+    let directory = fixture.transaction();
+    let mut stage = Stage::named(&directory).expect("create named fallback");
+    stage
+        .file
+        .write_all(b"incoming")
+        .expect("write fallback data");
+    fs::write(directory.path().join("keep"), b"existing").expect("write destination sentinel");
+    assert!(matches!(
+        stage.publish(&directory, Path::new("keep")),
+        Err(Error::Io(io::ErrorKind::AlreadyExists))
+    ));
+    drop(stage);
+    assert_eq!(
+        fs::read(directory.path().join("keep")).expect("read sentinel"),
+        b"existing"
+    );
+    assert_eq!(
+        fs::read_dir(directory.path())
+            .expect("list fixture")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn named_fallback_preserves_replaced_or_unowned_content() {
+    let fixture = Fixture::new();
+    let directory = fixture.transaction();
+    let stage = Stage::named(&directory).expect("create named fallback");
+    let path = stage
+        ._reservation
+        .as_ref()
+        .expect("named reservation")
+        .directory
+        .path()
+        .join("content");
+    fs::remove_file(&path).expect("remove generated staged file");
+    fs::write(&path, b"replacement must survive").expect("create replacement sentinel");
+    let retained_path = fs::read_link(
+        stage
+            ._reservation
+            .as_ref()
+            .expect("named reservation")
+            .directory
+            .path(),
+    )
+    .expect("resolve fixture directory handle")
+    .join("content");
+    drop(stage);
+    assert_eq!(
+        fs::read(retained_path).expect("read replacement sentinel"),
+        b"replacement must survive"
+    );
+    let reservation = NamedStage::new(&directory).expect("reserve empty fallback");
+    let retained_path = directory.path().join(&reservation.name).join("content");
+    fs::write(&retained_path, b"created before exclusive open").expect("write unowned sentinel");
+    drop(reservation);
+    assert_eq!(
+        fs::read(retained_path).expect("read unowned sentinel"),
+        b"created before exclusive open"
+    );
+}
+
+#[test]
+fn retry_resyncs_backup_and_destination_before_checkpointing_reused_entries() {
+    for fail_backup in [false, true] {
+        let fixture = Fixture::new();
+        fixture.source(0, "settings.toml", b"complete original");
+        let transaction = fixture.transaction();
+        let directory = if fail_backup {
+            transaction
+                .child(Path::new("backups"), true)
+                .expect("create backup fixture")
+        } else {
+            Directory::open(&fixture.roots.target[0], true).expect("create destination fixture")
+        };
+        fail_next_sync(&directory);
+        assert!(matches!(
+            fixture.roots.decide(Choice::Import),
+            Err(Error::Io(io::ErrorKind::Other))
+        ));
+        let (generation, first) = load(&transaction)
+            .expect("load durable fixture checkpoint")
+            .expect("checkpoint exists");
+        assert!(!first.completed);
+        fail_next_sync(&directory);
+        assert!(matches!(
+            fixture.roots.decide(Choice::Import),
+            Err(Error::Io(io::ErrorKind::Other))
+        ));
+        let (after_retry, second) = load(&transaction)
+            .expect("load retry checkpoint")
+            .expect("checkpoint exists");
+        assert_eq!(
+            generation, after_retry,
+            "retry must sync reused publication before advancing recovery"
+        );
+        assert!(!second.completed);
+        fixture
+            .roots
+            .decide(Choice::Import)
+            .expect("resume after storage sync recovers");
+        assert_eq!(
+            fs::read(fixture.target(0, "settings.toml")).expect("read final data"),
+            b"complete original"
+        );
+        assert_eq!(
+            fs::read(fixture.roots.source[0].join("settings.toml")).expect("read original"),
+            b"complete original"
+        );
+    }
+}
+
+#[test]
+fn storage_exhaustion_preserves_originals_and_recovers_after_space_is_freed() {
+    const CHILD: &str = "HERMES_IMPORT_STORAGE_FIXTURE";
+    if let Some(root) = std::env::var_os(CHILD) {
+        let root = PathBuf::from(root);
+        assert!(
+            root.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("hermes-import-"))
+        );
+        let index: usize = std::env::var("HERMES_IMPORT_STORAGE_INDEX")
+            .expect("fixture index")
+            .parse()
+            .expect("numeric fixture index");
+        assert!(index < 3);
+        let roots = Roots {
+            source: [
+                root.join("old-config"),
+                root.join("old-data"),
+                root.join("old-state"),
+            ],
+            target: [root.join("config"), root.join("data"), root.join("state")],
+            development: false,
+        };
+        for target in &roots.target {
+            fs::create_dir_all(target).expect("create generated target");
+            fs::write(target.join("unrelated"), b"keep").expect("write unrelated sentinel");
+        }
+        fs::write(roots.target[1].join("ratings-v1.json"), b"newer ratings")
+            .expect("write conflict sentinel");
+        let filler = roots.target[index].join("fixture-space-filler");
+        let mut file = File::create(&filler).expect("create bounded filler");
+        let mut exhausted = false;
+        for _ in 0..256 {
+            if let Err(error) = file.write_all(&[0; 4096]) {
+                assert_eq!(error.kind(), io::ErrorKind::StorageFull);
+                exhausted = true;
+                break;
+            }
+        }
+        drop(file);
+        assert!(
+            exhausted,
+            "fixture must exhaust its bounded tmpfs within 1 MiB"
+        );
+        assert!(matches!(
+            roots.decide(Choice::Import),
+            Err(Error::Io(io::ErrorKind::StorageFull))
+        ));
+        for (index, name) in [
+            "settings.toml",
+            "music-collections-v1.json",
+            "music-queue-v1.json",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let original =
+                fs::read(roots.source[index].join(name)).expect("read original after exhaustion");
+            assert_eq!(original, vec![b'x'; 8192]);
+            if let Ok(published) = fs::read(roots.target[index].join(name)) {
+                assert_eq!(published, original, "only complete data may be published");
+            }
+        }
+        fs::remove_file(filler).expect("release bounded fixture space");
+        roots
+            .decide(Choice::Import)
+            .expect("resume with available storage");
+        assert_eq!(
+            roots.inspect().expect("inspect recovered import"),
+            Status::Ready
+        );
+        for (index, name) in [
+            "settings.toml",
+            "music-collections-v1.json",
+            "music-queue-v1.json",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(
+                fs::read(roots.target[index].join(name)).expect("read recovered data"),
+                vec![b'x'; 8192]
+            );
+            assert_eq!(
+                fs::read(roots.target[index].join("unrelated")).expect("read unrelated sentinel"),
+                b"keep"
+            );
+        }
+        assert_eq!(
+            fs::read(roots.target[1].join("ratings-v1.json")).expect("read preserved conflict"),
+            b"newer ratings"
+        );
+        return;
+    }
+    for index in 0..3 {
+        let fixture = Fixture::new();
+        for (root, name) in [
+            "settings.toml",
+            "music-collections-v1.json",
+            "music-queue-v1.json",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            fixture.source(root, name, &vec![b'x'; 8192]);
+        }
+        fixture.source(1, "ratings-v1.json", b"older ratings");
+        fs::create_dir_all(&fixture.roots.target[index]).expect("create bounded mount target");
+        let output = std::process::Command::new("bwrap")
+            .args(["--die-with-parent", "--unshare-pid", "--unshare-net", "--ro-bind", "/", "/", "--bind"])
+            .arg(&fixture.path).arg(&fixture.path)
+            .args(["--proc", "/proc", "--dev", "/dev", "--size", "131072", "--tmpfs"])
+            .arg(&fixture.roots.target[index]).arg("--")
+            .arg(std::env::current_exe().expect("current test executable"))
+            .args(["paths::legacy_import::tests::storage_exhaustion_preserves_originals_and_recovers_after_space_is_freed", "--exact", "--nocapture"])
+            .env(CHILD, &fixture.path).env("HERMES_IMPORT_STORAGE_INDEX", index.to_string())
+            .output().expect("run private bounded filesystem fixture");
+        assert!(
+            output.status.success(),
+            "bounded root {index} failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
 
@@ -441,6 +785,10 @@ fn backup_recovers_crash_before_or_after_backup_checkpoint_without_original() {
         assert_eq!(
             fs::read(backups.path().join("000.backup")).expect("read generated fixture"),
             b"recover me"
+        );
+        assert_eq!(
+            fs::read(orphan.path().join("content")).expect("read unknown legacy stage"),
+            b"partial journal"
         );
     }
 }

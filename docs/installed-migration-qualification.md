@@ -36,6 +36,12 @@ cleanup review** into the pending release gates. Safe cleanup requires a reviewe
 ownership/recovery protocol before removing crash leftovers. Backups and immutable
 journals also remain available for recovery review.
 
+The subsequent [staging lifecycle batch](migration-staging.md) adds anonymous
+temporary files and strengthens the installed fixture to three interruptions
+with zero newly created named stages. Its PR records the new executable/artifact
+results. The evidence above describes the earlier package and its observed
+leftover; older/fallback stages retain their explicit ownership review.
+
 Local evidence is under
 `/home/bry/hermes-validation/2026-11-07/migration/installed-run-3/` and the combined
 `full-lifecycle/` run. Each includes a JSON result and generated profiles/logs.

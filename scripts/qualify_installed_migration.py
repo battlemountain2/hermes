@@ -323,17 +323,22 @@ class InstalledChecks:
         name = "data/music-collections-v1.json"
         content[name] += b" " * (2 * 1024 * 1024)
         source_path(profile, name).write_bytes(content[name])
-        self.start(profile, "limited")
-        self.prompt()
-        subprocess.run(["prlimit", "--pid", str(self.process.pid), "--core=0",
-                        "--fsize=1048576:1048576"], check=True)
-        self.accessible.click(IMPORT)
-        wait_for(lambda: self.process.poll() is not None, "Bounded import fixture did not interrupt")
-        require(self.process.returncode == -signal.SIGXFSZ, "Import did not stop at the expected file-size limit")
-        require(not journal(profile)["completed"], "Interrupted import was marked complete")
-        require(not target_path(profile, name).exists(), "Incomplete collection was published")
+        for attempt in range(3):
+            self.start(profile, f"limited-{attempt}")
+            self.prompt()
+            subprocess.run(["prlimit", "--pid", str(self.process.pid), "--core=0",
+                            "--fsize=1048576:1048576"], check=True)
+            self.accessible.click(IMPORT)
+            wait_for(lambda: self.process.poll() is not None, "Bounded import fixture did not interrupt")
+            require(self.process.returncode == -signal.SIGXFSZ, "Import did not stop at the expected file-size limit")
+            require(not journal(profile)["completed"], "Interrupted import was marked complete")
+            require(not target_path(profile, name).exists(), "Incomplete collection was published")
+            stages = list(profile.rglob(".import-stage-*"))
+            require(not stages, "Interrupted import retained newly created staging data")
+            check_originals(profile, content)
+            self.close(force=True)
         self.report["interruption_signal"] = "SIGXFSZ from a 1 MiB process file-size limit"
-        self.close(force=True)
+        self.report["interruption_attempts"] = 3
         self.start(profile, "resume")
         self.prompt()
         self.accessible.click(IMPORT)
@@ -343,12 +348,7 @@ class InstalledChecks:
         check_imported(profile, content)
         stages = list((profile / "state/hermes/legacy-import-v2").rglob(".import-stage-*"))
         self.report["retained_crash_stages"] = len(stages)
-        for stage in stages:
-            require(not stage.is_symlink() and stage.is_dir() and stage.stat().st_mode & 0o777 == 0o700,
-                    "Retained crash stage is not a private directory")
-            require((stage / "content").stat().st_mode & 0o777 == 0o600, "Retained crash file is not private")
-        if stages:
-            self.report["pending"].append("private crash-stage retention and cleanup review")
+        require(not stages, "Recovered import retained newly created staging data")
         self.passed("abrupt process interruption resumes remaining data")
 
     def development(self):
