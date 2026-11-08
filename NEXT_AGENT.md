@@ -1,5 +1,26 @@
 # Next agent: Hermes performance, file features and media polish
 
+## November 7 downloaded-package qualification — current
+
+Branch `test/6-package-qualification` follows `ci/6-release-qualification` and
+tracks issue #6 in draft PR #9. It adds a fresh Arch runtime CI job and guarded package lifecycle
+runner. The downloaded foundation artifact, its exact merge-source identity,
+checksums, verified scope and reproduction are in `docs/package-qualification.md`.
+
+Local package installation, installed CLI/private-display startup, same-version
+reinstall, removal and generated data/default retention passed in a private Arch
+rootfs. Evidence is under `/home/bry/hermes-validation/2026-11-07/`. The installed
+desktop executable's hash remains the prior recorded value. Rootless pacman uses
+the existing subordinate UID/GID ranges with its usual downloader sandbox policy.
+
+Keep actual previous-release upgrades and installed-app migration/recovery open.
+Package fixture retention and fresh-profile startup have separate evidence.
+Physical Wayland/browser/audio, decoder corpus, Asahi and Mac acceptance remain
+pending. Final hosted CI results and this batch's PR identity belong in its PR.
+The first hosted runtime check exposed the official Docker image's documentation
+`NoExtract` rule. Its fixture now permits the full document payload while
+retaining other pacman policies and strict installed-file integrity checks.
+
 ## November 7 compatibility qualification — current
 
 The release-foundation follow-up is backed up in draft PR #8 on
