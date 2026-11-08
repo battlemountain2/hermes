@@ -1,14 +1,12 @@
-use std::mem::size_of;
-
 use rusqlite::{
     Connection, config::DbConfig, limits::Limit, params, params_from_iter, types::Value,
 };
 
 use super::{ParsedSearchQuery, SearchItem, matches_category};
 
-const MAX_ITEMS: usize = 40_000;
 const MAX_DATABASE_BYTES: usize = 32 * 1024 * 1024;
 const PAGE_SIZE: usize = 4096;
+const CANDIDATE_PAGE_SIZE: usize = 256;
 const MAX_ROW_BYTES: usize = 16 * 1024;
 const CATEGORIES: [&str; 6] = [
     "audio",
@@ -22,6 +20,8 @@ const CATEGORIES: [&str; 6] = [
 pub(super) struct Candidates {
     connection: Connection,
     item_count: usize,
+    #[cfg(test)]
+    fail_after_page: std::cell::Cell<Option<usize>>,
 }
 
 impl Candidates {
@@ -30,9 +30,6 @@ impl Candidates {
         cancelled: &impl Fn() -> bool,
     ) -> Result<Self, String> {
         check_cancelled(cancelled)?;
-        if items.len() > MAX_ITEMS {
-            return Err("Search candidates exceed the item limit".into());
-        }
         let mut input_bytes = 0usize;
         for item in items {
             check_cancelled(cancelled)?;
@@ -45,7 +42,7 @@ impl Candidates {
                 return Err("Search candidates exceed the input byte limit".into());
             }
         }
-        let mut connection = Connection::open_in_memory().map_err(error)?;
+        let mut connection = Connection::open("").map_err(error)?;
         configure(&connection)?;
         check_cancelled(cancelled)?;
         connection
@@ -143,14 +140,36 @@ impl Candidates {
         Ok(Self {
             connection,
             item_count: items.len(),
+            #[cfg(test)]
+            fail_after_page: std::cell::Cell::new(None),
         })
     }
 
-    pub(super) fn matching(
+    #[cfg(test)]
+    pub(super) fn fail_after_page_for_test(&self, page: usize) {
+        self.fail_after_page.set(Some(page));
+    }
+
+    #[cfg(test)]
+    fn matching(
         &self,
         query: &ParsedSearchQuery,
         cancelled: &impl Fn() -> bool,
     ) -> Result<Vec<usize>, String> {
+        let mut matches = Vec::new();
+        self.for_each_page(query, cancelled, |page| {
+            matches.extend_from_slice(page);
+            Ok(())
+        })?;
+        Ok(matches)
+    }
+
+    pub(super) fn for_each_page(
+        &self,
+        query: &ParsedSearchQuery,
+        cancelled: &impl Fn() -> bool,
+        mut visit: impl FnMut(&[usize]) -> Result<(), String>,
+    ) -> Result<(), String> {
         check_cancelled(cancelled)?;
         let query = query.candidate_query();
         let mut selects = Vec::with_capacity(6);
@@ -189,36 +208,71 @@ impl Candidates {
                 bindings.push(Value::Text(value.clone()));
             }
         }
-        let mut matches = Vec::with_capacity(self.item_count);
-        if selects.is_empty() {
-            for sequence in 0..self.item_count {
-                check_cancelled(cancelled)?;
-                matches.push(sequence);
-            }
+        let after_parameter = bindings.len() + 1;
+        let limit_parameter = after_parameter + 1;
+        let selection = if selects.is_empty() {
+            "SELECT sequence FROM candidates WHERE sequence > ?1".to_owned()
         } else {
-            let sql = format!("{} ORDER BY sequence", selects.join(" INTERSECT "));
-            let mut statement = self.connection.prepare(&sql).map_err(error)?;
+            selects
+                .iter()
+                .enumerate()
+                .map(|(index, select)| {
+                    format!(
+                        "{} AND sequence > ?{after_parameter}",
+                        select.replace('?', &format!("?{}", index + 1))
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" INTERSECT ")
+        };
+        let sql = format!("{selection} ORDER BY sequence LIMIT ?{limit_parameter}");
+        let mut statement = self.connection.prepare(&sql).map_err(error)?;
+        let mut after = -1i64;
+        let mut page = Vec::with_capacity(CANDIDATE_PAGE_SIZE);
+        #[cfg(test)]
+        let mut page_number = 0;
+        loop {
             check_cancelled(cancelled)?;
+            page.clear();
+            let bounds = [
+                Value::Integer(after),
+                Value::Integer(CANDIDATE_PAGE_SIZE as i64),
+            ];
             let mut rows = statement
-                .query(params_from_iter(bindings.iter()))
+                .query(params_from_iter(bindings.iter().chain(bounds.iter())))
                 .map_err(error)?;
-            loop {
+            while let Some(row) = rows.next().map_err(error)? {
                 check_cancelled(cancelled)?;
-                let Some(row) = rows.next().map_err(error)? else {
-                    break;
-                };
                 let sequence: i64 = row.get(0).map_err(error)?;
-                let sequence = usize::try_from(sequence).map_err(error)?;
-                if sequence >= self.item_count
-                    || matches.last().is_some_and(|previous| *previous >= sequence)
+                let position = usize::try_from(sequence).map_err(error)?;
+                if position >= self.item_count
+                    || sequence <= after
+                    || page.len() >= CANDIDATE_PAGE_SIZE
                 {
                     return Err("Search candidates returned an invalid sequence".into());
                 }
-                matches.push(sequence);
+                after = sequence;
+                page.push(position);
+            }
+            drop(rows);
+            if page.is_empty() {
+                return Ok(());
+            }
+            check_cancelled(cancelled)?;
+            visit(&page)?;
+            check_cancelled(cancelled)?;
+            #[cfg(test)]
+            {
+                page_number += 1;
+                if self.fail_after_page.get() == Some(page_number) {
+                    self.fail_after_page.set(None);
+                    return Err("Generated candidate read failure after a page".into());
+                }
+            }
+            if page.len() < CANDIDATE_PAGE_SIZE {
+                return Ok(());
             }
         }
-        check_cancelled(cancelled)?;
-        Ok(matches)
     }
 }
 
@@ -251,30 +305,31 @@ fn configure(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(
             "PRAGMA page_size=4096; PRAGMA max_page_count=8192;
-         PRAGMA cache_size=-2048; PRAGMA mmap_size=0; PRAGMA temp_store=MEMORY;
+         PRAGMA cache_size=-2048; PRAGMA mmap_size=0; PRAGMA temp_store=FILE;
          PRAGMA journal_mode=MEMORY; PRAGMA trusted_schema=OFF; PRAGMA cell_size_check=ON;",
         )
         .map_err(error)?;
     Ok(())
 }
 
+// Account only for fields stored by this auxiliary index. The shared catalog
+// owns paths and search strings separately, so counting them here imposed an
+// unrelated entry ceiling on otherwise small candidate rows.
 fn item_bytes(item: &SearchItem) -> Result<usize, String> {
-    let mut total = [
-        item.path.capacity(),
-        item.name.capacity(),
-        item.search_name.capacity(),
-        item.search_path.capacity(),
-        item.search_metadata.capacity(),
-    ]
-    .into_iter()
-    .try_fold(size_of::<SearchItem>(), usize::checked_add)
-    .ok_or_else(size_error)?;
+    let extension_bytes = if item.is_directory {
+        0
+    } else {
+        item.path.extension().map_or(0, |extension| extension.len())
+    };
+    let mut total = 128usize
+        .checked_add(extension_bytes)
+        .ok_or_else(size_error)?;
     if let Some(tags) = &item.music_tags {
-        for field in [&tags.title, &tags.artist, &tags.album_artist, &tags.album]
+        for field in [&tags.title, &tags.artist, &tags.album]
             .into_iter()
             .flatten()
         {
-            total = total.checked_add(field.capacity()).ok_or_else(size_error)?;
+            total = total.checked_add(field.len()).ok_or_else(size_error)?;
         }
     }
     Ok(total)

@@ -164,6 +164,106 @@ fn oversized_candidate_index_falls_back_without_losing_tag_matches() {
     assert!(second.iter().any(|item| item.name == "small.flac"));
 }
 
+#[test]
+fn paged_candidates_preserve_complete_ranking_above_the_old_item_cutoff() {
+    let items: Vec<_> = (0..40_257)
+        .map(|number| tagged_item(&format!("match-{number:06}.flac"), "Title"))
+        .collect();
+    let mut worker = synthetic_worker(items);
+    worker.query.limit = 100;
+    worker.rescore_shared();
+    let expected = worker.ranked.clone();
+    assert_eq!(expected.len(), 40_257);
+    worker.prepare_candidates();
+    assert!(
+        worker.candidates.is_some(),
+        "large eligible scopes must use indexed candidates"
+    );
+    worker.rescore_shared();
+    assert_eq!(worker.ranked, expected);
+    worker.publish(false);
+    let SearchEvent::Results { items, page, .. } = worker.events.take().expect("first ranked page");
+    assert_eq!(items.len(), 100);
+    assert_eq!(page.expect("revision-bound page").total, 40_257);
+}
+
+#[test]
+fn candidate_failure_replays_document_matches_without_spending_the_budget_twice() {
+    use std::sync::atomic::AtomicUsize;
+    struct Extraction(Arc<AtomicUsize>);
+    impl TextExtractionProvider for Extraction {
+        fn extract_text(
+            &self,
+            _: &Path,
+            _: crate::services::TextExtractor,
+            _: usize,
+            _: Arc<AtomicBool>,
+        ) -> Result<String, String> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Ok("needle".into())
+        }
+    }
+    let fixture = Fixture::new(0);
+    let mut items = Vec::new();
+    for number in 0..300 {
+        let extension = if (132..164).contains(&number) {
+            "pdf"
+        } else {
+            "txt"
+        };
+        let path = fixture.0.join(format!("entry-{number:03}.{extension}"));
+        std::fs::write(
+            &path,
+            if number < 132 {
+                b"needle".as_slice()
+            } else {
+                b"empty".as_slice()
+            },
+        )
+        .expect("write bounded content fixture");
+        items.push(SearchItem::from_path(path, &fixture.0, false, None));
+    }
+    for identified in [false, true] {
+        let mut items = items.clone();
+        if identified {
+            for item in &mut items {
+                item.source_identity =
+                    Some(crate::services::music_library::FileIdentity::from_metadata(
+                        &std::fs::metadata(&item.path).expect("generated source metadata"),
+                    ));
+            }
+        }
+        let baseline_calls = Arc::new(AtomicUsize::new(0));
+        let mut baseline = synthetic_worker(items.clone());
+        baseline.query.text = "type:file content:needle".into();
+        baseline.extraction = Arc::new(Extraction(baseline_calls.clone()));
+        baseline.rescore_shared();
+        assert_eq!(baseline.ranked.len(), 164);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut worker = synthetic_worker(items);
+        worker.query.text = baseline.query.text.clone();
+        worker.extraction = Arc::new(Extraction(calls.clone()));
+        worker.prepare_candidates();
+        worker
+            .candidates
+            .as_ref()
+            .expect("prepared candidate index")
+            .fail_after_page_for_test(1);
+        worker.rescore_shared();
+        assert_eq!(worker.ranked, baseline.ranked, "identified={identified}");
+        assert_eq!(worker.query_notice, baseline.query_notice);
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            MAX_DOCUMENT_EXTRACTIONS_PER_QUERY
+        );
+        assert_eq!(
+            baseline_calls.load(Ordering::Relaxed),
+            MAX_DOCUMENT_EXTRACTIONS_PER_QUERY
+        );
+        assert!(worker.content_scores.len() <= RESULT_LIMIT + MAX_DOCUMENT_EXTRACTIONS_PER_QUERY);
+    }
+}
+
 fn tagged_item(name: &str, title: &str) -> SearchItem {
     let root = Path::new("/synthetic");
     let mut item = SearchItem::from_path(root.join(name), root, false, None);

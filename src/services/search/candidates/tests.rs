@@ -1,6 +1,6 @@
 use std::{cell::Cell, path::Path, time::Instant};
 
-use super::{Candidates, MAX_DATABASE_BYTES, MAX_ITEMS, MAX_ROW_BYTES, PAGE_SIZE};
+use super::{CANDIDATE_PAGE_SIZE, Candidates, MAX_DATABASE_BYTES, MAX_ROW_BYTES, PAGE_SIZE};
 use crate::{
     model::MusicTags,
     services::search::{ParsedSearchQuery, SearchItem, matches_category},
@@ -143,7 +143,7 @@ fn inferred_filters_do_not_prune_literal_matches_from_candidate_queries() {
 }
 
 #[test]
-#[ignore = "Generated 10k in-memory timing fixture; run explicitly with output; no end-to-end speed claim"]
+#[ignore = "Generated 10k temporary-SQLite timing fixture; run explicitly with output; no end-to-end speed claim"]
 fn generated_10k_exact_filter_retrieval_timings() {
     let items: Vec<_> = (0..10_000)
         .map(|sequence| match sequence % 10 {
@@ -496,19 +496,15 @@ fn oversized_input_and_normalized_rows_are_rejected_without_truncation() {
             < MAX_ROW_BYTES
     );
     assert!(Candidates::build(&[expanding], &|| false).is_err());
-    let too_many = vec![item("small.flac", false); MAX_ITEMS + 1];
-    assert!(Candidates::build(&too_many, &|| false).is_err());
 }
 
 #[test]
 fn aggregate_input_budget_is_rejected_before_building() {
-    let mut candidate = item("small.flac", false);
-    candidate.search_metadata = "a".repeat(8000);
+    let candidate = song("small.flac", &"a".repeat(8000), "Album", "Title");
     let row_bytes = super::item_bytes(&candidate)
         .expect("expected test value from super::item_bytes(&candidate)");
     assert!(row_bytes < MAX_ROW_BYTES);
     let items = vec![candidate; MAX_DATABASE_BYTES / row_bytes + 100];
-    assert!(items.len() < MAX_ITEMS);
     assert!(
         items
             .iter()
@@ -549,7 +545,7 @@ fn sqlite_is_ephemeral_and_has_bounded_pages_cache_and_values() {
         ("page_size", PAGE_SIZE as i64),
         ("max_page_count", (MAX_DATABASE_BYTES / PAGE_SIZE) as i64),
         ("cache_size", -2048),
-        ("temp_store", 2),
+        ("temp_store", 1),
         ("query_only", 1),
     ] {
         let actual: i64 = connection
@@ -588,4 +584,187 @@ fn sqlite_failure_is_an_error_not_an_empty_candidate_set() {
             .matching(&query("type:audio"), &|| false)
             .is_err()
     );
+}
+
+#[test]
+fn one_hundred_thousand_candidates_are_visited_in_bounded_ordered_pages() {
+    let items: Vec<_> = (0..100_000)
+        .map(|number| {
+            item(
+                &format!(
+                    "entry-{number:06}.{}",
+                    if number % 100 == 0 { "txt" } else { "flac" }
+                ),
+                false,
+            )
+        })
+        .collect();
+    let candidates = Candidates::build(&items, &|| false)
+        .expect("build 100k generated candidate rows within the auxiliary byte budget");
+    let mut count = 0;
+    let mut largest_page = 0;
+    candidates
+        .for_each_page(&query(""), &|| false, |page| {
+            assert_eq!(page.first(), Some(&count));
+            assert!(page.windows(2).all(|pair| pair[0] + 1 == pair[1]));
+            count += page.len();
+            largest_page = largest_page.max(page.len());
+            Ok(())
+        })
+        .expect("visit every generated row");
+    assert_eq!(count, 100_000);
+    assert_eq!(largest_page, CANDIDATE_PAGE_SIZE);
+    let mut filtered = 0;
+    candidates
+        .for_each_page(&query("type:document ext:txt"), &|| false, |page| {
+            assert!(page.iter().all(|position| position % 100 == 0));
+            filtered += page.len();
+            Ok(())
+        })
+        .expect("page exact indexed filters above the previous item cap");
+    assert_eq!(filtered, 1000);
+}
+
+#[test]
+fn all_six_filter_bindings_and_page_bounds_preserve_scorer_parity() {
+    let items: Vec<_> = (0..777)
+        .map(|number| song(&format!("entry-{number}.flac"), "Artist", "Album", "Title"))
+        .collect();
+    let candidates = Candidates::build(&items, &|| false).expect("generated tagged candidates");
+    let parsed = ParsedSearchQuery {
+        directory: Some(false),
+        category: Some("audio".into()),
+        extension: Some("flac".into()),
+        artist: Some("artist".into()),
+        album: Some("album".into()),
+        title: Some("title".into()),
+        ..ParsedSearchQuery::default()
+    };
+    assert_eq!(
+        candidates
+            .matching(&parsed, &|| false)
+            .expect("six filters fit the bounded parameter policy"),
+        (0..items.len()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn visitor_failure_and_cancellation_after_a_page_stop_further_visits() {
+    let items = vec![item("entry.flac", false); CANDIDATE_PAGE_SIZE * 3];
+    let candidates = Candidates::build(&items, &|| false).expect("generated paged candidates");
+    let visits = Cell::new(0);
+    let result = candidates.for_each_page(&query("type:audio"), &|| false, |_| {
+        visits.set(visits.get() + 1);
+        Err("generated ranking failure".into())
+    });
+    assert_eq!(result, Err("generated ranking failure".into()));
+    assert_eq!(visits.get(), 1);
+    let cancelled = Cell::new(false);
+    let result = candidates.for_each_page(&query("type:audio"), &|| cancelled.get(), |_| {
+        cancelled.set(true);
+        Ok(())
+    });
+    assert!(result.is_err());
+    assert_eq!(
+        matching(&candidates, "type:audio").len(),
+        items.len(),
+        "next query starts from its own cursor"
+    );
+}
+
+#[test]
+fn sqlite_failure_after_an_earlier_page_is_not_a_successful_partial_set() {
+    let items = vec![item("entry.flac", false); CANDIDATE_PAGE_SIZE * 3];
+    let candidates = Candidates::build(&items, &|| false).expect("generated paged candidates");
+    let mut count = 0;
+    let result = candidates.for_each_page(&query("type:audio"), &|| false, |page| {
+        count += page.len();
+        candidates
+            .connection
+            .execute_batch("PRAGMA query_only=OFF; DROP TABLE categories;")
+            .expect("inject failure between pages");
+        Ok(())
+    });
+    assert!(result.is_err());
+    assert_eq!(count, CANDIDATE_PAGE_SIZE);
+}
+
+#[test]
+fn every_filter_subset_preserves_the_full_scorer_candidates() {
+    let items: Vec<_> = (0..777)
+        .map(|number| {
+            let mut row = song(
+                &format!(
+                    "entry-{number}.{}",
+                    if number % 2 == 0 { "flac" } else { "txt" }
+                ),
+                if number % 3 == 0 { "Artist" } else { "Other" },
+                if number % 5 == 0 { "Album" } else { "Other" },
+                if number % 7 == 0 { "Title" } else { "Other" },
+            );
+            row.is_directory = number % 11 == 0;
+            row
+        })
+        .collect();
+    let candidates = Candidates::build(&items, &|| false).expect("mixed generated candidates");
+    for mask in 0..64 {
+        let parsed = ParsedSearchQuery {
+            directory: (mask & 1 != 0).then_some(false),
+            category: (mask & 2 != 0).then(|| "audio".into()),
+            extension: (mask & 4 != 0).then(|| "flac".into()),
+            artist: (mask & 8 != 0).then(|| "artist".into()),
+            album: (mask & 16 != 0).then(|| "album".into()),
+            title: (mask & 32 != 0).then(|| "title".into()),
+            ..ParsedSearchQuery::default()
+        };
+        let mut budget = 32;
+        let mut notice = None;
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let expected: Vec<_> = items
+            .iter()
+            .enumerate()
+            .filter_map(|(position, item)| {
+                if parsed.is_empty() {
+                    return Some(position);
+                }
+                crate::services::search::score_item(
+                    item,
+                    &parsed,
+                    &mut crate::services::search::ContentSearchContext {
+                        text_extraction: &crate::services::search::UnavailableTextExtraction,
+                        cancelled: &cancelled,
+                        document_extractions_remaining: &mut budget,
+                        notice: &mut notice,
+                    },
+                )
+                .map(|_| position)
+            })
+            .collect();
+        assert_eq!(
+            candidates
+                .matching(&parsed, &|| false)
+                .expect("bounded filter traversal"),
+            expected,
+            "filter mask {mask}"
+        );
+    }
+}
+
+#[test]
+fn exact_page_boundaries_and_unindexed_large_fields_are_preserved() {
+    for count in [0, 255, 256, 257, 512] {
+        let items = vec![item("entry.flac", false); count];
+        let candidates = Candidates::build(&items, &|| false).expect("page boundary fixture");
+        assert_eq!(
+            matching(&candidates, "type:audio"),
+            (0..count).collect::<Vec<_>>()
+        );
+    }
+    let mut row = song("entry.flac", "Artist", "Album", "Title");
+    row.search_metadata = "unindexed ".repeat(100_000);
+    row.music_tags.as_mut().expect("fixture tags").album_artist =
+        Some("unindexed ".repeat(100_000));
+    let candidates = Candidates::build(&[row], &|| false)
+        .expect("auxiliary budget excludes fields it does not store");
+    assert_eq!(matching(&candidates, "artist:artist"), vec![0]);
 }
