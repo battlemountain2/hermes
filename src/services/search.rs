@@ -16,6 +16,7 @@ mod candidates;
 mod groups;
 mod ranked;
 mod scope;
+mod source;
 mod worker;
 pub(crate) use groups::{
     SearchCounts, SearchEntity, SearchEntityKey, SearchGroup, SearchGroups, SearchResult,

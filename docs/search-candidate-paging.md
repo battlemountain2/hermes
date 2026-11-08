@@ -45,8 +45,9 @@ between pages, visitor failure and cancellation. Worker fixtures compare complet
 ranking above the former cutoff and document-content replay with identified and
 unidentified sources. Existing grouped/literal/pagination fixtures remain gates.
 
-The current worker still builds library snapshots and full rank vectors. The
-shared 100k scan/metadata caps, grouping budgets and catalog reconciliation still
+Query ranks now use [paged SQLite storage](search-query-ranking.md), and shared
+queries use [source paging](search-source-access.md) over original Entry snapshots.
+The shared 100k scan/metadata caps, grouping budgets and catalog reconciliation still
 need the next architecture increment. Complete 100k-file Home coverage,
 restart/offline correctness and the under-100-ms warm first-page p95 goal on both
 reference machines remain release gates. Exact source, local/hosted counts and

@@ -768,3 +768,214 @@ fn exact_page_boundaries_and_unindexed_large_fields_are_preserved() {
         .expect("auxiliary budget excludes fields it does not store");
     assert_eq!(matching(&candidates, "artist:artist"), vec![0]);
 }
+
+#[test]
+fn source_candidates_keep_sparse_global_positions_and_all_exact_filters() {
+    use std::sync::Arc;
+
+    use crate::services::{music_library::Entry, search::source::Source};
+
+    let root = std::env::temp_dir();
+    let mut folder = song("folder.flac", "Artist", "Album", "Title");
+    folder.is_directory = true;
+    let items = vec![
+        song("z.FLAC", "Artist", "Album", "Title"),
+        song("other.flac", "Other", "Album", "Title"),
+        folder,
+        song("unicode.flac", "İSTANBUL", "ΑΘΗΝΑ", "ПЕСНЯ"),
+        item("document.pdf", false),
+        item("untagged.flac", false),
+        song("a.flac", "Artist", "Album", "Title"),
+    ];
+    let mut entries = Vec::new();
+    for candidate in &items {
+        // Root rows are holes before every eligible row and after the last one.
+        entries.push(Entry {
+            path: root.clone(),
+            is_directory: true,
+            modified_unix_seconds: None,
+            identity: None,
+            music_tags: None,
+        });
+        entries.push(Entry {
+            path: root.join(candidate.path.file_name().expect("fixture name")),
+            is_directory: candidate.is_directory,
+            modified_unix_seconds: candidate.modified_unix_seconds,
+            identity: None,
+            music_tags: candidate.music_tags.clone(),
+        });
+    }
+    entries.push(entries[0].clone());
+    let entries = Arc::new(entries);
+    let source = Source::new(root, entries.clone(), usize::MAX, usize::MAX, &|| false)
+        .expect("sparse source");
+    let streamed = Candidates::build_source(&source, &|| false).expect("streamed candidates");
+    let flat = Candidates::build(&items, &|| false).expect("slice candidates");
+    assert_eq!(source.len(), items.len() * 2 + 1);
+    assert_eq!(streamed.item_count, source.len());
+    for text in [
+        "",
+        "fuzzy terms",
+        "type:file",
+        "type:folder",
+        "type:audio",
+        "type:document",
+        "ext:flac",
+        "artist:Artist",
+        "album:Album",
+        "title:Title",
+        "type:file type:audio ext:flac artist:Artist album:Album title:Title",
+        "type:folder type:audio",
+        "artist:İSTANBUL album:ΑΘΗΝΑ title:ПЕСНЯ",
+        "artist:missing",
+    ] {
+        let expected: Vec<_> = matching(&flat, text)
+            .into_iter()
+            .map(|position| position * 2 + 1)
+            .collect();
+        assert_eq!(matching(&streamed, text), expected, "{text}");
+    }
+    assert_eq!(Arc::strong_count(&entries), 2);
+    let capped = Source::new(std::env::temp_dir(), entries, 1, usize::MAX, &|| false)
+        .expect("capped source");
+    assert_eq!(capped.len(), 3);
+    let candidates = Candidates::build_source(&capped, &|| false).expect("capped candidates");
+    assert_eq!(candidates.item_count, 3);
+    assert_eq!(matching(&candidates, ""), vec![1]);
+}
+
+#[test]
+fn source_candidate_pages_stay_bounded_and_stop_on_cancellation() {
+    use std::sync::Arc;
+
+    use crate::services::{music_library::Entry, search::source::Source};
+
+    let root = std::env::temp_dir();
+    let entries = Arc::new(
+        (0..1200)
+            .map(|position| Entry {
+                path: if position % 2 == 0 {
+                    root.clone()
+                } else {
+                    root.join(format!("candidate-{position}.flac"))
+                },
+                is_directory: false,
+                modified_unix_seconds: None,
+                identity: None,
+                music_tags: None,
+            })
+            .collect(),
+    );
+    let source =
+        Source::new(root, entries, usize::MAX, usize::MAX, &|| false).expect("paged sparse source");
+    assert!(Candidates::build_source(&source, &|| true).is_err());
+    let checks = Cell::new(0);
+    assert!(
+        Candidates::build_source(&source, &|| {
+            checks.set(checks.get() + 1);
+            checks.get() >= 30
+        })
+        .is_err()
+    );
+    let candidates = Candidates::build_source(&source, &|| false).expect("fresh build");
+    let mut sizes = Vec::new();
+    let mut positions = Vec::new();
+    candidates
+        .for_each_page(&query("type:audio ext:flac"), &|| false, |page| {
+            sizes.push(page.len());
+            positions.extend_from_slice(page);
+            Ok(())
+        })
+        .expect("bounded sparse candidate pages");
+    assert_eq!(sizes, vec![256, 256, 88]);
+    assert_eq!(positions, (1..1200).step_by(2).collect::<Vec<_>>());
+    let cancelled = Cell::new(false);
+    assert!(
+        candidates
+            .for_each_page(&query(""), &|| cancelled.get(), |_| {
+                cancelled.set(true);
+                Ok(())
+            })
+            .is_err()
+    );
+    assert_eq!(matching(&candidates, "type:audio"), positions);
+}
+
+#[test]
+fn common_stream_validates_before_insertion_and_rejects_second_pass_failures() {
+    let candidate = item("small.flac", false);
+    let passes = Cell::new(0);
+    let candidates = Candidates::build_stream(8, &|| false, |visit| {
+        passes.set(passes.get() + 1);
+        visit(7, &candidate)
+    })
+    .expect("two-pass sparse candidate stream");
+    assert_eq!(passes.get(), 2);
+    assert_eq!(candidates.item_count, 8);
+    assert_eq!(matching(&candidates, ""), vec![7]);
+
+    let oversized = song("large.flac", &"a".repeat(MAX_ROW_BYTES), "Album", "Title");
+    passes.set(0);
+    assert!(
+        Candidates::build_stream(1, &|| false, |visit| {
+            passes.set(passes.get() + 1);
+            visit(0, &oversized)
+        })
+        .is_err()
+    );
+    assert_eq!(passes.get(), 1);
+
+    passes.set(0);
+    let error = Candidates::build_stream(1, &|| false, |visit| {
+        passes.set(passes.get() + 1);
+        visit(0, &candidate)?;
+        if passes.get() == 2 {
+            return Err("source failed after an inserted row".into());
+        }
+        Ok(())
+    });
+    assert_eq!(
+        error.err(),
+        Some("source failed after an inserted row".into())
+    );
+
+    passes.set(0);
+    let cancelled = Cell::new(false);
+    assert!(
+        Candidates::build_stream(1, &|| cancelled.get(), |visit| {
+            passes.set(passes.get() + 1);
+            visit(0, &candidate)?;
+            if passes.get() == 2 {
+                cancelled.set(true);
+            }
+            Ok(())
+        })
+        .is_err()
+    );
+    assert_eq!(passes.get(), 2);
+}
+
+#[test]
+fn streamed_source_keeps_existing_input_and_normalized_row_budgets() {
+    use crate::services::search::source::Source;
+
+    let expanding = song(
+        "expanding.flac",
+        &"Ⱥ".repeat(4200),
+        &"a".repeat(4200),
+        "Title",
+    );
+    assert!(super::item_bytes(&expanding).expect("row size") < MAX_ROW_BYTES);
+    let source = Source::from_items(vec![expanding]);
+    assert!(Candidates::build_source(&source, &|| false).is_err());
+
+    let candidate = song("small.flac", &"a".repeat(8000), "Album", "Title");
+    let count = MAX_DATABASE_BYTES / super::item_bytes(&candidate).expect("row size") + 1;
+    let source = Source::from_items(vec![candidate; count]);
+    assert!(Candidates::build_source(&source, &|| false).is_err());
+
+    let source = Source::empty();
+    let empty = Candidates::build_source(&source, &|| false).expect("empty source candidates");
+    assert_eq!(empty.item_count, 0);
+    assert!(matching(&empty, "").is_empty());
+}
