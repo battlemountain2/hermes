@@ -430,10 +430,16 @@ struct Worker {
     scan_notice: Option<String>,
     query_notice: Option<String>,
     document_budget: usize,
-    content_scores: HashMap<PathBuf, (SearchItem, Option<i64>)>,
+    content_scores: HashMap<PathBuf, CachedContentScore>,
     last_publish: Instant,
     limits: Limits,
     index_cache: Arc<Mutex<VecDeque<CachedIndex>>>,
+}
+
+struct CachedContentScore {
+    item: SearchItem,
+    score: Option<i64>,
+    revision: u64,
 }
 
 impl Worker {
@@ -525,10 +531,12 @@ impl Worker {
             return None;
         }
         if parsed.content.is_some()
-            && let Some((cached, score)) = self.content_scores.get(&item.path)
-            && cached == item
+            && let Some(cached) = self.content_scores.get(&item.path)
+            && cached.item == *item
+            && (item.source_identity.is_some()
+                || (self.revision > 0 && cached.revision == self.revision))
         {
-            return *score;
+            return cached.score;
         }
         let before = self.document_budget;
         let score = score_item(
@@ -541,14 +549,25 @@ impl Worker {
                 notice: &mut self.query_notice,
             },
         );
+        let extracted = self.document_budget < before;
         if parsed.content.is_some()
-            && item.source_identity.is_some()
-            && (score.is_some() || self.document_budget < before)
-            && (self.content_scores.len() < RESULT_LIMIT + MAX_DOCUMENT_EXTRACTIONS_PER_QUERY
-                || self.content_scores.contains_key(&item.path))
+            && ((extracted && (item.source_identity.is_some() || self.revision > 0))
+                || (item.source_identity.is_some()
+                    && score.is_some()
+                    && self.content_scores.len() < RESULT_LIMIT))
         {
-            self.content_scores
-                .insert(item.path.clone(), (item.clone(), score));
+            // Reserve capacity for every budget-consuming extraction. Plain
+            // text hits cannot displace document outcomes needed to replay a
+            // failed paged query without extracting again. Unknown identities
+            // are reusable only within this exact snapshot revision.
+            self.content_scores.insert(
+                item.path.clone(),
+                CachedContentScore {
+                    item: item.clone(),
+                    score,
+                    revision: self.revision,
+                },
+            );
         }
         score
     }
@@ -607,17 +626,60 @@ impl Worker {
             self.rebuild_groups(&parsed);
             return;
         }
-        let candidates = self.candidates.as_ref().and_then(|candidates| {
-            candidates
-                .matching(&parsed, &|| {
-                    self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire)
-                })
-                .ok()
+        let mut used_candidates = false;
+        if let Some(candidates) = self.candidates.take() {
+            let cancellation = self.cancellation.clone();
+            let query_cancelled = self.query.cancelled.clone();
+            let result = candidates.for_each_page(
+                &parsed,
+                &|| cancellation.is_cancelled() || query_cancelled.load(Ordering::Acquire),
+                |page| {
+                    if self.rank_positions(&items, page.iter().copied(), &parsed) {
+                        Ok(())
+                    } else {
+                        Err("Search query cancelled".to_owned())
+                    }
+                },
+            );
+            self.candidates = Some(candidates);
+            used_candidates = result.is_ok();
+            if !used_candidates {
+                // A failure after earlier pages must discard their ranking
+                // before using the full scorer, or rows could be duplicated.
+                self.ranked.clear();
+            }
+        }
+        if !used_candidates && !self.rank_positions(&items, 0..items.len(), &parsed) {
+            self.ranked.clear();
+            return;
+        }
+        let album_order =
+            self.query.grouping.as_ref().is_some_and(|grouping| {
+                matches!(grouping.entity, Some(SearchEntityKey::Album { .. }))
+            });
+        self.ranked.sort_unstable_by(|left, right| {
+            if album_order {
+                return album_numbers(&items[left.1])
+                    .cmp(&album_numbers(&items[right.1]))
+                    .then_with(|| items[left.1].path.cmp(&items[right.1].path));
+            }
+            right
+                .0
+                .cmp(&left.0)
+                .then_with(|| items[left.1].path.cmp(&items[right.1].path))
         });
-        let candidates = candidates.unwrap_or_else(|| (0..items.len()).collect());
-        for position in candidates {
+        self.rebuild_groups(&parsed);
+    }
+
+    fn rank_positions(
+        &mut self,
+        items: &[SearchItem],
+        positions: impl Iterator<Item = usize>,
+        parsed: &ParsedSearchQuery,
+    ) -> bool {
+        for position in positions {
             if self.cancellation.is_cancelled() || self.query.cancelled.load(Ordering::Acquire) {
-                return;
+                return false;
             }
             let Some(item) = items.get(position) else {
                 continue;
@@ -643,27 +705,12 @@ impl Worker {
             if let Some(score) = if parsed.is_empty() {
                 Some(0)
             } else {
-                self.score(item, &parsed)
+                self.score(item, parsed)
             } {
                 self.ranked.push((score, position));
             }
         }
-        let album_order =
-            self.query.grouping.as_ref().is_some_and(|grouping| {
-                matches!(grouping.entity, Some(SearchEntityKey::Album { .. }))
-            });
-        self.ranked.sort_unstable_by(|left, right| {
-            if album_order {
-                return album_numbers(&items[left.1])
-                    .cmp(&album_numbers(&items[right.1]))
-                    .then_with(|| items[left.1].path.cmp(&items[right.1].path));
-            }
-            right
-                .0
-                .cmp(&left.0)
-                .then_with(|| items[left.1].path.cmp(&items[right.1].path))
-        });
-        self.rebuild_groups(&parsed);
+        true
     }
 
     fn rebuild_groups(&mut self, parsed: &ParsedSearchQuery) {

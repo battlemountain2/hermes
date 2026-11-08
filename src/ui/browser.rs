@@ -7778,26 +7778,12 @@ pub(super) fn open_location(location: &Location, parent: &impl IsA<gtk::Widget>)
     if let Some(path) = location.native_path()
         && path.extension().and_then(std::ffi::OsStr::to_str) == Some("desktop")
     {
-        let trusted_location = path.starts_with("/usr/share/applications")
-            || path.starts_with(glib::home_dir().join(".local/share/applications"));
-        let executable = std::fs::metadata(path)
-            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false);
-        if !trusted_location && !executable {
-            show_error_dialog(
-                parent,
-                "Desktop entry is not trusted",
-                "Mark the file as executable before launching it.",
-            );
-            return;
-        }
-        let Some(app) = gio::DesktopAppInfo::from_filename(path) else {
-            show_error_dialog(
-                parent,
-                "Unable to open desktop entry",
-                "The desktop entry is invalid.",
-            );
-            return;
+        let app = match crate::platform::desktop_file::application(path) {
+            Ok(app) => app,
+            Err(error) => {
+                show_error_dialog(parent, error.title, error.detail);
+                return;
+            }
         };
         let folder = path.parent().map(|p| p.to_path_buf());
         let previous = match (folder, std::env::current_dir()) {

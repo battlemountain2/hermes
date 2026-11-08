@@ -11,6 +11,7 @@ mod model;
 mod mpris;
 mod music;
 mod paths;
+mod platform;
 mod playback;
 mod portal;
 mod sandbox;
@@ -199,6 +200,16 @@ fn print_diagnostics() {
     println!("Data Directory: {}", paths::data_dir().display());
     println!("Cache Directory: {}", paths::cache_dir().display());
     println!("State Directory: {}", paths::state_dir().display());
+
+    let isolation = platform::preview_isolation();
+    println!(
+        "Preview Isolation: {isolation:?} (implementation {}, runtime readiness not checked)",
+        if isolation.is_implemented() {
+            "present"
+        } else {
+            "pending or unsupported"
+        }
+    );
 
     println!("\nPreview Helpers:");
     for (name, binary) in [
