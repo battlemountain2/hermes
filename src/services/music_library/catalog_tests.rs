@@ -8,6 +8,160 @@ use std::{
 
 const DEADLINE: Duration = Duration::from_secs(4);
 
+fn save_restore_fixture(fixture: &Fixture, count: usize) -> Vec<Entry> {
+    let entries: Vec<_> = (0..count)
+        .map(|number| {
+            let path = fixture.file(format!("document-{number:04}.txt"), b"generated content");
+            let metadata = fs::symlink_metadata(&path).expect("generated source metadata");
+            let identity = FileIdentity::from_metadata(&metadata);
+            Entry {
+                path,
+                is_directory: false,
+                modified_unix_seconds: Some(identity.modified.0),
+                identity: Some(identity),
+                music_tags: None,
+            }
+        })
+        .collect();
+    catalog_disk::write(
+        &fixture.catalog_path,
+        &fixture.root,
+        &entries,
+        None,
+        &Cancellation::default(),
+    )
+    .expect("save bounded restore fixture");
+    entries
+}
+
+#[test]
+fn saved_restore_publishes_one_bounded_prefix_before_checking_later_sources() {
+    let fixture = Fixture::new();
+    let entries = save_restore_fixture(&fixture, 257);
+    let mut snapshots = Vec::new();
+    let restored = read_saved_catalog(
+        &fixture.configuration(),
+        &Cancellation::default(),
+        |snapshot| {
+            assert!(snapshot.indexing);
+            assert_eq!(snapshot.entries.len(), catalog_disk::PAGE_ENTRIES);
+            fs::write(&entries[256].path, b"changed after the first cached page")
+                .expect("change later source before its page is verified");
+            snapshots.push(snapshot);
+        },
+    )
+    .expect("finish validating saved rows");
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(restored.entries.as_slice(), &entries[..256]);
+    assert!(restored.indexing, "live scan still decides completion");
+    assert!(
+        restored
+            .notice
+            .as_deref()
+            .expect("stale source notice")
+            .contains("Cached sources changed")
+    );
+    assert!(
+        snapshots[0]
+            .notice
+            .as_deref()
+            .expect("verification notice")
+            .contains("Verifying saved search index")
+    );
+}
+
+#[test]
+fn invalid_catalog_tail_withdraws_provisional_rows_and_keeps_the_saved_file() {
+    let fixture = Fixture::new();
+    save_restore_fixture(&fixture, 257);
+    let database = rusqlite::Connection::open(&fixture.catalog_path)
+        .expect("open generated catalog for corruption fixture");
+    database
+        .execute(
+            "UPDATE entries SET path=?1 WHERE sequence=256",
+            [fixture
+                .root
+                .join(".hidden.txt")
+                .as_os_str()
+                .as_encoded_bytes()],
+        )
+        .expect("inject invalid later row");
+    drop(database);
+    let original = fs::read(&fixture.catalog_path).expect("read malformed saved catalog");
+    let mut snapshots = Vec::new();
+    assert!(
+        read_saved_catalog(
+            &fixture.configuration(),
+            &Cancellation::default(),
+            |snapshot| snapshots.push(snapshot)
+        )
+        .is_err()
+    );
+    assert_eq!(snapshots.len(), 2);
+    assert_eq!(snapshots[0].entries.len(), 256);
+    assert!(snapshots[1].entries.is_empty());
+    assert!(snapshots.iter().all(|snapshot| snapshot.indexing));
+    assert!(
+        snapshots[1]
+            .notice
+            .as_deref()
+            .expect("rebuild notice")
+            .contains("rebuilding")
+    );
+    assert_eq!(
+        fs::read(&fixture.catalog_path).expect("saved catalog retained"),
+        original
+    );
+    assert_eq!(
+        fs::read_dir(fixture.catalog_path.parent().expect("private cache parent"))
+            .expect("list private cache")
+            .count(),
+        1,
+        "private reader stages are released after failure"
+    );
+}
+
+#[test]
+fn cancelling_cached_restore_stops_publication_and_a_new_attempt_recovers() {
+    let fixture = Fixture::new();
+    let entries = save_restore_fixture(&fixture, 257);
+    let original = fs::read(&fixture.catalog_path).expect("saved fixture catalog");
+    let cancellation = Cancellation::default();
+    let mut snapshots = Vec::new();
+    assert!(
+        read_saved_catalog(&fixture.configuration(), &cancellation, |snapshot| {
+            snapshots.push(snapshot);
+            cancellation.cancel();
+        })
+        .is_err()
+    );
+    assert_eq!(snapshots.len(), 1);
+    assert!(snapshots[0].indexing);
+    assert_eq!(snapshots[0].entries.len(), 256);
+    let restored = read_saved_catalog(&fixture.configuration(), &Cancellation::default(), |_| {})
+        .expect("reopen saved snapshot after cancellation");
+    assert_eq!(restored.entries.as_slice(), entries);
+    assert!(restored.indexing);
+    assert_eq!(
+        fs::read(&fixture.catalog_path).expect("saved fixture retained"),
+        original
+    );
+}
+
+#[test]
+fn cached_restore_allocates_only_the_validated_entry_slots() {
+    let fixture = Fixture::new();
+    let entries = save_restore_fixture(&fixture, 257);
+    let restored = read_saved_catalog(&fixture.configuration(), &Cancellation::default(), |_| {})
+        .expect("restore exact bounded entry count");
+    assert_eq!(restored.entries.len(), entries.len());
+    assert_eq!(
+        restored.entries.capacity(),
+        entries.len(),
+        "incremental growth must not exceed the reader's charged entry slots"
+    );
+}
+
 #[test]
 #[ignore = "Generated 10k-file catalog timing; no personal data or desktop session"]
 fn generated_catalog_restart_and_query_timings() {
