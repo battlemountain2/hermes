@@ -5,8 +5,7 @@
 This first patch adds `src/platform.rs` and adjacent modules. The pinned
 `gio 0.21.5` source excludes `DesktopAppInfo` on macOS. All Hermes references to
 that type now live in Linux-only desktop-file helpers. The launcher call site
-at this base is `src/ui/browser.rs::open_location`. There is no
-`src/services/file_launcher.rs` at base `c53b69a71993ffef13ea20fb73a7b83cd64346cb`.
+at this base is `src/ui/browser.rs::open_location`.
 
 Linux application discovery retains the existing `/usr/share/applications` and
 `~/.local/share/applications` trust locations, executable-bit check, error text
@@ -32,12 +31,11 @@ GIO's desktop-entry interface is documented separately from portable AppInfo.
 
 `is_implemented()` describes code availability. Linux still needs working
 Bubblewrap, permitted namespaces and the appropriate decoder dependencies.
-The capability function performs no runtime probe. The private platform module
-exposes it within the crate for `print_diagnostics`, which reports the selected
-backend, whether its implementation is present, and that runtime readiness has
-not been checked. Production enum variants are target-specific, with all variants
-available to the adjacent capability tests. Existing sandbox launchers still
-invoke Bubblewrap and have not been routed through this API. A future Mac adapter
+The private platform module exposes it within the crate for `print_diagnostics`,
+which reports the selected backend, implementation availability and pending runtime
+readiness checks. Production enum variants are target-specific, with all variants
+available to the adjacent capability tests. Existing sandbox launchers invoke
+Bubblewrap. Routing through a platform-specific launcher remains pending. A future Mac adapter
 must reject decoder requests until its isolated service passes acceptance. Every startup, decode,
 timeout or protocol failure must fail closed. An in-process or unrestricted
 child-process decoder fallback is forbidden.
@@ -47,13 +45,12 @@ child-process decoder fallback is forbidden.
 Native Mac compilation, GTK startup, dependency resolution, bundle assembly,
 signing, native application discovery, platform integration and all XPC decoder
 work remain pending. Stable/Dev profile resolution and Mac migration also need
-physical qualification. Existing Linux migration evidence does not qualify Mac
-storage. Linux-only test fixtures elsewhere in the repository still need a Mac
+physical qualification. Mac storage has its own acceptance gate.
+Linux-only test fixtures elsewhere in the repository still need a Mac
 audit, including the existing thumbnail desktop-icon expectation.
 
-This batch introduces no Swift service or macOS profile migration. Formatting,
-source review and Linux dependency API inspection do not establish Mac compilation.
-The parent owns the integrated Linux build and test run. Adjacent tests cover
+The Swift service, macOS profile migration and native Mac compilation remain
+pending. The parent owns the integrated Linux build and test run. Adjacent tests cover
 desktop-file permission/parsing/icon behavior, target capability selection and
 the unsupported-platform contract. Tests discover generated applications without
 launching them or changing file associations.
@@ -101,7 +98,7 @@ on-device. Setting XDG variables alone is insufficient evidence of isolation.
    first rendered window, logs and observed profile writes. Try generated
    executable and nonexecutable `.desktop` entries. Both must report unsupported
    launching and retain a generic icon. Keep decoder previews unavailable while
-   XPC is pending. Do not promote this result to image-preview acceptance.
+   XPC is pending. Image-preview acceptance follows the isolated-service proof.
 
    ```sh
    fixture_root=$(mktemp -d "${TMPDIR:-/tmp}/hermes-mac-foundation.XXXXXX")

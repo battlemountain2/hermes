@@ -1,5 +1,31 @@
 # Next agent: Hermes performance, file features and media polish
 
+## November 8 parallel release groundwork — current
+
+Integration branch `feat/6-search-candidate-paging` follows PR #12, issue #6.
+`docs/1.0-roadmap.md` now has one authoritative checklist above its historical
+entries. Exact final source/hosted/artifact results belong in this batch PR.
+
+- Candidate lookup uses a SQLite-owned temporary database with the existing
+  32 MiB auxiliary budget, 2 MiB page cache and 256-row keyset pages. The 40k
+  auxiliary entry cutoff and full candidate-ID vector are removed. The worker
+  still holds library snapshots/ranks and retains broader scan/group limits.
+- Ranking falls back completely on page failure. Budget-consuming document
+  outcomes have reserved replay capacity, with same-revision reuse for unknown
+  source identities and identity equality for later snapshots.
+- The Mac agent extracted desktop-file discovery/launch policy into platform
+  helpers and wired isolation implementation status into diagnostics. Darwin
+  compilation, safe Mac roots/filesystem adapters and the XPC service are pending.
+- The qualification agent added actual separate bounded tmpfs tests, proving
+  EXDEV and exercising copy/move/overwrite, symlinks, genuine ENOSPC, cancellation,
+  source/unrelated destination preservation and successful retry.
+
+Parent owns integrated compilation/tests and Git backup. Agent worktrees are
+isolated and their reviewed commits are integrated here. Linux runtime evidence
+cannot qualify macOS or physical Asahi/storage/audio behavior. Preserve explicit
+pending gates in the new batch documents and platform migration acceptance.
+
+
 ## November 8 live transfer telemetry — current
 
 Branch `feat/6-live-transfer-progress` is stacked on PR #11, issue #6.

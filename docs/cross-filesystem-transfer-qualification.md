@@ -69,5 +69,5 @@ These fixtures use separate mounts of the same filesystem type. Distinct physica
 filesystems, remote GIO backends, device removal, physical storage pressure,
 crash durability, cancellation summaries and shutdown acceptance remain pending.
 Architecture-specific and physical Asahi/ARM qualification remain pending, as
-does macOS qualification. No physical-platform result is inferred from tmpfs
-behavior. Descriptor-relative transfer race hardening retains its existing gate.
+does macOS qualification. Physical-platform evidence and descriptor-relative
+transfer race hardening retain their own gates.
