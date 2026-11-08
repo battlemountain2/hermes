@@ -24,6 +24,10 @@ use crate::{
     services::{OperationEvent, OperationProvider, OperationRequestId, PasteRequest},
 };
 
+#[cfg(target_os = "linux")]
+#[path = "cross_filesystem_tests.rs"]
+mod cross_filesystem;
+
 struct Fixture(PathBuf);
 
 impl Fixture {
