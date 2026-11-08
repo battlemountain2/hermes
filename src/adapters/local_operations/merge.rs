@@ -2,6 +2,8 @@ use std::{future::Future, path::Path, pin::Pin, rc::Rc};
 
 use gtk::{gio, glib, prelude::*};
 
+use super::progress::Progress;
+
 use crate::{
     model::{EntryKind, FileEntry, FileEntryInner, Location, MetadataValue},
     services::{
@@ -21,7 +23,7 @@ pub(super) struct TransferTree {
     policies: [Option<ConflictAction>; 3],
     relocation: RelocationHandler,
     pub skipped: usize,
-    pub bytes_transferred: u64,
+    progress: Rc<Progress>,
 }
 
 #[derive(Debug, Default)]
@@ -36,6 +38,7 @@ impl TransferTree {
         emit: Rc<dyn Fn(OperationEvent)>,
         cancellation: gio::Cancellable,
         moving: bool,
+        progress: Rc<Progress>,
     ) -> Self {
         Self {
             id,
@@ -45,7 +48,7 @@ impl TransferTree {
             policies: [None; 3],
             relocation: Rc::new(relocate),
             skipped: 0,
-            bytes_transferred: 0,
+            progress,
         }
     }
 
@@ -94,14 +97,24 @@ impl TransferTree {
         mut target: gio::File,
         authorize_replacement: bool,
         depth: usize,
+        expected_root_size: Option<u64>,
     ) -> Pin<Box<dyn Future<Output = Result<Outcome, glib::Error>> + 'a>> {
         Box::pin(async move {
             self.check_cancelled()?;
             if depth > 128 {
                 return Err(error("Folder nesting exceeds the safe transfer limit"));
             }
-            let incoming = query(&source).await?;
-            let directory = incoming.file_type() == gio::FileType::Directory;
+            let mut incoming = query(&source).await?;
+            let mut directory = incoming.file_type() == gio::FileType::Directory;
+            if depth == 0
+                && (incoming.file_type() != gio::FileType::Regular
+                    || expected_root_size
+                        != incoming
+                            .has_attribute("standard::size")
+                            .then_some(incoming.size().max(0) as u64))
+            {
+                self.progress.invalidate_total();
+            }
             if directory {
                 super::transfer::validate_directory_target(&source, &target, &self.cancellation)
                     .await?;
@@ -129,6 +142,7 @@ impl TransferTree {
                         }
                         ConflictAction::Skip => {
                             self.skipped += 1;
+                            self.progress.invalidate_total();
                             return Ok(Outcome::default());
                         }
                         ConflictAction::KeepBoth => {
@@ -152,6 +166,23 @@ impl TransferTree {
                         may_replace = false;
                         continue;
                     }
+                }
+                // A decision can remain open while the source changes. Refresh
+                // its identity/type/size before using that authorization or the
+                // byte estimate, including the rename-only fast path.
+                let current_source = query(&source).await?;
+                if !same_version(&incoming, &current_source) {
+                    incoming = current_source;
+                    directory = incoming.file_type() == gio::FileType::Directory;
+                    self.progress.invalidate_total();
+                    self.progress.report();
+                    self.policies = [None; 3];
+                    may_replace = false;
+                    try_rename = self.moving
+                        && directory
+                        && source.path().is_some()
+                        && target.path().is_some();
+                    continue;
                 }
                 if directory
                     && existing
@@ -228,6 +259,7 @@ impl TransferTree {
                                     target.child(child.name()),
                                     false,
                                     depth + 1,
+                                    None,
                                 )
                                 .await?;
                             outcome.complete &= child_outcome.complete;
@@ -242,12 +274,25 @@ impl TransferTree {
                     }
                     return Ok(outcome);
                 }
-                match super::transfer::transfer_item(
+                let size = if incoming.file_type() == gio::FileType::Regular {
+                    incoming.size().max(0) as u64
+                } else {
+                    0
+                };
+                let progress = self.progress.clone();
+                let regular = incoming.file_type() == gio::FileType::Regular;
+                let report: super::transfer::ByteProgress = Rc::new(move |current, total| {
+                    if regular {
+                        progress.update_file(current, total, size);
+                    }
+                });
+                match super::transfer::transfer_item_with_progress(
                     source.clone(),
                     target.clone(),
                     self.moving,
                     may_replace,
                     self.cancellation.clone(),
+                    report,
                 )
                 .await
                 {
@@ -255,19 +300,21 @@ impl TransferTree {
                         if self.moving {
                             (self.relocation)(&source, &target);
                         }
-                        self.bytes_transferred = self
-                            .bytes_transferred
-                            .saturating_add(incoming.size().max(0) as u64);
+                        self.progress.finish_file(size);
                         return Ok(Outcome {
                             complete: true,
-                            bytes: incoming.size().max(0) as u64,
+                            bytes: size,
                         });
                     }
                     Err(error) if error.matches(gio::IOErrorEnum::Exists) => {
+                        self.progress.abandon_file();
                         self.policies = [None; 3];
                         may_replace = false;
                     }
-                    Err(error) => return Err(error),
+                    Err(error) => {
+                        self.progress.abandon_file();
+                        return Err(error);
+                    }
                 }
             }
             Err(error(

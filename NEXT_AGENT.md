@@ -1,5 +1,30 @@
 # Next agent: Hermes performance, file features and media polish
 
+## November 8 live transfer telemetry — current
+
+Branch `feat/6-live-transfer-progress` is stacked on PR #11, issue #6.
+Read `docs/transfer-progress.md` for byte semantics and remaining release gates.
+
+- Native GIO copy callbacks update one bounded worker sample. The main-context
+  future polls every 100 ms and flushes a final changed sample without detached
+  polling tasks. Remote GIO progress uses the same throttled accounting.
+- Logical processed bytes and backend copy bytes are separate. Rename-only
+  moves preserve their fast path and cannot inflate measured copy speed.
+- Retry/skip/failure and changed source type/size invalidate byte totals.
+  Folder transfers remain indeterminate without a recursive preflight walk.
+- The HUD has a widget-owned weak-reference frame refresh for speed/ETA expiry
+  during stalls, unknown-total pulsing and automatic disposal with its view.
+- A new competing destination during hard-link publication maps to GIO Exists,
+  preserving the original and allowing the current conflict/retry decisions.
+
+The read-only subagent review identified telemetry and conflict-error issues
+addressed in this batch. Exact local/hosted source identities, counts and final
+review results belong in the PR and durable evidence. Keep physical storage,
+cross-filesystem/backend, cancellation summary, shutdown and platform checks open.
+PR #11 is backed up with all hosted gates and downloaded package checks passing.
+Its legacy/fallback staging limits remain explicit. Preserve the running desktop
+and use private profiles/displays/buses for qualification.
+
 ## November 7 migration staging follow-up — current
 
 Branch `fix/6-migration-staging-lifecycle` is stacked on PR #10, issue #6.
