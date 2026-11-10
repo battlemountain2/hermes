@@ -75,7 +75,17 @@ fn publication_keeps_private_readers_isolated_and_releases_the_cache_lock() {
     let fixture = Fixture::new();
     let first = fixture.save(1);
     assert_eq!(fixture.stages(), 1);
+    let orphan = fixture
+        .path
+        .parent()
+        .expect("cache parent")
+        .join(".snapshot-v2-123-999");
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&orphan)
+        .expect("generated abandoned stage");
     let next = fixture.open();
+    assert!(!orphan.exists());
     assert!(next.reused());
     next.connection()
         .execute("UPDATE value SET number=2", [])

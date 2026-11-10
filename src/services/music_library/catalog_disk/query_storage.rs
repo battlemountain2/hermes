@@ -20,7 +20,7 @@ impl Staged {
     ) -> Result<Self, String> {
         cancelled(cancellation)?;
         let sources = Sources::new(root)?;
-        let (directory, name) = location(path, true)?;
+        let (directory, name) = location(path, true, cancellation)?;
         let mut stage = Stage::new(&directory)?;
         let mut reused = match fs::symlink_metadata(directory.pinned().join(&name)) {
             Ok(_) => {
@@ -125,7 +125,7 @@ impl Staged {
         let connection = connect(&stage, false)?;
         self.sources.root_unchanged()?;
         cancelled(cancellation)?;
-        fs::rename(published.file(), self.directory.pinned().join(&self.name)).map_err(error)?;
+        cache_policy::publish(&self.directory, &self.name, &published, cancellation)?;
         self.directory.0.sync_all().map_err(error)?;
         // Stage parent descriptors share this lock description. Release it
         // explicitly before returning a long-lived reader.
