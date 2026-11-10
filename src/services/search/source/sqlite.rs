@@ -34,6 +34,14 @@ const RECORD_SCHEMA: &str = "CREATE TABLE records (path BLOB PRIMARY KEY NOT NUL
 const PATH_INDEX_SCHEMA: &str = "CREATE INDEX positions_path ON positions(path)";
 const POSITION_SCHEMA: &str = "CREATE TABLE positions (position INTEGER PRIMARY KEY CHECK(position >= 0), ordinal INTEGER NOT NULL UNIQUE CHECK(ordinal >= 0), path BLOB NOT NULL REFERENCES records(path)) STRICT";
 
+const FULL_PAGE_SQL: &str = "SELECT p.position, p.ordinal, r.* FROM positions p
+    JOIN records r ON r.path = p.path WHERE p.position > ?1
+    ORDER BY p.position LIMIT 256";
+const SCORE_PAGE_SQL: &str = "SELECT p.position, p.ordinal, r.path, r.name, r.search_name,
+    r.search_path, r.search_metadata, r.directory, r.cost FROM positions p
+    JOIN records r ON r.path = p.path WHERE p.position > ?1
+    ORDER BY p.position LIMIT 256";
+
 pub(super) struct Store {
     database: Database,
     root: PathBuf,
@@ -296,8 +304,35 @@ impl Store {
         page: &mut Vec<(usize, SearchItem)>,
         cancelled: &impl Fn() -> bool,
     ) -> Result<usize, String> {
-        let result = self.read_page_into(after, page, cancelled);
+        let result =
+            self.read_page_into(after, page, cancelled, FULL_PAGE_SQL, |row, root, item| {
+                decode_into(row, 2, root, item).map(|_| ())
+            });
         if result.is_err() {
+            page.clear();
+        }
+        result
+    }
+
+    /// Text-only scoring projection. Raw tags, identity and modification time
+    /// are omitted. Results and grouping must resolve the full source rows.
+    /// Like `read_page`, only the returned prefix belongs to this page.
+    pub(super) fn read_score_page(
+        &mut self,
+        after: Option<usize>,
+        page: &mut Vec<(usize, SearchItem)>,
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<usize, String> {
+        let result = self.read_page_into(after, page, cancelled, SCORE_PAGE_SQL, decode_score_into);
+        if let Ok(used) = result {
+            // Unused reusable slots may still contain full rows from an earlier
+            // read. Release their raw payloads too, including at successful EOF.
+            for (_, item) in &mut page[used..] {
+                item.music_tags = None;
+                item.source_identity = None;
+                item.modified_unix_seconds = None;
+            }
+        } else {
             page.clear();
         }
         result
@@ -308,6 +343,8 @@ impl Store {
         after: Option<usize>,
         page: &mut Vec<(usize, SearchItem)>,
         cancelled: &impl Fn() -> bool,
+        sql: &str,
+        decode: impl Fn(&Row<'_>, &Path, &mut SearchItem) -> Result<(), String>,
     ) -> Result<usize, String> {
         check_cancelled(cancelled)?;
         self.database.check_root()?;
@@ -334,13 +371,7 @@ impl Store {
             .checked_sub(start)
             .ok_or_else(invalid)?
             .min(PAGE_SIZE);
-        let mut statement = connection
-            .prepare(
-                "SELECT p.position, p.ordinal, r.* FROM positions p
-             JOIN records r ON r.path = p.path WHERE p.position > ?1
-             ORDER BY p.position LIMIT 256",
-            )
-            .map_err(error)?;
+        let mut statement = connection.prepare(sql).map_err(error)?;
         let mut rows = statement.query([after]).map_err(error)?;
         let mut used = 0;
         let mut previous = after;
@@ -361,7 +392,7 @@ impl Store {
             if used == page.len() {
                 page.push((0, empty_item()));
             }
-            decode_into(row, 2, &self.root, &mut page[used].1)?;
+            decode(row, &self.root, &mut page[used].1)?;
             page[used].0 = natural(position)?;
             previous = position;
             used += 1;
@@ -709,6 +740,36 @@ fn decode_into(
     let cost = natural(row.get(offset + 2).map_err(error)?)?;
     validate_record(item, signature, cost)?;
     Ok(cost)
+}
+
+fn decode_score_into(row: &Row<'_>, root: &Path, item: &mut SearchItem) -> Result<(), String> {
+    let path = row.get_ref(2).map_err(error)?.as_blob().map_err(error)?;
+    item.path.clear();
+    item.path.push(OsStr::from_bytes(path));
+    for (index, target) in [
+        &mut item.name,
+        &mut item.search_name,
+        &mut item.search_path,
+        &mut item.search_metadata,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        row.get_ref(3 + index)
+            .map_err(error)?
+            .as_str()
+            .map_err(error)?
+            .clone_into(target);
+    }
+    item.is_directory = boolean(row.get(7).map_err(error)?)?;
+    item.music_tags = None;
+    item.source_identity = None;
+    item.modified_unix_seconds = None;
+    validate_item(item, root)?;
+    let cost = natural(row.get(8).map_err(error)?)?;
+    // The persisted cost includes the omitted raw fields. Its lower bound can
+    // only use this projection's payload, while the complete cost cap remains.
+    validate_record(item, &[], cost)
 }
 
 fn boolean(value: i64) -> Result<bool, String> {

@@ -1069,3 +1069,481 @@ fn root_change_during_build_cannot_publish_over_the_previous_database() {
     );
     assert_eq!(fs::read(&fixture.path).expect("preserved bytes"), before);
 }
+
+fn scoring_projection(mut item: SearchItem) -> SearchItem {
+    item.music_tags = None;
+    item.source_identity = None;
+    item.modified_unix_seconds = None;
+    item
+}
+
+#[test]
+fn scoring_projection_preserves_text_and_full_getters_and_owns_decoded_values() {
+    let fixture = Fixture::new();
+    let mut tagged = fixture.entry("ΟΣ/İSTANBUL.FLAC");
+    tagged.modified_unix_seconds = Some(-123);
+    tagged.identity = Some(FileIdentity::from_metadata(
+        &fs::metadata(&fixture.root).expect("root metadata"),
+    ));
+    tagged.music_tags = Some(MusicTags {
+        title: Some("ΟΣ".into()),
+        artist: Some(String::new()),
+        album_artist: Some("İSTANBUL".into()),
+        album: Some("東京".into()),
+        disc: Some(u32::MAX),
+        track: Some(17),
+    });
+    let mut directory = tagged.clone();
+    directory.path = fixture.root.join("nested//Directory");
+    directory.is_directory = true;
+    let entries = [
+        fixture.entry(""),
+        tagged,
+        fixture.entry(OsString::from_vec(b"NATIVE-\xff.TXT".to_vec())),
+        directory,
+    ];
+    let mut store = fixture.build(&entries);
+    let full = all(&mut store);
+    let expected: Vec<_> = full
+        .iter()
+        .map(|(position, item)| (*position, scoring_projection(item.clone())))
+        .collect();
+    let mut page = full.clone();
+    let used = store
+        .read_score_page(None, &mut page, &|| false)
+        .expect("read projected text");
+    assert_eq!(used, expected.len());
+    assert_eq!(&page[..used], expected.as_slice());
+    let last = page[used - 1].0;
+    assert_eq!(
+        store
+            .read_score_page(Some(last), &mut page, &|| false)
+            .expect("projection EOF"),
+        0
+    );
+    for (position, item) in &full {
+        assert_eq!(
+            store.get(*position).expect("full getter"),
+            Some(item.clone())
+        );
+    }
+    assert_eq!(all(&mut store), full);
+    let stage = PathBuf::from(
+        store
+            .database
+            .connection()
+            .path()
+            .expect("private reader path"),
+    );
+    assert!(stage.exists());
+    drop(store);
+    assert!(!stage.exists());
+    assert_eq!(&page[..used], expected.as_slice());
+    let conversions = Cell::new(0);
+    assert_eq!(all(&mut fixture.counted(&entries, &conversions)), full);
+    assert_eq!(conversions.get(), 0);
+}
+
+#[test]
+fn scoring_pages_reuse_256_slots_across_sparse_ids_and_reset_full_payloads() {
+    let fixture = Fixture::new();
+    let identity =
+        FileIdentity::from_metadata(&fs::metadata(&fixture.root).expect("root metadata"));
+    let entries: Vec<_> = (0..1029)
+        .map(|position| {
+            if position % 2 == 0 {
+                fixture.entry("")
+            } else {
+                let mut entry = fixture.entry(format!("FILE-{position:04}.TXT"));
+                entry.modified_unix_seconds = Some(position);
+                entry.identity = Some(identity.clone());
+                entry.music_tags = Some(MusicTags {
+                    title: Some(format!("TITLE-{position:04}")),
+                    artist: Some("ARTIST".into()),
+                    ..MusicTags::default()
+                });
+                entry
+            }
+        })
+        .collect();
+    let mut store = fixture.build(&entries);
+    let mut page = Vec::new();
+    assert_eq!(
+        store
+            .read_page(None, &mut page, &|| false)
+            .expect("full slots"),
+        256
+    );
+    assert!(page.iter().all(|(_, item)| item.music_tags.is_some()
+        && item.source_identity.is_some()
+        && item.modified_unix_seconds.is_some()));
+    let buffers = (
+        page.as_ptr(),
+        page[0].1.path.as_os_str().as_bytes().as_ptr(),
+        page[0].1.name.as_ptr(),
+        page[0].1.search_name.as_ptr(),
+        page[0].1.search_path.as_ptr(),
+        page[0].1.search_metadata.as_ptr(),
+    );
+    for (after, first, last) in [(None, 1, 511), (Some(511), 513, 1023)] {
+        assert_eq!(
+            store
+                .read_score_page(after, &mut page, &|| false)
+                .expect("projected page"),
+            256
+        );
+        assert_eq!((page[0].0, page[255].0), (first, last));
+        assert_eq!(
+            buffers,
+            (
+                page.as_ptr(),
+                page[0].1.path.as_os_str().as_bytes().as_ptr(),
+                page[0].1.name.as_ptr(),
+                page[0].1.search_name.as_ptr(),
+                page[0].1.search_path.as_ptr(),
+                page[0].1.search_metadata.as_ptr(),
+            )
+        );
+        for (position, item) in &page {
+            assert_eq!(
+                item,
+                &scoring_projection(convert(&entries[*position], &fixture.root))
+            );
+        }
+    }
+    // Refill every slot with a full row before requesting a short projection.
+    assert_eq!(
+        store
+            .read_page(None, &mut page, &|| false)
+            .expect("refill full slots"),
+        256
+    );
+    assert_eq!(
+        store
+            .read_score_page(Some(1023), &mut page, &|| false)
+            .expect("short projection"),
+        2
+    );
+    assert_eq!((page[0].0, page[1].0), (1025, 1027));
+    assert_eq!(page.len(), 256);
+    assert!(page.iter().all(|(_, item)| item.music_tags.is_none()
+        && item.source_identity.is_none()
+        && item.modified_unix_seconds.is_none()));
+    assert_eq!(
+        store
+            .read_page(None, &mut page, &|| false)
+            .expect("refill full slots"),
+        256
+    );
+    assert_eq!(
+        store
+            .read_score_page(Some(1027), &mut page, &|| false)
+            .expect("projection EOF"),
+        0
+    );
+    assert_eq!(page.len(), 256);
+    assert!(page.iter().all(|(_, item)| item.music_tags.is_none()
+        && item.source_identity.is_none()
+        && item.modified_unix_seconds.is_none()));
+    assert_eq!(
+        store
+            .read_score_page(Some(512), &mut page, &|| false)
+            .expect("after sparse hole"),
+        256
+    );
+    assert_eq!(page[0].0, 513);
+    assert_eq!(store.get(512).expect("scope hole"), None);
+    assert_eq!(
+        store.get(513).expect("full getter"),
+        Some(convert(&entries[513], &fixture.root))
+    );
+}
+
+#[test]
+fn scoring_projection_cancellation_does_not_latch_or_publish_a_partial_page() {
+    let fixture = Fixture::new();
+    let entries: Vec<_> = (0..257)
+        .map(|position| fixture.entry(format!("{position}.flac")))
+        .collect();
+    let mut store = fixture.build(&entries);
+    let mut page = Vec::new();
+    let calls = Cell::new(0);
+    assert!(
+        store
+            .read_score_page(None, &mut page, &|| {
+                calls.set(calls.get() + 1);
+                calls.get() > 10
+            })
+            .is_err()
+    );
+    assert!(page.is_empty());
+    assert_eq!(
+        store
+            .read_score_page(None, &mut page, &|| false)
+            .expect("retry scoring"),
+        256
+    );
+    assert_eq!(
+        store
+            .read_score_page(Some(255), &mut page, &|| false)
+            .expect("final scoring row"),
+        1
+    );
+    assert_eq!(page[0].0, 256);
+    assert!(
+        store
+            .read_score_page(Some(256), &mut page, &|| true)
+            .is_err()
+    );
+    assert!(page.is_empty());
+    assert_eq!(
+        store
+            .read_score_page(Some(256), &mut page, &|| false)
+            .expect("successful EOF"),
+        0
+    );
+    assert_eq!(all(&mut store).len(), 257);
+}
+
+#[test]
+fn scoring_projection_rejects_late_short_pages_and_sql_failures() {
+    let fixture = Fixture::new();
+    let entries: Vec<_> = (0..257)
+        .map(|position| fixture.entry(format!("{position}.flac")))
+        .collect();
+    let mut store = fixture.build(&entries);
+    let mut page = Vec::new();
+    assert_eq!(
+        store
+            .read_score_page(None, &mut page, &|| false)
+            .expect("first projection"),
+        256
+    );
+    edit_reader(&store)
+        .execute("DELETE FROM positions WHERE position=256", [])
+        .expect("remove final position");
+    assert!(
+        store
+            .read_score_page(Some(255), &mut page, &|| false)
+            .expect_err("committed short page must fail")
+            .contains("committed count")
+    );
+    assert!(page.is_empty());
+    store
+        .database
+        .connection()
+        .set_limit(Limit::SQLITE_LIMIT_SQL_LENGTH, 1)
+        .expect("inject SQL error");
+    assert!(store.read_score_page(None, &mut page, &|| false).is_err());
+    assert!(page.is_empty());
+    store
+        .database
+        .connection()
+        .set_limit(Limit::SQLITE_LIMIT_SQL_LENGTH, MAX_ROW_BYTES as i32)
+        .expect("restore SQL limit");
+    assert_eq!(
+        store.get(0).expect("full getter remains usable"),
+        Some(convert(&entries[0], &fixture.root))
+    );
+}
+
+#[test]
+fn scoring_projection_skips_raw_decoding_while_full_reads_still_validate_it() {
+    let fixture = Fixture::new();
+    let mut entry = fixture.entry("track.flac");
+    entry.music_tags = Some(MusicTags {
+        title: Some("TITLE".into()),
+        ..MusicTags::default()
+    });
+    entry.modified_unix_seconds = Some(123);
+    let mut store = fixture.build(std::slice::from_ref(&entry));
+    edit_reader(&store)
+        .execute_batch("UPDATE records SET identity=X'FF', title=CAST(X'FF' AS TEXT)")
+        .expect("corrupt omitted raw fields");
+    let mut page = Vec::new();
+    assert_eq!(
+        store
+            .read_score_page(None, &mut page, &|| false)
+            .expect("projection ignores omitted raw fields"),
+        1
+    );
+    assert_eq!(
+        page[0].1,
+        scoring_projection(convert(&entry, &fixture.root))
+    );
+    assert!(store.get(0).is_err());
+    assert!(store.read_page(None, &mut page, &|| false).is_err());
+    assert!(page.is_empty());
+    assert_eq!(
+        store
+            .read_score_page(None, &mut page, &|| false)
+            .expect("scoring remains usable"),
+        1
+    );
+}
+
+#[test]
+fn scoring_projection_validates_utf8_field_bounds_mode_and_cost() {
+    let fixture = Fixture::new();
+    let entries = [fixture.entry("track.flac")];
+    for corruption in [
+        "UPDATE records SET name=CAST(X'FF' AS TEXT)",
+        "UPDATE records SET search_name=CAST(X'FF' AS TEXT)",
+        "UPDATE records SET search_path=CAST(X'FF' AS TEXT)",
+        "UPDATE records SET search_metadata=CAST(X'FF' AS TEXT)",
+        "UPDATE records SET search_metadata=hex(zeroblob(9000))",
+        "PRAGMA ignore_check_constraints=ON; UPDATE records SET directory=2",
+        "PRAGMA ignore_check_constraints=ON; UPDATE records SET cost=-1",
+        "UPDATE records SET cost=0",
+        "UPDATE records SET cost=262145",
+    ] {
+        let mut store = fixture.build(&entries);
+        edit_reader(&store)
+            .execute_batch(corruption)
+            .expect("corrupt projected field");
+        let mut page = Vec::new();
+        assert!(
+            store.read_score_page(None, &mut page, &|| false).is_err(),
+            "{corruption}"
+        );
+        assert!(page.is_empty());
+    }
+    let mut tagged = fixture.entry("tagged.flac");
+    tagged.music_tags = Some(MusicTags {
+        title: Some("RAW TITLE".into()),
+        ..MusicTags::default()
+    });
+    let mut store = fixture.build(std::slice::from_ref(&tagged));
+    let projected = scoring_projection(convert(&tagged, &fixture.root));
+    let payload = projected.path.as_os_str().len()
+        + projected.name.len()
+        + projected.search_name.len()
+        + projected.search_path.len()
+        + projected.search_metadata.len();
+    edit_reader(&store)
+        .execute(
+            "UPDATE records SET cost=?1",
+            [integer(size_of::<SearchItem>() + payload).expect("projection cost")],
+        )
+        .expect("set projection minimum cost");
+    let mut page = Vec::new();
+    assert_eq!(
+        store
+            .read_score_page(None, &mut page, &|| false)
+            .expect("projection minimum cost"),
+        1
+    );
+    assert_eq!(page[0].1, projected);
+    assert!(store.get(0).is_err());
+}
+
+#[test]
+fn scoring_projection_rejects_invalid_native_paths_scope_and_missing_targets() {
+    let fixture = Fixture::new();
+    let entries = [fixture.entry("track.flac")];
+    for invalid_path in [
+        fixture.root.as_os_str().as_bytes().to_vec(),
+        fixture
+            .parent
+            .join("outside")
+            .as_os_str()
+            .as_bytes()
+            .to_vec(),
+        fixture
+            .root
+            .join(OsString::from_vec(b"invalid\0path".to_vec()))
+            .as_os_str()
+            .as_bytes()
+            .to_vec(),
+        vec![b'X'; MAX_PATH_BYTES + 1],
+    ] {
+        let mut store = fixture.build(&entries);
+        let writer = edit_reader(&store);
+        writer
+            .pragma_update(None, "foreign_keys", false)
+            .expect("allow deliberate key corruption");
+        writer
+            .execute("UPDATE records SET path=?1", [&invalid_path])
+            .expect("corrupt record path");
+        writer
+            .execute("UPDATE positions SET path=?1", [&invalid_path])
+            .expect("preserve join for path validation");
+        let mut page = Vec::new();
+        assert!(store.read_score_page(None, &mut page, &|| false).is_err());
+        assert!(page.is_empty());
+    }
+    let mut store = fixture.build(&entries);
+    let writer = edit_reader(&store);
+    writer
+        .pragma_update(None, "foreign_keys", false)
+        .expect("allow deliberate missing target");
+    writer
+        .execute("DELETE FROM records", [])
+        .expect("remove target");
+    assert!(
+        store
+            .read_score_page(None, &mut Vec::new(), &|| false)
+            .is_err()
+    );
+}
+
+#[test]
+fn scoring_projection_checks_replaced_roots_even_at_eof() {
+    let fixture = Fixture::new();
+    let mut store = fixture.build(&[fixture.entry("row")]);
+    fs::rename(&fixture.root, fixture.parent.join("old-root")).expect("move root");
+    fs::create_dir(&fixture.root).expect("replace root");
+    assert!(
+        store
+            .read_score_page(None, &mut Vec::new(), &|| false)
+            .is_err()
+    );
+    assert!(
+        store
+            .read_score_page(Some(usize::MAX), &mut Vec::new(), &|| false)
+            .is_err()
+    );
+}
+
+#[test]
+fn scoring_projection_selects_nine_columns_with_an_indexed_keyset() {
+    let fixture = Fixture::new();
+    let store = fixture.build(&[fixture.entry("row")]);
+    let connection = store.database.connection();
+    let statement = connection
+        .prepare(SCORE_PAGE_SQL)
+        .expect("projection statement");
+    assert_eq!(statement.column_count(), 9);
+    assert_eq!(
+        statement.column_names(),
+        [
+            "position",
+            "ordinal",
+            "path",
+            "name",
+            "search_name",
+            "search_path",
+            "search_metadata",
+            "directory",
+            "cost"
+        ]
+    );
+    let mut statement = connection
+        .prepare(&format!("EXPLAIN QUERY PLAN {SCORE_PAGE_SQL}"))
+        .expect("projection query plan");
+    let plans: Vec<String> = statement
+        .query_map([0], |row| row.get(3))
+        .expect("query plan rows")
+        .collect::<rusqlite::Result<_>>()
+        .expect("collect plan");
+    assert!(
+        plans
+            .iter()
+            .any(|plan| plan.contains("SEARCH p USING INTEGER PRIMARY KEY")),
+        "{plans:?}"
+    );
+    assert!(
+        !plans.iter().any(|plan| plan.contains("TEMP B-TREE")),
+        "{plans:?}"
+    );
+}
