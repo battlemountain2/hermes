@@ -1,6 +1,37 @@
 # Next agent: Hermes performance, file features and media polish
 
-## November 8 paged search source access — current
+## November 9 persistent normalized query source — current
+
+Integration checkout `/home/bry/hermes-worktrees/safety`, branch
+`feat/6-persistent-query-source`, follows PR #16 and issue #6.
+Read `docs/persistent-query-source.md` for ownership, limits and commit semantics.
+
+- Completed Linux search snapshots query a normalized SQLite source directly.
+  Unchanged raw inputs reuse normalized rows; position maps update transactionally.
+  Active readers keep private revisions across atomic public replacement.
+- Source lookup/pages decode stored fields in bounded reusable slots. Progress
+  snapshots and verified-root cache failures use the memory adapter with notices.
+- Schema v2 puts a covering score projection in position rows. Plain text queries
+  avoid per-file record joins; metadata/content/literal/entity queries retain full
+  rows and displayed results resolve full records. Record comparative timings.
+- Producer configurations bind root identity. Root replacement withdraws results
+  before SQL or memory fallback, then restarts/waits for verified scope data.
+- Active memory sources and composed Music data carry revision-bound identities.
+  Reads/More/publication validate them without waiting for another snapshot event.
+- Build-only progress callbacks cancel long SQL operations. Published readers
+  use a separate connection and retain independent query cancellation.
+- A backend implementation agent and read-only reviewer support one integration
+  owner. Exact-source local/hosted/package and timing evidence belongs in the PR.
+- The fresh dependency gate found RUSTSEC-2026-0459. Bundled SQLite was upgraded
+  through rusqlite 0.41.1 / libsqlite3-sys 0.39.1, with a linked-version floor test.
+
+The normalized cache is a separate bounded derived database. Legacy catalog,
+private copies, journals and rank/candidate workspaces have separate budgets.
+Peak normalized revision copies can approach 2 GiB before journals. Producer
+Entry vectors, global storage quotas/eviction/crash-stage recovery, scan/group
+caps, full 100k coverage and physical Linux/Asahi/Mac qualification remain gates.
+
+## November 8 paged search source access — previous checkpoint
 
 Integration checkout `/home/bry/hermes-worktrees/safety`, branch
 `refactor/6-paged-search-source`, follows PR #15 and issue #6.

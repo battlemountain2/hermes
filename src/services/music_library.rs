@@ -15,6 +15,8 @@ use crate::{model::MusicTags, sandbox::Cancellation};
 
 mod cache;
 mod catalog_disk;
+#[cfg(target_os = "linux")]
+pub(crate) use catalog_disk::query_storage;
 mod monitoring;
 
 const MAX_ENTRIES: usize = 100_000;
@@ -34,6 +36,18 @@ pub(crate) struct FileIdentity {
 }
 
 impl FileIdentity {
+    pub(crate) fn directory(path: &Path) -> Option<Self> {
+        fs::symlink_metadata(path)
+            .ok()
+            .filter(|metadata| metadata.is_dir())
+            .as_ref()
+            .map(Self::from_metadata)
+    }
+
+    pub(crate) fn same_object(&self, other: &Self) -> bool {
+        self.device == other.device && self.inode == other.inode
+    }
+
     pub(crate) fn size(&self) -> u64 {
         self.size
     }
@@ -80,8 +94,10 @@ pub(crate) struct Snapshot {
 
 type TagReader = dyn Fn(&Path, &Cancellation) -> Option<MusicTags> + Send + Sync;
 
+#[derive(Clone)]
 struct Configuration {
     root: PathBuf,
+    root_identity: Option<FileIdentity>,
     cache_path: PathBuf,
     catalog_path: Option<PathBuf>,
     music_source: Option<PathBuf>,
@@ -97,6 +113,7 @@ struct Configuration {
 impl Configuration {
     fn new(root: PathBuf) -> Self {
         Self {
+            root_identity: FileIdentity::directory(&root),
             cache_path: cache::path(&root),
             catalog_path: None,
             music_source: None,
@@ -114,6 +131,7 @@ impl Configuration {
 
 struct Shared {
     snapshot: Arc<Snapshot>,
+    root_bindings: Vec<RootBinding>,
     revision: u64,
     subscribers: usize,
     requested: Option<Instant>,
@@ -126,15 +144,57 @@ struct Library {
     ready: Condvar,
     cancellation: Cancellation,
     music_snapshot: Mutex<Option<Arc<Snapshot>>>,
+    music_root_identity: Mutex<Option<FileIdentity>>,
     saved_catalog: Mutex<Option<Arc<Snapshot>>>,
 }
 
 pub(crate) struct Subscription {
     library: Arc<Library>,
     seen: Option<u64>,
+    root_bindings: Vec<RootBinding>,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct RootBinding {
+    pub(crate) path: PathBuf,
+    pub(crate) identity: FileIdentity,
 }
 
 impl Subscription {
+    pub(crate) fn root_bindings(&self) -> Vec<RootBinding> {
+        self.root_bindings.clone()
+    }
+    pub(crate) fn root_is_current(&self) -> bool {
+        same_root_binding(
+            &self.library.configuration.root_identity,
+            &FileIdentity::directory(&self.library.configuration.root),
+        )
+    }
+
+    pub(crate) fn scope_is_current(&self, snapshot: &Snapshot, root: &Path) -> bool {
+        if !self.root_is_current() {
+            return false;
+        }
+        let expected = if root == self.library.configuration.root {
+            self.library.configuration.root_identity.as_ref()
+        } else {
+            snapshot
+                .entries
+                .iter()
+                .find(|entry| entry.path == root && entry.is_directory)
+                .and_then(|entry| entry.identity.as_ref())
+        };
+        expected
+            .zip(FileIdentity::directory(root).as_ref())
+            .is_some_and(|(expected, current)| expected.same_object(current))
+    }
+
+    pub(crate) fn restart(&self) -> Self {
+        let mut configuration = self.library.configuration.clone();
+        configuration.root_identity = FileIdentity::directory(&configuration.root);
+        subscribe_with(configuration)
+    }
+
     pub(crate) fn poll(&mut self) -> Option<Arc<Snapshot>> {
         let shared = self
             .library
@@ -145,6 +205,7 @@ impl Subscription {
             return None;
         }
         self.seen = Some(shared.revision);
+        self.root_bindings.clone_from(&shared.root_bindings);
         Some(shared.snapshot.clone())
     }
 
@@ -221,6 +282,14 @@ pub(crate) fn cached_tags(path: &Path) -> Option<MusicTags> {
     None
 }
 
+fn same_root_binding(left: &Option<FileIdentity>, right: &Option<FileIdentity>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left.same_object(right),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
 fn subscribe_with(configuration: Configuration) -> Subscription {
     let mut registry = registry().lock().unwrap_or_else(|error| error.into_inner());
     registry.retain(|weak| weak.strong_count() > 0);
@@ -235,16 +304,26 @@ fn subscribe_with(configuration: Configuration) -> Subscription {
             if library.cancellation.is_cancelled() {
                 continue;
             }
-            let exact = library.configuration.root == configuration.root;
+            if !same_root_binding(
+                &library.configuration.root_identity,
+                &FileIdentity::directory(&library.configuration.root),
+            ) {
+                continue;
+            }
+            let exact = library.configuration.root == configuration.root
+                && same_root_binding(
+                    &library.configuration.root_identity,
+                    &configuration.root_identity,
+                );
             let covered_folder = configuration.catalog_path.is_some()
                 && !shared.snapshot.indexing
                 && shared.snapshot.notice.is_none()
                 && configuration.root.starts_with(&library.configuration.root)
-                && shared
-                    .snapshot
-                    .entries
-                    .iter()
-                    .any(|entry| entry.is_directory && entry.path == configuration.root);
+                && shared.snapshot.entries.iter().any(|entry| {
+                    entry.is_directory
+                        && entry.path == configuration.root
+                        && same_root_binding(&entry.identity, &configuration.root_identity)
+                });
             if !exact && !covered_folder {
                 continue;
             }
@@ -262,12 +341,23 @@ fn subscribe_with(configuration: Configuration) -> Subscription {
             return Subscription {
                 library,
                 seen: None,
+                root_bindings: Vec::new(),
             };
         }
     }
+    let root_bindings = configuration
+        .root_identity
+        .as_ref()
+        .map(|identity| RootBinding {
+            path: configuration.root.clone(),
+            identity: identity.clone(),
+        })
+        .into_iter()
+        .collect();
     let library = Arc::new(Library {
         configuration,
         shared: Mutex::new(Shared {
+            root_bindings,
             snapshot: Arc::new(Snapshot {
                 indexing: true,
                 ..Snapshot::default()
@@ -280,6 +370,7 @@ fn subscribe_with(configuration: Configuration) -> Subscription {
         ready: Condvar::new(),
         cancellation: Cancellation::default(),
         music_snapshot: Mutex::new(None),
+        music_root_identity: Mutex::new(None),
         saved_catalog: Mutex::new(None),
     });
     registry.push(Arc::downgrade(&library));
@@ -305,6 +396,7 @@ fn subscribe_with(configuration: Configuration) -> Subscription {
     Subscription {
         library,
         seen: None,
+        root_bindings: Vec::new(),
     }
 }
 
@@ -398,14 +490,37 @@ impl Library {
 
     fn publish(&self, snapshot: Snapshot) {
         let snapshot = self.compose(snapshot);
+        let mut root_bindings: Vec<_> = self
+            .configuration
+            .root_identity
+            .as_ref()
+            .map(|identity| RootBinding {
+                path: self.configuration.root.clone(),
+                identity: identity.clone(),
+            })
+            .into_iter()
+            .collect();
+        if let Some(root) = &self.configuration.music_source
+            && let Some(identity) = self
+                .music_root_identity
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone()
+        {
+            root_bindings.push(RootBinding {
+                path: root.clone(),
+                identity,
+            });
+        }
         let mut shared = self
             .shared
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        if *shared.snapshot == snapshot {
+        if *shared.snapshot == snapshot && shared.root_bindings == root_bindings {
             return;
         }
         shared.snapshot = Arc::new(snapshot);
+        shared.root_bindings = root_bindings;
         shared.revision = shared.revision.wrapping_add(1);
         self.ready.notify_all();
     }
@@ -438,7 +553,33 @@ impl Library {
         let mut completed = Instant::now();
         while !self.cancellation.is_cancelled() {
             pump(context, &self.cancellation);
+            if music
+                .as_ref()
+                .is_some_and(|subscription| !subscription.root_is_current())
+            {
+                self.music_snapshot
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .take();
+                self.music_root_identity
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .take();
+                music = music.as_ref().map(Subscription::restart);
+                self.publish(Snapshot {
+                    entries: previous.clone(),
+                    indexing: true,
+                    notice: base_notice.clone(),
+                });
+            }
             if let Some(snapshot) = music.as_mut().and_then(Subscription::poll) {
+                let binding = music.as_ref().and_then(|subscription| {
+                    subscription.library.configuration.root_identity.clone()
+                });
+                self.music_root_identity
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .clone_from(&binding);
                 self.music_snapshot
                     .lock()
                     .unwrap_or_else(|error| error.into_inner())
@@ -516,13 +657,31 @@ impl Library {
             }
             return snapshot;
         };
+        let binding = self
+            .music_root_identity
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        let current = self
+            .configuration
+            .music_source
+            .as_ref()
+            .and_then(|root| FileIdentity::directory(root));
+        if !same_root_binding(&binding, &current)
+            || (binding.is_none() && !music.entries.is_empty())
+        {
+            append_notice(
+                &mut snapshot.notice,
+                "Music folder changed; waiting for its verified index",
+            );
+            snapshot.indexing = true;
+            return snapshot;
+        }
         let mut entries = Vec::new();
         let mut bytes = 0;
         if let Some(root) = &self.configuration.music_source
-            && let Ok(metadata) = fs::symlink_metadata(root)
-            && metadata.is_dir()
+            && let Some(identity) = current
         {
-            let identity = FileIdentity::from_metadata(&metadata);
             let entry = Entry {
                 path: root.clone(),
                 is_directory: true,

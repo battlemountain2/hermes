@@ -68,6 +68,7 @@ impl Store {
         check_cancelled(&|| cancel.is_cancelled())?;
         validate_path(root)?;
         let mut staged = Staged::open(path, root, cancel)?;
+        cancellable(staged.connection_mut(), cancel)?;
         let root_key = staged.root_key();
         if root_key.len() != 16 {
             return Err(invalid());
@@ -85,7 +86,9 @@ impl Store {
                 .and_then(|()| validate(staged.connection(), root, &root_key).map(|_| ()))
                 .is_err()
             {
+                check_cancelled(&|| cancel.is_cancelled())?;
                 staged.reset()?;
+                cancellable(staged.connection_mut(), cancel)?;
             }
         }
         configure(staged.connection())?;
@@ -488,6 +491,13 @@ fn configure(connection: &Connection) -> Result<(), String> {
         return Err("Search query database exceeds 512 MiB".into());
     }
     Ok(())
+}
+
+fn cancellable(connection: &mut Connection, cancellation: &Cancellation) -> Result<(), String> {
+    let cancellation = cancellation.clone();
+    connection
+        .progress_handler(1000, Some(move || cancellation.is_cancelled()))
+        .map_err(error)
 }
 
 fn validate(connection: &Connection, root: &Path, root_key: &[u8]) -> Result<Metadata, String> {

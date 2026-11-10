@@ -9,6 +9,116 @@ use std::{
 use super::*;
 use crate::services::music_library::FileIdentity;
 
+#[test]
+fn linked_sqlite_engine_meets_the_patched_version_floor() {
+    assert!(
+        rusqlite::version_number() >= 3_054_000,
+        "linked SQLite {} is below the patched release",
+        rusqlite::version()
+    );
+}
+
+#[test]
+#[ignore = "Generated 100k-entry persistent source coverage/timing; no personal files or physical platform qualification"]
+fn generated_hundred_thousand_rows_reopen_without_normalizing_unchanged_inputs() {
+    let fixture = Fixture::new();
+    let mut entries: Vec<_> = (0..100_000)
+        .map(|number| fixture.entry(format!("document-{number:06}.txt")))
+        .collect();
+    let converted = Cell::new(0);
+    let started = std::time::Instant::now();
+    let mut first = fixture.counted(&entries, &converted);
+    let cold = started.elapsed();
+    assert_eq!(converted.get(), 100_000);
+    assert_eq!(first.count(), 100_000);
+    let mut after = None;
+    let mut page = Vec::new();
+    let mut visited = 0;
+    let reading = std::time::Instant::now();
+    loop {
+        let count = first
+            .read_score_page(after, &mut page, &|| false)
+            .expect("100k projected page");
+        if count == 0 {
+            break;
+        }
+        assert!(count <= 256);
+        for (position, item) in &page[..count] {
+            assert_eq!(*position, visited);
+            assert_eq!(item.path, entries[visited].path);
+            visited += 1;
+        }
+        after = Some(page[count - 1].0);
+    }
+    let read = reading.elapsed();
+    assert_eq!(visited, 100_000);
+    entries.reverse();
+    converted.set(0);
+    let reopening = std::time::Instant::now();
+    let mut reopened = fixture.counted(&entries, &converted);
+    let warm = reopening.elapsed();
+    assert_eq!(converted.get(), 0);
+    assert_eq!(reopened.count(), 100_000);
+    assert_eq!(
+        reopened
+            .get(0)
+            .expect("reordered lookup")
+            .expect("row")
+            .path,
+        entries[0].path
+    );
+    assert_ne!(
+        first.get(0).expect("old pinned lookup").expect("row").path,
+        entries[0].path
+    );
+    eprintln!(
+        "Generated persistent source 100k: cold={cold:?}, sequential_projection={read:?}, warm_reordered={warm:?}, unchanged_conversions={}",
+        converted.get()
+    );
+}
+
+#[test]
+fn progress_cancellation_interrupts_long_sql_without_a_wall_clock_threshold() {
+    let mut connection = Connection::open_in_memory().expect("private SQL fixture");
+    let cancellation = Cancellation::default();
+    cancellable(&mut connection, &cancellation).expect("install scoped progress callback");
+    cancellation.cancel();
+    let result = connection.query_row::<i64, _, _>(
+        "WITH RECURSIVE numbers(value) AS (VALUES(0) UNION ALL SELECT value + 1 FROM numbers WHERE value < 1000000) SELECT SUM(value) FROM numbers", [], |row| row.get(0),
+    );
+    assert!(
+        matches!(result, Err(rusqlite::Error::SqliteFailure(error, _)) if error.code == rusqlite::ErrorCode::OperationInterrupted)
+    );
+}
+
+#[test]
+fn publication_does_not_carry_the_build_cancellation_hook_into_readers() {
+    let fixture = Fixture::new();
+    let cancellation = Cancellation::default();
+    let mut store = Store::build(
+        &fixture.path,
+        &fixture.root,
+        &[fixture.entry("track.flac")],
+        usize::MAX,
+        usize::MAX,
+        &cancellation,
+        |entry| convert(entry, &fixture.root),
+    )
+    .expect("published source");
+    cancellation.cancel();
+    let sum: i64 = store.database.connection().query_row(
+        "WITH RECURSIVE numbers(value) AS (VALUES(0) UNION ALL SELECT value + 1 FROM numbers WHERE value < 5000) SELECT SUM(value) FROM numbers", [], |row| row.get(0),
+    ).expect("published reader has no expired build progress handler");
+    assert_eq!(sum, 12_502_500);
+    let mut page = Vec::new();
+    assert_eq!(
+        store
+            .read_page(None, &mut page, &|| false)
+            .expect("next query has its own cancellation"),
+        1
+    );
+}
+
 struct Fixture {
     parent: PathBuf,
     root: PathBuf,
@@ -771,6 +881,9 @@ fn missing_join_targets_and_malformed_rows_never_become_partial_success() {
     ];
     let mut store = fixture.build(&entries);
     let writer = edit_reader(&store);
+    writer
+        .pragma_update(None, "foreign_keys", false)
+        .expect("permit generated broken reference");
     writer
         .execute(
             "DELETE FROM records WHERE path = ?1",
@@ -1542,7 +1655,7 @@ fn scoring_projection_selects_nine_columns_with_an_indexed_keyset() {
         .expect("projection statement");
     assert_eq!(statement.column_count(), 9);
     assert_eq!(
-        statement.column_names(),
+        statement.column_names().collect::<Vec<_>>(),
         [
             "position",
             "ordinal",

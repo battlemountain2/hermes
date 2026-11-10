@@ -780,6 +780,27 @@ struct ParsedSearchQuery {
 }
 
 impl ParsedSearchQuery {
+    fn has_candidate_constraints(&self) -> bool {
+        let query = self.candidate_query();
+        query.directory.is_some()
+            || query.category.is_some()
+            || query.extension.is_some()
+            || query.artist.is_some()
+            || query.album.is_some()
+            || query.title.is_some()
+    }
+
+    fn can_project_score(&self) -> bool {
+        self.literal.is_none()
+            && self.content.is_none()
+            && self.modified.is_none()
+            && self.rating.is_none()
+            && self.artist.is_none()
+            && self.album.is_none()
+            && self.title.is_none()
+            && self.inferred_artist.is_none()
+    }
+
     fn parse(query: &str) -> Self {
         let now = glib::DateTime::now_local()
             .unwrap_or_else(|_| glib::DateTime::from_unix_local(0).expect("unix epoch"));

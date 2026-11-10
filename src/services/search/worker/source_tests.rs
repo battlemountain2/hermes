@@ -2,6 +2,106 @@ use super::pagination_tests::{ranked_rows, synthetic_worker};
 use super::*;
 use crate::services::music_library::Entry;
 
+#[test]
+fn root_replacement_withdraws_stale_results_before_any_memory_fallback() {
+    use crate::services::music_library::tests::{Fixture as LibraryFixture, ready, stop};
+    let fixture = LibraryFixture::new();
+    fixture.song("old.flac", "Old");
+    let mut library = fixture.subscribe();
+    let snapshot = ready(&mut library, |snapshot| !snapshot.entries.is_empty());
+    let mut worker = synthetic_worker(vec![SearchItem::from_path(
+        fixture.root.join("old.flac"),
+        &fixture.root,
+        false,
+        None,
+    )]);
+    worker.query.text = "old".into();
+    worker.rescore_shared();
+    worker.publish(false);
+    let SearchEvent::Results {
+        page: Some(old), ..
+    } = worker.events.take().expect("old results")
+    else {
+        panic!("expected revision")
+    };
+    std::fs::rename(&fixture.root, fixture.root.with_extension("previous")).expect("replace root");
+    std::fs::create_dir(&fixture.root).expect("replacement root");
+    assert!(worker.reject_changed_root(&mut library, &snapshot, &fixture.root));
+    let SearchEvent::Results {
+        items,
+        page: Some(page),
+        indexing,
+        notice,
+        ..
+    } = worker.events.take().expect("withdrawal")
+    else {
+        panic!("expected withdrawn revision")
+    };
+    assert!(items.is_empty());
+    assert_eq!(page.total, 0);
+    assert!(page.revision > old.revision);
+    assert!(indexing);
+    assert!(notice.expect("root status").contains("verified index"));
+    assert!(worker.source.get(0).expect("empty source").is_none());
+    stop(library);
+}
+
+#[test]
+fn more_withdraws_an_installed_memory_source_after_replacement_without_a_snapshot_event() {
+    let fixture = Fixture::new();
+    let root = fixture.0.join("Selected");
+    std::fs::create_dir(&root).expect("selected root");
+    let entries = Arc::new(
+        (0..260)
+            .map(|number| Entry {
+                path: root.join(format!("match-{number:03}.txt")),
+                is_directory: false,
+                modified_unix_seconds: None,
+                identity: None,
+                music_tags: None,
+            })
+            .collect(),
+    );
+    let mut worker = synthetic_worker(Vec::new());
+    worker.source = Arc::new(
+        super::super::source::Source::new(
+            root.clone(),
+            entries,
+            MAX_INDEX_ENTRIES,
+            MAX_INDEX_BYTES,
+            &|| false,
+        )
+        .expect("installed fallback source"),
+    );
+    worker.query.text = "match".into();
+    worker.query.limit = 100;
+    worker.rescore_shared();
+    worker.publish(false);
+    let SearchEvent::Results {
+        page: Some(old), ..
+    } = worker.events.take().expect("healthy page")
+    else {
+        panic!("expected revision")
+    };
+    std::fs::rename(&root, fixture.0.join("Previous")).expect("replace selected folder");
+    std::fs::create_dir(&root).expect("replacement root");
+    worker.commands.put(Command::More(old));
+    worker.pending_shared(false);
+    let SearchEvent::Results {
+        items,
+        page: Some(page),
+        notice,
+        ..
+    } = worker.events.take().expect("withdrawn page")
+    else {
+        panic!("expected withdrawn revision")
+    };
+    assert!(items.is_empty());
+    assert_eq!(page.total, 0);
+    assert!(page.revision > old.revision);
+    assert!(notice.expect("root error").contains("root changed"));
+}
+
 struct Fixture(PathBuf);
 
 impl Fixture {
