@@ -92,13 +92,16 @@ notice. Entry and logical transformed-item admission limits preserve the existin
 coverage notice behavior.
 
 This derived cache coexists with the legacy saved Entry catalog during migration.
-Its main-file ceiling is separate from that catalog, rank/candidate workspaces,
-SQLite journals and private revision copies. An old reader, old public cache,
+The [cache lifecycle policy](search-cache-lifecycle.md) shares a 512 MiB budget
+across published general and normalized main files. Rank/candidate workspaces,
+SQLite journals and private revision copies have separate accounting. An old reader, old public cache,
 new private build and publication copy can approach 2 GiB for this cache alone,
 before journals or additional readers. There is no application-wide disk/RSS
-quota. Consolidating producer storage, quotas/eviction, and recovery of stages
-left by abrupt process death remain release gates. Normal closure and recoverable
-failures clean up their own stages.
+quota. Consolidating producer storage and temporary peak-space accounting remain
+release gates. New stages carry kernel leases and abandoned stages are recovered
+on the next acquisition of their directory. Older lease-free stages and unvisited
+scope cleanup remain separate work. Normal closure and recoverable failures
+clean up their own stages.
 
 The producer's complete Entry vectors, scan/group caps, grouped position/entity
 collections, end-to-end eligible-file accounting and the two physical reference-machine

@@ -1,6 +1,22 @@
 # Next agent: Hermes performance, file features and media polish
 
-## November 9 persistent normalized query source — current
+## November 9 search cache lifecycle — current batch
+
+Branch `feat/6-search-cache-lifecycle` follows PR #17 and issue #6.
+Read `docs/search-cache-lifecycle.md` for the precise budget and recovery scope.
+
+- General and normalized published main files share a 512 MiB publication budget.
+  Eviction uses oldest publication order, safe managed files and nonwaiting root
+  locks. Busy or incompatible data can cause a visible cache-save/fallback error.
+- New snapshot directories hold a lifetime kernel lease. The next acquisition
+  reclaims unlocked versioned stages with validated known contents. Active and
+  older lease-free stages are preserved.
+- Private revisions, journals and temporary workspaces retain separate resource
+  accounting. Whole-application peak quota and unvisited-scope maintenance remain.
+- Record focused recovery/quota tests and exact-source local/hosted/package
+  evidence in this batch PR. Carry the completed scale ledger forward.
+
+## November 9 persistent normalized query source — previous checkpoint
 
 Integration checkout `/home/bry/hermes-worktrees/safety`, branch
 `feat/6-persistent-query-source`, follows PR #16 and issue #6.

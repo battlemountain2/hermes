@@ -53,6 +53,17 @@ fn publish_with_budget(
     cancellation: &Cancellation,
     budget: u64,
 ) -> Result<(), String> {
+    publish_with_budget_and_sync(directory, name, stage, cancellation, budget, File::sync_all)
+}
+
+fn publish_with_budget_and_sync(
+    directory: &DirectoryHandle,
+    name: &OsStr,
+    stage: &Stage,
+    cancellation: &Cancellation,
+    budget: u64,
+    sync_directory: impl FnOnce(&File) -> std::io::Result<()>,
+) -> Result<(), String> {
     cancelled(cancellation)?;
     if name.as_bytes().is_empty()
         || name.as_bytes().contains(&b'/')
@@ -87,6 +98,7 @@ fn publish_with_budget(
             &incoming,
             target.as_ref(),
             cancellation,
+            sync_directory,
         );
     };
     if incoming_metadata.len() > budget {
@@ -132,6 +144,7 @@ fn publish_with_budget(
         &incoming,
         target.as_ref(),
         cancellation,
+        sync_directory,
     )
 }
 
@@ -316,7 +329,7 @@ fn supported_header(file: &File, metadata: &Metadata, kind: Kind) -> Result<bool
         && (512..=65536).contains(&page_size)
         && page_size.is_power_of_two()
         && metadata.len() >= page_size
-        && metadata.len() % page_size == 0
+        && metadata.len().is_multiple_of(page_size)
         && u64::from(word(28)) == metadata.len() / page_size
         && word(24) == word(92)
         && matches!(header[18], 1 | 2)
@@ -395,6 +408,7 @@ fn commit(
     incoming: &File,
     target: Option<&Metadata>,
     cancellation: &Cancellation,
+    sync_directory: impl FnOnce(&File) -> std::io::Result<()>,
 ) -> Result<(), String> {
     cancelled(cancellation)?;
     // Record publication order, including stages that waited a long time after
@@ -413,7 +427,7 @@ fn commit(
     }
     cancelled(cancellation)?;
     fs::rename(stage.file(), directory.pinned().join(name)).map_err(error)?;
-    directory.0.sync_all().map_err(error)
+    sync_directory(&directory.0).map_err(error)
 }
 
 #[cfg(test)]

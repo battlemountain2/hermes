@@ -48,6 +48,11 @@ impl Fixture {
         lock_directory(&directory.0).expect("hold caller directory lock");
         let stage = Stage::new(&directory).expect("private incoming stage");
         database(&stage.file(), kind, extra);
+        let connection = Connection::open(stage.file()).expect("distinct incoming revision");
+        connection
+            .execute("UPDATE marker SET value=x'08' WHERE rowid=1", [])
+            .expect("incoming marker differs from saved cache");
+        connection.close().expect("close incoming revision");
         (directory, stage)
     }
 
@@ -81,7 +86,10 @@ fn database(path: &Path, kind: Kind, extra: usize) {
     connection.execute_batch("PRAGMA page_size=512; CREATE TABLE marker(value BLOB); INSERT INTO marker VALUES(x'07');").expect("fixture schema");
     if extra > 0 {
         connection
-            .execute("INSERT INTO marker VALUES(zeroblob(?1))", [extra])
+            .execute(
+                "INSERT INTO marker VALUES(zeroblob(?1))",
+                [i64::try_from(extra).expect("bounded generated payload")],
+            )
             .expect("fixture payload");
     }
     let (version, application) = match kind {
@@ -152,6 +160,84 @@ fn replacement_subtracts_the_existing_target_and_does_not_relock_current_inode()
         fs::remove_file(peer).expect("reset peer");
         fs::remove_file(path).expect("reset target");
     }
+}
+
+#[test]
+fn failed_publication_preserves_target_after_prior_eligible_evictions() {
+    let fixture = Fixture::new();
+    let target = fixture.general(1);
+    let eligible = fixture.normalized(2);
+    let protected = fixture.general(3);
+    let budget = seed(&target, Kind::General, 1);
+    seed(&eligible, Kind::Normalized, 2);
+    seed(&protected, Kind::General, 3);
+    let connection = Connection::open(&protected).expect("generated future cache");
+    connection
+        .pragma_update(None, "user_version", 99)
+        .expect("future schema fixture");
+    connection.close().expect("close future cache");
+    let original = fs::read(&target).expect("original target bytes");
+    let identity = inode(&fs::metadata(&target).expect("target identity"));
+    assert!(fixture.save(&target, Kind::General, budget).is_err());
+    assert_eq!(fs::read(&target).expect("preserved target"), original);
+    assert_eq!(
+        inode(&fs::metadata(&target).expect("target identity")),
+        identity
+    );
+    assert!(protected.exists());
+    assert!(!eligible.exists());
+}
+
+#[test]
+fn publication_cannot_bypass_an_independently_held_shared_lock() {
+    let fixture = Fixture::new();
+    let root = DirectoryHandle::open(&fixture.0, false).expect("namespace root");
+    let lock = publication_lock(&root).expect("independent quota lock");
+    lock.try_lock().expect("hold quota lock");
+    let target = fixture.general(1);
+    let failure = fixture
+        .save(&target, Kind::General, PUBLIC_BYTES)
+        .expect_err("publication must honor the independent lock");
+    assert!(failure.contains("lock acquisition failed"), "{failure}");
+    assert!(!target.exists());
+    lock.unlock().expect("release quota lock");
+    fixture
+        .save(&target, Kind::General, PUBLIC_BYTES)
+        .expect("publication resumes after lock release");
+}
+
+#[test]
+fn post_rename_sync_failure_reports_error_with_new_target_and_released_lock() {
+    let fixture = Fixture::new();
+    let target = fixture.general(1);
+    seed(&target, Kind::General, 1);
+    let old_identity = inode(&fs::metadata(&target).expect("original identity"));
+    let (directory, stage) = fixture.stage(&target, Kind::General, 0);
+    let failure = publish_with_budget_and_sync(
+        &directory,
+        target.file_name().expect("target name"),
+        &stage,
+        &Cancellation::default(),
+        PUBLIC_BYTES,
+        |_| Err(std::io::Error::other("generated directory sync failure")),
+    )
+    .expect_err("final sync failure must be reported");
+    assert!(failure.contains("generated directory sync failure"));
+    assert_ne!(
+        inode(&fs::metadata(&target).expect("new target identity")),
+        old_identity
+    );
+    assert!(!stage.file().exists());
+    let connection = Connection::open(&target).expect("complete new database");
+    let marker: Vec<u8> = connection
+        .query_row("SELECT value FROM marker WHERE rowid=1", [], |row| {
+            row.get(0)
+        })
+        .expect("read new revision");
+    assert_eq!(marker, [8]);
+    let lock = publication_lock(&directory).expect("quota lock after failure");
+    lock.try_lock()
+        .expect("failed publication released shared lock");
 }
 
 #[test]

@@ -792,7 +792,7 @@ fn cancellation_during_transaction_does_not_publish_or_leave_staging_files() {
 fn connection_uses_small_cache_and_disables_stored_code_and_attachments() {
     let fixture = Fixture::new();
     fixture.save(&[], None);
-    let (directory, _) = location(&fixture.cache, false)
+    let (directory, _) = location(&fixture.cache, false, &Cancellation::default())
         .expect("expected test value from location(&fixture.cache, false)");
     let stage = Stage::new(&directory).expect("expected test value from Stage::new(&directory)");
     let connection = stage

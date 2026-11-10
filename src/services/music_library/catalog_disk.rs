@@ -20,8 +20,10 @@ use std::{
     time::Duration,
 };
 
+mod cache_policy;
 #[cfg(target_os = "linux")]
 pub(crate) mod query_storage;
+mod stage_recovery;
 
 const VERSION: i64 = 1;
 const MAX_DATABASE_BYTES: u64 = 512 * 1024 * 1024;
@@ -136,7 +138,7 @@ impl Stage {
     fn new(parent: &DirectoryHandle) -> Result<Self, String> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let name = OsString::from(format!(
-            ".snapshot-{}-{}",
+            ".snapshot-v2-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -150,6 +152,9 @@ impl Stage {
             name,
         };
         stage.directory.private()?;
+        // This lease outlives the parent publication lock. Recovery can reclaim
+        // a crashed revision without removing a reader's live private inode.
+        stage.directory.0.try_lock().map_err(error)?;
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -490,7 +495,11 @@ fn validate_entry(entry: &Entry, sources: &Sources) -> Result<(), String> {
     Ok(())
 }
 
-fn location(path: &Path, create: bool) -> Result<(DirectoryHandle, OsString), String> {
+fn location(
+    path: &Path,
+    create: bool,
+    cancellation: &Cancellation,
+) -> Result<(DirectoryHandle, OsString), String> {
     let name = path.file_name().ok_or("Invalid search catalog filename")?;
     if name.as_bytes().contains(&0) || path.as_os_str().len() > MAX_PATH_BYTES {
         return Err("Invalid search catalog filename".into());
@@ -501,6 +510,7 @@ fn location(path: &Path, create: bool) -> Result<(DirectoryHandle, OsString), St
     )?;
     directory.private()?;
     lock_directory(&directory.0)?;
+    stage_recovery::recover(&directory, cancellation)?;
     Ok((directory, name.to_owned()))
 }
 
@@ -563,7 +573,7 @@ impl PagedReader {
     ) -> Result<Self, String> {
         cancelled(cancellation)?;
         let sources = Sources::new(root)?;
-        let (directory, name) = location(path, false)?;
+        let (directory, name) = location(path, false, cancellation)?;
         let stage = Stage::new(&directory)?;
         stage.copy(existing(&directory, &name)?, cancellation)?;
         let connection = stage.connect(false)?;
@@ -772,7 +782,7 @@ pub(super) fn write(
     if entries.len() > super::MAX_ENTRIES || bytes > super::MAX_INDEX_BYTES {
         return Err("Search catalog exceeds the entry or memory budget".into());
     }
-    let (directory, name) = location(path, true)?;
+    let (directory, name) = location(path, true, cancellation)?;
     match fs::symlink_metadata(directory.pinned().join(&name)) {
         Ok(_) => {
             let old = Stage::new(&directory)?;
@@ -846,7 +856,7 @@ pub(super) fn write(
     }
     sources.root_unchanged()?;
     cancelled(cancellation)?;
-    fs::rename(stage.file(), directory.pinned().join(&name)).map_err(error)?;
+    cache_policy::publish(&directory, &name, &stage, cancellation)?;
     directory.0.sync_all().map_err(error)
 }
 
