@@ -1,5 +1,8 @@
 use rusqlite::Connection;
 
+#[cfg(test)]
+mod tests;
+
 /// Bound the main file on a writable connection after its standard PRAGMAs.
 pub(super) fn enforce(connection: &Connection, bytes: u64) -> Result<(), String> {
     let page_size: i64 = connection
