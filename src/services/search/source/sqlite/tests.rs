@@ -1010,6 +1010,23 @@ fn corrupt_cached_rows_are_repaired_once_without_normalizing_unchanged_peers() {
                 .map(|(index, entry)| (index, convert(entry, &fixture.root)))
                 .collect::<Vec<_>>()
         );
+        let mut projected = Vec::new();
+        assert_eq!(
+            repaired
+                .read_score_page(None, &mut projected, &|| false)
+                .expect("repaired score rows"),
+            entries.len()
+        );
+        assert_eq!(
+            projected,
+            entries
+                .iter()
+                .enumerate()
+                .map(|(position, entry)| {
+                    (position, scoring_projection(convert(entry, &fixture.root)))
+                })
+                .collect::<Vec<_>>()
+        );
         drop(repaired);
         conversions.set(0);
         drop(fixture.counted(&entries, &conversions));
@@ -1387,15 +1404,15 @@ fn scoring_projection_validates_utf8_field_bounds_mode_and_cost() {
     let fixture = Fixture::new();
     let entries = [fixture.entry("track.flac")];
     for corruption in [
-        "UPDATE records SET name=CAST(X'FF' AS TEXT)",
-        "UPDATE records SET search_name=CAST(X'FF' AS TEXT)",
-        "UPDATE records SET search_path=CAST(X'FF' AS TEXT)",
-        "UPDATE records SET search_metadata=CAST(X'FF' AS TEXT)",
-        "UPDATE records SET search_metadata=hex(zeroblob(9000))",
-        "PRAGMA ignore_check_constraints=ON; UPDATE records SET directory=2",
-        "PRAGMA ignore_check_constraints=ON; UPDATE records SET cost=-1",
-        "UPDATE records SET cost=0",
-        "UPDATE records SET cost=262145",
+        "UPDATE positions SET name=CAST(X'FF' AS TEXT)",
+        "UPDATE positions SET search_name=CAST(X'FF' AS TEXT)",
+        "UPDATE positions SET search_path=CAST(X'FF' AS TEXT)",
+        "UPDATE positions SET search_metadata=CAST(X'FF' AS TEXT)",
+        "UPDATE positions SET search_metadata=hex(zeroblob(9000))",
+        "PRAGMA ignore_check_constraints=ON; UPDATE positions SET directory=2",
+        "PRAGMA ignore_check_constraints=ON; UPDATE positions SET cost=-1",
+        "UPDATE positions SET cost=0",
+        "UPDATE positions SET cost=262145",
     ] {
         let mut store = fixture.build(&entries);
         edit_reader(&store)
@@ -1420,12 +1437,14 @@ fn scoring_projection_validates_utf8_field_bounds_mode_and_cost() {
         + projected.search_name.len()
         + projected.search_path.len()
         + projected.search_metadata.len();
-    edit_reader(&store)
-        .execute(
-            "UPDATE records SET cost=?1",
-            [integer(size_of::<SearchItem>() + payload).expect("projection cost")],
-        )
+    let writer = edit_reader(&store);
+    let minimum_cost = integer(size_of::<SearchItem>() + payload).expect("projection cost");
+    writer
+        .execute("UPDATE positions SET cost=?1", [minimum_cost])
         .expect("set projection minimum cost");
+    writer
+        .execute("UPDATE records SET cost=?1", [minimum_cost])
+        .expect("set full-record cost below its minimum");
     let mut page = Vec::new();
     assert_eq!(
         store
@@ -1438,7 +1457,7 @@ fn scoring_projection_validates_utf8_field_bounds_mode_and_cost() {
 }
 
 #[test]
-fn scoring_projection_rejects_invalid_native_paths_scope_and_missing_targets() {
+fn scoring_projection_rejects_invalid_paths_and_full_get_rejects_missing_targets() {
     let fixture = Fixture::new();
     let entries = [fixture.entry("track.flac")];
     for invalid_path in [
@@ -1480,11 +1499,19 @@ fn scoring_projection_rejects_invalid_native_paths_scope_and_missing_targets() {
     writer
         .execute("DELETE FROM records", [])
         .expect("remove target");
-    assert!(
+    let mut page = Vec::new();
+    assert_eq!(
         store
-            .read_score_page(None, &mut Vec::new(), &|| false)
-            .is_err()
+            .read_score_page(None, &mut page, &|| false)
+            .expect("snapshot scoring remains available"),
+        1
     );
+    assert_eq!(
+        page[0].1,
+        scoring_projection(convert(&entries[0], &fixture.root))
+    );
+    assert!(store.get(0).is_err());
+    assert!(store.read_page(None, &mut Vec::new(), &|| false).is_err());
 }
 
 #[test]
@@ -1536,6 +1563,8 @@ fn scoring_projection_selects_nine_columns_with_an_indexed_keyset() {
         .expect("query plan rows")
         .collect::<rusqlite::Result<_>>()
         .expect("collect plan");
+    // One primary-key range scan, with no record lookup or correlated subquery.
+    assert_eq!(plans.len(), 1, "{plans:?}");
     assert!(
         plans
             .iter()
@@ -1546,4 +1575,133 @@ fn scoring_projection_selects_nine_columns_with_an_indexed_keyset() {
         !plans.iter().any(|plan| plan.contains("TEMP B-TREE")),
         "{plans:?}"
     );
+}
+
+#[test]
+fn version_one_positions_rebuild_privately_and_version_two_reuses_records() {
+    let fixture = Fixture::new();
+    let entries = [
+        fixture.entry(""),
+        fixture.entry("ΟΣ.flac"),
+        fixture.entry("second.flac"),
+    ];
+    drop(fixture.build(&entries));
+    {
+        let connection = fixture.edit_public();
+        connection.execute_batch(
+            "DROP INDEX positions_path;
+             ALTER TABLE positions RENAME TO positions_v2;
+             CREATE TABLE positions (position INTEGER PRIMARY KEY CHECK(position >= 0), ordinal INTEGER NOT NULL UNIQUE CHECK(ordinal >= 0), path BLOB NOT NULL REFERENCES records(path)) STRICT;
+             INSERT INTO positions(position, ordinal, path) SELECT position, ordinal, path FROM positions_v2;
+             DROP TABLE positions_v2;
+             CREATE INDEX positions_path ON positions(path);
+             PRAGMA user_version=1;",
+        ).expect("construct version-one cache");
+    }
+    let before = fs::read(&fixture.path).expect("version-one bytes");
+    let cancel = Cancellation::default();
+    assert!(
+        Store::build(
+            &fixture.path,
+            &fixture.root,
+            &entries,
+            usize::MAX,
+            usize::MAX,
+            &cancel,
+            |entry| {
+                cancel.cancel();
+                convert(entry, &fixture.root)
+            },
+        )
+        .is_err()
+    );
+    assert_eq!(
+        fs::read(&fixture.path).expect("preserved version-one bytes"),
+        before
+    );
+    let conversions = Cell::new(0);
+    let mut upgraded = fixture.counted(&entries, &conversions);
+    assert_eq!(conversions.get(), 2);
+    assert_eq!(
+        upgraded
+            .database
+            .connection()
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .expect("schema version"),
+        2
+    );
+    let full = all(&mut upgraded);
+    let mut page = Vec::new();
+    assert_eq!(
+        upgraded
+            .read_score_page(None, &mut page, &|| false)
+            .expect("upgraded score rows"),
+        2
+    );
+    assert_eq!(
+        page,
+        full.into_iter()
+            .map(|(position, item)| (position, scoring_projection(item)))
+            .collect::<Vec<_>>()
+    );
+    drop(upgraded);
+    conversions.set(0);
+    drop(fixture.counted(&entries, &conversions));
+    assert_eq!(conversions.get(), 0);
+}
+
+#[test]
+fn discarded_projection_bodies_are_rebuilt_from_cached_records_without_normalization() {
+    let fixture = Fixture::new();
+    let mut tagged = fixture.entry("ΟΣ/İSTANBUL.FLAC");
+    tagged.music_tags = Some(MusicTags {
+        title: Some("東京".into()),
+        artist: Some("ARTIST".into()),
+        ..MusicTags::default()
+    });
+    let mut entries = [fixture.entry(""), tagged, fixture.entry("second.flac")];
+    let conversions = Cell::new(0);
+    drop(fixture.counted(&entries, &conversions));
+    assert_eq!(conversions.replace(0), 2);
+    for corruption in [
+        "UPDATE positions SET name='obsolete', search_name=CAST(X'FF' AS TEXT), search_path='wrong', search_metadata='stale'",
+        "PRAGMA ignore_check_constraints=ON; UPDATE positions SET directory=2, cost=-1",
+    ] {
+        fixture
+            .edit_public()
+            .execute_batch(corruption)
+            .expect("corrupt discarded projection body");
+        entries.swap(1, 2);
+        let mut store = fixture.counted(&entries, &conversions);
+        assert_eq!(conversions.replace(0), 0);
+        let full = all(&mut store);
+        let expected = entries
+            .iter()
+            .enumerate()
+            .skip(1)
+            .map(|(position, entry)| (position, convert(entry, &fixture.root)))
+            .collect::<Vec<_>>();
+        assert_eq!(full, expected);
+        let mut projected = Vec::new();
+        assert_eq!(
+            store
+                .read_score_page(None, &mut projected, &|| false)
+                .expect("rebuilt covering rows"),
+            2
+        );
+        assert_eq!(
+            projected,
+            expected
+                .into_iter()
+                .map(|(position, item)| (position, scoring_projection(item)))
+                .collect::<Vec<_>>()
+        );
+        let mismatched: bool = store.database.connection().query_row(
+            "SELECT EXISTS(SELECT 1 FROM positions p JOIN records r ON r.path=p.path
+             WHERE p.name<>r.name OR p.search_name<>r.search_name OR p.search_path<>r.search_path
+             OR p.search_metadata<>r.search_metadata OR p.directory<>r.directory OR p.cost<>r.cost)",
+            [], |row| row.get(0),
+        ).expect("published snapshot projection parity");
+        assert!(!mismatched);
+    }
 }

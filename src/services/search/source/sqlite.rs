@@ -19,7 +19,7 @@ use crate::{
     },
 };
 
-const VERSION: i64 = 1;
+const VERSION: i64 = 2;
 const APPLICATION_ID: i64 = 0x48515331;
 const PAGE_SIZE: usize = 256;
 const MAX_DATABASE_BYTES: i64 = 512 * 1024 * 1024;
@@ -32,15 +32,14 @@ const MAX_ITEM_BYTES: usize = 4 * MAX_ROW_BYTES;
 const META_SCHEMA: &str = "CREATE TABLE metadata (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), root BLOB NOT NULL, root_key BLOB NOT NULL, source_end INTEGER NOT NULL CHECK(source_end >= 0), eligible INTEGER NOT NULL CHECK(eligible >= 0), item_bytes INTEGER NOT NULL CHECK(item_bytes >= 0), notice TEXT) STRICT";
 const RECORD_SCHEMA: &str = "CREATE TABLE records (path BLOB PRIMARY KEY NOT NULL, signature BLOB NOT NULL, cost INTEGER NOT NULL CHECK(cost >= 0), name TEXT NOT NULL, search_name TEXT NOT NULL, search_path TEXT NOT NULL, search_metadata TEXT NOT NULL, directory INTEGER NOT NULL CHECK(directory IN (0, 1)), modified INTEGER, identity BLOB, title TEXT, artist TEXT, album_artist TEXT, album TEXT, disc INTEGER, track INTEGER, tagged INTEGER NOT NULL CHECK(tagged IN (0, 1))) STRICT, WITHOUT ROWID";
 const PATH_INDEX_SCHEMA: &str = "CREATE INDEX positions_path ON positions(path)";
-const POSITION_SCHEMA: &str = "CREATE TABLE positions (position INTEGER PRIMARY KEY CHECK(position >= 0), ordinal INTEGER NOT NULL UNIQUE CHECK(ordinal >= 0), path BLOB NOT NULL REFERENCES records(path)) STRICT";
+const POSITION_SCHEMA: &str = "CREATE TABLE positions (position INTEGER PRIMARY KEY CHECK(position >= 0), ordinal INTEGER NOT NULL UNIQUE CHECK(ordinal >= 0), path BLOB NOT NULL REFERENCES records(path), name TEXT NOT NULL, search_name TEXT NOT NULL, search_path TEXT NOT NULL, search_metadata TEXT NOT NULL, directory INTEGER NOT NULL CHECK(directory IN (0, 1)), cost INTEGER NOT NULL CHECK(cost >= 0)) STRICT";
 
 const FULL_PAGE_SQL: &str = "SELECT p.position, p.ordinal, r.* FROM positions p
     JOIN records r ON r.path = p.path WHERE p.position > ?1
     ORDER BY p.position LIMIT 256";
-const SCORE_PAGE_SQL: &str = "SELECT p.position, p.ordinal, r.path, r.name, r.search_name,
-    r.search_path, r.search_metadata, r.directory, r.cost FROM positions p
-    JOIN records r ON r.path = p.path WHERE p.position > ?1
-    ORDER BY p.position LIMIT 256";
+const SCORE_PAGE_SQL: &str = "SELECT p.position, p.ordinal, p.path, p.name, p.search_name,
+    p.search_path, p.search_metadata, p.directory, p.cost FROM positions p
+    WHERE p.position > ?1 ORDER BY p.position LIMIT 256";
 
 pub(super) struct Store {
     database: Database,
@@ -117,9 +116,10 @@ impl Store {
                      artist=excluded.artist, album_artist=excluded.album_artist, album=excluded.album,
                      disc=excluded.disc, track=excluded.track, tagged=excluded.tagged",
                 ).map_err(error)?;
-                let mut position_insert = transaction
-                    .prepare("INSERT INTO positions(position, ordinal, path) VALUES (?1, ?2, ?3)")
-                    .map_err(error)?;
+                let mut position_insert = transaction.prepare(
+                    "INSERT INTO positions(position, ordinal, path, name, search_name, search_path,
+                     search_metadata, directory, cost) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                ).map_err(error)?;
                 let mut duplicate = transaction
                     .prepare("SELECT 1 FROM positions WHERE path = ?1 LIMIT 1")
                     .map_err(error)?;
@@ -206,8 +206,20 @@ impl Store {
                             ])
                             .map_err(error)?;
                     }
+                    // Copy the normalized values already decoded or converted
+                    // above into sequential rows for this snapshot's scoring.
                     position_insert
-                        .execute(params![integer(position)?, integer(count)?, raw_path])
+                        .execute(params![
+                            integer(position)?,
+                            integer(count)?,
+                            raw_path,
+                            item.name,
+                            item.search_name,
+                            item.search_path,
+                            item.search_metadata,
+                            i64::from(item.is_directory),
+                            integer(cost)?,
+                        ])
                         .map_err(error)?;
                     bytes = next_bytes;
                     count += 1;
