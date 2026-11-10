@@ -101,8 +101,10 @@ left by abrupt process death remain release gates. Normal closure and recoverabl
 failures clean up their own stages.
 
 The producer's complete Entry vectors, scan/group caps, grouped position/entity
-collections, full 100k-file coverage and the two physical reference-machine
-latency target remain open. Exact-source tests, generated timing, hosted attempts
+collections, end-to-end eligible-file accounting and the two physical reference-machine
+latency target remain open. The [roadmap scale ledger](1.0-roadmap.md#completed-scale-checks-and-specific-remaining-work)
+records completed 100k checks, including this source's build/read/reopen fixture.
+Exact-source tests, generated timing, hosted attempts
 and native package provenance belong in the batch PR. Synthetic debug timing
 alone does not qualify physical Linux, Asahi or macOS performance.
 

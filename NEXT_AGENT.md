@@ -29,7 +29,11 @@ The normalized cache is a separate bounded derived database. Legacy catalog,
 private copies, journals and rank/candidate workspaces have separate budgets.
 Peak normalized revision copies can approach 2 GiB before journals. Producer
 Entry vectors, global storage quotas/eviction/crash-stage recovery, scan/group
-caps, full 100k coverage and physical Linux/Asahi/Mac qualification remain gates.
+caps, end-to-end eligible-file accounting and physical Linux/Asahi/Mac latency
+qualification remain gates. The roadmap's completed-scale-check ledger records
+the prior 100k enumeration, prototype, candidate-paging and persistent-source
+checks. Carry those results forward. Prioritize quota/eviction and abandoned-stage
+recovery or producer-limit changes before another optional scale benchmark.
 
 ## November 8 paged search source access — previous checkpoint
 
