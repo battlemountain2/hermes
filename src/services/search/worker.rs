@@ -375,6 +375,7 @@ fn start_worker(
         candidates: None,
         candidate_attempted: false,
         shared_indexing: true,
+        root_invalidated: false,
         ranked: None,
         rank_notice: None,
         groups: None,
@@ -424,6 +425,7 @@ struct Worker {
     candidates: Option<super::candidates::Candidates>,
     candidate_attempted: bool,
     shared_indexing: bool,
+    root_invalidated: bool,
     ranked: Option<super::ranked::Ranked>,
     rank_notice: Option<String>,
     groups: Option<super::groups::GroupIndex>,
@@ -445,28 +447,92 @@ struct CachedContentScore {
 }
 
 impl Worker {
+    fn reject_changed_root(
+        &mut self,
+        library: &mut Subscription,
+        snapshot: &crate::services::music_library::Snapshot,
+        root: &Path,
+    ) -> bool {
+        if library.scope_is_current(snapshot, root) {
+            self.root_invalidated = false;
+            return false;
+        }
+        self.invalidate_root(library, !snapshot.indexing);
+        true
+    }
+
+    fn invalidate_root(&mut self, library: &mut Subscription, refresh_index: bool) {
+        let refresh = !self.root_invalidated;
+        self.root_invalidated = true;
+        self.source = Arc::new(super::source::Source::empty());
+        self.candidates = None;
+        self.candidate_attempted = false;
+        self.shared_indexing = true;
+        self.warn("Search folder changed or is unavailable; waiting for a verified index".into());
+        self.rescore_shared();
+        self.publish(true);
+        if !library.root_is_current() {
+            *library = library.restart();
+        } else if refresh && refresh_index {
+            library.refresh();
+        }
+    }
+
     fn run_shared(&mut self, root: PathBuf, mut library: Subscription) {
-        let mut indexing = true;
         while !self.cancellation.is_cancelled() {
             if let Some(snapshot) = library.poll() {
-                indexing = snapshot.indexing;
+                let indexing = snapshot.indexing;
                 self.scan_notice = snapshot.notice.clone();
-                let source = match super::source::Source::new(
-                    root.clone(),
-                    snapshot.entries.clone(),
-                    self.limits.entries,
-                    self.limits.bytes,
-                    &|| self.cancellation.is_cancelled(),
-                ) {
+                if self.reject_changed_root(&mut library, &snapshot, &root) {
+                    continue;
+                }
+                let build = if indexing {
+                    super::source::Source::new(
+                        root.clone(),
+                        snapshot.entries.clone(),
+                        self.limits.entries,
+                        self.limits.bytes,
+                        &|| self.cancellation.is_cancelled(),
+                    )
+                } else {
+                    super::source::Source::persistent(
+                        root.clone(),
+                        snapshot.entries.clone(),
+                        self.limits.entries,
+                        self.limits.bytes,
+                        &self.cancellation,
+                    )
+                };
+                if self.reject_changed_root(&mut library, &snapshot, &root) {
+                    continue;
+                }
+                let source = match build {
                     Ok(source) => source,
                     Err(error) => {
                         if self.cancellation.is_cancelled() {
                             return;
                         }
-                        self.warn(error);
-                        super::source::Source::empty()
+                        self.warn(format!(
+                            "Persistent query source unavailable; using in-memory snapshot: {error}"
+                        ));
+                        match super::source::Source::new(
+                            root.clone(),
+                            snapshot.entries.clone(),
+                            self.limits.entries,
+                            self.limits.bytes,
+                            &|| self.cancellation.is_cancelled(),
+                        ) {
+                            Ok(source) => source,
+                            Err(_) => {
+                                return;
+                            }
+                        }
                     }
-                };
+                }
+                .bind_roots(library.root_bindings());
+                if self.reject_changed_root(&mut library, &snapshot, &root) {
+                    continue;
+                }
                 if let Some(notice) = source.notice() {
                     self.warn(notice.to_owned());
                 }
@@ -478,7 +544,10 @@ impl Worker {
                 self.publish(indexing);
                 self.prepare_candidates();
             }
-            self.pending_shared(indexing);
+            if !library.root_is_current() || self.source.check_root().is_err() {
+                self.invalidate_root(&mut library, true);
+            }
+            self.pending_shared(self.shared_indexing);
             let guard = self
                 .commands
                 .value
@@ -618,7 +687,9 @@ impl Worker {
             return Ok(ranked);
         }
         let mut used_candidates = false;
-        if let Some(candidates) = self.candidates.take() {
+        if parsed.has_candidate_constraints()
+            && let Some(candidates) = self.candidates.take()
+        {
             let mut rank_error = None;
             let result = candidates.for_each_page(parsed, &cancelled, |page| {
                 self.rank_positions(source, page.iter().copied(), parsed, &mut ranked)
@@ -637,7 +708,12 @@ impl Worker {
             }
         }
         if !used_candidates {
-            source.for_each_page(&cancelled, |page| {
+            let entity_filter = self
+                .query
+                .grouping
+                .as_ref()
+                .is_some_and(|grouping| grouping.entity.is_some());
+            source.for_scoring_page(parsed, entity_filter, &cancelled, |page| {
                 for (position, item) in page {
                     self.rank_item(*position, item, parsed, &mut ranked)?;
                 }
@@ -738,13 +814,7 @@ impl Worker {
 
     fn prepare_candidates(&mut self) {
         let parsed = ParsedSearchQuery::parse(&self.query.text.to_lowercase());
-        let parsed = parsed.candidate_query();
-        let filtered = parsed.directory.is_some()
-            || parsed.category.is_some()
-            || parsed.extension.is_some()
-            || parsed.artist.is_some()
-            || parsed.album.is_some()
-            || parsed.title.is_some();
+        let filtered = parsed.has_candidate_constraints();
         if filtered && !self.shared_indexing && !self.candidate_attempted {
             self.candidate_attempted = true;
             self.candidates = super::candidates::Candidates::build_source(&self.source, &|| {
@@ -819,6 +889,11 @@ impl Worker {
                 self.rank_notice = Some(error);
                 None
             });
+        if self.revision > 0
+            && let Err(error) = self.source.check_root()
+        {
+            self.rank_notice = Some(error);
+        }
         if self.rank_notice.is_some() {
             if self.ranked.is_some() || self.groups.is_some() {
                 // Consumers reject shrinking pages within one revision. Make

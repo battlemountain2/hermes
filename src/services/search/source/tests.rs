@@ -76,6 +76,64 @@ fn retains_the_original_arc_and_clones_only_source_ownership() {
 }
 
 #[test]
+fn installed_memory_source_rejects_a_replaced_root_without_a_new_snapshot() {
+    let fixture = Fixture::new();
+    let root = fixture.0.join("Selected");
+    fs::create_dir(&root).expect("selected directory");
+    let source = Source::new(
+        root.clone(),
+        Arc::new(vec![entry(root.join("file.txt"))]),
+        usize::MAX,
+        usize::MAX,
+        &|| false,
+    )
+    .expect("memory source");
+    assert!(source.get(0).expect("original lookup").is_some());
+    fs::rename(&root, fixture.0.join("Previous")).expect("move original root");
+    fs::create_dir(&root).expect("replacement directory");
+    assert!(source.get(0).is_err());
+    assert!(source.for_each_page(&|| false, |_| Ok(())).is_err());
+}
+
+#[test]
+fn composed_component_binding_rejects_related_scope_and_preserves_unrelated_scope() {
+    let fixture = Fixture::new();
+    let music = fixture.0.join("Music");
+    let pictures = fixture.0.join("Pictures");
+    fs::create_dir(&music).expect("music directory");
+    fs::create_dir(&pictures).expect("pictures directory");
+    let binding = RootBinding {
+        path: music.clone(),
+        identity: FileIdentity::directory(&music).expect("music identity"),
+    };
+    let home = fixture
+        .source(
+            Arc::new(vec![entry(music.join("song.flac"))]),
+            usize::MAX,
+            usize::MAX,
+        )
+        .bind_roots(vec![binding.clone()]);
+    let picture_source = Source::new(
+        pictures.clone(),
+        Arc::new(vec![entry(pictures.join("photo.jpg"))]),
+        usize::MAX,
+        usize::MAX,
+        &|| false,
+    )
+    .expect("unrelated source")
+    .bind_roots(vec![binding]);
+    fs::rename(&music, fixture.0.join("PreviousMusic")).expect("replace component");
+    fs::create_dir(&music).expect("new component");
+    assert!(home.get(0).is_err());
+    assert!(
+        picture_source
+            .get(0)
+            .expect("unrelated binding filtered")
+            .is_some()
+    );
+}
+
+#[test]
 fn scope_holes_keep_global_positions_and_the_raw_upper_bound() {
     let fixture = Fixture::new();
     let entries = Arc::new(vec![

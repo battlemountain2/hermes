@@ -121,7 +121,7 @@ pub(crate) fn ready(
     }
 }
 
-fn stop(subscription: Subscription) {
+pub(crate) fn stop(subscription: Subscription) {
     let weak = Arc::downgrade(&subscription.library);
     drop(subscription);
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -129,6 +129,117 @@ fn stop(subscription: Subscription) {
         assert!(Instant::now() < deadline, "Library worker did not stop");
         std::thread::sleep(TICK);
     }
+}
+
+#[test]
+fn replacement_roots_require_a_new_bound_library_and_reject_old_snapshots() {
+    let fixture = Fixture::new();
+    fixture.song("old.flac", "Old");
+    let mut original = fixture.subscribe();
+    let old = ready(&mut original, |snapshot| !snapshot.entries.is_empty());
+    assert!(original.scope_is_current(&old, &fixture.root));
+    fs::rename(&fixture.root, fixture.root.with_extension("previous")).expect("move root");
+    fs::create_dir(&fixture.root).expect("replace root");
+    fixture.song("new.flac", "New");
+    assert!(!original.root_is_current());
+    assert!(!original.scope_is_current(&old, &fixture.root));
+    let mut replacement = original.restart();
+    assert!(!Arc::ptr_eq(&original.library, &replacement.library));
+    let current = ready(&mut replacement, |snapshot| {
+        snapshot
+            .entries
+            .iter()
+            .any(|entry| entry.path.ends_with("new.flac"))
+    });
+    assert!(replacement.scope_is_current(&current, &fixture.root));
+    assert!(
+        !current
+            .entries
+            .iter()
+            .any(|entry| entry.path.ends_with("old.flac"))
+    );
+    stop(original);
+    stop(replacement);
+}
+
+#[test]
+fn replaced_child_scope_waits_for_its_new_directory_identity() {
+    let fixture = Fixture::new();
+    fixture.song("Album/old.flac", "Old");
+    let album = fixture.root.join("Album");
+    let mut subscription = fixture.subscribe();
+    let old = ready(&mut subscription, |snapshot| {
+        snapshot.entries.iter().any(|entry| entry.path == album)
+    });
+    assert!(subscription.scope_is_current(&old, &album));
+    fs::rename(&album, fixture.root.join("PreviousAlbum")).expect("move scoped folder");
+    fixture.song("Album/new.flac", "New");
+    assert!(subscription.root_is_current());
+    assert!(!subscription.scope_is_current(&old, &album));
+    subscription.refresh();
+    let current = ready(&mut subscription, |snapshot| {
+        subscription_scope_matches(snapshot, &album)
+    });
+    assert!(subscription.scope_is_current(&current, &album));
+    stop(subscription);
+}
+
+fn subscription_scope_matches(snapshot: &Snapshot, root: &Path) -> bool {
+    snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.path == root)
+        .and_then(|entry| entry.identity.as_ref())
+        .zip(FileIdentity::directory(root).as_ref())
+        .is_some_and(|(expected, current)| expected.same_object(current))
+}
+
+#[test]
+fn composition_cannot_give_a_new_music_root_identity_to_old_component_rows() {
+    let fixture = Fixture::new();
+    fixture.song("Nested/song.flac", "Old song");
+    let music = fixture.root.join("Nested");
+    let music_identity = FileIdentity::directory(&music).expect("component root identity");
+    let mut configuration = fixture.configuration();
+    configuration.music_source = Some(music.clone());
+    let entry = Entry {
+        path: music.join("song.flac"),
+        is_directory: false,
+        modified_unix_seconds: None,
+        identity: None,
+        music_tags: None,
+    };
+    let library = Library {
+        configuration,
+        shared: Mutex::new(Shared {
+            snapshot: Arc::new(Snapshot::default()),
+            root_bindings: Vec::new(),
+            revision: 0,
+            subscribers: 0,
+            requested: None,
+            immediate: false,
+        }),
+        ready: Condvar::new(),
+        cancellation: Cancellation::default(),
+        music_snapshot: Mutex::new(Some(Arc::new(Snapshot {
+            entries: Arc::new(vec![entry]),
+            ..Snapshot::default()
+        }))),
+        music_root_identity: Mutex::new(Some(music_identity)),
+        saved_catalog: Mutex::new(None),
+    };
+    assert_eq!(library.compose(Snapshot::default()).entries.len(), 2);
+    fs::rename(&music, fixture.root.join("PreviousNested")).expect("move component");
+    fixture.song("Nested/song.flac", "Replacement song");
+    let composed = library.compose(Snapshot::default());
+    assert!(composed.entries.is_empty());
+    assert!(composed.indexing);
+    assert!(
+        composed
+            .notice
+            .expect("component status")
+            .contains("verified index")
+    );
 }
 
 #[test]

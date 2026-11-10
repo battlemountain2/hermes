@@ -20,6 +20,9 @@ use std::{
     time::Duration,
 };
 
+#[cfg(target_os = "linux")]
+pub(crate) mod query_storage;
+
 const VERSION: i64 = 1;
 const MAX_DATABASE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_ROW_BYTES: usize = 16 * 1024;
@@ -193,6 +196,12 @@ impl Stage {
     }
 
     fn connect(&self, writable: bool) -> Result<Connection, String> {
+        let connection = self.open_connection(writable)?;
+        configure(&connection, writable)?;
+        Ok(connection)
+    }
+
+    fn open_connection(&self, writable: bool) -> Result<Connection, String> {
         let actual = fs::read_link(self.directory.pinned())
             .map_err(error)?
             .join("snapshot.sqlite");
@@ -218,7 +227,6 @@ impl Stage {
         {
             return Err("Search catalog staging directory moved".into());
         }
-        configure(&connection, writable)?;
         Ok(connection)
     }
 }
@@ -238,15 +246,24 @@ impl Drop for Stage {
 }
 
 fn configure(connection: &Connection, writable: bool) -> Result<(), String> {
+    configure_with_limits(connection, writable, MAX_ROW_BYTES, 16)
+}
+
+fn configure_with_limits(
+    connection: &Connection,
+    writable: bool,
+    row_bytes: usize,
+    columns: i32,
+) -> Result<(), String> {
     for (limit, value) in [
-        (Limit::SQLITE_LIMIT_LENGTH, MAX_ROW_BYTES as i32),
-        (Limit::SQLITE_LIMIT_SQL_LENGTH, MAX_ROW_BYTES as i32),
-        (Limit::SQLITE_LIMIT_COLUMN, 16),
+        (Limit::SQLITE_LIMIT_LENGTH, row_bytes as i32),
+        (Limit::SQLITE_LIMIT_SQL_LENGTH, row_bytes as i32),
+        (Limit::SQLITE_LIMIT_COLUMN, columns),
         (Limit::SQLITE_LIMIT_EXPR_DEPTH, 32),
         (Limit::SQLITE_LIMIT_COMPOUND_SELECT, 2),
         (Limit::SQLITE_LIMIT_VDBE_OP, 2_000_000),
         (Limit::SQLITE_LIMIT_ATTACHED, 0),
-        (Limit::SQLITE_LIMIT_VARIABLE_NUMBER, 16),
+        (Limit::SQLITE_LIMIT_VARIABLE_NUMBER, columns),
         (Limit::SQLITE_LIMIT_TRIGGER_DEPTH, 0),
         (Limit::SQLITE_LIMIT_WORKER_THREADS, 0),
     ] {

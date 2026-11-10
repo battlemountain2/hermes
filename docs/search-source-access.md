@@ -1,6 +1,8 @@
 # Paged search source access
 
-Issue #6 removes the shared search worker's second complete `SearchItem` copy of
+The [persistent query source](persistent-query-source.md) now backs completed
+Linux snapshots. This contract describes the memory adapter used for progress,
+verified fallback and test comparisons. Issue #6 removes the worker's second complete `SearchItem` copy of
 its library snapshot. One immutable source adapter retains the library's original
 `Arc<Vec<Entry>>`. Scoring, candidate construction, result materialization and
 group representatives use the same fallible source interface.
@@ -48,8 +50,8 @@ same source revision, preserving reserved document-extraction outcomes.
 
 The current backing is the library's immutable `Entry` snapshot. Library scanning,
 composition, saved-catalog restoration and publication still retain full entry
-vectors. Direct reads from a persistent catalog revision require a disk-backed
-implementation of this interface and atomic producer/publication integration.
+vectors. Completed Linux snapshots now use the persistent normalized implementation.
+Consolidating that derived store with the producer catalog remains open.
 The version-1 saved catalog and the existing private paged reader keep their
 current contracts. Scan/group caps, source reconciliation, the two-reference-
 machine 100k-file/latency gate and physical platform qualification remain open.
@@ -59,8 +61,7 @@ complete `SearchItem` vectors are excluded from the production adapter.
 
 The adapter trades retained duplicate data for repeated conversion work. Generated
 timing currently measures higher warm-query CPU/latency than the prior retained
-item snapshot. Page-slot reuse reduces allocation churn, but direct persistent
-normalized-row access remains a performance requirement. Exact comparative
+item snapshot. Page-slot reuse reduces allocation churn, and completed Linux snapshots now use persistent normalized-row access. Exact comparative
 measurements and their debug/synthetic scope belong in the batch PR.
 
 ## Verification

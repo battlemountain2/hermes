@@ -303,6 +303,7 @@ pub(super) fn synthetic_worker(items: Vec<SearchItem>) -> Worker {
         candidates: None,
         candidate_attempted: false,
         shared_indexing: false,
+        root_invalidated: false,
         ranked: None,
         rank_notice: None,
         groups: None,
