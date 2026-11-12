@@ -3,11 +3,12 @@
 use super::*;
 
 const MAX_DIRECTORY_ENTRIES: usize = 4096;
-const FILES: [&str; 4] = [
+const FILES: [&str; 5] = [
     "snapshot.sqlite",
     "snapshot.sqlite-journal",
     "snapshot.sqlite-wal",
     "snapshot.sqlite-shm",
+    ".reservation",
 ];
 
 pub(super) fn recover(parent: &DirectoryHandle, cancellation: &Cancellation) -> Result<(), String> {
@@ -36,27 +37,32 @@ pub(super) fn recover(parent: &DirectoryHandle, cancellation: &Cancellation) -> 
     cancelled(cancellation)
 }
 
-fn recover_stage(
+pub(super) fn recover_stage(
     parent: &DirectoryHandle,
     name: &OsStr,
     directory: DirectoryHandle,
     cancellation: &Cancellation,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     match directory.0.try_lock() {
         Ok(()) => {}
-        Err(std::fs::TryLockError::WouldBlock) => return Ok(()),
+        Err(std::fs::TryLockError::WouldBlock) => return Ok(false),
         Err(failure) => return Err(error(failure)),
     }
     // A reader may have unlinked its stage before releasing this lease.
     // A pinned but already detached directory has nothing left to recover.
     let current = match DirectoryHandle::at(parent, name) {
         Ok(current) => current,
-        Err(_) => return Ok(()),
+        Err(_) => return Ok(false),
     };
     if !same_directory(&directory, &current)? {
-        return Ok(());
+        return Ok(false);
     }
-    if let Some(files) = removable_files(&directory, cancellation)? {
+    let file_limit = if name.as_bytes().starts_with(b".snapshot-v3-") {
+        5
+    } else {
+        4
+    };
+    if let Some(files) = removable_files(&directory, file_limit, cancellation)? {
         // Recheck the parent entry before unlinking through pinned handles.
         let current = DirectoryHandle::at(parent, name)?;
         if !same_directory(&directory, &current)? {
@@ -77,15 +83,16 @@ fn recover_stage(
         }
         fs::remove_dir(parent.pinned().join(name)).map_err(error)?;
         parent.0.sync_all().map_err(error)?;
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 
-fn leased_stage_name(name: &OsStr) -> bool {
-    let Some(name) = name
-        .to_str()
-        .and_then(|name| name.strip_prefix(".snapshot-v2-"))
-    else {
+pub(super) fn leased_stage_name(name: &OsStr) -> bool {
+    let Some(name) = name.to_str().and_then(|name| {
+        name.strip_prefix(".snapshot-v2-")
+            .or_else(|| name.strip_prefix(".snapshot-v3-"))
+    }) else {
         return false;
     };
     let Some((pid, sequence)) = name.split_once('-') else {
@@ -99,7 +106,10 @@ fn leased_stage_name(name: &OsStr) -> bool {
         && sequence.parse::<u64>().is_ok()
 }
 
-fn same_directory(left: &DirectoryHandle, right: &DirectoryHandle) -> Result<bool, String> {
+pub(super) fn same_directory(
+    left: &DirectoryHandle,
+    right: &DirectoryHandle,
+) -> Result<bool, String> {
     let left = left.0.metadata().map_err(error)?;
     let right = right.0.metadata().map_err(error)?;
     Ok(left.dev() == right.dev() && left.ino() == right.ino())
@@ -107,16 +117,20 @@ fn same_directory(left: &DirectoryHandle, right: &DirectoryHandle) -> Result<boo
 
 fn removable_files(
     directory: &DirectoryHandle,
+    file_limit: usize,
     cancellation: &Cancellation,
 ) -> Result<Option<Vec<(OsString, FileIdentity)>>, String> {
     let mut files = Vec::new();
     for (count, entry) in fs::read_dir(directory.pinned()).map_err(error)?.enumerate() {
         cancelled(cancellation)?;
-        if count >= FILES.len() {
+        if count >= file_limit {
             return Ok(None);
         }
         let name = entry.map_err(error)?.file_name();
-        if !FILES.iter().any(|known| name == OsStr::new(known)) {
+        if !FILES[..file_limit]
+            .iter()
+            .any(|known| name == OsStr::new(known))
+        {
             return Ok(None);
         }
         let file = match OpenOptions::new()

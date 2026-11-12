@@ -21,7 +21,7 @@ impl Staged {
         cancelled(cancellation)?;
         let sources = Sources::new(root)?;
         let (directory, name) = location(path, true, cancellation)?;
-        let mut stage = Stage::new(&directory)?;
+        let mut stage = Stage::build(&directory, cancellation)?;
         let mut reused = match fs::symlink_metadata(directory.pinned().join(&name)) {
             Ok(_) => {
                 stage.copy(existing(&directory, &name)?, cancellation)?;
@@ -41,7 +41,7 @@ impl Staged {
                 // Only the copied, private database is discarded. Publication
                 // leaves the previous cache intact until a new build succeeds.
                 drop(stage);
-                stage = Stage::new(&directory)?;
+                stage = Stage::build(&directory, cancellation)?;
                 reused = false;
                 connect(&stage, true)?
             }
@@ -82,12 +82,12 @@ impl Staged {
             .collect()
     }
 
-    pub(crate) fn reset(&mut self) -> Result<(), String> {
+    pub(crate) fn reset(&mut self, cancellation: &Cancellation) -> Result<(), String> {
         if let Some(connection) = self.connection.take() {
             connection.close().map_err(|(_, failure)| error(failure))?;
         }
         self.stage.take();
-        let stage = Stage::new(&self.directory)?;
+        let stage = Stage::build(&self.directory, cancellation)?;
         self.connection = Some(connect(&stage, true)?);
         self.stage = Some(stage);
         self.reused = false;
@@ -102,7 +102,8 @@ impl Staged {
             .expect("live query staging connection")
             .close()
             .map_err(|(_, failure)| error(failure))?;
-        let stage = self.stage.take().expect("live query staging directory");
+        let mut stage = self.stage.take().expect("live query staging directory");
+        stage.seal(cancellation)?;
         let file = OpenOptions::new()
             .read(true)
             .custom_flags(NO_FOLLOW | NON_BLOCK)
@@ -113,8 +114,7 @@ impl Staged {
 
         // The active reader keeps its original private inode. A separate copy
         // can replace the public cache without changing this revision's pages.
-        let published = Stage::new(&self.directory)?;
-        published.copy(file, cancellation)?;
+        let published = Stage::copied(&self.directory, file, cancellation)?;
         let output = OpenOptions::new()
             .read(true)
             .custom_flags(NO_FOLLOW | NON_BLOCK)
@@ -165,6 +165,9 @@ pub(crate) fn decode_identity(bytes: &[u8]) -> Result<FileIdentity, String> {
 fn connect(stage: &Stage, writable: bool) -> Result<Connection, String> {
     let connection = stage.open_connection(writable)?;
     configure_with_limits(&connection, writable, 64 * 1024, 32)?;
+    if writable {
+        sqlite_capacity::enforce(&connection, stage.allowance)?;
+    }
     connection
         .execute_batch("PRAGMA temp_store=FILE;")
         .map_err(error)?;

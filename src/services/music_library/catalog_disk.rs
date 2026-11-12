@@ -6,7 +6,7 @@ use rusqlite::{
 use std::{
     ffi::{OsStr, OsString},
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::{Read, Seek, Write},
     mem::size_of,
     os::{
         fd::AsRawFd,
@@ -23,6 +23,8 @@ use std::{
 mod cache_policy;
 #[cfg(target_os = "linux")]
 pub(crate) mod query_storage;
+mod snapshot_budget;
+mod sqlite_capacity;
 mod stage_recovery;
 
 const VERSION: i64 = 1;
@@ -132,13 +134,41 @@ struct Stage {
     directory: DirectoryHandle,
     parent: DirectoryHandle,
     name: OsString,
+    allowance: u64,
+    writable: bool,
 }
 
 impl Stage {
+    #[cfg(test)]
     fn new(parent: &DirectoryHandle) -> Result<Self, String> {
+        Self::build(parent, &Cancellation::default())
+    }
+
+    fn build(parent: &DirectoryHandle, cancellation: &Cancellation) -> Result<Self, String> {
+        Self::reserved(parent, MAX_DATABASE_BYTES, true, cancellation)
+    }
+
+    fn copied(
+        parent: &DirectoryHandle,
+        source: File,
+        cancellation: &Cancellation,
+    ) -> Result<Self, String> {
+        let bytes = private_file(&source)?.len();
+        let stage = Self::reserved(parent, bytes, false, cancellation)?;
+        stage.copy(source, cancellation)?;
+        Ok(stage)
+    }
+
+    fn reserved(
+        parent: &DirectoryHandle,
+        allowance: u64,
+        writable: bool,
+        cancellation: &Cancellation,
+    ) -> Result<Self, String> {
+        let admission = snapshot_budget::Admission::acquire(parent, allowance, cancellation)?;
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let name = OsString::from(format!(
-            ".snapshot-v2-{}-{}",
+            ".snapshot-v3-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -150,11 +180,14 @@ impl Stage {
             directory: DirectoryHandle::at(parent, &name)?,
             parent: DirectoryHandle(parent.0.try_clone().map_err(error)?),
             name,
+            allowance,
+            writable,
         };
         stage.directory.private()?;
         // This lease outlives the parent publication lock. Recovery can reclaim
         // a crashed revision without removing a reader's live private inode.
         stage.directory.0.try_lock().map_err(error)?;
+        admission.record(&stage)?;
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -164,7 +197,36 @@ impl Stage {
             .open(stage.file())
             .map_err(error)?;
         private_file(&file)?;
+        cancelled(cancellation)?;
         Ok(stage)
+    }
+
+    fn seal(&mut self, cancellation: &Cancellation) -> Result<(), String> {
+        self.seal_with(cancellation, snapshot_budget::reduce)
+    }
+
+    fn seal_with(
+        &mut self,
+        cancellation: &Cancellation,
+        reduce: impl FnOnce(&Stage, u64, &Cancellation) -> Result<(), String>,
+    ) -> Result<(), String> {
+        cancelled(cancellation)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(NO_FOLLOW | NON_BLOCK)
+            .open(self.file())
+            .map_err(error)?;
+        let bytes = private_file(&file)?.len();
+        if bytes > self.allowance {
+            return Err("Search catalog snapshot exceeded its reservation before sealing".into());
+        }
+        file.sync_all().map_err(error)?;
+        let previous = self.allowance;
+        // A failed shrink is terminal for writable access too. A sync failure
+        // may have already committed the smaller reservation to disk.
+        self.writable = false;
+        self.allowance = bytes;
+        reduce(self, previous, cancellation)
     }
 
     fn file(&self) -> PathBuf {
@@ -173,6 +235,7 @@ impl Stage {
 
     fn copy(&self, mut source: File, cancellation: &Cancellation) -> Result<(), String> {
         let original = FileIdentity::from_metadata(&private_file(&source)?);
+        source.rewind().map_err(error)?;
         let mut output = OpenOptions::new()
             .write(true)
             .custom_flags(NO_FOLLOW | NON_BLOCK)
@@ -189,12 +252,14 @@ impl Stage {
             total = total
                 .checked_add(count as u64)
                 .ok_or("Search catalog size overflow")?;
-            if total > MAX_DATABASE_BYTES {
-                return Err("Search catalog exceeds 512 MiB".into());
+            if total > self.allowance {
+                return Err("Search catalog copy exceeds its snapshot reservation".into());
             }
             output.write_all(&buffer[..count]).map_err(error)?;
         }
-        if FileIdentity::from_metadata(&private_file(&source)?) != original {
+        if total != original.size
+            || FileIdentity::from_metadata(&private_file(&source)?) != original
+        {
             return Err("Search catalog changed while being read".into());
         }
         Ok(())
@@ -203,10 +268,16 @@ impl Stage {
     fn connect(&self, writable: bool) -> Result<Connection, String> {
         let connection = self.open_connection(writable)?;
         configure(&connection, writable)?;
+        if writable {
+            sqlite_capacity::enforce(&connection, self.allowance)?;
+        }
         Ok(connection)
     }
 
     fn open_connection(&self, writable: bool) -> Result<Connection, String> {
+        if writable && !self.writable {
+            return Err("Search catalog sealed snapshot cannot be reopened for writing".into());
+        }
         let actual = fs::read_link(self.directory.pinned())
             .map_err(error)?
             .join("snapshot.sqlite");
@@ -243,6 +314,7 @@ impl Drop for Stage {
             "snapshot.sqlite-journal",
             "snapshot.sqlite-wal",
             "snapshot.sqlite-shm",
+            snapshot_budget::RECORD,
         ] {
             let _removed = fs::remove_file(self.directory.pinned().join(name));
         }
@@ -289,7 +361,11 @@ fn configure_with_limits(
         .map_err(error)?;
     connection.execute_batch("PRAGMA trusted_schema=OFF; PRAGMA cache_size=-2048; PRAGMA mmap_size=0; PRAGMA temp_store=MEMORY; PRAGMA cell_size_check=ON;").map_err(error)?;
     if writable {
-        connection.execute_batch("PRAGMA page_size=4096; PRAGMA max_page_count=131072; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;").map_err(error)?;
+        connection
+            .execute_batch(
+                "PRAGMA page_size=4096; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;",
+            )
+            .map_err(error)?;
     } else {
         connection
             .execute_batch("PRAGMA query_only=ON;")
@@ -574,8 +650,7 @@ impl PagedReader {
         cancelled(cancellation)?;
         let sources = Sources::new(root)?;
         let (directory, name) = location(path, false, cancellation)?;
-        let stage = Stage::new(&directory)?;
-        stage.copy(existing(&directory, &name)?, cancellation)?;
+        let stage = Stage::copied(&directory, existing(&directory, &name)?, cancellation)?;
         let connection = stage.connect(false)?;
         let notice = metadata(&connection, &sources, true)?;
         let entry_limit = entry_limit.min(super::MAX_ENTRIES);
@@ -785,14 +860,13 @@ pub(super) fn write(
     let (directory, name) = location(path, true, cancellation)?;
     match fs::symlink_metadata(directory.pinned().join(&name)) {
         Ok(_) => {
-            let old = Stage::new(&directory)?;
-            old.copy(existing(&directory, &name)?, cancellation)?;
+            let old = Stage::copied(&directory, existing(&directory, &name)?, cancellation)?;
             metadata(&old.connect(false)?, &sources, false)?;
         }
         Err(failure) if failure.kind() == std::io::ErrorKind::NotFound => {}
         Err(failure) => return Err(error(failure)),
     }
-    let stage = Stage::new(&directory)?;
+    let mut stage = Stage::build(&directory, cancellation)?;
     let mut connection = stage.connect(true)?;
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -841,6 +915,7 @@ pub(super) fn write(
     cancelled(cancellation)?;
     transaction.commit().map_err(error)?;
     connection.close().map_err(|(_, failure)| error(failure))?;
+    stage.seal(cancellation)?;
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(NO_FOLLOW | NON_BLOCK)

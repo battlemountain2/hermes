@@ -87,7 +87,7 @@ impl Store {
                 .is_err()
             {
                 check_cancelled(&|| cancel.is_cancelled())?;
-                staged.reset()?;
+                staged.reset(cancel)?;
                 cancellable(staged.connection_mut(), cancel)?;
             }
         }

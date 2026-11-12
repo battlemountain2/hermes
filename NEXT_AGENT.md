@@ -1,6 +1,37 @@
 # Next agent: Hermes performance, file features and media polish
 
-## November 9 search cache lifecycle — current batch
+## Next delivery — tested Linux preview
+
+The user is concerned about the prolonged release work. Prioritize delivery of
+the tested x86_64 preview from `a5fb071331652d104cc60bf538f12f5bce5a2b8a`.
+PR #19 records its hosted and native package/runtime qualification. The current
+roadmap pins the candidate and package hash.
+
+Next work is preview release preparation and daily-use feedback, then native
+Asahi package qualification. Further internal architecture work should address
+a concrete defect or failed agreed acceptance check. Stable promotion retains
+the existing file-safety, search completeness, upgrade and physical RC gates.
+
+## November 11 snapshot admission — current batch
+
+Branch `fix/6-search-snapshot-budget` follows PR #18 and issue #6.
+Read `docs/search-snapshot-budget.md` for the precise main-file scope.
+
+- Profile-wide private snapshot reservations default to 2 GiB. Writers reserve
+  512 MiB, read copies reserve exact bytes, and closed writers seal to actual
+  length before publication. Main-file page ceilings use actual SQLite page size.
+- Version-3 stages add a private reservation record to their lifetime lease.
+  Discovery reconstructs usage and opportunistically reclaims idle peer-scope
+  stages. Busy peers never block on acquisition while the budget lock is held.
+- Discovery is bounded across the namespace. Reclamation limits count successful
+  removals, so live readers cannot starve an orphan behind them. Detached stages
+  contribute zero. Older lease-free stages are preserved and conservatively billed.
+- Journals, query workspaces, published caches and RSS have separate accounting.
+  Producer consolidation, indexing limits and physical qualification remain gates.
+- Record focused/full/hosted/artifact evidence in this batch PR. Carry the scale
+  ledger forward.
+
+## November 9 search cache lifecycle — previous checkpoint
 
 Branch `feat/6-search-cache-lifecycle` follows PR #17 and issue #6.
 Read `docs/search-cache-lifecycle.md` for the precise budget and recovery scope.

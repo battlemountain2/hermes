@@ -93,15 +93,14 @@ coverage notice behavior.
 
 This derived cache coexists with the legacy saved Entry catalog during migration.
 The [cache lifecycle policy](search-cache-lifecycle.md) shares a 512 MiB budget
-across published general and normalized main files. Rank/candidate workspaces,
-SQLite journals and private revision copies have separate accounting. An old reader, old public cache,
-new private build and publication copy can approach 2 GiB for this cache alone,
-before journals or additional readers. There is no application-wide disk/RSS
-quota. Consolidating producer storage and temporary peak-space accounting remain
-release gates. New stages carry kernel leases and abandoned stages are recovered
-on the next acquisition of their directory. Older lease-free stages and unvisited
-scope cleanup remain separate work. Normal closure and recoverable failures
-clean up their own stages.
+across published general and normalized main files. Private snapshot main files
+also have a shared [2 GiB reservation budget](search-snapshot-budget.md).
+Rank/candidate workspaces and SQLite journals retain separate accounting. There
+is no application-wide disk/RSS quota. Consolidating producer storage and
+journal/query-workspace accounting remain release gates. New stages carry
+kernel leases and bounded admission discovery reclaims abandoned leased stages
+from idle scopes too. Older lease-free stages remain protected and conservatively
+charged. Normal closure and recoverable failures clean up their own stages.
 
 The producer's complete Entry vectors, scan/group caps, grouped position/entity
 collections, end-to-end eligible-file accounting and the two physical reference-machine

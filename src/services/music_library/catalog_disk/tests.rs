@@ -88,6 +88,7 @@ impl Fixture {
         )
         .expect("expected test value from fs::read_dir(self.cache.parent().unwrap())")
         .map(|entry| entry.expect("expected test value from entry").file_name())
+        .filter(|name| name != ".staging-budget-lock")
         .collect();
         assert_eq!(
             names,

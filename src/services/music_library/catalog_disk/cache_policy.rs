@@ -105,14 +105,8 @@ fn publish_with_budget_and_sync(
         return Err("Search catalog: incoming database exceeds the public cache budget".into());
     }
     namespace.root.private()?;
-    let publication_lock = publication_lock(&namespace.root)?;
-    lock_directory(&publication_lock)?;
+    let _publication_lock = acquire_control_lock(&namespace.root, OsStr::new(LOCK_NAME))?;
     cancelled(cancellation)?;
-    revalidate_file(
-        &namespace.root,
-        OsStr::new(LOCK_NAME),
-        &publication_lock.metadata().map_err(error)?,
-    )?;
     let target = target_metadata(directory, name)?;
     let (mut bytes, mut candidates) = discover(&namespace, name, cancellation)?;
     bytes = bytes
@@ -148,7 +142,7 @@ fn publish_with_budget_and_sync(
     )
 }
 
-fn digest_name(name: &OsStr, prefix: &[u8], suffix: &[u8]) -> bool {
+pub(super) fn digest_name(name: &OsStr, prefix: &[u8], suffix: &[u8]) -> bool {
     let bytes = name.as_bytes();
     bytes.len() == prefix.len() + 64 + suffix.len()
         && bytes.starts_with(prefix)
@@ -188,6 +182,13 @@ fn namespace(directory: &DirectoryHandle, name: &OsStr) -> Result<Option<Namespa
     }))
 }
 
+pub(super) fn snapshot_root(directory: &DirectoryHandle) -> Result<DirectoryHandle, String> {
+    match namespace(directory, OsStr::new("source.sqlite"))? {
+        Some(namespace) => Ok(namespace.root),
+        None => Ok(DirectoryHandle(directory.0.try_clone().map_err(error)?)),
+    }
+}
+
 fn inode(metadata: &Metadata) -> (u64, u64) {
     (metadata.dev(), metadata.ino())
 }
@@ -217,7 +218,19 @@ fn open_file(path: &std::path::Path) -> Result<File, String> {
         .map_err(error)
 }
 
+#[cfg(test)]
 fn publication_lock(root: &DirectoryHandle) -> Result<File, String> {
+    control_lock(root, OsStr::new(LOCK_NAME))
+}
+
+pub(super) fn acquire_control_lock(root: &DirectoryHandle, name: &OsStr) -> Result<File, String> {
+    let file = control_lock(root, name)?;
+    lock_directory(&file)?;
+    revalidate_file(root, name, &file.metadata().map_err(error)?)?;
+    Ok(file)
+}
+
+pub(super) fn control_lock(root: &DirectoryHandle, name: &OsStr) -> Result<File, String> {
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -225,7 +238,7 @@ fn publication_lock(root: &DirectoryHandle) -> Result<File, String> {
         .truncate(false)
         .mode(0o600)
         .custom_flags(NO_FOLLOW | NON_BLOCK)
-        .open(root.pinned().join(LOCK_NAME))
+        .open(root.pinned().join(name))
         .map_err(error)?;
     let metadata = file.metadata().map_err(error)?;
     if !safe_file(&metadata)? || metadata.len() != 0 {
@@ -234,7 +247,7 @@ fn publication_lock(root: &DirectoryHandle) -> Result<File, String> {
                 .into(),
         );
     }
-    revalidate_file(root, OsStr::new(LOCK_NAME), &metadata)?;
+    revalidate_file(root, name, &metadata)?;
     Ok(file)
 }
 
