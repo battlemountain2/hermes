@@ -33,7 +33,7 @@ impl Fixture {
     fn create(&self, page_size: u64) -> Connection {
         let connection = Connection::open(self.path()).expect("create fixture database");
         connection
-            .pragma_update(None, "page_size", page_size)
+            .pragma_update(None, "page_size", page_size as i64)
             .expect("fixture page size");
         connection
             .execute_batch(
@@ -74,9 +74,10 @@ impl Drop for Fixture {
 }
 
 fn pragma(connection: &Connection, name: &str) -> u64 {
-    connection
+    let value: i64 = connection
         .query_row(&format!("PRAGMA main.{name}"), [], |row| row.get(0))
-        .expect("read fixture PRAGMA")
+        .expect("read fixture PRAGMA");
+    u64::try_from(value).expect("nonnegative fixture PRAGMA")
 }
 
 fn assert_full(error: Error) {
@@ -92,7 +93,7 @@ fn empty_database_installs_capacity_before_the_first_schema_write() {
         let fixture = Fixture::new();
         let connection = fixture.open();
         connection
-            .pragma_update(None, "page_size", page_size)
+            .pragma_update(None, "page_size", page_size as i64)
             .expect("unallocated fixture page size");
         assert_eq!(pragma(&connection, "page_count"), 0);
 
@@ -133,7 +134,10 @@ fn exact_allocation_and_fractional_page_budgets_use_actual_page_size() {
             assert_eq!(pragma(&connection, "max_page_count"), pages);
             assert_full(
                 connection
-                    .execute("INSERT INTO marker VALUES(zeroblob(?1))", [page_size])
+                    .execute(
+                        "INSERT INTO marker VALUES(zeroblob(?1))",
+                        [page_size as i64],
+                    )
                     .expect_err("an additional page exceeds the floored byte cap"),
             );
             assert_eq!(fixture.bytes(), original);
@@ -147,7 +151,10 @@ fn oversized_existing_allocation_is_refused_without_changing_bytes_or_limit() {
         let fixture = Fixture::new();
         let connection = fixture.create(page_size);
         connection
-            .execute("INSERT INTO marker VALUES(zeroblob(?1))", [8 * page_size])
+            .execute(
+                "INSERT INTO marker VALUES(zeroblob(?1))",
+                [8 * page_size as i64],
+            )
             .expect("grow legacy database");
         connection
             .execute("DELETE FROM marker WHERE rowid > 1", [])
@@ -181,10 +188,13 @@ fn bounded_writes_reach_sqlite_full_and_preserve_committed_rows() {
         let bytes = 8 * page_size + page_size - 1;
         enforce(&connection, bytes).expect("small writable capacity");
         assert_eq!(pragma(&connection, "max_page_count"), 8);
-        let mut inserted = 0u64;
+        let mut inserted = 0i64;
         let mut reached_full = false;
         for _ in 0..16 {
-            match connection.execute("INSERT INTO marker VALUES(zeroblob(?1))", [page_size]) {
+            match connection.execute(
+                "INSERT INTO marker VALUES(zeroblob(?1))",
+                [page_size as i64],
+            ) {
                 Ok(_) => inserted += 1,
                 Err(error) => {
                     assert_full(error);
@@ -203,7 +213,7 @@ fn bounded_writes_reach_sqlite_full_and_preserve_committed_rows() {
 
         let reopened = fixture.open();
         enforce(&reopened, bytes).expect("reapply cap after reopening full database");
-        let rows: u64 = reopened
+        let rows: i64 = reopened
             .query_row("SELECT count(*) FROM marker", [], |row| row.get(0))
             .expect("read committed rows after FULL");
         assert_eq!(rows, inserted + 1);

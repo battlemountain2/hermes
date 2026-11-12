@@ -115,6 +115,8 @@ fn invalid_catalog_tail_withdraws_provisional_rows_and_keeps_the_saved_file() {
     assert_eq!(
         fs::read_dir(fixture.catalog_path.parent().expect("private cache parent"))
             .expect("list private cache")
+            .map(|entry| entry.expect("private cache entry").file_name())
+            .filter(|name| name != ".staging-budget-lock")
             .count(),
         1,
         "private reader stages are released after failure"

@@ -115,13 +115,14 @@ fn older_stages_unknown_contents_and_unsafe_objects_are_preserved() {
 fn only_strict_versioned_stage_names_are_eligible() {
     for name in [
         ".snapshot-v2-12-0",
+        ".snapshot-v3-12-0",
         ".snapshot-v2-4294967295-18446744073709551615",
     ] {
         assert!(leased_stage_name(OsStr::new(name)));
     }
     for name in [
         ".snapshot-12-0",
-        ".snapshot-v3-12-0",
+        ".snapshot-v4-12-0",
         ".snapshot-v2-0-0",
         ".snapshot-v2--0",
         ".snapshot-v2-12-",
@@ -196,6 +197,7 @@ fn abrupt_child_exit_releases_the_lease_for_the_next_acquisition() {
     let stages: Vec<_> = fs::read_dir(&fixture.root)
         .expect("crash fixture entries")
         .map(|entry| entry.expect("entry").path())
+        .filter(|path| path.file_name().is_some_and(leased_stage_name))
         .collect();
     assert_eq!(stages.len(), 1);
     assert!(stages[0].join("snapshot.sqlite").exists());

@@ -24,13 +24,15 @@ does not remove their current revision. A later visit can rebuild an evicted
 saved database from the ordinary scan.
 
 This budget covers published general and normalized main database bytes. Private
-reader/build/publication copies, rollback journals, SQLite temporary workspaces,
+reader/build/publication copies now have a [shared reservation budget](search-snapshot-budget.md).
+Rollback journals, SQLite temporary workspaces,
 Music's separate cache, artwork and process memory have independent accounting.
 An application-wide peak-storage or RSS quota remains a separate task.
 
 ## Interrupted snapshot recovery
 
-New private snapshots use `.snapshot-v2-PID-counter` names and hold an exclusive
+Leased private snapshots use `.snapshot-v2-PID-counter` or `.snapshot-v3-PID-counter`
+names and hold an exclusive
 kernel file lock on their directory throughout the Stage lifetime. This lease
 continues after the catalog's parent acquisition lock is released. Process exit
 releases the lease even when Rust destructors do not run.
@@ -43,14 +45,15 @@ Identity is rechecked before unlinking. Cleanup uses pinned directories and
 individual unlinks, with directory synchronization after removal.
 
 Live leased stages, older lease-free stages, unknown names or contents, shared
-files and symlinks are preserved. An older stage's process ID alone cannot prove
+files and symlinks are preserved. Version-3 stages also carry a private reservation
+record, which is accepted only in that stage version. An older stage's process ID alone cannot prove
 it is abandoned. Recovery inspects at most 4,096 directory entries per acquisition
 and checks cancellation between entries and file removals. Exhausting the
 inspection budget defers further cleanup and allows ordinary catalog access.
 A failed/cancelled
 cleanup can leave a partially cleaned abandoned stage for a subsequent retry.
-Directories for scopes that are never revisited require a later namespace-wide
-maintenance pass.
+Snapshot admission also performs bounded namespace-wide maintenance, including
+idle scopes that are not being revisited.
 
 ## Evidence and remaining work
 

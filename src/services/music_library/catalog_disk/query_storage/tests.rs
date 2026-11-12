@@ -152,7 +152,7 @@ fn reset_only_discards_the_private_build() {
     let mut staged = fixture.open();
     let root_key = staged.root_key();
     assert_eq!(root_key.len(), 16);
-    staged.reset().expect("reset stage");
+    staged.reset(&Cancellation::default()).expect("reset stage");
     assert!(!staged.reused());
     let count: i64 = staged
         .connection()

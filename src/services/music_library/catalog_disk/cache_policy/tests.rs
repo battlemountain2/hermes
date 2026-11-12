@@ -43,21 +43,30 @@ impl Fixture {
     }
 
     fn stage(&self, path: &Path, kind: Kind, extra: usize) -> (DirectoryHandle, Stage) {
-        let directory = DirectoryHandle::open(path.parent().expect("target parent"), false)
-            .expect("pin target directory");
-        lock_directory(&directory.0).expect("hold caller directory lock");
-        let stage = Stage::new(&directory).expect("private incoming stage");
+        self.try_stage(path, kind, extra)
+            .expect("private incoming stage")
+    }
+
+    fn try_stage(
+        &self,
+        path: &Path,
+        kind: Kind,
+        extra: usize,
+    ) -> Result<(DirectoryHandle, Stage), String> {
+        let directory = DirectoryHandle::open(path.parent().expect("target parent"), false)?;
+        lock_directory(&directory.0)?;
+        let stage = Stage::new(&directory)?;
         database(&stage.file(), kind, extra);
         let connection = Connection::open(stage.file()).expect("distinct incoming revision");
         connection
             .execute("UPDATE marker SET value=x'08' WHERE rowid=1", [])
             .expect("incoming marker differs from saved cache");
         connection.close().expect("close incoming revision");
-        (directory, stage)
+        Ok((directory, stage))
     }
 
     fn save(&self, path: &Path, kind: Kind, budget: u64) -> Result<(), String> {
-        let (directory, stage) = self.stage(path, kind, 0);
+        let (directory, stage) = self.try_stage(path, kind, 0)?;
         publish_with_budget(
             &directory,
             path.file_name().expect("target name"),
@@ -412,6 +421,8 @@ fn private_stages_journals_artwork_and_rank_files_are_excluded() {
         .expect("unknown private stage");
     let private_file = private.join("snapshot.sqlite");
     database(&private_file, Kind::General, 16384);
+    let private_lease = DirectoryHandle::open(&private, false).expect("active private revision");
+    private_lease.0.try_lock().expect("hold the revision lease");
     for name in [
         "general-artwork.sqlite",
         "query-ranks.sqlite",
