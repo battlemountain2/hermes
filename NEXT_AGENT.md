@@ -1,5 +1,17 @@
 # Next agent: Hermes performance, file features and media polish
 
+## Next delivery — tested Linux preview
+
+The user is concerned about the prolonged release work. Prioritize delivery of
+the tested x86_64 preview from `a5fb071331652d104cc60bf538f12f5bce5a2b8a`.
+PR #19 records its hosted and native package/runtime qualification. The current
+roadmap pins the candidate and package hash.
+
+Next work is preview release preparation and daily-use feedback, then native
+Asahi package qualification. Further internal architecture work should address
+a concrete defect or failed agreed acceptance check. Stable promotion retains
+the existing file-safety, search completeness, upgrade and physical RC gates.
+
 ## November 11 snapshot admission — current batch
 
 Branch `fix/6-search-snapshot-budget` follows PR #18 and issue #6.
