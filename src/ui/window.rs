@@ -695,29 +695,8 @@ fn present_target(
     close_window.add_css_class("header-action");
     let closing_window = window.clone();
     close_window.connect_clicked(move |_| closing_window.close());
-    let split_button = gtk::Button::builder()
-        .tooltip_text("Split view (F3)")
-        .build();
-    let split_icon = crate::assets::primary_icon(crate::assets::icons::COLUMNS_2, 16);
-    split_button.set_child(Some(&split_icon));
-    split_button.add_css_class("header-action");
-    split_button.add_css_class("split-action");
-    let split_view_btn = split_view.clone();
-    split_button.connect_clicked(move |_| {
-        split_view_btn.toggle_split();
-    });
-    let split_button_toggle = split_button.clone();
-    split_view.connect_split_toggled(move |active| {
-        if active {
-            split_button_toggle.add_css_class("active");
-        } else {
-            split_button_toggle.remove_css_class("active");
-        }
-    });
-
     let header_actions = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     header_actions.add_css_class("header-actions");
-    header_actions.append(&split_button);
     header_actions.append(&search_button);
     header_actions.append(&tab_bar.new_button());
     header_actions.append(&appearance);

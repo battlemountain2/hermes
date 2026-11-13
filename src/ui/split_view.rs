@@ -19,7 +19,6 @@ pub enum ActivePane {
 }
 
 type PaneChanged = Rc<dyn Fn(ActivePane)>;
-type SplitToggled = Rc<dyn Fn(bool)>;
 
 pub struct SplitView {
     container: gtk::Box,
@@ -31,7 +30,6 @@ pub struct SplitView {
     browser_left: BrowserView,
     browser_right: BrowserView,
     active_pane_handlers: RefCell<Vec<PaneChanged>>,
-    split_toggle_handlers: RefCell<Vec<SplitToggled>>,
 }
 
 impl SplitView {
@@ -69,7 +67,6 @@ impl SplitView {
             browser_left,
             browser_right,
             active_pane_handlers: RefCell::new(Vec::new()),
-            split_toggle_handlers: RefCell::new(Vec::new()),
         });
 
         // Click on left pane activates it
@@ -208,10 +205,6 @@ impl SplitView {
             self.container.append(&self.left_wrapper);
         }
 
-        let toggle_handlers = self.split_toggle_handlers.borrow().clone();
-        for handler in toggle_handlers {
-            handler(split);
-        }
         let pane_handlers = self.active_pane_handlers.borrow().clone();
         for handler in pane_handlers {
             handler(self.active_pane.get());
@@ -238,12 +231,6 @@ impl SplitView {
 
     pub fn connect_active_pane_changed<F: Fn(ActivePane) + 'static>(&self, handler: F) {
         self.active_pane_handlers
-            .borrow_mut()
-            .push(Rc::new(handler));
-    }
-
-    pub fn connect_split_toggled<F: Fn(bool) + 'static>(&self, handler: F) {
-        self.split_toggle_handlers
             .borrow_mut()
             .push(Rc::new(handler));
     }
