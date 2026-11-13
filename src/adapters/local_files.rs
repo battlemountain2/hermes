@@ -56,7 +56,10 @@ impl PendingMusic {
     }
 }
 
-#[expect(dead_code, reason = "Validation error mapping for file paths")]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "Validation error mapping for file paths")
+)]
 fn map_validation_error(error: std::io::Error) -> LocationValidationError {
     match error.kind() {
         ErrorKind::NotFound => LocationValidationError::Missing,
@@ -72,7 +75,9 @@ fn location_for_file(file: &gio::File) -> Location {
 }
 
 fn directory_error_message(location: &Location, error: &glib::Error) -> String {
-    if location.uri_value().is_some_and(|uri| uri.starts_with("trash:"))
+    if location
+        .uri_value()
+        .is_some_and(|uri| uri.starts_with("trash:"))
         && error.matches(gio::IOErrorEnum::NotSupported)
     {
         "Trash support is unavailable. Install the GVfs trash backend (Arch: sudo pacman -S --needed gvfs), then restart Hermes.".into()
@@ -91,7 +96,9 @@ fn entry_from_info(location: Location, info: gio::FileInfo) -> FileEntry {
         (gio::FileType::SymbolicLink, _) => EntryKind::SymbolicLink,
         _ => EntryKind::Other,
     };
-    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner { music_tags: None, location,
+    crate::model::FileEntry(std::rc::Rc::new(crate::model::FileEntryInner {
+        music_tags: None,
+        location,
         native_name,
         display_name: info.display_name().to_string(),
         kind,
@@ -161,9 +168,9 @@ impl FileSource for LocalFileSource {
                 match enumerator
                     .next_files_future(
                         if first_batch {
-                            request.batch_size.clamp(1, 32)
+                            request.batch_size.clamp(1, 64)
                         } else {
-                            request.batch_size.clamp(1, 128)
+                            request.batch_size.clamp(1, 256)
                         } as i32,
                         glib::Priority::DEFAULT,
                     )
@@ -253,15 +260,14 @@ impl FileSource for LocalFileSource {
         })
     }
 
-    fn watch_invalidation(
-        &self,
-        location: &Location,
-        notify: Rc<dyn Fn()>,
-    ) -> Option<LoadHandle> {
+    fn watch_invalidation(&self, location: &Location, notify: Rc<dyn Fn()>) -> Option<LoadHandle> {
         let path = location.native_path()?;
         let file = gio::File::for_path(path);
         let monitor = file
-            .monitor_directory(gio::FileMonitorFlags::WATCH_MOVES, None::<&gio::Cancellable>)
+            .monitor_directory(
+                gio::FileMonitorFlags::WATCH_MOVES,
+                None::<&gio::Cancellable>,
+            )
             .ok()?;
         monitor.set_rate_limit(0);
         let directory_notify = notify.clone();
@@ -276,7 +282,10 @@ impl FileSource for LocalFileSource {
             };
             let watched = gio::File::for_path(watched_path);
             let monitor = gio::File::for_path(parent)
-                .monitor_directory(gio::FileMonitorFlags::WATCH_MOVES, None::<&gio::Cancellable>)
+                .monitor_directory(
+                    gio::FileMonitorFlags::WATCH_MOVES,
+                    None::<&gio::Cancellable>,
+                )
                 .ok()?;
             monitor.set_rate_limit(0);
             let parent_notify = notify.clone();
@@ -407,7 +416,10 @@ async fn enrich_directory_music(
         return;
     };
     while !cancellation.is_cancelled() {
-        let Ok(files) = enumerator.next_files_future(32, glib::Priority::DEFAULT).await else {
+        let Ok(files) = enumerator
+            .next_files_future(32, glib::Priority::DEFAULT)
+            .await
+        else {
             return;
         };
         if files.is_empty() || cancellation.is_cancelled() {
@@ -426,7 +438,10 @@ async fn enrich_directory_music(
         if cancellation.is_cancelled() {
             return;
         }
-        emit(DirectoryEvent::MusicMetadata { request_id, entries });
+        emit(DirectoryEvent::MusicMetadata {
+            request_id,
+            entries,
+        });
     }
 }
 

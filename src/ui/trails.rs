@@ -23,6 +23,7 @@ pub struct TabBar {
     activate_tab: Rc<dyn Fn(Trail)>,
     rendered: RefCell<Vec<(TabPresentation, gtk::Box)>>,
     rendered_active: RefCell<Option<TrailId>>,
+    closed_tabs: RefCell<Vec<Trail>>,
 }
 
 struct TabPresentation {
@@ -38,15 +39,16 @@ impl TabBar {
         capture_view: Rc<dyn Fn() -> TrailViewState>,
         activate_tab: Rc<dyn Fn(Trail)>,
     ) -> Rc<Self> {
-        let tabs = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         tabs.add_css_class("tab-strip-content");
-        tabs.set_valign(gtk::Align::Center);
+        tabs.set_valign(gtk::Align::Fill);
         tabs.set_halign(gtk::Align::Start);
         let root = gtk::ScrolledWindow::builder()
             .child(&tabs)
             .hscrollbar_policy(gtk::PolicyType::Automatic)
             .vscrollbar_policy(gtk::PolicyType::Never)
             .hexpand(true)
+            .vexpand(false)
             .height_request(40)
             .overlay_scrolling(true)
             .build();
@@ -80,6 +82,7 @@ impl TabBar {
             activate_tab,
             rendered: RefCell::new(Vec::new()),
             rendered_active: RefCell::new(None),
+            closed_tabs: RefCell::new(Vec::new()),
         });
         let weak = Rc::downgrade(&tab_bar);
         tab_bar.new_button.connect_clicked(move |_| {
@@ -130,6 +133,28 @@ impl TabBar {
         self.close_tab(&active);
     }
 
+    pub fn reopen_closed_tab(self: &Rc<Self>) {
+        let Some(reopened) = self.closed_tabs.borrow_mut().pop() else {
+            return;
+        };
+        let Some(location) = reopened.active_location().cloned() else {
+            return;
+        };
+        let view_state = reopened.view.clone();
+        match self
+            .trails
+            .create(reopened.name.clone(), location, view_state)
+        {
+            Ok(id) => {
+                if let Some(tab) = self.trails.all().into_iter().find(|tab| tab.id == id) {
+                    (self.activate_tab)(tab);
+                }
+            }
+            Err(error) => tracing::warn!(%error, "unable to reopen tab"),
+        }
+        self.refresh();
+    }
+
     pub fn cycle(self: &Rc<Self>, offset: isize) {
         match self.trails.cycle(offset) {
             Ok(Some(tab)) => (self.activate_tab)(tab),
@@ -142,7 +167,8 @@ impl TabBar {
     pub fn refresh(self: &Rc<Self>) {
         let started = std::time::Instant::now();
         let tabs = self.trails.all();
-        self.browser.retain_open_tabs(&tabs.iter().map(|tab| tab.id.clone()).collect::<Vec<_>>());
+        self.browser
+            .retain_open_tabs(&tabs.iter().map(|tab| tab.id.clone()).collect::<Vec<_>>());
         let active = self.trails.active_id();
         let active_changed = self.rendered_active.replace(active.clone()) != active;
         let mut previous = self.rendered.take();
@@ -151,7 +177,11 @@ impl TabBar {
         let mut rebuilt = 0usize;
         self.root.set_visible(!tabs.is_empty());
         for tab in &tabs {
-            let existing = previous.iter().position(|(old, _)| old.id == tab.id && old.name == tab.name && old.location.as_ref() == tab.active_location());
+            let existing = previous.iter().position(|(old, _)| {
+                old.id == tab.id
+                    && old.name == tab.name
+                    && old.location.as_ref() == tab.active_location()
+            });
             let item = if let Some(position) = existing {
                 previous.remove(position).1
             } else {
@@ -204,13 +234,21 @@ impl TabBar {
                     gtk::glib::ControlFlow::Break
                 });
             }
-            rendered.push((TabPresentation {
-                id: tab.id.clone(),
-                name: tab.name.clone(),
-                location: tab.active_location().cloned(),
-            }, item));
+            rendered.push((
+                TabPresentation {
+                    id: tab.id.clone(),
+                    name: tab.name.clone(),
+                    location: tab.active_location().cloned(),
+                },
+                item,
+            ));
         }
-        if old_order.len() != rendered.len() || old_order.iter().zip(&rendered).any(|(old, (_, item))| old != item) {
+        if old_order.len() != rendered.len()
+            || old_order
+                .iter()
+                .zip(&rendered)
+                .any(|(old, (_, item))| old != item)
+        {
             while let Some(child) = self.tabs.first_child() {
                 self.tabs.remove(&child);
             }
@@ -220,13 +258,18 @@ impl TabBar {
             self.tabs.append(&self.tab_new_button);
         }
         self.rendered.replace(rendered);
-        tracing::debug!(tabs = tabs.len(), rebuilt, refresh_micros = started.elapsed().as_micros() as u64, "tab strip refreshed");
+        tracing::debug!(
+            tabs = tabs.len(),
+            rebuilt,
+            refresh_micros = started.elapsed().as_micros() as u64,
+            "tab strip refreshed"
+        );
     }
 
     fn tab(self: &Rc<Self>, tab: &Trail, count: usize, active: Option<&TrailId>) -> gtk::Box {
         let item = gtk::Box::new(gtk::Orientation::Horizontal, 2);
         item.add_css_class("file-tab");
-        item.set_valign(gtk::Align::Center);
+        item.set_valign(gtk::Align::Fill);
         item.set_hexpand(false);
         if active == Some(&tab.id) {
             item.add_css_class("active");
@@ -234,7 +277,7 @@ impl TabBar {
 
         let select = gtk::Button::with_label(&tab.name);
         select.add_css_class("file-tab-select");
-        select.set_valign(gtk::Align::Center);
+        select.set_valign(gtk::Align::Fill);
         select.set_hexpand(false);
         if let Some(label) = select
             .child()
@@ -350,6 +393,13 @@ impl TabBar {
     }
 
     fn close_tab(self: &Rc<Self>, id: &TrailId) {
+        if let Some(closed) = self.trails.all().into_iter().find(|t| &t.id == id) {
+            let mut stack = self.closed_tabs.borrow_mut();
+            if stack.len() >= 20 {
+                stack.remove(0);
+            }
+            stack.push(closed);
+        }
         match self.trails.close(id) {
             Ok(Some(tab)) => (self.activate_tab)(tab),
             Ok(None) => {}

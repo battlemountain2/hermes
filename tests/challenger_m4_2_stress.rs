@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#![allow(dead_code, unused_imports, clippy::all)]
-
 //! Empirical Challenger Stress Test Suite for Milestone 4 (M4.2):
 //! - 1. Massive spreadsheets exceeding cell/row/col/byte limits:
 //!      confirm truncation flags, bounds enforcement (200 rows, 256 cols, 20MB ceiling),
@@ -19,14 +17,7 @@
 //!      and deselect on Escape key behavior.
 //! - 5. Strict check: Ensure NO modal/Vim keyboard navigation modes exist across the codebase.
 
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{cell::RefCell, collections::HashMap, fs, path::Path, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
@@ -379,45 +370,47 @@ const ODS_MANIFEST_XML: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
 /// Builds a valid ODS spreadsheet workbook with custom rows and columns.
 pub fn generate_massive_ods(num_rows: usize, num_cols: usize) -> Vec<u8> {
     let mut xml = String::new();
-    xml.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>
+    xml.push_str(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
                          xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
                          xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">
   <office:body>
     <office:spreadsheet>
       <table:table table:name="MassiveSheet">
-"#);
+"#,
+    );
 
     // Header row
-    xml.push_str("        <table:table-row>\n");
+    xml.push_str("<table:table-row>");
     for c in 0..num_cols {
         xml.push_str(&format!(
-            "          <table:table-cell office:value-type=\"string\"><text:p>Col_{}</text:p></table:table-cell>\n",
+            "<table:table-cell office:value-type=\"string\"><text:p>Col_{}</text:p></table:table-cell>",
             c
         ));
     }
-    xml.push_str("        </table:table-row>\n");
+    xml.push_str("</table:table-row>");
 
     // Data rows
     for r in 0..num_rows {
-        xml.push_str("        <table:table-row>\n");
+        xml.push_str("<table:table-row>");
         for c in 0..num_cols {
             xml.push_str(&format!(
-                "          <table:table-cell office:value-type=\"float\" office:value=\"{}\"><text:p>{}</text:p></table:table-cell>\n",
+                "<table:table-cell office:value-type=\"float\" office:value=\"{}\"><text:p>{}</text:p></table:table-cell>",
                 r * 100 + c,
                 r * 100 + c
             ));
         }
-        xml.push_str("        </table:table-row>\n");
+        xml.push_str("</table:table-row>");
     }
 
-    xml.push_str(r#"      </table:table>
-    </office:spreadsheet>
-  </office:body>
-</office:document-content>"#);
+    xml.push_str(r#"</table:table></office:spreadsheet></office:body></office:document-content>"#);
 
     create_zip(&[
-        ("mimetype", b"application/vnd.oasis.opendocument.spreadsheet"),
+        (
+            "mimetype",
+            b"application/vnd.oasis.opendocument.spreadsheet",
+        ),
         ("content.xml", xml.as_bytes()),
         ("META-INF/manifest.xml", ODS_MANIFEST_XML),
     ])
@@ -432,38 +425,21 @@ pub fn generate_formula_ods() -> Vec<u8> {
   <office:body>
     <office:spreadsheet>
       <table:table table:name="FormulaSheet">
-        <table:table-row>
-          <table:table-cell office:value-type="string"><text:p>Formula Type</text:p></table:table-cell>
-          <table:table-cell office:value-type="string"><text:p>Expression</text:p></table:table-cell>
-          <table:table-cell office:value-type="string"><text:p>Evaluated Result</text:p></table:table-cell>
-        </table:table-row>
-        <table:table-row>
-          <table:table-cell office:value-type="string"><text:p>Sum</text:p></table:table-cell>
-          <table:table-cell table:formula="of:=SUM([.A1:.A10])" office:value-type="float" office:value="1050"><text:p>1050</text:p></table:table-cell>
-          <table:table-cell office:value-type="float" office:value="1050"><text:p>1050</text:p></table:table-cell>
-        </table:table-row>
-        <table:table-row>
-          <table:table-cell office:value-type="string"><text:p>DivisionByZero</text:p></table:table-cell>
-          <table:table-cell table:formula="of:=1/0" office:value-type="string"><text:p>#DIV/0!</text:p></table:table-cell>
-          <table:table-cell office:value-type="string"><text:p>#DIV/0!</text:p></table:table-cell>
-        </table:table-row>
-        <table:table-row>
-          <table:table-cell office:value-type="string"><text:p>Concat</text:p></table:table-cell>
-          <table:table-cell table:formula="of:=CONCATENATE(&quot;Hermes&quot;, &quot; &quot;, &quot;Preview&quot;)" office:value-type="string"><text:p>Hermes Preview</text:p></table:table-cell>
-          <table:table-cell office:value-type="string"><text:p>Hermes Preview</text:p></table:table-cell>
-        </table:table-row>
-        <table:table-row>
-          <table:table-cell office:value-type="string"><text:p>LogicalIF</text:p></table:table-cell>
-          <table:table-cell table:formula="of:=IF(1>0, &quot;PASS&quot;, &quot;FAIL&quot;)" office:value-type="string"><text:p>PASS</text:p></table:table-cell>
-          <table:table-cell office:value-type="string"><text:p>PASS</text:p></table:table-cell>
-        </table:table-row>
+        <table:table-row><table:table-cell office:value-type="string"><text:p>Formula Type</text:p></table:table-cell><table:table-cell office:value-type="string"><text:p>Expression</text:p></table:table-cell><table:table-cell office:value-type="string"><text:p>Evaluated Result</text:p></table:table-cell></table:table-row>
+        <table:table-row><table:table-cell office:value-type="string"><text:p>Sum</text:p></table:table-cell><table:table-cell table:formula="of:=SUM([.A1:.A10])" office:value-type="float" office:value="1050"><text:p>1050</text:p></table:table-cell><table:table-cell office:value-type="float" office:value="1050"><text:p>1050</text:p></table:table-cell></table:table-row>
+        <table:table-row><table:table-cell office:value-type="string"><text:p>DivisionByZero</text:p></table:table-cell><table:table-cell table:formula="of:=1/0" office:value-type="string"><text:p>#DIV/0!</text:p></table:table-cell><table:table-cell office:value-type="string"><text:p>#DIV/0!</text:p></table:table-cell></table:table-row>
+        <table:table-row><table:table-cell office:value-type="string"><text:p>Concat</text:p></table:table-cell><table:table-cell table:formula="of:=CONCATENATE(&quot;Hermes&quot;, &quot; &quot;, &quot;Preview&quot;)" office:value-type="string"><text:p>Hermes Preview</text:p></table:table-cell><table:table-cell office:value-type="string"><text:p>Hermes Preview</text:p></table:table-cell></table:table-row>
+        <table:table-row><table:table-cell office:value-type="string"><text:p>LogicalIF</text:p></table:table-cell><table:table-cell table:formula="of:=IF(1>0, &quot;PASS&quot;, &quot;FAIL&quot;)" office:value-type="string"><text:p>PASS</text:p></table:table-cell><table:table-cell office:value-type="string"><text:p>PASS</text:p></table:table-cell></table:table-row>
       </table:table>
     </office:spreadsheet>
   </office:body>
 </office:document-content>"#;
 
     create_zip(&[
-        ("mimetype", b"application/vnd.oasis.opendocument.spreadsheet"),
+        (
+            "mimetype",
+            b"application/vnd.oasis.opendocument.spreadsheet",
+        ),
         ("content.xml", content_xml.as_bytes()),
         ("META-INF/manifest.xml", ODS_MANIFEST_XML),
     ])
@@ -480,7 +456,10 @@ pub fn generate_empty_ods_no_tables() -> Vec<u8> {
 </office:document-content>"#;
 
     create_zip(&[
-        ("mimetype", b"application/vnd.oasis.opendocument.spreadsheet"),
+        (
+            "mimetype",
+            b"application/vnd.oasis.opendocument.spreadsheet",
+        ),
         ("content.xml", content_xml.as_bytes()),
         ("META-INF/manifest.xml", ODS_MANIFEST_XML),
     ])
@@ -499,7 +478,10 @@ pub fn generate_empty_ods_zero_cells() -> Vec<u8> {
 </office:document-content>"#;
 
     create_zip(&[
-        ("mimetype", b"application/vnd.oasis.opendocument.spreadsheet"),
+        (
+            "mimetype",
+            b"application/vnd.oasis.opendocument.spreadsheet",
+        ),
         ("content.xml", content_xml.as_bytes()),
         ("META-INF/manifest.xml", ODS_MANIFEST_XML),
     ])
@@ -518,9 +500,14 @@ pub fn generate_scanned_pdf() -> Vec<u8> {
     let o2 = out.len();
     out.extend_from_slice(b"2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n");
     let o3 = out.len();
-    out.extend_from_slice(b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R>>endobj\n");
+    out.extend_from_slice(
+        b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R>>endobj\n",
+    );
     let o4 = out.len();
-    let content_obj = format!("4 0 obj<</Length {}>>stream\n{}\nendstream\nendobj\n", stream_len, stream_content);
+    let content_obj = format!(
+        "4 0 obj<</Length {}>>stream\n{}\nendstream\nendobj\n",
+        stream_len, stream_content
+    );
     out.extend_from_slice(content_obj.as_bytes());
 
     let xref_offset = out.len();
@@ -554,7 +541,10 @@ pub fn generate_zero_dimension_pdf() -> Vec<u8> {
     let o4 = out.len();
     out.extend_from_slice(b"4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\n");
     let o5 = out.len();
-    let content_obj = format!("5 0 obj<</Length {}>>stream\n{}\nendstream\nendobj\n", stream_len, stream_content);
+    let content_obj = format!(
+        "5 0 obj<</Length {}>>stream\n{}\nendstream\nendobj\n",
+        stream_len, stream_content
+    );
     out.extend_from_slice(content_obj.as_bytes());
 
     let xref_offset = out.len();
@@ -583,7 +573,7 @@ pub fn generate_custom_wav(sample_rate: u32, channels: u16, num_samples: usize) 
     // fmt subchunk
     out.extend_from_slice(b"fmt ");
     out.extend_from_slice(&16u32.to_le_bytes()); // subchunk1 size
-    out.extend_from_slice(&1u16.to_le_bytes());  // PCM format
+    out.extend_from_slice(&1u16.to_le_bytes()); // PCM format
     out.extend_from_slice(&channels.to_le_bytes());
     out.extend_from_slice(&sample_rate.to_le_bytes());
     out.extend_from_slice(&byte_rate.to_le_bytes());
@@ -619,9 +609,19 @@ fn test_massive_spreadsheet_rows_capped_at_200() {
     let meta_content = fs::read_to_string(&meta_path).expect("read meta");
     let data: SpreadsheetData = serde_json::from_str(&meta_content).expect("parse SpreadsheetData");
 
-    assert!(data.truncated, "Truncation flag must be true when rows exceed 200");
-    assert_eq!(data.rows.len(), 200, "Rendered rows must be strictly capped at 200");
-    assert_eq!(data.total_rows, 351, "total_rows must record original row count (350 data + 1 header)");
+    assert!(
+        data.truncated,
+        "Truncation flag must be true when rows exceed 200"
+    );
+    assert_eq!(
+        data.rows.len(),
+        200,
+        "Rendered rows must be strictly capped at 200"
+    );
+    assert_eq!(
+        data.total_rows, 351,
+        "total_rows must record original row count (350 data + 1 header)"
+    );
     assert_eq!(data.total_cols, 4, "total_cols must match 4");
 }
 
@@ -640,12 +640,26 @@ fn test_massive_spreadsheet_columns_capped_at_256() {
     let meta_content = fs::read_to_string(&meta_path).expect("read meta");
     let data: SpreadsheetData = serde_json::from_str(&meta_content).expect("parse SpreadsheetData");
 
-    assert!(data.truncated, "Truncation flag must be true when columns exceed 256");
-    assert!(data.headers.len() <= 256, "Headers must be capped at 256 (got {})", data.headers.len());
+    assert!(
+        data.truncated,
+        "Truncation flag must be true when columns exceed 256"
+    );
+    assert!(
+        data.headers.len() <= 256,
+        "Headers must be capped at 256 (got {})",
+        data.headers.len()
+    );
     for row in &data.rows {
-        assert!(row.len() <= 256, "Row columns must be capped at 256 (got {})", row.len());
+        assert!(
+            row.len() <= 256,
+            "Row columns must be capped at 256 (got {})",
+            row.len()
+        );
     }
-    assert_eq!(data.total_cols, 300, "total_cols must reflect original 300 columns");
+    assert_eq!(
+        data.total_cols, 300,
+        "total_cols must reflect original 300 columns"
+    );
 }
 
 #[test]
@@ -676,7 +690,11 @@ fn test_massive_spreadsheet_text_extraction_byte_limit_exact() {
 
     let limit = 45usize;
     let res = run_preview_helper("extract-spreadsheet-text", &input, &output, limit as i32);
-    assert!(res.status.success(), "Extraction must succeed: {}", res.stderr);
+    assert!(
+        res.status.success(),
+        "Extraction must succeed: {}",
+        res.stderr
+    );
 
     let bytes = fs::read(&output).expect("read extracted text");
     assert!(
@@ -685,7 +703,10 @@ fn test_massive_spreadsheet_text_extraction_byte_limit_exact() {
         bytes.len(),
         limit
     );
-    assert!(std::str::from_utf8(&bytes).is_ok(), "Truncation must preserve valid UTF-8 boundaries");
+    assert!(
+        std::str::from_utf8(&bytes).is_ok(),
+        "Truncation must preserve valid UTF-8 boundaries"
+    );
 }
 
 // =========================================================================
@@ -704,12 +725,18 @@ fn test_corrupted_spreadsheet_truncated_zip_headers() {
         let input_xlsx = env.write_file(&format!("corrupt_{len}.xlsx"), &data);
         let output_xlsx = env.file_path(&format!("out_{len}.png"));
         let res_xlsx = run_preview_helper("preview-spreadsheet", &input_xlsx, &output_xlsx, 0);
-        assert!(!res_xlsx.status.success(), "Truncated XLSX len {len} must fail gracefully");
+        assert!(
+            !res_xlsx.status.success(),
+            "Truncated XLSX len {len} must fail gracefully"
+        );
 
         let input_ods = env.write_file(&format!("corrupt_{len}.ods"), &data);
         let output_ods = env.file_path(&format!("out_ods_{len}.png"));
         let res_ods = run_preview_helper("preview-spreadsheet", &input_ods, &output_ods, 0);
-        assert!(!res_ods.status.success(), "Truncated ODS len {len} must fail gracefully");
+        assert!(
+            !res_ods.status.success(),
+            "Truncated ODS len {len} must fail gracefully"
+        );
     }
 }
 
@@ -730,7 +757,10 @@ fn test_corrupted_spreadsheet_truncated_ole_headers() {
         let input = env.write_file(&format!("corrupt_ole_{len}.xls"), &data);
         let output = env.file_path(&format!("out_ole_{len}.png"));
         let res = run_preview_helper("preview-spreadsheet", &input, &output, 0);
-        assert!(!res.status.success(), "Truncated XLS/OLE len {len} must fail gracefully");
+        assert!(
+            !res.status.success(),
+            "Truncated XLS/OLE len {len} must fail gracefully"
+        );
     }
 }
 
@@ -758,7 +788,8 @@ fn test_corrupted_spreadsheet_empty_sheets() {
     let out2 = env.file_path("out2.png");
     let res2 = run_preview_helper("preview-spreadsheet", &input2, &out2, 0);
     if res2.status.success() {
-        let meta_content = fs::read_to_string(out2.with_file_name("result.meta")).expect("read meta");
+        let meta_content =
+            fs::read_to_string(out2.with_file_name("result.meta")).expect("read meta");
         let data: SpreadsheetData = serde_json::from_str(&meta_content).expect("parse");
         assert_eq!(data.total_rows, 0);
         assert_eq!(data.rows.len(), 0);
@@ -773,13 +804,20 @@ fn test_formula_heavy_spreadsheet_resilience() {
     let output = env.file_path("formula_out.png");
 
     let res = run_preview_helper("preview-spreadsheet", &input, &output, 0);
-    assert!(res.status.success(), "Formula-heavy sheet must succeed: {}", res.stderr);
+    assert!(
+        res.status.success(),
+        "Formula-heavy sheet must succeed: {}",
+        res.stderr
+    );
 
     let meta_path = output.with_file_name("result.meta");
     let meta_content = fs::read_to_string(&meta_path).expect("read meta");
     let data: SpreadsheetData = serde_json::from_str(&meta_content).expect("parse SpreadsheetData");
 
-    assert_eq!(data.headers, vec!["Formula Type", "Expression", "Evaluated Result"]);
+    assert_eq!(
+        data.headers,
+        vec!["Formula Type", "Expression", "Evaluated Result"]
+    );
     assert_eq!(data.rows.len(), 4, "Must extract 4 formula data rows");
 
     // Row 1: Division by zero (#DIV/0!) must not crash parser
@@ -840,25 +878,45 @@ fn test_audio_truncated_streams_all_formats() {
     // Truncated WAV
     let wav = generate_custom_wav(44100, 2, 500);
     let trunc_wav = env.write_file("trunc.wav", &wav[..20]);
-    let res = run_preview_helper("preview-audio-waveform", &trunc_wav, &env.file_path("out_wav.png"), 0);
+    let res = run_preview_helper(
+        "preview-audio-waveform",
+        &trunc_wav,
+        &env.file_path("out_wav.png"),
+        0,
+    );
     assert!(!res.status.success(), "Truncated WAV must be rejected");
 
     // Truncated FLAC
     let flac = sample_flac();
     let trunc_flac = env.write_file("trunc.flac", &flac[..8]);
-    let res = run_preview_helper("preview-audio-waveform", &trunc_flac, &env.file_path("out_flac.png"), 0);
+    let res = run_preview_helper(
+        "preview-audio-waveform",
+        &trunc_flac,
+        &env.file_path("out_flac.png"),
+        0,
+    );
     assert!(!res.status.success(), "Truncated FLAC must be rejected");
 
     // Truncated MP3
     let mp3 = sample_mp3();
     let trunc_mp3 = env.write_file("trunc.mp3", &mp3[..14]);
-    let res = run_preview_helper("preview-audio-waveform", &trunc_mp3, &env.file_path("out_mp3.png"), 0);
+    let res = run_preview_helper(
+        "preview-audio-waveform",
+        &trunc_mp3,
+        &env.file_path("out_mp3.png"),
+        0,
+    );
     assert!(!res.status.success(), "Truncated MP3 must be rejected");
 
     // Truncated OGG
     let ogg = sample_ogg();
     let trunc_ogg = env.write_file("trunc.ogg", &ogg[..12]);
-    let res = run_preview_helper("preview-audio-waveform", &trunc_ogg, &env.file_path("out_ogg.png"), 0);
+    let res = run_preview_helper(
+        "preview-audio-waveform",
+        &trunc_ogg,
+        &env.file_path("out_ogg.png"),
+        0,
+    );
     assert!(!res.status.success(), "Truncated OGG must be rejected");
 }
 
@@ -870,7 +928,10 @@ fn test_audio_empty_streams_all_formats() {
         let empty = env.write_file(&format!("empty.{ext}"), b"");
         let out = env.file_path(&format!("empty_{ext}.png"));
         let res = run_preview_helper("preview-audio-waveform", &empty, &out, 0);
-        assert!(!res.status.success(), "Empty {ext} audio file must be rejected cleanly");
+        assert!(
+            !res.status.success(),
+            "Empty {ext} audio file must be rejected cleanly"
+        );
     }
 }
 
@@ -882,10 +943,17 @@ fn test_audio_valid_waveform_and_metadata_contracts() {
     let output = env.file_path("waveform.png");
 
     let res = run_preview_helper("preview-audio-waveform", &input, &output, 0);
-    assert!(res.status.success(), "Waveform generator must succeed for valid WAV: {}", res.stderr);
+    assert!(
+        res.status.success(),
+        "Waveform generator must succeed for valid WAV: {}",
+        res.stderr
+    );
 
     let png_bytes = fs::read(&output).expect("read waveform png");
-    assert!(is_valid_png(&png_bytes), "Waveform output must be valid PNG");
+    assert!(
+        is_valid_png(&png_bytes),
+        "Waveform output must be valid PNG"
+    );
 
     let meta_path = output.with_file_name("result.meta");
     let meta_content = fs::read_to_string(&meta_path).expect("read metadata");
@@ -910,16 +978,27 @@ fn test_pdf_scanned_page_without_text() {
 
     // 1. preview-pdf must render page visual image
     let res_prev = run_preview_helper("preview-pdf", &input, &output, 1);
-    assert!(res_prev.status.success(), "Visual preview of scanned PDF must succeed: {}", res_prev.stderr);
+    assert!(
+        res_prev.status.success(),
+        "Visual preview of scanned PDF must succeed: {}",
+        res_prev.stderr
+    );
     let png_bytes = fs::read(&output).expect("read scanned png");
     assert!(is_valid_png(&png_bytes), "Page preview must be valid PNG");
 
     // 2. extract-pdf-text must return empty bytes, no failure
     let text_out = env.file_path("scanned_text.txt");
     let res_text = run_preview_helper("extract-pdf-text", &input, &text_out, 100);
-    assert!(res_text.status.success(), "Text extraction on scanned PDF must succeed: {}", res_text.stderr);
+    assert!(
+        res_text.status.success(),
+        "Text extraction on scanned PDF must succeed: {}",
+        res_text.stderr
+    );
     let extracted = fs::read(&text_out).expect("read text");
-    assert!(extracted.is_empty(), "Scanned PDF has 0 text glyphs, text must be empty");
+    assert!(
+        extracted.is_empty(),
+        "Scanned PDF has 0 text glyphs, text must be empty"
+    );
 
     // 3. Selection model with empty layer
     let empty_layer = PdfTextLayer {
@@ -942,11 +1021,17 @@ fn test_pdf_ligatures_and_multibyte_unicode() {
     let text_out = env.file_path("extracted.txt");
 
     let res = run_preview_helper("extract-pdf-text", &input, &text_out, 1000);
-    assert!(res.status.success(), "Text extraction with ligatures must succeed: {}", res.stderr);
+    assert!(
+        res.status.success(),
+        "Text extraction with ligatures must succeed: {}",
+        res.stderr
+    );
 
     let extracted = fs::read_to_string(&text_out).expect("read text");
     assert!(
-        extracted.contains("Difficult") || extracted.contains("flight") || extracted.contains("aesthetic"),
+        extracted.contains("Difficult")
+            || extracted.contains("flight")
+            || extracted.contains("aesthetic"),
         "Extracted text must contain words with ligatures"
     );
 
@@ -955,7 +1040,9 @@ fn test_pdf_ligatures_and_multibyte_unicode() {
         width: 600.0,
         height: 800.0,
         text: "Difficult flight: 東京 🦊\nAffirm aesthetic".to_owned(),
-        glyphs: (0..35).map(|i| [i as f32 * 15.0, 10.0, i as f32 * 15.0 + 12.0, 24.0]).collect(),
+        glyphs: (0..35)
+            .map(|i| [i as f32 * 15.0, 10.0, i as f32 * 15.0 + 12.0, 24.0])
+            .collect(),
     };
 
     // Substring indexing across multi-byte UTF-8 boundaries must not panic
@@ -978,7 +1065,10 @@ fn test_pdf_empty_and_zero_dimension_pages() {
 
     let res = run_preview_helper("preview-pdf", &input, &output, 1);
     // Even if Poppler rejects zero-dimension page or produces 0-sized image, it must not panic
-    assert!(res.status.code().is_some(), "Zero-dimension PDF must not panic or abort");
+    assert!(
+        res.status.code().is_some(),
+        "Zero-dimension PDF must not panic or abort"
+    );
 
     // Pure model image_bounds with 0 dimension
     let layer_zero = PdfTextLayer {
@@ -988,7 +1078,10 @@ fn test_pdf_empty_and_zero_dimension_pages() {
         glyphs: Vec::new(),
     };
     let (ox, oy, s) = image_bounds(&layer_zero, 800.0, 600.0);
-    assert!(s.is_finite(), "Scale must be finite, no division-by-zero NaN");
+    assert!(
+        s.is_finite(),
+        "Scale must be finite, no division-by-zero NaN"
+    );
     assert!(ox.is_finite() && oy.is_finite());
 }
 
@@ -1065,7 +1158,9 @@ fn test_pdf_shortcut_modifiers_with_caps_lock_and_num_lock() {
     // Disallowed modifiers: Shift or Alt must be rejected (e.g. Ctrl+Shift+C is different action)
     assert!(!pdf_shortcut_modifiers(M::CONTROL_MASK | M::SHIFT_MASK));
     assert!(!pdf_shortcut_modifiers(M::CONTROL_MASK | M::ALT_MASK));
-    assert!(!pdf_shortcut_modifiers(M::CONTROL_MASK | M::SHIFT_MASK | M::ALT_MASK));
+    assert!(!pdf_shortcut_modifiers(
+        M::CONTROL_MASK | M::SHIFT_MASK | M::ALT_MASK
+    ));
 
     // No modifiers
     assert!(!pdf_shortcut_modifiers(M::empty()));
@@ -1078,10 +1173,13 @@ fn test_pdf_escape_key_deselection_contract() {
     // 1. Verify selection clearing contract:
     // When ranges exist, applying an empty map clears all selection ranges.
     let ranges = RefCell::new(HashMap::from([(1, (0, 10)), (2, (0, 5))]));
-    let layers: RefCell<HashMap<i32, Arc<PdfTextLayer>>> = RefCell::new(HashMap::new());
+    let _layers: RefCell<HashMap<i32, Arc<PdfTextLayer>>> = RefCell::new(HashMap::new());
     let _visible: HashMap<i32, bool> = HashMap::new();
 
-    assert!(!ranges.borrow().is_empty(), "Initial selection ranges must be non-empty");
+    assert!(
+        !ranges.borrow().is_empty(),
+        "Initial selection ranges must be non-empty"
+    );
 
     // Applying empty map simulates deselection action
     *ranges.borrow_mut() = HashMap::new();
@@ -1124,14 +1222,18 @@ fn test_strict_no_modal_vim_navigation_modes() {
         let display = path.display().to_string();
 
         // Check for modal navigation enums
-        if content.contains("enum Mode") && (content.contains("Normal") || content.contains("Visual")) {
+        if content.contains("enum Mode")
+            && (content.contains("Normal") || content.contains("Visual"))
+        {
             violations.push(format!("{display}: contains Vim mode enum"));
         }
         if content.contains("VimMode") || content.contains("NavMode") {
             violations.push(format!("{display}: contains VimMode/NavMode identifier"));
         }
         if content.contains("VisualMode") || content.contains("NormalMode") {
-            violations.push(format!("{display}: contains VisualMode/NormalMode identifier"));
+            violations.push(format!(
+                "{display}: contains VisualMode/NormalMode identifier"
+            ));
         }
 
         // Check for vim navigation keybindings (hjkl navigation mode)
@@ -1140,7 +1242,9 @@ fn test_strict_no_modal_vim_navigation_modes() {
             && content.contains("Key::k")
             && content.contains("Key::l")
         {
-            violations.push(format!("{display}: contains HJKL modal navigation bindings"));
+            violations.push(format!(
+                "{display}: contains HJKL modal navigation bindings"
+            ));
         }
     }
 

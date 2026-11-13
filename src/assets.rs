@@ -27,10 +27,14 @@ pub mod icons {
     pub const ARROW_UP_NARROW_WIDE: &str = "strata-arrow-up-narrow-wide";
     pub const CHECK: &str = "strata-check";
     pub const CHECK_ON_PRIMARY: &str = "strata-check-on-primary";
+    pub const CHEVRON_DOWN: &str = "strata-chevron-down";
     pub const CHEVRON_RIGHT: &str = "strata-chevron-right";
+    pub const COLUMNS_2: &str = "strata-columns-2";
     pub const COPY: &str = "strata-copy";
+    pub const CORNER_DOWN_LEFT: &str = "strata-corner-down-left";
     pub const DOCUMENTS: &str = "strata-file-text";
     pub const DOWNLOADS: &str = "strata-download";
+    pub const EJECT: &str = "strata-eject";
     pub const EYE: &str = "strata-eye";
     pub const EYE_OFF: &str = "strata-eye-off";
     pub const EXTERNAL_LINK: &str = "strata-external-link";
@@ -38,7 +42,10 @@ pub mod icons {
     pub const FILE_CODE: &str = "strata-file-code";
     pub const FOLDER: &str = "strata-folder";
     pub const FOLDER_FILLED: &str = "strata-folder-filled";
+    pub const FOLDER_OPEN: &str = "strata-folder-open";
     pub const HARD_DRIVE: &str = "strata-hard-drive";
+    pub const HEART: &str = "strata-heart";
+    pub const HEART_SELECTED: &str = "strata-heart-selected";
     pub const INFO: &str = "strata-info";
     pub const FUNNEL: &str = "strata-funnel";
     pub const GRID: &str = "strata-grid";
@@ -65,8 +72,11 @@ pub mod icons {
     pub const SLIDERS: &str = "strata-sliders-horizontal";
     pub const TERMINAL: &str = "strata-terminal";
     pub const TRASH: &str = "strata-trash";
+    pub const TRIANGLE_ALERT: &str = "strata-triangle-alert";
     pub const VIDEOS: &str = "strata-video";
     pub const X: &str = "strata-x";
+    pub const STAR: &str = "strata-star";
+    pub const STAR_FILLED: &str = "strata-star-filled";
 }
 
 const FONT_VERSION: &str = "jetbrains-2.304-maple-7.9";
@@ -90,6 +100,8 @@ thread_local! {
     static PRIMARY_ICONS: RefCell<IconRegistry> = RefCell::new(IconRegistry::default());
     static TEXT_ICON_COLOR: RefCell<String> = RefCell::new("#c9deed".to_owned());
     static TEXT_ICONS: RefCell<IconRegistry> = RefCell::new(IconRegistry::default());
+    static ON_ACCENT_ICON_COLOR: RefCell<Option<String>> = const { RefCell::new(None) };
+    static ON_ACCENT_ICONS: RefCell<IconRegistry> = RefCell::new(IconRegistry::default());
     static DANGER_ICON_COLOR: RefCell<String> = RefCell::new("#e5484d".to_owned());
     static DANGER_ICONS: RefCell<IconRegistry> = RefCell::new(IconRegistry::default());
     static ICON_TEXTURES: RefCell<HashMap<(String, String), gdk::Texture>> = RefCell::new(HashMap::new());
@@ -98,10 +110,7 @@ thread_local! {
 pub fn prepare() -> Result<(), Box<dyn std::error::Error>> {
     gio::resources_register_include!("strata.gresource")?;
 
-    let font_directory = glib::user_cache_dir()
-        .join("strata")
-        .join("fonts")
-        .join(FONT_VERSION);
+    let font_directory = crate::paths::fonts_cache_dir().join(FONT_VERSION);
     fs::create_dir_all(&font_directory)?;
 
     let jetbrains = font_directory.join("JetBrainsMono.ttf");
@@ -116,6 +125,8 @@ pub fn prepare() -> Result<(), Box<dyn std::error::Error>> {
 pub fn register_icon_theme() {
     if let Some(display) = gdk::Display::default() {
         gtk::IconTheme::for_display(&display).add_resource_path("/io/github/lgse/Strata/icons");
+        gtk::IconTheme::for_display(&display)
+            .add_resource_path("/io/github/battlemountain2/Hermes/icons");
     }
 }
 
@@ -127,6 +138,12 @@ pub fn primary_icon(name: &str, pixel_size: i32) -> gtk::Image {
 }
 
 pub fn set_primary_icon(image: &gtk::Image, name: &str) {
+    ON_ACCENT_ICONS.with(|icons| {
+        icons
+            .borrow_mut()
+            .entries
+            .remove(&(image.as_ptr() as usize))
+    });
     let color = PRIMARY_ICON_COLOR.with(|color| color.borrow().clone());
     apply_primary_icon(image, name, &color);
     PRIMARY_ICONS.with(|icons| register_icon(icons, image, name));
@@ -164,6 +181,12 @@ pub fn text_icon(name: &str, pixel_size: i32) -> gtk::Image {
 }
 
 pub fn set_text_icon(image: &gtk::Image, name: &str) {
+    ON_ACCENT_ICONS.with(|icons| {
+        icons
+            .borrow_mut()
+            .entries
+            .remove(&(image.as_ptr() as usize))
+    });
     let color = TEXT_ICON_COLOR.with(|color| color.borrow().clone());
     apply_primary_icon(image, name, &color);
     TEXT_ICONS.with(|icons| register_icon(icons, image, name));
@@ -172,6 +195,38 @@ pub fn set_text_icon(image: &gtk::Image, name: &str) {
 pub fn set_text_icon_color(color: &str) {
     TEXT_ICON_COLOR.with(|current| current.replace(color.to_owned()));
     TEXT_ICONS.with(|icons| recolor_registered_icons(icons, color));
+}
+
+pub fn on_accent_icon(name: &str, pixel_size: i32) -> gtk::Image {
+    let image = gtk::Image::new();
+    image.set_pixel_size(pixel_size);
+    set_on_accent_icon(&image, name);
+    image
+}
+
+pub fn set_on_accent_icon(image: &gtk::Image, name: &str) {
+    PRIMARY_ICONS.with(|icons| {
+        icons
+            .borrow_mut()
+            .entries
+            .remove(&(image.as_ptr() as usize))
+    });
+    TEXT_ICONS.with(|icons| {
+        icons
+            .borrow_mut()
+            .entries
+            .remove(&(image.as_ptr() as usize))
+    });
+    let color = ON_ACCENT_ICON_COLOR
+        .with(|color| color.borrow().clone())
+        .unwrap_or_else(|| TEXT_ICON_COLOR.with(|color| color.borrow().clone()));
+    apply_primary_icon(image, name, &color);
+    ON_ACCENT_ICONS.with(|icons| register_icon(icons, image, name));
+}
+
+pub fn set_on_accent_icon_color(color: &str) {
+    ON_ACCENT_ICON_COLOR.with(|current| current.replace(Some(color.to_owned())));
+    ON_ACCENT_ICONS.with(|icons| recolor_registered_icons(icons, color));
 }
 
 pub fn danger_icon(name: &str, pixel_size: i32) -> gtk::Image {

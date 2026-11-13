@@ -6,6 +6,7 @@ pub(super) struct Presentation {
     columns_widget: gtk::Box,
     scroller: gtk::ScrolledWindow,
     scroll: Vec<(gtk::Adjustment, f64)>,
+    context_menu: Option<Rc<dyn Fn() -> bool>>,
 }
 
 impl BrowserView {
@@ -64,7 +65,8 @@ impl ViewState {
         self.mode_views.borrow().cancel_rename();
         let columns_widget = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         columns_widget.add_css_class("columns");
-        columns_widget.set_halign(gtk::Align::Start);
+        columns_widget.set_halign(gtk::Align::Fill);
+        columns_widget.set_hexpand(true);
         columns_widget.set_vexpand(true);
         let scroller = gtk::ScrolledWindow::builder()
             .child(&columns_widget)
@@ -88,6 +90,7 @@ impl ViewState {
                 columns_widget,
                 scroller,
                 scroll,
+                context_menu: self.active_context_menu.take(),
             },
         ));
     }
@@ -107,6 +110,7 @@ impl ViewState {
         self.columns_widget.replace(retained.columns_widget);
         self.scroller.replace(retained.scroller);
         self.columns.replace(retained.columns);
+        self.active_context_menu.replace(retained.context_menu);
         for column in self.columns.borrow().iter() {
             self.overlay.add_overlay(&column.marquee);
         }

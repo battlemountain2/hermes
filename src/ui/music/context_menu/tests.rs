@@ -3,13 +3,14 @@ use super::*;
 #[test]
 #[ignore = "Requires isolated GTK display; generated library only, no personal library or session"]
 fn desktop_context_menus_target_clicked_rows_and_preserve_queue_playback() {
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let _theme = super::super::super::theme::ThemeManager::shared();
     let provider = gtk::CssProvider::new();
     provider.load_from_string(include_str!("../../../style.css"));
     gtk::style_context_add_provider_for_display(
-        &gtk::gdk::Display::default().unwrap(),
+        &gtk::gdk::Display::default()
+            .expect("expected test value from gtk::gdk::Display::default()"),
         &provider,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
@@ -52,6 +53,7 @@ fn desktop_context_menus_target_clicked_rows_and_preserve_queue_playback() {
     window.set_default_size(1000, 700);
     window.set_child(Some(&player.view()));
     window.present();
+    player.state.scan.borrow_mut().take();
     for _ in 0..100 {
         if !glib::MainContext::default().iteration(false) {
             break;
@@ -64,10 +66,11 @@ fn desktop_context_menus_target_clicked_rows_and_preserve_queue_playback() {
             view.model()
                 .is_some_and(|model| model == player.state.album_selection)
         })
-        .unwrap();
+        .expect("expected test value from super::super::tests::descendants(player.view().upcast_ref()) .into_iter() .filter_map(|widget| widget.downcast::<gtk::ListView>...");
     player.state.album_selection.set_selected(1);
     player.state.filter.set_text("Third");
-    let target = Target::resolve(&player.state, Kind::Album, 0).unwrap();
+    let target = Target::resolve(&player.state, Kind::Album, 0)
+        .expect("expected test value from Target::resolve(&player.state, Kind::Album, 0)");
     assert_eq!(
         target.tracks,
         vec![first.clone(), second.clone(), third.clone()]
@@ -97,12 +100,12 @@ fn desktop_context_menus_target_clicked_rows_and_preserve_queue_playback() {
                 .and_downcast::<gtk::GestureClick>()
         })
         .find(|gesture| gesture.button() == 3)
-        .unwrap();
+        .expect("expected test value from (0..controllers.n_items()) .filter_map(|position| { controllers .item(position) .and_downcast::<gtk::GestureClick>() }) .find(|...");
     gesture.emit_by_name::<()>("pressed", &[&1_i32, &24.0_f64, &24.0_f64]);
     let menu = super::super::tests::descendants(&row)
         .into_iter()
         .find_map(|widget| widget.downcast::<gtk::Popover>().ok())
-        .unwrap();
+        .expect("expected test value from super::super::tests::descendants(&row) .into_iter() .find_map(|widget| widget.downcast::<gtk::Popover>().ok())");
     super::super::tests::desktop_screenshot(
         &player,
         menu.upcast_ref(),
@@ -116,7 +119,7 @@ fn desktop_context_menus_target_clicked_rows_and_preserve_queue_playback() {
         .into_iter()
         .filter_map(|widget| widget.downcast::<gtk::Button>().ok())
         .collect();
-    assert_eq!(controls.len(), 3);
+    assert_eq!(controls.len(), 4);
     player.state.library.borrow_mut().reverse();
     player.state.render_library();
     controls[2].emit_clicked();
@@ -127,6 +130,29 @@ fn desktop_context_menus_target_clicked_rows_and_preserve_queue_playback() {
     assert_eq!(player.state.queue.borrow().current, Some(0));
     assert!(player.state.stream.borrow().is_none());
     assert!(menu.parent().is_none());
+    controls[3].emit_clicked();
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while player
+        .state
+        .collection_store
+        .snapshot()
+        .data
+        .favorite_paths()
+        .len()
+        != 3
+    {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        !player
+            .state
+            .collection_store
+            .snapshot()
+            .data
+            .favorite_paths()
+            .contains(&other.path)
+    );
     let menu_probe = menu.downgrade();
     drop(controls);
     drop(menu);
@@ -136,7 +162,8 @@ fn desktop_context_menus_target_clicked_rows_and_preserve_queue_playback() {
         std::thread::sleep(Duration::from_millis(5));
     }
     assert!(menu_probe.upgrade().is_none());
-    let target = Target::resolve(&player.state, Kind::Track, 0).unwrap();
+    let target = Target::resolve(&player.state, Kind::Track, 0)
+        .expect("expected test value from Target::resolve(&player.state, Kind::Track, 0)");
     assert_eq!(target.tracks, vec![third.clone()]);
     let menu = show(
         view.upcast_ref(),
@@ -159,9 +186,70 @@ fn desktop_context_menus_target_clicked_rows_and_preserve_queue_playback() {
     assert_eq!(player.state.queue.borrow().ordered()[1].1, &third);
     assert_eq!(player.state.queue.borrow().current, Some(0));
     assert!(player.state.stream.borrow().is_none());
+    player
+        .state
+        .collection_command(CollectionCommand::Create("Menu fixture".into()));
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while player
+        .state
+        .collection_store
+        .snapshot()
+        .data
+        .playlists
+        .is_empty()
+    {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    player.state.poll_collections();
+    player.state.filter.set_text("Third");
+    let target = Target::resolve(&player.state, Kind::Track, 0)
+        .expect("expected test value from Target::resolve(&player.state, Kind::Track, 0)");
+    let playlist_menu = show(
+        view.upcast_ref(),
+        Rc::downgrade(&player.state),
+        target,
+        24.0,
+        24.0,
+    );
+    let add_to_playlist = super::super::tests::descendants(playlist_menu.upcast_ref())
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::Button>().ok())
+        .last()
+        .expect("expected test value from super::super::tests::descendants(playlist_menu.upcast_ref()) .into_iter() .filter_map(|widget| widget.downcast::<gtk::Button>()...");
+    player.state.filter.set_text("Other");
+    add_to_playlist.emit_clicked();
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while player
+        .state
+        .collection_store
+        .snapshot()
+        .data
+        .playlist(1)
+        .expect("expected test value from player .state .collection_store .snapshot() .data .playlist(1)")
+        .tracks
+        .is_empty()
+    {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        player
+            .state
+            .collection_store
+            .snapshot()
+            .data
+            .playlist(1)
+            .expect("expected test value from player .state .collection_store .snapshot() .data .playlist(1)")
+            .tracks[0]
+            .native_path(),
+        Some(third.path.as_path())
+    );
+    assert!(player.state.stream.borrow().is_none());
     assert!(Target::resolve(&player.state, Kind::Track, gtk::INVALID_LIST_POSITION).is_none());
     assert!(Target::resolve(&player.state, Kind::Album, 99).is_none());
-    let target = Target::resolve(&player.state, Kind::Album, 0).unwrap();
+    let target = Target::resolve(&player.state, Kind::Album, 0)
+        .expect("expected test value from Target::resolve(&player.state, Kind::Album, 0)");
     let menu = show(
         view.upcast_ref(),
         Rc::downgrade(&player.state),
@@ -177,7 +265,7 @@ fn desktop_context_menus_target_clicked_rows_and_preserve_queue_playback() {
         .filter_map(Result::ok)
         .filter_map(|controller| controller.downcast::<gtk::EventControllerKey>().ok())
         .find(|keys| keys.name().as_deref() == Some("hermes-music-context-keys"))
-        .unwrap();
+        .expect("expected test value from view .observe_controllers() .iter::<glib::Object>() .filter_map(Result::ok) .filter_map(|controller| controller.downcast::<gtk:...");
     assert!(!keys.emit_by_name::<bool>(
         "key-pressed",
         &[
@@ -195,7 +283,7 @@ fn desktop_context_menus_target_clicked_rows_and_preserve_queue_playback() {
         let menu = super::super::tests::descendants(view.upcast_ref())
             .into_iter()
             .find_map(|widget| widget.downcast::<gtk::Popover>().ok())
-            .unwrap();
+            .expect("expected test value from super::super::tests::descendants(view.upcast_ref()) .into_iter() .find_map(|widget| widget.downcast::<gtk::Popover>().ok())");
         assert!(
             super::super::tests::descendants(menu.upcast_ref())
                 .iter()
@@ -206,7 +294,8 @@ fn desktop_context_menus_target_clicked_rows_and_preserve_queue_playback() {
         dismiss(view.upcast_ref());
         assert!(menu.parent().is_none());
     }
-    let target = Target::resolve(&player.state, Kind::Album, 1).unwrap();
+    let target = Target::resolve(&player.state, Kind::Album, 1)
+        .expect("expected test value from Target::resolve(&player.state, Kind::Album, 1)");
     let menu = show(
         view.upcast_ref(),
         Rc::downgrade(&player.state),

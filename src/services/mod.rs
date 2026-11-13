@@ -2,12 +2,18 @@
 
 mod custom_actions;
 mod file_source;
+pub(crate) mod folder_views;
 mod formats;
-pub(crate) mod music_library;
+pub(crate) mod lyrics;
 pub(crate) mod model_preview;
+pub(crate) mod music_collections;
+pub(crate) mod music_library;
+pub(crate) mod naming;
 mod operations;
 pub(crate) mod preview;
-mod search;
+pub(crate) mod ratings;
+pub(crate) mod saved_searches;
+pub(crate) mod search;
 pub(crate) mod table;
 mod trails;
 pub(crate) mod waveform;
@@ -19,6 +25,7 @@ pub use file_source::{
     DirectoryChange, DirectoryEvent, DirectoryRequest, FileSource, LoadHandle,
     LocationValidationError, RequestId,
 };
+pub(crate) use folder_views::FolderViewStore;
 #[cfg(test)]
 pub(crate) use formats::thumbnail_handler_for_name;
 pub(crate) use formats::{
@@ -26,16 +33,19 @@ pub(crate) use formats::{
     capabilities_by_name, classify_by_mime, classify_by_name, is_gif_image,
 };
 pub use operations::{
-    CompressArchiveRequest, CreateDirectoryRequest, CreateFileRequest, DeleteRequest,
-    ExtractArchiveRequest, OperationEvent, OperationProvider, OperationRequestId, PasteRequest,
-    RenameRequest, RestoreRequest, validate_basename,
+    CompressArchiveRequest, ConflictAction, ConflictReply, ConflictResolution,
+    CreateDirectoryRequest, CreateFileRequest, DeleteRequest, ExtractArchiveRequest,
+    OperationEvent, OperationProvider, OperationRequestId, PasteRequest, RenameRequest,
+    RestoreRequest, validate_basename,
 };
 pub use preview::{
     PdfTextLayer, Preview, PreviewContent, PreviewEvent, PreviewProvider, PreviewRequest,
     PreviewRequestId,
 };
 pub(crate) use search::{
-    SearchEvent, SearchFilterValues, SearchHandle, SearchItem, SearchScope, ScopedSearch, TextExtractionProvider, index_tree,
-    search_filter_values,
+    InferredFilterChip, ScopedSearch, SearchCounts, SearchEntity, SearchEntityKey, SearchEvent,
+    SearchFilterValues, SearchGroup, SearchGroups, SearchHandle, SearchItem, SearchPage,
+    SearchResult, SearchResultKey, SearchScope, TextExtractionProvider, index_tree,
+    search_filter_terms, search_filter_values,
 };
 pub use trails::{StoredTrails, TRAIL_SCHEMA_VERSION, TrailStore};

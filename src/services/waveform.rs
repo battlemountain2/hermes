@@ -6,7 +6,6 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use gtk::glib;
 use serde::{Deserialize, Serialize};
 
 use crate::sandbox::{self, Cancellation, ParseOperation};
@@ -72,7 +71,7 @@ struct CacheEntry {
 }
 
 pub(crate) fn load(path: &Path, cancellation: &Cancellation) -> Result<Vec<f32>, String> {
-    let directory = glib::user_cache_dir().join("strata/music-waveforms");
+    let directory = crate::paths::waveform_cache_dir();
     load_with(path, cancellation, &directory, |path, cancellation| {
         sandbox::parse(path, ParseOperation::MusicWaveform, 0, cancellation)
             .map(|output| output.data)

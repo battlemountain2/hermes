@@ -39,17 +39,10 @@ pub(super) fn fork_child() -> io::Result<Option<i32>> {
     if pid < 0 {
         return Err(io::Error::last_os_error());
     }
-    if pid == 0 {
-        Ok(None)
-    } else {
-        Ok(Some(pid))
-    }
+    if pid == 0 { Ok(None) } else { Ok(Some(pid)) }
 }
 
-#[expect(
-    unsafe_code,
-    reason = "Calls POSIX waitpid to reap child processes"
-)]
+#[expect(unsafe_code, reason = "Calls POSIX waitpid to reap child processes")]
 pub(super) fn wait(pid: i32) -> io::Result<bool> {
     let mut status = 0;
     loop {

@@ -3,10 +3,114 @@ use super::visible_tab_scroll;
 #[test]
 fn file_tab_surfaces_keep_square_indicator_corners() {
     let css = include_str!("../../style.css");
-    for selector in [".file-tab {", ".file-tab-select {"] {
-        let rule = css.split_once(selector).unwrap().1.split_once('}').unwrap().0;
-        assert!(rule.contains("border-radius: 0;"), "Rounded tab surface: {selector}");
+    for selector in [
+        ".file-tab {",
+        ".file-tab-select {",
+        ".file-tab-close {",
+        ".file-tab-rename {",
+        ".tab-strip-new {",
+    ] {
+        let rule = css
+            .rsplit_once(&format!("\n{selector}"))
+            .expect("expected test value from css .rsplit_once(&format!(\"\\n{selector}\"))")
+            .1
+            .split_once('}')
+            .expect("expected test value from css .rsplit_once(&format!(\"\\n{selector}\")) .unwrap() .1 .split_once('}')")
+            .0;
+        assert!(
+            rule.contains("border-radius: 0;"),
+            "Rounded tab surface: {selector}"
+        );
     }
+}
+
+#[test]
+#[ignore = "Requires isolated GTK display; checks real tab close allocation and interaction states"]
+fn desktop_tab_close_is_compact_centered_and_keyboard_focusable() {
+    use crate::{
+        app::{Browser, Trails},
+        model::{Location, TrailViewState},
+        services::{StoredTrails, TrailStore},
+    };
+    use gtk::prelude::*;
+    use std::{
+        rc::Rc,
+        time::{Duration, Instant},
+    };
+
+    struct MemoryStore;
+    impl TrailStore for MemoryStore {
+        fn load(&self) -> std::io::Result<StoredTrails> {
+            Ok(StoredTrails::default())
+        }
+        fn save(&self, _: &StoredTrails) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
+    let _manager = crate::ui::theme::ThemeManager::shared();
+    let css = gtk::CssProvider::new();
+    css.connect_parsing_error(|_, _, error| panic!("Tab stylesheet: {error}"));
+    css.load_from_string(include_str!("../../style.css"));
+    gtk::style_context_add_provider_for_display(
+        &gtk::gdk::Display::default()
+            .expect("expected test value from gtk::gdk::Display::default()"),
+        &css,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let trails = Trails::empty(Rc::new(MemoryStore));
+    trails.create("First", Location::local("/"), TrailViewState::default()).expect("expected test value from trails.create(\"First\", Location::local(\"/\"), TrailViewState::default())");
+    trails.create("Second", Location::local("/"), TrailViewState::default()).expect("expected test value from trails.create(\"Second\", Location::local(\"/\"), TrailViewState::default())");
+    let browser = Browser::new(Rc::new(crate::adapters::RoutedFileSource::new()));
+    let bar = super::TabBar::new(
+        trails.clone(),
+        browser,
+        Rc::new(TrailViewState::default),
+        Rc::new(|_| {}),
+    );
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.append(&bar.widget());
+    let window = gtk::Window::builder()
+        .default_width(640)
+        .default_height(100)
+        .child(&content)
+        .build();
+    window.present();
+    let tab = bar.rendered.borrow()[0].1.clone();
+    let close = tab
+        .last_child()
+        .expect("expected test value from tab.last_child()")
+        .downcast::<gtk::Button>()
+        .expect("expected test value from tab.last_child().unwrap().downcast::<gtk::Button>()");
+    let pump = || {
+        let until = Instant::now() + Duration::from_millis(100);
+        while Instant::now() < until {
+            while gtk::glib::MainContext::default().iteration(false) {}
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    };
+    pump();
+    assert_eq!(close.valign(), gtk::Align::Center);
+    let original = (close.width(), close.height());
+    assert!(close.height() >= 24 && close.height() < tab.height());
+    assert!(close.grab_focus());
+    for state in [
+        gtk::StateFlags::PRELIGHT,
+        gtk::StateFlags::ACTIVE,
+        gtk::StateFlags::FOCUS_VISIBLE,
+    ] {
+        close.set_state_flags(state, false);
+        pump();
+        assert_eq!((close.width(), close.height()), original);
+        close.unset_state_flags(state);
+    }
+    close.emit_clicked();
+    assert_eq!(trails.all().len(), 1);
+    let remaining = bar.rendered.borrow()[0].1.last_child().expect("expected test value from bar.rendered.borrow()[0].1.last_child()").downcast::<gtk::Button>().expect("expected test value from bar.rendered.borrow()[0].1.last_child().unwrap().downcast::<gtk::Button>()");
+    assert!(!remaining.is_sensitive());
+    window.close();
 }
 
 #[test]
@@ -19,30 +123,44 @@ fn desktop_warm_tab_directory_reuse_and_live_changes() {
         ui::browser::{BrowserView, PeekBehavior},
     };
     use gtk::prelude::*;
-    use std::{cell::Cell, rc::Rc, time::{Duration, Instant}};
+    use std::{
+        cell::Cell,
+        rc::Rc,
+        time::{Duration, Instant},
+    };
 
     struct MemoryStore;
     impl TrailStore for MemoryStore {
-        fn load(&self) -> std::io::Result<StoredTrails> { Ok(StoredTrails::default()) }
-        fn save(&self, _: &StoredTrails) -> std::io::Result<()> { Ok(()) }
+        fn load(&self) -> std::io::Result<StoredTrails> {
+            Ok(StoredTrails::default())
+        }
+        fn save(&self, _: &StoredTrails) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let root = std::env::temp_dir().join(format!("hermes-tab-directories-{}", std::process::id()));
     let first = root.join("First");
     let second = root.join("Second");
     for folder in [&first, &second] {
-        std::fs::create_dir_all(folder).unwrap();
+        std::fs::create_dir_all(folder).expect("create generated fixture directory");
         for index in 0..1_000 {
-            std::fs::write(folder.join(format!("entry-{index:04}.txt")), b"fixture").unwrap();
+            std::fs::write(folder.join(format!("entry-{index:04}.txt")), b"fixture")
+                .expect("write generated fixture");
         }
     }
     let trails = Trails::empty(Rc::new(MemoryStore));
-    let first_tab = trails.create("First", Location::local(&first), TrailViewState::default()).unwrap();
-    trails.create("Second", Location::local(&second), TrailViewState::default()).unwrap();
-    trails.activate(&first_tab).unwrap();
-    let view = BrowserView::new(Rc::new(crate::adapters::RoutedFileSource::new()), PeekBehavior::default());
+    let first_tab = trails.create("First", Location::local(&first), TrailViewState::default()).expect("expected test value from trails.create(\"First\", Location::local(&first), TrailViewState::default())");
+    trails.create("Second", Location::local(&second), TrailViewState::default()).expect("expected test value from trails.create(\"Second\", Location::local(&second), TrailViewState::default())");
+    trails
+        .activate(&first_tab)
+        .expect("expected test value from trails.activate(&first_tab)");
+    let view = BrowserView::new(
+        Rc::new(crate::adapters::RoutedFileSource::new()),
+        PeekBehavior::default(),
+    );
     match std::env::var("HERMES_TEST_TAB_MODE").as_deref() {
         Ok("grid") => view.set_view_mode(crate::ui::browser_modes::BrowserMode::Grid),
         Ok("explorer") => view.set_view_mode(crate::ui::browser_modes::BrowserMode::Explorer),
@@ -51,15 +169,28 @@ fn desktop_warm_tab_directory_reuse_and_live_changes() {
     let browser = view.browser();
     let activated_browser = browser.clone();
     let bar = super::TabBar::new(
-        trails, browser.clone(), Rc::new(TrailViewState::default),
+        trails,
+        browser.clone(),
+        Rc::new(TrailViewState::default),
         Rc::new(move |trail| {
-            activated_browser.activate_tab(trail.id.clone(), trail.active_location().unwrap().clone(), trail.view.preferences);
+            activated_browser.activate_tab(
+                trail.id.clone(),
+                trail
+                    .active_location()
+                    .expect("expected test value from trail.active_location()")
+                    .clone(),
+                trail.view.preferences,
+            );
         }),
     );
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.append(&bar.widget());
     content.append(&view.widget());
-    let window = gtk::Window::builder().default_width(1000).default_height(700).child(&content).build();
+    let window = gtk::Window::builder()
+        .default_width(1000)
+        .default_height(700)
+        .child(&content)
+        .build();
     window.present();
     let began = Rc::new(Cell::new(Instant::now()));
     let first_batch = Rc::new(Cell::new(None));
@@ -71,8 +202,12 @@ fn desktop_warm_tab_directory_reuse_and_live_changes() {
         BrowserEvent::EntriesInserted { depth: 0, .. } if observed_first.get().is_none() => {
             observed_first.set(Some(observed_began.get().elapsed()));
         }
-        BrowserEvent::LoadFinished { depth: 0 } => observed_finished.set(Some(observed_began.get().elapsed())),
-        BrowserEvent::TabRestored { .. } => observed_finished.set(Some(observed_began.get().elapsed())),
+        BrowserEvent::LoadFinished { depth: 0 } => {
+            observed_finished.set(Some(observed_began.get().elapsed()))
+        }
+        BrowserEvent::TabRestored { .. } => {
+            observed_finished.set(Some(observed_began.get().elapsed()))
+        }
         BrowserEvent::LoadFailed { message, .. } => panic!("{message}"),
         _ => {}
     });
@@ -88,16 +223,46 @@ fn desktop_warm_tab_directory_reuse_and_live_changes() {
         finished.set(None);
         began.set(Instant::now());
     };
-    for (label, offset) in [("cold-first", 0), ("cold-second", 1), ("warm-first", -1), ("warm-second", 1)] {
+    for (label, offset) in [
+        ("cold-first", 0),
+        ("cold-second", 1),
+        ("warm-first", -1),
+        ("warm-second", 1),
+    ] {
         reset_timing();
-        if offset == 0 { browser.activate_tab(first_tab.clone(), Location::local(&first), crate::model::ViewPreferences::default()); } else { bar.cycle(offset); }
+        if offset == 0 {
+            browser.activate_tab(
+                first_tab.clone(),
+                Location::local(&first),
+                crate::model::ViewPreferences::default(),
+            );
+        } else {
+            bar.cycle(offset);
+        }
         pump_until(&|| finished.get().is_some());
-        assert_eq!(browser.column_entries(0).unwrap().len(), 1_000);
-        eprintln!("generated 1k-entry tab {label}: first GTK insertion={:?}, complete/restored model={:?}", first_batch.get(), finished.get().unwrap());
-        if label.starts_with("warm") { assert!(first_batch.get().is_none(), "Unchanged tab must not reload entries"); }
+        assert_eq!(
+            browser
+                .column_entries(0)
+                .expect("expected test value from browser.column_entries(0)")
+                .len(),
+            1_000
+        );
+        eprintln!(
+            "generated 1k-entry tab {label}: first GTK insertion={:?}, complete/restored model={:?}",
+            first_batch.get(),
+            finished
+                .get()
+                .expect("expected test value from finished.get()")
+        );
+        if label.starts_with("warm") {
+            assert!(
+                first_batch.get().is_none(),
+                "Unchanged tab must not reload entries"
+            );
+        }
     }
     let added = first.join("added.txt");
-    std::fs::write(&added, b"changed while inactive").unwrap();
+    std::fs::write(&added, b"changed while inactive").expect("write generated fixture");
     let until_notifications = Instant::now() + Duration::from_millis(250);
     while Instant::now() < until_notifications {
         gtk::glib::MainContext::default().iteration(false);
@@ -105,19 +270,48 @@ fn desktop_warm_tab_directory_reuse_and_live_changes() {
     }
     reset_timing();
     bar.cycle(-1);
-    pump_until(&|| browser.column_snapshot(0).is_some_and(|column| !column.loading && column.entries.len() == 1001));
-    assert_eq!(browser.column_entries(0).unwrap().len(), 1_001);
+    pump_until(&|| {
+        browser
+            .column_snapshot(0)
+            .is_some_and(|column| !column.loading && column.entries.len() == 1001)
+    });
+    assert_eq!(
+        browser
+            .column_entries(0)
+            .expect("expected test value from browser.column_entries(0)")
+            .len(),
+        1_001
+    );
     let renamed = first.join("renamed.txt");
-    std::fs::rename(&added, &renamed).unwrap();
-    pump_until(&|| browser.column_entries(0).unwrap().iter().any(|entry| entry.location == Location::local(&renamed)));
-    assert!(!browser.column_entries(0).unwrap().iter().any(|entry| entry.location == Location::local(&added)));
-    std::fs::remove_file(&renamed).unwrap();
-    pump_until(&|| browser.column_entries(0).unwrap().len() == 1_000);
+    std::fs::rename(&added, &renamed)
+        .expect("expected test value from std::fs::rename(&added, &renamed)");
+    pump_until(&|| {
+        browser
+            .column_entries(0)
+            .expect("expected test value from browser.column_entries(0)")
+            .iter()
+            .any(|entry| entry.location == Location::local(&renamed))
+    });
+    assert!(
+        !browser
+            .column_entries(0)
+            .expect("expected test value from browser.column_entries(0)")
+            .iter()
+            .any(|entry| entry.location == Location::local(&added))
+    );
+    std::fs::remove_file(&renamed).expect("remove generated fixture");
+    pump_until(&|| {
+        browser
+            .column_entries(0)
+            .expect("expected test value from browser.column_entries(0)")
+            .len()
+            == 1_000
+    });
     view.browser().clear_observer();
     window.close();
     drop((bar, view, browser));
     while gtk::glib::MainContext::default().iteration(false) {}
-    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(root).expect("remove generated fixture");
 }
 
 #[test]
@@ -143,53 +337,122 @@ fn active_tabs_stay_visible_without_unnecessary_scrolling() {
 #[test]
 #[ignore = "Requires GTK display; checks tab reuse during switching and navigation"]
 fn desktop_tab_refresh_reuses_unmodified_widgets() {
-    use crate::{app::{Browser, Trails}, model::{Location, TrailViewState}, services::{StoredTrails, TrailStore}};
+    use crate::{
+        app::{Browser, Trails},
+        model::{Location, TrailViewState},
+        services::{StoredTrails, TrailStore},
+    };
     use gtk::prelude::*;
     use std::rc::Rc;
     struct MemoryStore;
     impl TrailStore for MemoryStore {
-        fn load(&self) -> std::io::Result<StoredTrails> { Ok(StoredTrails::default()) }
-        fn save(&self, _: &StoredTrails) -> std::io::Result<()> { Ok(()) }
+        fn load(&self) -> std::io::Result<StoredTrails> {
+            Ok(StoredTrails::default())
+        }
+        fn save(&self, _: &StoredTrails) -> std::io::Result<()> {
+            Ok(())
+        }
     }
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let trails = Trails::empty(Rc::new(MemoryStore));
-    let first = trails.create("First", Location::local("/tmp/first"), TrailViewState::default()).unwrap();
-    let second = trails.create("Second", Location::local("/tmp/second"), TrailViewState::default()).unwrap();
+    let first = trails.create("First", Location::local("/tmp/first"), TrailViewState::default()).expect("expected test value from trails.create(\"First\", Location::local(\"/tmp/first\"), TrailViewState::default())");
+    let second = trails.create("Second", Location::local("/tmp/second"), TrailViewState::default()).expect("expected test value from trails.create(\"Second\", Location::local(\"/tmp/second\"), TrailViewState::default())");
     let browser = Browser::new(Rc::new(crate::adapters::LocalFileSource));
-    let bar = super::TabBar::new(trails.clone(), browser, Rc::new(TrailViewState::default), Rc::new(|_| {}));
-    let first_widget = bar.tabs.first_child().unwrap();
-    let second_widget = first_widget.next_sibling().unwrap();
+    let bar = super::TabBar::new(
+        trails.clone(),
+        browser,
+        Rc::new(TrailViewState::default),
+        Rc::new(|_| {}),
+    );
+    let first_widget = bar
+        .tabs
+        .first_child()
+        .expect("expected test value from bar.tabs.first_child()");
+    let second_widget = first_widget
+        .next_sibling()
+        .expect("expected test value from first_widget.next_sibling()");
     let started = std::time::Instant::now();
     for _ in 0..100 {
-        trails.activate(&first).unwrap();
+        trails
+            .activate(&first)
+            .expect("expected test value from trails.activate(&first)");
         bar.refresh();
-        trails.activate(&second).unwrap();
+        trails
+            .activate(&second)
+            .expect("expected test value from trails.activate(&second)");
         bar.refresh();
     }
     println!("200 warm tab refreshes: {:?}", started.elapsed());
-    assert_eq!(bar.tabs.first_child().unwrap(), first_widget);
-    assert_eq!(first_widget.next_sibling().unwrap(), second_widget);
+    assert_eq!(
+        bar.tabs
+            .first_child()
+            .expect("expected test value from bar.tabs.first_child()"),
+        first_widget
+    );
+    assert_eq!(
+        first_widget
+            .next_sibling()
+            .expect("expected test value from first_widget.next_sibling()"),
+        second_widget
+    );
     assert!(second_widget.has_css_class("active"));
     assert!(!first_widget.has_css_class("active"));
-    let select = first_widget.first_child().unwrap();
-    let rename = select.next_sibling().unwrap();
+    let select = first_widget
+        .first_child()
+        .expect("expected test value from first_widget.first_child()");
+    let rename = select
+        .next_sibling()
+        .expect("expected test value from select.next_sibling()");
     select.set_visible(false);
     rename.set_visible(true);
     bar.refresh();
     assert!(select.is_visible());
     assert!(!rename.is_visible());
-    trails.rename(&second, "Renamed").unwrap();
+    trails
+        .rename(&second, "Renamed")
+        .expect("expected test value from trails.rename(&second, \"Renamed\")");
     bar.refresh();
-    assert_eq!(bar.tabs.first_child().unwrap(), first_widget);
-    assert_ne!(first_widget.next_sibling().unwrap(), second_widget);
-    trails.move_relative(&second, &first, true).unwrap();
+    assert_eq!(
+        bar.tabs
+            .first_child()
+            .expect("expected test value from bar.tabs.first_child()"),
+        first_widget
+    );
+    assert_ne!(
+        first_widget
+            .next_sibling()
+            .expect("expected test value from first_widget.next_sibling()"),
+        second_widget
+    );
+    trails
+        .move_relative(&second, &first, true)
+        .expect("expected test value from trails.move_relative(&second, &first, true)");
     bar.refresh();
-    assert_eq!(bar.tabs.first_child().unwrap().next_sibling().unwrap(), first_widget);
-    trails.close(&second).unwrap();
+    assert_eq!(
+        bar.tabs
+            .first_child()
+            .expect("expected test value from bar.tabs.first_child()")
+            .next_sibling()
+            .expect("expected test value from bar.tabs.first_child().unwrap().next_sibling()"),
+        first_widget
+    );
+    trails
+        .close(&second)
+        .expect("expected test value from trails.close(&second)");
     bar.refresh();
-    assert_eq!(bar.tabs.first_child().unwrap(), first_widget);
-    assert!(!first_widget.last_child().unwrap().is_sensitive());
+    assert_eq!(
+        bar.tabs
+            .first_child()
+            .expect("expected test value from bar.tabs.first_child()"),
+        first_widget
+    );
+    assert!(
+        !first_widget
+            .last_child()
+            .expect("expected test value from first_widget.last_child()")
+            .is_sensitive()
+    );
 }
 
 #[test]
@@ -211,12 +474,12 @@ fn desktop_new_switch_and_close_tabs_return_to_files_without_hiding_transport() 
             Ok(())
         }
     }
-    gtk::init().unwrap();
-    crate::assets::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
     let trails = Trails::empty(Rc::new(MemoryStore));
     trails
         .create("First", Location::local("/tmp"), TrailViewState::default())
-        .unwrap();
+        .expect("expected test value from trails .create(\"First\", Location::local(\"/tmp\"), TrailViewState::default())");
     let browser = Browser::new(Rc::new(crate::adapters::LocalFileSource));
     browser.navigate(Location::local("/tmp"));
     let workspace = gtk::Stack::new();
@@ -319,10 +582,15 @@ fn desktop_tabs_remain_compact_and_aligned() {
         Rc::new(TrailViewState::default),
         Rc::new(|_| {}),
     );
+    let layout = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    layout.append(&bar.widget());
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.set_vexpand(true);
+    layout.append(&content);
     let window = gtk::Window::builder()
         .default_width(1200)
         .default_height(100)
-        .child(&bar.widget())
+        .child(&layout)
         .build();
     window.present();
     let deadline = Instant::now() + Duration::from_millis(500);
@@ -332,7 +600,26 @@ fn desktop_tabs_remain_compact_and_aligned() {
     }
     let mut tab = bar.tabs.first_child().expect("First tab exists");
     let first_height = tab.height();
-    assert!(first_height > 0);
+    assert!(
+        (40..=42).contains(&first_height),
+        "Tab row unexpectedly grew to {first_height}px"
+    );
+    let first_bounds = tab
+        .compute_bounds(&bar.root)
+        .expect("expected test value from tab.compute_bounds(&bar.root)");
+    assert!(
+        first_bounds.x().abs() <= 1.0,
+        "The first tab is inset from the strip"
+    );
+    assert!(
+        first_bounds.y().abs() <= 1.0,
+        "The indicator is inset from the top edge"
+    );
+    assert!(
+        (first_bounds.height() - bar.root.height() as f32).abs() <= 1.0,
+        "The tab does not fill the strip height"
+    );
+    let mut previous_right: Option<f32> = None;
     for _ in 0..3 {
         assert!(
             tab.width() >= 120 && tab.width() <= 300,
@@ -340,6 +627,16 @@ fn desktop_tabs_remain_compact_and_aligned() {
             tab.width()
         );
         assert_eq!(tab.height(), first_height);
+        let bounds = tab
+            .compute_bounds(&bar.tabs)
+            .expect("expected test value from tab.compute_bounds(&bar.tabs)");
+        if let Some(previous_right) = previous_right {
+            assert!(
+                (bounds.x() - previous_right).abs() <= 1.0,
+                "Gap between adjacent tab surfaces"
+            );
+        }
+        previous_right = Some(bounds.x() + bounds.width());
         let mut child = tab.first_child();
         while let Some(widget) = child {
             if widget.is_visible() {
@@ -355,6 +652,125 @@ fn desktop_tabs_remain_compact_and_aligned() {
         bar.tabs.width() < bar.root.width(),
         "Compact tabs must leave trailing space"
     );
+    window.set_child(None::<&gtk::Widget>);
     window.close();
+    let narrow_window = gtk::Window::builder()
+        .default_width(260)
+        .default_height(180)
+        .child(&layout)
+        .build();
+    narrow_window.present();
+    let deadline = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < deadline {
+        while gtk::glib::MainContext::default().iteration(false) {}
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(bar.root.hadjustment().upper() > bar.root.hadjustment().page_size());
+    assert_eq!(
+        bar.tabs
+            .first_child()
+            .expect("expected test value from bar.tabs.first_child()")
+            .height(),
+        first_height
+    );
+    for _ in 0..2 {
+        let last = bar
+            .trails
+            .all()
+            .last()
+            .expect("expected test value from bar.trails.all().last()")
+            .id
+            .clone();
+        bar.close_tab(&last);
+    }
+    narrow_window.set_child(None::<&gtk::Widget>);
+    narrow_window.close();
+    let single_window = gtk::Window::builder()
+        .default_width(260)
+        .default_height(180)
+        .child(&layout)
+        .build();
+    single_window.present();
+    let deadline = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < deadline {
+        while gtk::glib::MainContext::default().iteration(false) {}
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let remaining = bar
+        .tabs
+        .first_child()
+        .expect("expected test value from bar.tabs.first_child()");
+    let bounds = remaining
+        .compute_bounds(&bar.root)
+        .expect("expected test value from remaining.compute_bounds(&bar.root)");
+    assert!(bounds.x().abs() <= 1.0 && bounds.y().abs() <= 1.0);
+    assert_eq!(remaining.height(), first_height);
+    assert!(
+        remaining.width() < bar.root.width(),
+        "A lone tab must stay compact"
+    );
+    assert!(
+        !remaining
+            .last_child()
+            .expect("expected test value from remaining.last_child()")
+            .is_sensitive()
+    );
+    single_window.close();
     gtk::style_context_remove_provider_for_display(&display, &provider);
+}
+
+#[test]
+#[ignore = "Requires isolated GTK display; exercises TabBar tab reopen"]
+fn tab_bar_reopen_closed_tab_restores_last_closed_tab() {
+    use crate::{
+        app::{Browser, Trails},
+        model::{Location, TrailViewState},
+        services::{StoredTrails, TrailStore},
+    };
+    use std::rc::Rc;
+
+    struct MemoryStore;
+    impl TrailStore for MemoryStore {
+        fn load(&self) -> std::io::Result<StoredTrails> {
+            Ok(StoredTrails::default())
+        }
+        fn save(&self, _: &StoredTrails) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    gtk::init().expect("initialize the isolated GTK display");
+    let trails = Trails::empty(Rc::new(MemoryStore));
+    let id1 = trails
+        .create("First", Location::local("/first"), TrailViewState::default())
+        .expect("expected test value from trails .create(\"First\", Location::local(\"/first\"), TrailViewState::default())");
+    let id2 = trails
+        .create("Second", Location::local("/second"), TrailViewState::default())
+        .expect("expected test value from trails .create(\"Second\", Location::local(\"/second\"), TrailViewState::default())");
+    let browser = Browser::new(Rc::new(crate::adapters::RoutedFileSource::new()));
+    let bar = super::TabBar::new(
+        trails.clone(),
+        browser,
+        Rc::new(TrailViewState::default),
+        Rc::new(|_| {}),
+    );
+    assert_eq!(trails.all().len(), 2);
+
+    // Close the second tab
+    bar.close_tab(&id2);
+    assert_eq!(trails.all().len(), 1);
+    assert_eq!(trails.all()[0].id, id1);
+
+    // Reopen the closed tab (simulates Ctrl+Shift+T)
+    bar.reopen_closed_tab();
+    assert_eq!(trails.all().len(), 2);
+    let all = trails.all();
+    assert_eq!(all[1].name, "Second");
+    assert_eq!(
+        all[1]
+            .active_location()
+            .expect("expected test value from all[1].active_location()")
+            .display_path(),
+        "/second"
+    );
 }

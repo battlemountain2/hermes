@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#![allow(unsafe_code, dead_code, unused_imports, unused_mut, clippy::all)]
-
 //! Empirical Challenger Test Suite (Replacement Challenger 2):
 //! Thorough verification of Milestone 2:
 //! 1. SCM_RIGHTS descriptor passing under rapid requests (100 back-to-back requests, zero FD leaks, live worker pipeline).
@@ -10,24 +8,21 @@
 //! 4. Worker termination and disposal on timeout / unexpected exit (SIGKILL, broken pipe, deadline expiry, zombie reaping).
 
 use std::{
-    fs::{self, File},
+    fs::File,
     io::{self, Read, Write},
-    os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd},
+    os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
     os::unix::net::UnixStream,
-    path::Path,
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
 
-use gdk_pixbuf::prelude::*;
-
 mod common;
+use common::wire_protocol::{MAX_PAYLOAD_SIZE, WireError, decode_header, read_framed_message};
 use common::*;
-use common::wire_protocol::{decode_header, encode_frame, read_framed_message, WireError, MAX_PAYLOAD_SIZE, HEADER_SIZE};
 
 // POSIX socket ancillary definitions
 #[repr(C)]
@@ -73,34 +68,52 @@ struct PollFd {
 }
 const POLLIN: i16 = 0x0001;
 
+#[expect(
+    unsafe_code,
+    reason = "Exercise Linux descriptor passing with reviewed C layouts and owned descriptor lifetimes"
+)]
 unsafe extern "C" {
     fn sendmsg(sockfd: i32, msg: *const Msghdr, flags: i32) -> isize;
     fn recvmsg(sockfd: i32, msg: *mut Msghdr, flags: i32) -> isize;
     fn pipe2(pipefd: *mut i32, flags: i32) -> i32;
     fn poll(fds: *mut PollFd, nfds: usize, timeout: i32) -> i32;
-    fn kill(pid: i32, sig: i32) -> i32;
-    fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
     fn fcntl(fd: i32, cmd: i32, ...) -> i32;
 }
 
 const F_GETFD: i32 = 1;
 
+#[expect(
+    unsafe_code,
+    reason = "Exercise Linux descriptor passing with reviewed C layouts and owned descriptor lifetimes"
+)]
 fn is_fd_valid(fd: RawFd) -> bool {
+    // SAFETY: F_GETFD only inspects an integer descriptor; it neither dereferences memory nor takes ownership.
     let ret = unsafe { fcntl(fd, F_GETFD) };
     ret >= 0
 }
 
+#[expect(
+    unsafe_code,
+    reason = "Exercise Linux descriptor passing with reviewed C layouts and owned descriptor lifetimes"
+)]
 fn create_cloexec_pipe() -> io::Result<(OwnedFd, OwnedFd)> {
     let mut fds = [0; 2];
+    // SAFETY: fds points to two writable RawFd slots for the duration of pipe2.
     let ret = unsafe { pipe2(fds.as_mut_ptr(), 0x80000) };
     if ret < 0 {
         return Err(io::Error::last_os_error());
     }
+    // SAFETY: successful pipe2 returned a new read descriptor, transferred exactly once to OwnedFd.
     let read = unsafe { OwnedFd::from_raw_fd(fds[0]) };
+    // SAFETY: successful pipe2 returned a distinct new write descriptor, transferred exactly once.
     let write = unsafe { OwnedFd::from_raw_fd(fds[1]) };
     Ok((read, write))
 }
 
+#[expect(
+    unsafe_code,
+    reason = "Exercise Linux descriptor passing with reviewed C layouts and owned descriptor lifetimes"
+)]
 fn send_scm_rights(
     socket: &UnixStream,
     fd1: &impl AsRawFd,
@@ -130,6 +143,8 @@ fn send_scm_rights(
         msg_flags: 0,
     };
 
+    // SAFETY: msg, iov and cmsg use Linux C layouts and reference live, correctly sized buffers;
+    // socket and both passed descriptors remain borrowed throughout the synchronous call.
     let count = unsafe { sendmsg(socket.as_raw_fd(), &msg, MSG_NOSIGNAL) };
     if count < 0 {
         return Err(io::Error::last_os_error());
@@ -140,6 +155,10 @@ fn send_scm_rights(
     Ok(())
 }
 
+#[expect(
+    unsafe_code,
+    reason = "Exercise Linux descriptor passing with reviewed C layouts and owned descriptor lifetimes"
+)]
 fn recv_scm_rights(socket: &UnixStream) -> io::Result<Option<(u8, OwnedFd, OwnedFd)>> {
     let mut cmsg = ScmRights2Buffer {
         hdr: Cmsghdr {
@@ -164,6 +183,8 @@ fn recv_scm_rights(socket: &UnixStream) -> io::Result<Option<(u8, OwnedFd, Owned
         msg_flags: 0,
     };
 
+    // SAFETY: msg and its Linux C-layout iov/control buffers are writable and live for this call;
+    // the owned socket remains open, and the advertised sizes match those buffers.
     let count = unsafe { recvmsg(socket.as_raw_fd(), &mut msg, MSG_CMSG_CLOEXEC) };
     if count < 0 {
         return Err(io::Error::last_os_error());
@@ -171,7 +192,11 @@ fn recv_scm_rights(socket: &UnixStream) -> io::Result<Option<(u8, OwnedFd, Owned
     if count == 0 {
         return Ok(None);
     }
-    if cmsg.hdr.cmsg_level != SOL_SOCKET
+    if count != 1
+        || msg.msg_flags & 8 != 0 // Linux MSG_CTRUNC: never adopt a partial descriptor message.
+        || msg.msg_controllen != std::mem::size_of::<ScmRights2Buffer>()
+        || cmsg.hdr.cmsg_len != std::mem::size_of::<ScmRights2Buffer>()
+        || cmsg.hdr.cmsg_level != SOL_SOCKET
         || cmsg.hdr.cmsg_type != SCM_RIGHTS
         || cmsg.fds[0] < 0
         || cmsg.fds[1] < 0
@@ -179,7 +204,11 @@ fn recv_scm_rights(socket: &UnixStream) -> io::Result<Option<(u8, OwnedFd, Owned
         return Err(io::Error::other("Invalid descriptors in recvmsg"));
     }
 
+    // SAFETY: the checked, untruncated SCM_RIGHTS message supplied a newly received descriptor.
+    // No other owner has been constructed for this descriptor.
     let fd1 = unsafe { OwnedFd::from_raw_fd(cmsg.fds[0]) };
+    // SAFETY: the kernel supplied a distinct second descriptor in the validated SCM_RIGHTS message;
+    // it has not yet been transferred to another owner.
     let fd2 = unsafe { OwnedFd::from_raw_fd(cmsg.fds[1]) };
     Ok(Some((op_byte[0], fd1, fd2)))
 }
@@ -193,6 +222,10 @@ struct TestDeadlineReader<'a, R: AsRawFd + Read> {
 }
 
 impl<R: AsRawFd + Read> Read for TestDeadlineReader<'_, R> {
+    #[expect(
+        unsafe_code,
+        reason = "Exercise Linux descriptor passing with reviewed C layouts and owned descriptor lifetimes"
+    )]
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -214,6 +247,7 @@ impl<R: AsRawFd + Read> Read for TestDeadlineReader<'_, R> {
                 events: POLLIN,
                 revents: 0,
             };
+            // SAFETY: pfd is a live writable single-element Linux pollfd and nfds is exactly one.
             let ret = unsafe { poll(&mut pfd, 1, wait_ms) };
             if ret < 0 {
                 let err = io::Error::last_os_error();
@@ -247,7 +281,9 @@ static FD_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
 fn test_scm_rights_rapid_burst_and_fd_leak_check() {
-    let _lock = FD_TEST_MUTEX.lock().unwrap();
+    let _lock = FD_TEST_MUTEX
+        .lock()
+        .expect("expected test value from FD_TEST_MUTEX.lock()");
     let (sock_host, sock_worker) = UnixStream::pair().expect("unix stream pair");
 
     let iterations = 100;
@@ -262,16 +298,27 @@ fn test_scm_rights_rapid_burst_and_fd_leak_check() {
 
         let mut file_in_write = File::from(pipe_in_write);
         let marker = format!("request_{i}");
-        file_in_write.write_all(marker.as_bytes()).expect("write marker");
+        file_in_write
+            .write_all(marker.as_bytes())
+            .expect("write marker");
         drop(file_in_write);
-        assert!(!is_fd_valid(raw_in_write), "pipe_in_write must be closed after drop");
+        assert!(
+            !is_fd_valid(raw_in_write),
+            "pipe_in_write must be closed after drop"
+        );
 
         let op = ((i % 12) + 1) as u8;
         send_scm_rights(&sock_host, &pipe_in_read, &pipe_out_write, op).expect("send");
         drop(pipe_in_read);
         drop(pipe_out_write);
-        assert!(!is_fd_valid(raw_in_read), "pipe_in_read must be closed after drop");
-        assert!(!is_fd_valid(raw_out_write), "pipe_out_write must be closed after drop");
+        assert!(
+            !is_fd_valid(raw_in_read),
+            "pipe_in_read must be closed after drop"
+        );
+        assert!(
+            !is_fd_valid(raw_out_write),
+            "pipe_out_write must be closed after drop"
+        );
 
         let (recv_op, recv_in, recv_out) = recv_scm_rights(&sock_worker)
             .expect("recv")
@@ -281,37 +328,52 @@ fn test_scm_rights_rapid_burst_and_fd_leak_check() {
         let raw_recv_in = recv_in.as_raw_fd();
         let raw_recv_out = recv_out.as_raw_fd();
         assert!(is_fd_valid(raw_recv_in), "recv_in must be valid descriptor");
-        assert!(is_fd_valid(raw_recv_out), "recv_out must be valid descriptor");
+        assert!(
+            is_fd_valid(raw_recv_out),
+            "recv_out must be valid descriptor"
+        );
 
         let mut read_buf = Vec::new();
         let mut file_in = File::from(recv_in);
         file_in.read_to_end(&mut read_buf).expect("read in pipe");
         assert_eq!(read_buf, marker.as_bytes());
         drop(file_in);
-        assert!(!is_fd_valid(raw_recv_in), "recv_in must be closed after drop");
+        assert!(
+            !is_fd_valid(raw_recv_in),
+            "recv_in must be closed after drop"
+        );
 
         let mut file_out = File::from(recv_out);
         file_out.write_all(b"worker_ok").expect("write out pipe");
         drop(file_out);
-        assert!(!is_fd_valid(raw_recv_out), "recv_out must be closed after drop");
+        assert!(
+            !is_fd_valid(raw_recv_out),
+            "recv_out must be closed after drop"
+        );
 
         let mut out_buf = Vec::new();
         let mut file_out_read = File::from(pipe_out_read);
         file_out_read.read_to_end(&mut out_buf).expect("read out");
         assert_eq!(&out_buf, b"worker_ok");
         drop(file_out_read);
-        assert!(!is_fd_valid(raw_out_read), "pipe_out_read must be closed after drop");
+        assert!(
+            !is_fd_valid(raw_out_read),
+            "pipe_out_read must be closed after drop"
+        );
     }
 }
 
 #[test]
 fn test_scm_rights_live_worker_pipeline_under_rapid_requests() {
+    let _lock = FD_TEST_MUTEX
+        .lock()
+        .expect("expected test value from FD_TEST_MUTEX.lock()");
     let env = TestEnv::new();
     let img_bytes = generate_valid_jpeg(64, 64);
     let img_path = env.write_file("test_rapid.jpg", &img_bytes);
 
     let (host_sock, worker_sock) = UnixStream::pair().expect("socket pair");
-    let binary = env!("CARGO_BIN_EXE_strata");
+    let binary = env!("CARGO_BIN_EXE_hermes");
 
     let mut child = Command::new(binary)
         .arg("--preview-helper")
@@ -322,7 +384,8 @@ fn test_scm_rights_live_worker_pipeline_under_rapid_requests() {
         .spawn()
         .expect("spawn browser worker");
 
-    for i in 0..20 {
+    // Complete one cold decode before measuring twenty requests on the live worker.
+    for i in 0..=20 {
         let start = Instant::now();
         let file = File::open(&img_path).expect("open image file");
         let (pipe_read, pipe_write) = create_cloexec_pipe().expect("pipe");
@@ -332,26 +395,38 @@ fn test_scm_rights_live_worker_pipeline_under_rapid_requests() {
         drop(pipe_write);
 
         let (png, meta) = read_framed_message(File::from(pipe_read)).expect("read response");
-        assert!(is_valid_png(&png), "Must produce valid PNG on iteration {i}");
+        assert!(
+            is_valid_png(&png),
+            "Must produce valid PNG on iteration {i}"
+        );
         assert!(meta.is_empty(), "Image thumbnail has empty metadata");
 
         let mut status = [0u8; 1];
         let mut host_sock_clone = host_sock.try_clone().expect("clone sock");
-        host_sock_clone.read_exact(&mut status).expect("read status byte");
+        host_sock_clone
+            .read_exact(&mut status)
+            .expect("read status byte");
         assert_eq!(status[0], 1, "Worker reported failure on iteration {i}");
         drop(host_sock_clone);
 
         let duration = start.elapsed();
-        assert!(
-            duration < Duration::from_millis(150),
-            "Warm request took too long ({:?}) on iteration {i}",
-            duration
-        );
+        if i == 0 {
+            eprintln!("Cold worker request completed in {duration:?}");
+        } else {
+            assert!(
+                duration < Duration::from_millis(150),
+                "Warm request took too long ({:?}) on iteration {i}",
+                duration
+            );
+        }
     }
 
     drop(host_sock);
     let status = child.wait().expect("wait child");
-    assert!(status.success(), "Worker supervisor must exit cleanly after EOF");
+    assert!(
+        status.success(),
+        "Worker supervisor must exit cleanly after EOF"
+    );
 }
 
 // =========================================================================
@@ -381,19 +456,37 @@ fn test_framing_exact_32mb_boundaries() {
     header[0..4].copy_from_slice(&(max + 1).to_le_bytes());
     header[4..8].copy_from_slice(&0u32.to_le_bytes());
     let err = decode_header(&header).expect_err("32MB + 1 png rejected");
-    assert_eq!(err, WireError::PayloadTooLarge { length: max + 1, max });
+    assert_eq!(
+        err,
+        WireError::PayloadTooLarge {
+            length: max + 1,
+            max
+        }
+    );
 
     // 4. meta_len = 32MB + 1 must be rejected
     header[0..4].copy_from_slice(&0u32.to_le_bytes());
     header[4..8].copy_from_slice(&(max + 1).to_le_bytes());
     let err = decode_header(&header).expect_err("32MB + 1 meta rejected");
-    assert_eq!(err, WireError::PayloadTooLarge { length: max + 1, max });
+    assert_eq!(
+        err,
+        WireError::PayloadTooLarge {
+            length: max + 1,
+            max
+        }
+    );
 
     // 5. u32::MAX (4GB - 1) must be rejected
     header[0..4].copy_from_slice(&u32::MAX.to_le_bytes());
     header[4..8].copy_from_slice(&0u32.to_le_bytes());
     let err = decode_header(&header).expect_err("u32::MAX png rejected");
-    assert_eq!(err, WireError::PayloadTooLarge { length: u32::MAX, max });
+    assert_eq!(
+        err,
+        WireError::PayloadTooLarge {
+            length: u32::MAX,
+            max
+        }
+    );
 
     // 6. Zero lengths round trip
     header[0..4].copy_from_slice(&0u32.to_le_bytes());
@@ -487,7 +580,9 @@ fn test_cancellation_mid_poll_aborts_within_20ms() {
 
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(15));
-        *trigger_time_clone.lock().unwrap() = Some(Instant::now());
+        *trigger_time_clone
+            .lock()
+            .expect("expected test value from trigger_time_clone.lock()") = Some(Instant::now());
         cancel_clone.store(true, Ordering::Release);
     });
 
@@ -504,7 +599,10 @@ fn test_cancellation_mid_poll_aborts_within_20ms() {
 
     assert!(err.to_string().contains("cancelled"));
 
-    let t_trigger = trigger_time.lock().unwrap().expect("trigger occurred");
+    let t_trigger = trigger_time
+        .lock()
+        .expect("expected test value from trigger_time.lock()")
+        .expect("trigger occurred");
     let delay_since_cancel = return_instant.duration_since(t_trigger);
 
     assert!(
@@ -566,10 +664,13 @@ fn test_cancellation_multi_threaded_never_hangs() {
 
 #[test]
 fn test_worker_disposal_on_unexpected_sigkill() {
+    let _lock = FD_TEST_MUTEX
+        .lock()
+        .expect("expected test value from FD_TEST_MUTEX.lock()");
     let (host_sock, worker_sock) = UnixStream::pair().expect("socket pair");
-    let binary = env!("CARGO_BIN_EXE_strata");
+    let binary = env!("CARGO_BIN_EXE_hermes");
 
-    let child = Command::new(binary)
+    let mut child = Command::new(binary)
         .arg("--preview-helper")
         .arg("browser-worker")
         .stdin(Stdio::from(OwnedFd::from(worker_sock)))
@@ -578,20 +679,19 @@ fn test_worker_disposal_on_unexpected_sigkill() {
         .spawn()
         .expect("spawn worker");
 
-    let pid = child.id() as i32;
-
-    let kill_ret = unsafe { kill(pid, 9) };
-    assert_eq!(kill_ret, 0, "kill -9 succeeded");
+    child.kill().expect("kill only the generated worker child");
 
     let mut buf = [0u8; 10];
-    let count = host_sock.try_clone().unwrap().read(&mut buf).unwrap_or(0);
+    let count = host_sock
+        .try_clone()
+        .expect("expected test value from host_sock.try_clone()")
+        .read(&mut buf)
+        .unwrap_or(0);
     assert_eq!(count, 0, "Host detects immediate EOF when worker is killed");
 
-    let mut status = 0;
-    let wait_ret = unsafe { waitpid(pid, &mut status, 0) };
-    assert_eq!(wait_ret, pid, "waitpid reaped killed child");
-    let exited_sig = status & 0x7f;
-    assert_eq!(exited_sig, 9, "Process terminated by SIGKILL (signal 9)");
+    use std::os::unix::process::ExitStatusExt;
+    let status = child.wait().expect("reap the generated worker child");
+    assert_eq!(status.signal(), Some(9), "worker terminated by SIGKILL");
 }
 
 #[test]
@@ -623,13 +723,16 @@ fn test_deadline_reader_timeout_expiry() {
 
 #[test]
 fn test_worker_disposal_and_respawn_after_crash() {
+    let _lock = FD_TEST_MUTEX
+        .lock()
+        .expect("expected test value from FD_TEST_MUTEX.lock()");
     let env = TestEnv::new();
     let img_bytes = generate_valid_jpeg(32, 32);
     let img_path = env.write_file("respawn_test.jpg", &img_bytes);
-    let binary = env!("CARGO_BIN_EXE_strata");
+    let binary = env!("CARGO_BIN_EXE_hermes");
 
     let (host_sock1, worker_sock1) = UnixStream::pair().expect("socket pair");
-    let child1 = Command::new(binary)
+    let mut child1 = Command::new(binary)
         .arg("--preview-helper")
         .arg("browser-worker")
         .stdin(Stdio::from(OwnedFd::from(worker_sock1)))
@@ -638,12 +741,8 @@ fn test_worker_disposal_and_respawn_after_crash() {
         .spawn()
         .expect("spawn worker 1");
 
-    let pid1 = child1.id() as i32;
-
-    // Simulate crash of Worker 1 via SIGKILL
-    unsafe { kill(pid1, 9) };
-    let mut status1 = 0;
-    unsafe { waitpid(pid1, &mut status1, 0) };
+    child1.kill().expect("kill only the first generated worker");
+    child1.wait().expect("reap the first generated worker");
     drop(host_sock1);
 
     // Spawn Worker 2 (simulating Lease retry / pool replacement)
@@ -667,8 +766,12 @@ fn test_worker_disposal_and_respawn_after_crash() {
     assert!(is_valid_png(&png), "Worker 2 produced valid PNG");
 
     let mut status_byte = [0u8; 1];
-    let mut sock2_clone = host_sock2.try_clone().unwrap();
-    sock2_clone.read_exact(&mut status_byte).expect("read status");
+    let mut sock2_clone = host_sock2
+        .try_clone()
+        .expect("expected test value from host_sock2.try_clone()");
+    sock2_clone
+        .read_exact(&mut status_byte)
+        .expect("read status");
     assert_eq!(status_byte[0], 1);
     drop(sock2_clone); // IMPORTANT: drop clone so EOF reaches worker child2
 

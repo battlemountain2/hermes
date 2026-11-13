@@ -3,11 +3,42 @@
 use super::*;
 
 #[test]
+#[ignore = "Requires an isolated GTK display; no real filesystem queries"]
+fn desktop_status_sizes_reformat_cached_values_and_cleared_free_space_stays_empty() {
+    gtk::init().expect("initialize the isolated GTK display");
+    formatting::configure("iso", "decimal");
+    let bar = StatusBar::new();
+    bar.update_selection(2, 1_500_000);
+    formatting::bind(&bar.free_space, Value::FreeSpace(1_500_000));
+    assert_eq!(bar.selection_info.text(), "2 selected, 1.5 MB");
+    assert_eq!(bar.free_space.text(), "1.5 MB free");
+    formatting::configure("iso", "binary");
+    assert_eq!(bar.selection_info.text(), "2 selected, 1.4 MiB");
+    assert_eq!(bar.free_space.text(), "1.4 MiB free");
+    bar.clear_free_space();
+    assert_eq!(bar.free_space_generation.get(), 1);
+    bar.update_selection(0, 1_500_000);
+    formatting::configure("relative", "decimal");
+    assert_eq!(bar.selection_info.text(), "");
+    assert_eq!(bar.free_space.text(), "");
+}
+
+#[test]
 fn item_count_formatting_handles_singular_and_plural() {
     assert_eq!(format_item_count(0), "0 items");
     assert_eq!(format_item_count(1), "1 item");
     assert_eq!(format_item_count(2), "2 items");
     assert_eq!(format_item_count(42), "42 items");
+}
+
+#[test]
+fn item_stats_formatting_includes_total_size() {
+    formatting::configure("iso", "decimal");
+    assert_eq!(format_item_stats(0, 0), "0 items");
+    assert_eq!(format_item_stats(0, 1024), "0 items");
+    assert_eq!(format_item_stats(1, 0), "1 item");
+    assert_eq!(format_item_stats(1, 1_500), "1 item (1.5 kB)");
+    assert_eq!(format_item_stats(142, 2_400_000_000), "142 items (2.4 GB)");
 }
 
 #[test]
@@ -74,11 +105,9 @@ fn edge_case_byte_sizes_for_free_space() {
 }
 
 #[test]
+#[ignore = "Requires an isolated GTK display; no real filesystem queries"]
 fn test_status_bar_clear_free_space_widget() {
-    if gtk::init().is_err() {
-        eprintln!("GTK init skipped (no display server)");
-        return;
-    }
+    gtk::init().expect("initialize the isolated GTK display");
     let bar = StatusBar::new();
     // Simulate updating free space
     bar.free_space.set_text("500 GB free");
@@ -88,4 +117,3 @@ fn test_status_bar_clear_free_space_widget() {
     bar.clear_free_space();
     assert_eq!(bar.free_space.text(), "");
 }
-

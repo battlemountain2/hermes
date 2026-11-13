@@ -71,14 +71,43 @@ impl Location {
         }
     }
 
+    pub fn archive_parts(&self) -> Option<(std::path::PathBuf, String)> {
+        self.uri_value().and_then(parse_archive_uri)
+    }
+
     pub fn parent(&self) -> Option<Self> {
-        let path = self.native_path()?;
-        let parent = path.parent()?;
-        (parent != path).then(|| Self::local(parent))
+        if let Some(path) = self.native_path() {
+            let parent = path.parent()?;
+            (parent != path).then(|| Self::local(parent))
+        } else if let Some((archive_file, member_subpath)) = self.archive_parts() {
+            if member_subpath.is_empty() {
+                archive_file.parent().map(Self::local)
+            } else {
+                let parent_sub = std::path::Path::new(&member_subpath)
+                    .parent()
+                    .and_then(|p| p.to_str())
+                    .unwrap_or("");
+                if parent_sub.is_empty() {
+                    Some(Self::uri(format!("archive://{}/", archive_file.display())))
+                } else {
+                    Some(Self::uri(format!(
+                        "archive://{}/{}/",
+                        archive_file.display(),
+                        parent_sub
+                    )))
+                }
+            }
+        } else {
+            None
+        }
     }
 
     pub fn is_absolute_native(&self) -> bool {
         self.native_path().is_some_and(std::path::Path::is_absolute)
+    }
+
+    pub fn is_home_dashboard(&self) -> bool {
+        self.uri_value() == Some("home:///")
     }
 
     pub fn rebase(&self, from: &Self, to: &Self) -> Option<Self> {
@@ -117,6 +146,24 @@ impl Location {
                 .filter(|name| !name.is_empty())
                 .unwrap_or_else(|| path.to_string_lossy().into_owned()),
             LocationKind::Uri(uri) if uri == "trash:///" => "Trash".into(),
+            LocationKind::Uri(uri) if uri == "home:///" => "Home".into(),
+            LocationKind::Uri(uri) if uri.starts_with("archive://") => {
+                if let Some((archive_file, member_subpath)) = parse_archive_uri(uri) {
+                    if member_subpath.is_empty() {
+                        archive_file
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "Archive".into())
+                    } else {
+                        std::path::Path::new(&member_subpath)
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| member_subpath)
+                    }
+                } else {
+                    "Archive".into()
+                }
+            }
             LocationKind::Uri(uri) => uri
                 .trim_end_matches('/')
                 .rsplit('/')
@@ -127,13 +174,88 @@ impl Location {
     }
 
     pub fn breadcrumbs(&self) -> Vec<Self> {
-        let Some(path) = self.native_path() else {
-            return vec![self.clone()];
-        };
-        let mut locations: Vec<_> = path.ancestors().map(Self::local).collect();
-        locations.reverse();
-        locations
+        if let Some(path) = self.native_path() {
+            let mut locations: Vec<_> = path.ancestors().map(Self::local).collect();
+            locations.reverse();
+            locations
+        } else if let Some((archive_file, member_subpath)) = self.archive_parts() {
+            let mut locations: Vec<_> = archive_file.ancestors().map(Self::local).collect();
+            locations.reverse();
+            if let Some(last) = locations.last_mut() {
+                *last = Self::uri(format!("archive://{}/", archive_file.display()));
+            }
+            if !member_subpath.is_empty() {
+                let mut accumulated = String::new();
+                for segment in member_subpath.split('/').filter(|s| !s.is_empty()) {
+                    if !accumulated.is_empty() {
+                        accumulated.push('/');
+                    }
+                    accumulated.push_str(segment);
+                    locations.push(Self::uri(format!(
+                        "archive://{}/{}/",
+                        archive_file.display(),
+                        accumulated
+                    )));
+                }
+            }
+            locations
+        } else {
+            vec![self.clone()]
+        }
     }
+}
+
+pub fn parse_archive_uri(uri_str: &str) -> Option<(std::path::PathBuf, String)> {
+    let raw = uri_str.strip_prefix("archive://")?;
+    let clean = raw.trim_end_matches('/');
+    let path = std::path::Path::new(clean);
+    let mut current = Some(path);
+    while let Some(candidate) = current {
+        if candidate.is_file() {
+            let relative = path
+                .strip_prefix(candidate)
+                .ok()?
+                .to_string_lossy()
+                .trim_matches('/')
+                .to_string();
+            return Some((candidate.to_path_buf(), relative));
+        }
+        current = candidate.parent();
+    }
+    let mut current = Some(path);
+    while let Some(candidate) = current {
+        if let Some(ext) = candidate.extension().and_then(|e| e.to_str())
+            && matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "zip"
+                    | "tar"
+                    | "gz"
+                    | "bz2"
+                    | "xz"
+                    | "7z"
+                    | "rar"
+                    | "zst"
+                    | "tgz"
+                    | "tbz2"
+                    | "txz"
+                    | "iso"
+                    | "apk"
+                    | "jar"
+                    | "cbz"
+                    | "cbr"
+            )
+        {
+            let relative = path
+                .strip_prefix(candidate)
+                .ok()?
+                .to_string_lossy()
+                .trim_matches('/')
+                .to_string();
+            return Some((candidate.to_path_buf(), relative));
+        }
+        current = candidate.parent();
+    }
+    None
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

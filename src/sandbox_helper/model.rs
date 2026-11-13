@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::{
-    collections::HashMap,
-    fs,
-    io::Read,
-    path::Path,
-};
+use std::{collections::HashMap, fs, io::Read, path::Path};
 
 use crate::services::model_preview::*;
 use quick_xml::{
@@ -72,7 +67,9 @@ fn matrix(value: Option<String>) -> Result<Matrix, String> {
     if parts.len() != 12 || parts.iter().any(|part| !part.is_finite()) {
         return Err("Invalid 3MF transform".to_string());
     }
-    parts.try_into().map_err(|_| "Invalid 3MF transform".to_string())
+    parts
+        .try_into()
+        .map_err(|_| "Invalid 3MF transform".to_string())
 }
 
 fn transform(m: Matrix, p: Point) -> Point {
@@ -108,7 +105,9 @@ pub(crate) fn triangles_3mf(xml: &[u8]) -> Result<Vec<[Point; 3]>, String> {
     let mut total_components = 0usize;
 
     loop {
-        let event = reader.read_event().map_err(|_| "Invalid 3MF model XML".to_string())?;
+        let event = reader
+            .read_event()
+            .map_err(|_| "Invalid 3MF model XML".to_string())?;
         match event {
             Event::Start(tag) | Event::Empty(tag) => match tag.local_name().as_ref() {
                 b"object" => {
@@ -189,7 +188,8 @@ pub(crate) fn triangles_3mf(xml: &[u8]) -> Result<Vec<[Point; 3]>, String> {
 
     // Expand component tree DFS
     let mut faces = Vec::new();
-    let mut stack: Vec<(u32, Matrix, usize)> = items.into_iter().map(|(id, m)| (id, m, 0)).collect();
+    let mut stack: Vec<(u32, Matrix, usize)> =
+        items.into_iter().map(|(id, m)| (id, m, 0)).collect();
     let mut expansions = 0usize;
 
     while let Some((id, m, depth)) = stack.pop() {
@@ -206,11 +206,7 @@ pub(crate) fn triangles_3mf(xml: &[u8]) -> Result<Vec<[Point; 3]>, String> {
             let p0 = object.vertices.get(tri[0]).ok_or("Invalid vertex index")?;
             let p1 = object.vertices.get(tri[1]).ok_or("Invalid vertex index")?;
             let p2 = object.vertices.get(tri[2]).ok_or("Invalid vertex index")?;
-            faces.push([
-                transform(m, *p0),
-                transform(m, *p1),
-                transform(m, *p2),
-            ]);
+            faces.push([transform(m, *p0), transform(m, *p1), transform(m, *p2)]);
             if faces.len() > MAX_MODEL_TRIANGLES {
                 return Err(triangle_limit_message());
             }
@@ -228,27 +224,67 @@ pub(crate) fn triangles_3mf(xml: &[u8]) -> Result<Vec<[Point; 3]>, String> {
 
 pub(crate) fn stl(bytes: &[u8]) -> Result<Vec<[Point; 3]>, String> {
     if bytes.len() >= 84 {
-        let count = u32::from_le_bytes(bytes[80..84].try_into().map_err(|_| "Invalid STL header".to_string())?) as usize;
+        let count = u32::from_le_bytes(
+            bytes[80..84]
+                .try_into()
+                .map_err(|_| "Invalid STL header".to_string())?,
+        ) as usize;
         if count.checked_mul(50).and_then(|n| n.checked_add(84)) == Some(bytes.len()) {
             if count > MAX_MODEL_TRIANGLES {
                 return Err(triangle_limit_message());
             }
             let mut faces = Vec::with_capacity(count);
-            for chunk in bytes[84..].chunks_exact(50) {
+            for chunk in bytes[84..].as_chunks::<50>().0 {
                 let v0 = [
-                    f32::from_le_bytes(chunk[12..16].try_into().map_err(|_| "Invalid STL coordinate".to_string())?),
-                    f32::from_le_bytes(chunk[16..20].try_into().map_err(|_| "Invalid STL coordinate".to_string())?),
-                    f32::from_le_bytes(chunk[20..24].try_into().map_err(|_| "Invalid STL coordinate".to_string())?),
+                    f32::from_le_bytes(
+                        chunk[12..16]
+                            .try_into()
+                            .map_err(|_| "Invalid STL coordinate".to_string())?,
+                    ),
+                    f32::from_le_bytes(
+                        chunk[16..20]
+                            .try_into()
+                            .map_err(|_| "Invalid STL coordinate".to_string())?,
+                    ),
+                    f32::from_le_bytes(
+                        chunk[20..24]
+                            .try_into()
+                            .map_err(|_| "Invalid STL coordinate".to_string())?,
+                    ),
                 ];
                 let v1 = [
-                    f32::from_le_bytes(chunk[24..28].try_into().map_err(|_| "Invalid STL coordinate".to_string())?),
-                    f32::from_le_bytes(chunk[28..32].try_into().map_err(|_| "Invalid STL coordinate".to_string())?),
-                    f32::from_le_bytes(chunk[32..36].try_into().map_err(|_| "Invalid STL coordinate".to_string())?),
+                    f32::from_le_bytes(
+                        chunk[24..28]
+                            .try_into()
+                            .map_err(|_| "Invalid STL coordinate".to_string())?,
+                    ),
+                    f32::from_le_bytes(
+                        chunk[28..32]
+                            .try_into()
+                            .map_err(|_| "Invalid STL coordinate".to_string())?,
+                    ),
+                    f32::from_le_bytes(
+                        chunk[32..36]
+                            .try_into()
+                            .map_err(|_| "Invalid STL coordinate".to_string())?,
+                    ),
                 ];
                 let v2 = [
-                    f32::from_le_bytes(chunk[36..40].try_into().map_err(|_| "Invalid STL coordinate".to_string())?),
-                    f32::from_le_bytes(chunk[40..44].try_into().map_err(|_| "Invalid STL coordinate".to_string())?),
-                    f32::from_le_bytes(chunk[44..48].try_into().map_err(|_| "Invalid STL coordinate".to_string())?),
+                    f32::from_le_bytes(
+                        chunk[36..40]
+                            .try_into()
+                            .map_err(|_| "Invalid STL coordinate".to_string())?,
+                    ),
+                    f32::from_le_bytes(
+                        chunk[40..44]
+                            .try_into()
+                            .map_err(|_| "Invalid STL coordinate".to_string())?,
+                    ),
+                    f32::from_le_bytes(
+                        chunk[44..48]
+                            .try_into()
+                            .map_err(|_| "Invalid STL coordinate".to_string())?,
+                    ),
                 ];
                 if !v0.iter().chain(&v1).chain(&v2).all(|c| c.is_finite()) {
                     return Err("Invalid STL coordinate".to_string());
@@ -276,9 +312,15 @@ pub(crate) fn stl(bytes: &[u8]) -> Result<Vec<[Point; 3]>, String> {
         if trimmed_line.to_ascii_lowercase().starts_with("vertex") {
             let parts: Vec<&str> = trimmed_line.split_whitespace().collect();
             if parts.len() == 4 {
-                let x = parts[1].parse::<f32>().map_err(|_| "Invalid STL coordinate".to_string())?;
-                let y = parts[2].parse::<f32>().map_err(|_| "Invalid STL coordinate".to_string())?;
-                let z = parts[3].parse::<f32>().map_err(|_| "Invalid STL coordinate".to_string())?;
+                let x = parts[1]
+                    .parse::<f32>()
+                    .map_err(|_| "Invalid STL coordinate".to_string())?;
+                let y = parts[2]
+                    .parse::<f32>()
+                    .map_err(|_| "Invalid STL coordinate".to_string())?;
+                let z = parts[3]
+                    .parse::<f32>()
+                    .map_err(|_| "Invalid STL coordinate".to_string())?;
                 if !x.is_finite() || !y.is_finite() || !z.is_finite() {
                     return Err("Invalid STL coordinate".to_string());
                 }
@@ -470,20 +512,52 @@ pub(crate) fn shade(
     Ok(png_bytes)
 }
 
+pub(crate) fn detect_model_format(input: &Path) -> Option<ModelFormat> {
+    let mut header = [0u8; 4];
+    if let Ok(mut file) = fs::File::open(input)
+        && file.read_exact(&mut header).is_ok()
+        && header == [0x50, 0x4b, 0x03, 0x04]
+    {
+        return Some(ModelFormat::ThreeMf);
+    }
+    if input
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("3mf"))
+    {
+        Some(ModelFormat::ThreeMf)
+    } else if input
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("stl"))
+    {
+        Some(ModelFormat::Stl)
+    } else {
+        None
+    }
+}
+
 pub(crate) fn render_model(input: &Path, target_size: u32) -> Result<Vec<u8>, String> {
+    let format = detect_model_format(input).unwrap_or(ModelFormat::Stl);
+    render_model_with_format(input, target_size, format)
+}
+
+pub(crate) fn render_model_with_format(
+    input: &Path,
+    target_size: u32,
+    format: ModelFormat,
+) -> Result<Vec<u8>, String> {
+    if format == ModelFormat::FreeCad {
+        return Err("Unsupported model format".into());
+    }
     let size = target_size.clamp(16, 800);
     let accent = [0x7a, 0xa2, 0xf7]; // TokyoNight blue
     let surface = [0x24, 0x28, 0x3b]; // Dark surface
 
-    let ext = input
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|s| s.to_ascii_lowercase())
-        .unwrap_or_default();
-
-    if ext == "3mf" {
+    if format == ModelFormat::ThreeMf {
         let file = fs::File::open(input).map_err(|e| format!("Unable to open 3MF file: {e}"))?;
-        let mut archive = zip::ZipArchive::new(file).map_err(|_| "Invalid or corrupted 3MF archive".to_string())?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|_| "Invalid or corrupted 3MF archive".to_string())?;
         if archive.len() > MAX_3MF_ARCHIVE_ENTRIES {
             return Err("3MF archive contains too many entries".to_string());
         }
@@ -528,6 +602,9 @@ pub(crate) fn render_model(input: &Path, target_size: u32) -> Result<Vec<u8>, St
         shade(&faces, size, size, accent, surface)
     }
 }
+
+#[cfg(test)]
+mod format_tests;
 
 #[cfg(test)]
 mod tests {

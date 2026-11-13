@@ -13,7 +13,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(target_os = "linux")]
 pub(crate) mod browser;
+#[cfg(not(target_os = "linux"))]
+#[path = "sandbox/browser_pending.rs"]
+pub(crate) mod browser;
+mod helper_binary;
+pub(crate) mod office;
 
 pub(crate) const WALL_TIME_LIMIT: Duration = Duration::from_secs(12);
 pub(crate) const MAX_OUTPUT_BYTES: u64 = 32 * 1024 * 1024;
@@ -21,6 +27,10 @@ pub(crate) const MAX_TEXT_LAYER_BYTES: u64 = 8 * 1024 * 1024;
 pub(crate) const FILE_SIZE_LIMIT_BYTES: u64 = 32 * 1024 * 1024;
 pub(crate) const ADDRESS_SPACE_LIMIT_BYTES: u64 = 1_342_177_280;
 pub(crate) const CPU_TIME_LIMIT_SECS: u64 = 10;
+const OFFICE_ADDRESS_SPACE_LIMIT_BYTES: u64 = 4_294_967_296;
+const OFFICE_DATA_LIMIT_BYTES: u64 = 536_870_912;
+const OFFICE_CPU_TIME_LIMIT_SECS: u64 = 30;
+const OFFICE_WALL_TIME_LIMIT: Duration = Duration::from_secs(35);
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -29,6 +39,8 @@ pub(crate) enum ParseOperation {
     ThumbnailHeif,
     ThumbnailRaw,
     ThumbnailPdf,
+    ThumbnailOffice,
+    OfficePoster,
     ThumbnailVideo,
     PreviewImage,
     PreviewGeoTiff,
@@ -39,17 +51,25 @@ pub(crate) enum ParseOperation {
     ExtractPdfText,
     PreviewArchive,
     PreviewOffice,
+    ConvertOfficePdf,
     ExtractOfficeText,
     PreviewModel,
     PreviewArchiveCover,
     PreviewSpreadsheet,
     PreviewAudioMetadata,
+    ImageMetadata,
+    MediaMetadata,
+    PreviewAudioArtwork,
     MusicTags,
     MusicWaveform,
     ExtractSpreadsheetText,
 }
 
 impl ParseOperation {
+    fn uses_office_renderer(self) -> bool {
+        matches!(self, Self::ConvertOfficePdf | Self::ThumbnailOffice)
+    }
+
     fn argument(self) -> &'static str {
         match self {
             Self::MusicTags => "music-tags",
@@ -58,6 +78,8 @@ impl ParseOperation {
             Self::ThumbnailHeif => "thumbnail-heif",
             Self::ThumbnailRaw => "thumbnail-raw",
             Self::ThumbnailPdf => "thumbnail-pdf",
+            Self::ThumbnailOffice => "thumbnail-office",
+            Self::OfficePoster => "office-poster",
             Self::ThumbnailVideo => "thumbnail-video",
             Self::PreviewImage => "preview-image",
             Self::PreviewGeoTiff => "preview-geotiff",
@@ -68,19 +90,30 @@ impl ParseOperation {
             Self::ExtractPdfText => "extract-pdf-text",
             Self::PreviewArchive => "preview-archive",
             Self::PreviewOffice => "preview-office",
+            Self::ConvertOfficePdf => "convert-office-pdf",
             Self::ExtractOfficeText => "extract-office-text",
             Self::PreviewModel => "preview-model",
             Self::PreviewArchiveCover => "preview-archive-cover",
             Self::PreviewSpreadsheet => "preview-spreadsheet",
             Self::PreviewAudioMetadata => "preview-audio-metadata",
+            Self::ImageMetadata => "image-metadata",
+            Self::MediaMetadata => "media-metadata",
+            Self::PreviewAudioArtwork => "preview-audio-artwork",
             Self::ExtractSpreadsheetText => "extract-spreadsheet-text",
         }
     }
 
     fn output_name(self) -> &'static str {
+        if self == Self::ConvertOfficePdf {
+            return "result.pdf";
+        }
         if matches!(
             self,
-            Self::MusicTags | Self::MusicWaveform | Self::PreviewAudioMetadata
+            Self::MusicTags
+                | Self::MusicWaveform
+                | Self::PreviewAudioMetadata
+                | Self::ImageMetadata
+                | Self::MediaMetadata
         ) {
             "result.json"
         } else if self == Self::PreviewAnimation {
@@ -133,6 +166,7 @@ pub(crate) fn parse(
     value: i32,
     cancellation: &Cancellation,
 ) -> Result<ParseOutput, String> {
+    crate::platform::preview_isolation().require_implemented()?;
     if cancellation.is_cancelled() {
         return Err("Preview cancelled".to_owned());
     }
@@ -163,6 +197,13 @@ pub(crate) fn parse(
         });
     }
 
+    if operation.uses_office_renderer() {
+        return office::admit(
+            cancellation,
+            operation == ParseOperation::ThumbnailOffice,
+            || parse_one_shot(&input, operation, value, cancellation),
+        );
+    }
     parse_one_shot(&input, operation, value, cancellation)
 }
 
@@ -173,7 +214,7 @@ fn parse_one_shot(
     cancellation: &Cancellation,
 ) -> Result<ParseOutput, String> {
     let executable = helper_executable()
-        .map_err(|error| format!("Unable to locate the Strata executable: {error}"))?;
+        .map_err(|error| format!("Unable to locate the Hermes executable: {error}"))?;
     parse_one_shot_with_executable(input, operation, value, cancellation, &executable)
 }
 
@@ -184,7 +225,7 @@ pub(super) fn helper_executable() -> io::Result<PathBuf> {
         .parent()
         .and_then(Path::parent)
         .ok_or_else(|| io::Error::other("Test executable location missing"))?
-        .join("strata");
+        .join("hermes");
     Ok(executable)
 }
 
@@ -195,8 +236,19 @@ pub(crate) fn parse_one_shot_with_executable(
     cancellation: &Cancellation,
     executable: &Path,
 ) -> Result<ParseOutput, String> {
+    crate::platform::preview_isolation().require_implemented()?;
     let output = PrivateOutput::create().map_err(|error| error.to_string())?;
-    let mut command = sandbox_command(executable, input, output.path(), operation, value);
+    let command = sandbox_command(executable, input, output.path(), operation, value)
+        .map_err(|error| format!("Unable to prepare the preview helper: {error}"))?;
+    run_one_shot(command, &output, operation, cancellation)
+}
+
+fn run_one_shot(
+    mut command: Command,
+    output: &PrivateOutput,
+    operation: ParseOperation,
+    cancellation: &Cancellation,
+) -> Result<ParseOutput, String> {
     let diagnostic_path = output.path().join("renderer.stderr");
     let diagnostic = fs::File::create(&diagnostic_path).map_err(|error| error.to_string())?;
     let mut child = command
@@ -211,7 +263,13 @@ pub(crate) fn parse_one_shot_with_executable(
             terminate(&mut child);
             return Err("Preview cancelled".to_owned());
         }
-        if started.elapsed() >= WALL_TIME_LIMIT {
+        if started.elapsed()
+            >= if operation.uses_office_renderer() {
+                OFFICE_WALL_TIME_LIMIT
+            } else {
+                WALL_TIME_LIMIT
+            }
+        {
             terminate(&mut child);
             return Err("The preview renderer timed out".to_owned());
         }
@@ -230,7 +288,11 @@ pub(crate) fn parse_one_shot_with_executable(
             let _read = file.take(4096).read_to_end(&mut diagnostic);
         }
         let message = renderer_failure_message(status, &diagnostic);
-        tracing::warn!(?operation, %status, "preview renderer failed");
+        if operation == ParseOperation::OfficePoster {
+            tracing::debug!(%status, "No saved Office poster was available");
+        } else {
+            tracing::warn!(?operation, %status, "preview renderer failed");
+        }
         return Err(message);
     }
 
@@ -250,16 +312,22 @@ pub(crate) fn parse_one_shot_with_executable(
         return Err("The preview renderer produced an invalid output size".to_owned());
     }
     let data = fs::read(result_path).map_err(|error| error.to_string())?;
+    if operation == ParseOperation::ConvertOfficePdf && !data.starts_with(b"%PDF-") {
+        return Err("The Office converter produced invalid PDF data".into());
+    }
     if !matches!(
         operation,
         ParseOperation::MusicTags
             | ParseOperation::PreviewAudioMetadata
+            | ParseOperation::ImageMetadata
+            | ParseOperation::MediaMetadata
             | ParseOperation::MusicWaveform
             | ParseOperation::PreviewAnimation
             | ParseOperation::PreviewAudio
             | ParseOperation::ExtractPdfText
             | ParseOperation::PreviewArchive
             | ParseOperation::PreviewOffice
+            | ParseOperation::ConvertOfficePdf
             | ParseOperation::ExtractOfficeText
             | ParseOperation::ExtractSpreadsheetText
             | ParseOperation::PreviewSpreadsheet
@@ -319,7 +387,8 @@ fn sandbox_command(
     output: &Path,
     operation: ParseOperation,
     value: i32,
-) -> Command {
+) -> io::Result<Command> {
+    let input_path = sandbox_input_path(input);
     let mut command = Command::new("bwrap");
     command.args([
         "--unshare-all",
@@ -335,6 +404,12 @@ fn sandbox_command(
         "--setenv",
         "XDG_CACHE_HOME",
         "/tmp/cache",
+        "--setenv",
+        "OPENBLAS_NUM_THREADS",
+        "1",
+        "--setenv",
+        "OMP_NUM_THREADS",
+        "1",
         "--proc",
         "/proc",
         "--dev",
@@ -361,31 +436,85 @@ fn sandbox_command(
         "/etc/ld.so.cache",
         "/etc/ld.so.cache",
         "--ro-bind-try",
+        "/etc/alternatives",
+        "/etc/alternatives",
+        "--ro-bind-try",
+        "/var/cache/fontconfig",
+        "/var/cache/fontconfig",
+        "--ro-bind-try",
         "/etc/ImageMagick-7",
         "/etc/ImageMagick-7",
         "--ro-bind-try",
         "/etc/ImageMagick-6",
         "/etc/ImageMagick-6",
-        "--ro-bind",
     ]);
-    command.arg(executable).arg("/app/strata");
-    command.arg("--ro-bind").arg(input).arg("/input");
+    helper_binary::bind(&mut command, executable)?;
+    command.arg("--ro-bind").arg(input).arg(&input_path);
     command.arg("--bind").arg(output).arg("/output");
+    if operation.uses_office_renderer() {
+        command.args([
+            "--symlink",
+            "usr/bin",
+            "/bin",
+            "--setenv",
+            "LANG",
+            "C.UTF-8",
+        ]);
+        if Path::new("/opt/libreoffice/program/soffice").is_file() {
+            command.args([
+                "--dir",
+                "/opt",
+                "--ro-bind",
+                "/opt/libreoffice",
+                "/opt/libreoffice",
+            ]);
+        }
+    }
+    let address_space = if operation.uses_office_renderer() {
+        OFFICE_ADDRESS_SPACE_LIMIT_BYTES
+    } else {
+        ADDRESS_SPACE_LIMIT_BYTES
+    };
+    let cpu_time = if operation.uses_office_renderer() {
+        OFFICE_CPU_TIME_LIMIT_SECS
+    } else {
+        CPU_TIME_LIMIT_SECS
+    };
     command.args([
         "--",
         "/usr/bin/prlimit",
-        &format!("--as={ADDRESS_SPACE_LIMIT_BYTES}"),
-        &format!("--cpu={CPU_TIME_LIMIT_SECS}"),
+        &format!("--as={address_space}"),
+        &format!("--cpu={cpu_time}"),
         &format!("--fsize={FILE_SIZE_LIMIT_BYTES}"),
+    ]);
+    if operation.uses_office_renderer() {
+        command.arg(format!("--data={OFFICE_DATA_LIMIT_BYTES}"));
+    }
+    command.args([
         "--",
         "/app/strata",
         "--preview-helper",
         operation.argument(),
-        "/input",
+        &input_path,
     ]);
     command.arg(format!("/output/{}", operation.output_name()));
     command.arg(value.to_string());
-    command
+    Ok(command)
+}
+
+fn sandbox_input_path(input: &Path) -> String {
+    match input.extension().and_then(|extension| extension.to_str()) {
+        Some(extension)
+            if !extension.is_empty()
+                && extension.len() <= 16
+                && extension
+                    .bytes()
+                    .all(|character| character.is_ascii_alphanumeric()) =>
+        {
+            format!("/input.{}", extension.to_ascii_lowercase())
+        }
+        _ => "/input".to_owned(),
+    }
 }
 
 fn terminate(child: &mut std::process::Child) {

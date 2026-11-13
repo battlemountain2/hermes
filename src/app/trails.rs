@@ -36,39 +36,6 @@ impl Trails {
         self.stored.borrow().collection.active.clone()
     }
 
-    pub fn active_location(&self) -> Option<Location> {
-        self.stored
-            .borrow()
-            .collection
-            .active_trail()
-            .and_then(Trail::active_location)
-            .cloned()
-    }
-
-    pub fn active_view(&self) -> Option<TrailViewState> {
-        self.stored
-            .borrow()
-            .collection
-            .active_trail()
-            .map(|trail| trail.view.clone())
-    }
-
-    pub fn ensure_default(&self, location: Location) -> io::Result<()> {
-        if !self.stored.borrow().collection.trails.is_empty() {
-            return Ok(());
-        }
-        let trail = Trail::new(
-            TrailId::new("default").expect("static Trail identifier is valid"),
-            location.display_name(),
-            location.breadcrumbs(),
-        )
-        .expect("a location produces a valid Trail");
-        let mut stored = self.stored.borrow_mut();
-        stored.collection.active = Some(trail.id.clone());
-        stored.collection.trails.push(trail);
-        self.store.save(&stored)
-    }
-
     pub fn create(
         &self,
         name: impl Into<String>,
@@ -149,17 +116,47 @@ impl Trails {
         Ok(true)
     }
 
-    pub fn move_relative(&self, moving: &TrailId, target: &TrailId, before: bool) -> io::Result<bool> {
-        if moving == target { return Ok(false); }
+    pub fn move_relative(
+        &self,
+        moving: &TrailId,
+        target: &TrailId,
+        before: bool,
+    ) -> io::Result<bool> {
+        if moving == target {
+            return Ok(false);
+        }
         let mut stored = self.stored.borrow_mut();
-        let Some(source) = stored.collection.trails.iter().position(|trail| &trail.id == moving) else { return Ok(false); };
-        if !stored.collection.trails.iter().any(|trail| &trail.id == target) { return Ok(false); }
+        let Some(source) = stored
+            .collection
+            .trails
+            .iter()
+            .position(|trail| &trail.id == moving)
+        else {
+            return Ok(false);
+        };
+        if !stored
+            .collection
+            .trails
+            .iter()
+            .any(|trail| &trail.id == target)
+        {
+            return Ok(false);
+        }
         let original = stored.collection.trails.clone();
         let trail = stored.collection.trails.remove(source);
-        let destination = stored.collection.trails.iter().position(|trail| &trail.id == target)
+        let destination = stored
+            .collection
+            .trails
+            .iter()
+            .position(|trail| &trail.id == target)
             .expect("Target remains after removing a distinct tab");
-        stored.collection.trails.insert(destination + usize::from(!before), trail);
-        if stored.collection.trails == original { return Ok(false); }
+        stored
+            .collection
+            .trails
+            .insert(destination + usize::from(!before), trail);
+        if stored.collection.trails == original {
+            return Ok(false);
+        }
         self.store.save(&stored)?;
         Ok(true)
     }

@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Hermes
+GenericName=File Manager
+Comment=Browse files, preview documents and enjoy your music
+Exec=hermes %U
+TryExec=hermes
+Icon=io.github.battlemountain2.Hermes
+Terminal=false
+Categories=System;FileTools;FileManager;
+MimeType=inode/directory;
+StartupNotify=true
+StartupWMClass=io.github.battlemountain2.Hermes
+Keywords=files;folders;music;preview;

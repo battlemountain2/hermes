@@ -2,10 +2,14 @@ use super::*;
 use crate::model::{EntryKind, FileEntryInner, MetadataValue, MusicTags};
 use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 
+type Enumeration = (DirectoryRequest, Rc<dyn Fn(DirectoryEvent)>, Rc<Cell<bool>>);
+type Watch = (Location, Rc<dyn Fn()>, Rc<Cell<bool>>);
+type EventSink = (Rc<RefCell<Vec<DirectoryEvent>>>, Rc<dyn Fn(DirectoryEvent)>);
+
 #[derive(Default)]
 struct FakeSource {
-    calls: RefCell<Vec<(DirectoryRequest, Rc<dyn Fn(DirectoryEvent)>, Rc<Cell<bool>>)>>,
-    watches: RefCell<Vec<(Location, Rc<dyn Fn()>, Rc<Cell<bool>>)>>,
+    calls: RefCell<Vec<Enumeration>>,
+    watches: RefCell<Vec<Watch>>,
     order: RefCell<Vec<&'static str>>,
     unsupported: Cell<bool>,
     invalidated: RefCell<Vec<Location>>,
@@ -109,7 +113,7 @@ fn request(id: u64, folder: &str) -> DirectoryRequest {
     }
 }
 
-fn sink() -> (Rc<RefCell<Vec<DirectoryEvent>>>, Rc<dyn Fn(DirectoryEvent)>) {
+fn sink() -> EventSink {
     let events = Rc::new(RefCell::new(Vec::new()));
     let received = events.clone();
     (
@@ -124,7 +128,9 @@ fn source(fake: &Rc<FakeSource>) -> CachedFileSource {
 
 fn on_context(test: impl FnOnce(&glib::MainContext)) {
     let context = glib::MainContext::new();
-    context.with_thread_default(|| test(&context)).unwrap();
+    context
+        .with_thread_default(|| test(&context))
+        .expect("expected test value from context.with_thread_default(|| test(&context))");
     while context.iteration(false) {}
 }
 
@@ -183,8 +189,8 @@ fn hit_is_async_batched_remaps_ids_and_preserves_native_entries() {
                 _ => panic!("unexpected replay event"),
             })
             .collect::<Vec<_>>();
-        assert_eq!(batches[0].len(), 32);
-        assert!(batches.iter().all(|batch| batch.len() <= 128));
+        assert_eq!(batches[0].len(), 64);
+        assert!(batches.iter().all(|batch| batch.len() <= 256));
         assert_eq!(batches.concat(), expected);
         assert_eq!(fake.calls.borrow().len(), 1);
         drop(hit);
@@ -431,8 +437,8 @@ fn metadata_arriving_during_hit_is_replayed_after_finished_with_new_id() {
                 .any(|event| matches!(event, DirectoryEvent::MusicMetadata { .. }))
         });
         let events = events.borrow();
-        let finished_position = events.iter().position(|event| matches!(event, DirectoryEvent::Finished { request_id } if *request_id == RequestId(42))).unwrap();
-        let metadata_position = events.iter().position(|event| matches!(event, DirectoryEvent::MusicMetadata { request_id, entries } if *request_id == RequestId(42) && entries == &vec![expected.clone()])).unwrap();
+        let finished_position = events.iter().position(|event| matches!(event, DirectoryEvent::Finished { request_id } if *request_id == RequestId(42))).expect("expected test value from events.iter().position(|event| matches!(event, DirectoryEvent::Finished { request_id } if *request_id == RequestId(42)))");
+        let metadata_position = events.iter().position(|event| matches!(event, DirectoryEvent::MusicMetadata { request_id, entries } if *request_id == RequestId(42) && entries == &vec![expected.clone()])).expect("expected test value from events.iter().position(|event| matches!(event, DirectoryEvent::MusicMetadata { request_id, entries } if *request_id == RequestI...");
         assert!(metadata_position > finished_position);
         drop((cold, hit));
     });
@@ -493,7 +499,7 @@ fn invalidated_replay_resets_and_retains_cancel_safe_fresh_load() {
         );
         until(context, || fake.calls.borrow().len() == 2);
         assert!(
-            matches!(&events.borrow()[0], DirectoryEvent::Batch { entries, .. } if entries.len() == 32)
+            matches!(&events.borrow()[0], DirectoryEvent::Batch { entries, .. } if entries.len() == 64)
         );
         assert!(
             matches!(&events.borrow()[1], DirectoryEvent::Restarted { request_id } if *request_id == RequestId(2))
@@ -552,18 +558,19 @@ fn directory_limit_and_lru_release_watches() {
     on_context(|context| {
         let fake = Rc::new(FakeSource::default());
         let source = source(&fake);
-        for index in 0..12 {
-            let load = source.enumerate(request(index, &format!("/dir-{index}")), sink().1);
-            fake.complete(index as usize, vec![entry("one")]);
+        let limit = source.cache.borrow().limits.directories;
+        for index in 0..limit {
+            let load = source.enumerate(request(index as u64, &format!("/dir-{index}")), sink().1);
+            fake.complete(index, vec![entry("one")]);
             drop(load);
         }
         let (events, emit) = sink();
-        let hit = source.enumerate(request(20, "/dir-0"), emit);
+        let hit = source.enumerate(request(100, "/dir-0"), emit);
         until(context, || finished(&events));
-        let extra = source.enumerate(request(21, "/extra"), sink().1);
-        fake.complete(12, vec![entry("extra")]);
-        assert_eq!(source.cache.borrow().listings.len(), 12);
-        assert_eq!(fake.live_watches(), 12);
+        let extra = source.enumerate(request(101, "/extra"), sink().1);
+        fake.complete(limit, vec![entry("extra")]);
+        assert_eq!(source.cache.borrow().listings.len(), limit);
+        assert_eq!(fake.live_watches(), limit);
         assert!(
             source
                 .cache
@@ -657,7 +664,8 @@ fn ttl_is_not_extended_by_hits_and_expiration_releases_watches() {
         let cold = source.enumerate(request(1, "/fixture"), sink().1);
         fake.complete(0, vec![entry("one")]);
         drop(cold);
-        clock.set(clock.get() + Duration::from_secs(29));
+        let ttl = Limits::default().ttl;
+        clock.set(clock.get() + ttl - Duration::from_secs(1));
         let (events, emit) = sink();
         let hit = source.enumerate(request(2, "/fixture"), emit);
         until(context, || finished(&events));
@@ -677,6 +685,7 @@ fn routed_source_forwards_cold_ui_watch_and_invalidation_but_not_search_watch() 
     let routed = crate::adapters::RoutedFileSource {
         local: source(&fake),
         search: crate::adapters::SearchFileSource::new(),
+        archive: crate::adapters::ArchiveFileSource::new(),
     };
     let load = routed.enumerate(request(1, "/fixture"), sink().1);
     let watch = routed.watch(Location::local("/fixture"), true, Rc::new(|_| {}));
@@ -876,7 +885,7 @@ fn measure(
             DirectoryEvent::Restarted { .. } => received.borrow_mut().clear(),
             DirectoryEvent::Finished { .. } => complete_emit.set(Some(started.elapsed())),
             DirectoryEvent::Failed { message, .. } => panic!("{message}"),
-            DirectoryEvent::MusicMetadata { .. } => {}
+            DirectoryEvent::MusicMetadata { .. } | DirectoryEvent::Notice { .. } => {}
         }),
     );
     until(context, || complete.get().is_some());
@@ -885,7 +894,9 @@ fn measure(
     (
         entries,
         first.get().unwrap_or_default(),
-        complete.get().unwrap(),
+        complete
+            .get()
+            .expect("expected test value from complete.get()"),
     )
 }
 
@@ -895,20 +906,20 @@ impl TemporaryFolder {
     fn new() -> Self {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("expected test value from std::time::SystemTime::now() .duration_since(std::time::UNIX_EPOCH)")
             .as_nanos();
         let folder = std::env::temp_dir().join(format!(
             "hermes-directory-cache-{}-{unique}",
             std::process::id()
         ));
-        std::fs::create_dir(&folder).unwrap();
+        std::fs::create_dir(&folder).expect("create generated fixture directory");
         Self(folder)
     }
 }
 
 impl Drop for TemporaryFolder {
     fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.0).unwrap();
+        std::fs::remove_dir_all(&self.0).expect("remove generated fixture");
     }
 }
 
@@ -919,9 +930,9 @@ fn generated_real_watcher_and_warm_enumeration_timing() {
     context.with_thread_default(|| {
         let folder = TemporaryFolder::new();
         for index in 0..10_000 {
-            std::fs::write(folder.0.join(format!("entry-{index}.bin")), b"").unwrap();
+            std::fs::write(folder.0.join(format!("entry-{index}.bin")), b"").expect("write generated fixture");
         }
-        let directory = folder.0.to_str().unwrap();
+        let directory = folder.0.to_str().expect("expected test value from folder.0.to_str()");
         let (_, raw_first, raw_total) = measure(&context, &crate::adapters::LocalFileSource, request(1, directory));
         let provider = Rc::new(CountingLocal { enumerations: Cell::new(0) });
         let source = CachedFileSource::new(provider.clone());
@@ -932,23 +943,23 @@ fn generated_real_watcher_and_warm_enumeration_timing() {
         assert_eq!(warm_entries, cold_entries);
         assert_eq!(provider.enumerations.get(), 1);
         eprintln!("generated 10k entries, debug, enumeration delivery only: raw first={raw_first:?} total={raw_total:?}; cached cold first={cold_first:?} total={cold_total:?}; warm first={warm_first:?} total={warm_total:?}; accounted bytes={}", source.cache.borrow().listings[0].bytes);
-        std::fs::write(folder.0.join(".new-hidden"), b"generated").unwrap();
+        std::fs::write(folder.0.join(".new-hidden"), b"generated").expect("write generated fixture");
         until(&context, || !source.cache.borrow().listings[0].valid.get());
         let (fresh_entries, _, _) = measure(&context, &source, request(4, directory));
         assert_eq!(fresh_entries.len(), 10_000);
         assert_eq!(provider.enumerations.get(), 2);
-        std::fs::write(folder.0.join("added.bin"), b"").unwrap();
+        std::fs::write(folder.0.join("added.bin"), b"").expect("write generated fixture");
         until(&context, || !source.cache.borrow().listings[0].valid.get());
         let (added, _, _) = measure(&context, &source, request(5, directory));
         assert_eq!(added.len(), 10_001);
-        std::fs::remove_file(folder.0.join("added.bin")).unwrap();
+        std::fs::remove_file(folder.0.join("added.bin")).expect("remove generated fixture");
         until(&context, || !source.cache.borrow().listings[0].valid.get());
         let (removed, _, _) = measure(&context, &source, request(6, directory));
         assert_eq!(removed.len(), 10_000);
         source.cache.borrow_mut().limits.ttl = Duration::from_millis(10);
         until(&context, || source.cache.borrow().listings.is_empty());
         drop(source);
-    }).unwrap();
+    }).expect("write generated fixture");
     while context.iteration(false) {}
 }
 
@@ -960,28 +971,28 @@ fn generated_real_watcher_preserves_aliases_and_detects_retarget_and_deletion() 
         .with_thread_default(|| {
             let folder = TemporaryFolder::new();
             for name in ["old", "new"] {
-                std::fs::create_dir(folder.0.join(name)).unwrap();
-                std::fs::write(folder.0.join(name).join(format!("{name}.bin")), b"").unwrap();
+                std::fs::create_dir(folder.0.join(name)).expect("create generated fixture directory");
+                std::fs::write(folder.0.join(name).join(format!("{name}.bin")), b"").expect("write generated fixture");
             }
             let link = folder.0.join("alias");
-            std::os::unix::fs::symlink(folder.0.join("old"), &link).unwrap();
+            std::os::unix::fs::symlink(folder.0.join("old"), &link).expect("expected test value from std::os::unix::fs::symlink(folder.0.join(\"old\"), &link)");
             let provider = Rc::new(CountingLocal {
                 enumerations: Cell::new(0),
             });
             let source = CachedFileSource::new(provider.clone());
-            let alias = link.to_str().unwrap();
+            let alias = link.to_str().expect("expected test value from link.to_str()");
             let (old, _, _) = measure(&context, &source, request(1, alias));
             assert_eq!(old[0].location, Location::local(link.join("old.bin")));
             let (warm, _, _) = measure(&context, &source, request(2, alias));
             assert_eq!(warm, old);
             assert_eq!(provider.enumerations.get(), 1);
-            std::os::unix::fs::symlink(folder.0.join("new"), folder.0.join("replacement")).unwrap();
-            std::fs::rename(folder.0.join("replacement"), &link).unwrap();
+            std::os::unix::fs::symlink(folder.0.join("new"), folder.0.join("replacement")).expect("expected test value from std::os::unix::fs::symlink(folder.0.join(\"new\"), folder.0.join(\"replacement\"))");
+            std::fs::rename(folder.0.join("replacement"), &link).expect("expected test value from std::fs::rename(folder.0.join(\"replacement\"), &link)");
             until(&context, || !source.cache.borrow().listings[0].valid.get());
             let (new, _, _) = measure(&context, &source, request(3, alias));
             assert_eq!(new[0].location, Location::local(link.join("new.bin")));
             assert_eq!(provider.enumerations.get(), 2);
-            std::fs::remove_dir_all(folder.0.join("new")).unwrap();
+            std::fs::remove_dir_all(folder.0.join("new")).expect("remove generated fixture");
             until(&context, || !source.cache.borrow().listings[0].valid.get());
             let (events, emit) = sink();
             let failed = source.enumerate(request(4, alias), emit);
@@ -994,6 +1005,6 @@ fn generated_real_watcher_preserves_aliases_and_detects_retarget_and_deletion() 
             assert!(!finished(&events));
             drop((failed, source));
         })
-        .unwrap();
+        .expect("write generated fixture");
     while context.iteration(false) {}
 }

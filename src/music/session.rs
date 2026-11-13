@@ -87,7 +87,7 @@ impl Session {
 }
 
 pub(crate) fn path() -> PathBuf {
-    gio::glib::user_state_dir().join("strata/music-queue-v1.json")
+    crate::paths::music_queue_file()
 }
 
 pub(crate) fn load(path: &Path) -> Result<Option<Session>, String> {

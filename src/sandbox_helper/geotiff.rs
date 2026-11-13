@@ -52,7 +52,7 @@ pub enum SelectionDecision {
 
 /// Color mapping options for single-band elevation models.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[expect(dead_code, reason = "DEM color map options")]
+#[cfg_attr(not(test), expect(dead_code, reason = "DEM color map options"))]
 pub enum DemColorMap {
     Hypsometric,
     Grayscale,
@@ -151,7 +151,8 @@ pub fn render_geotiff(path: &Path, target_box: i32) -> Result<(Vec<u8>, String),
         tiff::ColorType::Multiband { num_samples, .. } => num_samples as usize,
         _ => 1,
     };
-    let is_float_dem = num_samples == 1 && (sample_format == 3 || matches!(colortype, tiff::ColorType::Gray(32)));
+    let is_float_dem =
+        num_samples == 1 && (sample_format == 3 || matches!(colortype, tiff::ColorType::Gray(32)));
 
     // 4. Decode raster data (direct decode overview or subsampled grid)
     let decoded = decode_raster(&mut decoder, &decision, num_samples, is_planar, nodata_tag)?;
@@ -181,7 +182,9 @@ pub fn render_geotiff(path: &Path, target_box: i32) -> Result<(Vec<u8>, String),
     let png = encode_rgba_to_png(&rgba, decoded.width, decoded.height)?;
 
     // 7. Extract geospatial metadata (EPSG, bounds, resolution)
-    let elevation_range = elevation_stats.as_ref().map(|s| (s.min_valid as f64, s.max_valid as f64));
+    let elevation_range = elevation_stats
+        .as_ref()
+        .map(|s| (s.min_valid as f64, s.max_valid as f64));
     let data_type_str = if is_float_dem {
         "Float32DEM"
     } else if num_samples >= 3 {
@@ -262,7 +265,7 @@ pub fn select_overview_layer(
         .copied()
         .filter(|s| {
             let max_dim = s.width.max(s.height);
-            max_dim >= MIN_OVERVIEW_DIM && max_dim <= MAX_SAFE_DECODE_DIM
+            (MIN_OVERVIEW_DIM..=MAX_SAFE_DECODE_DIM).contains(&max_dim)
         })
         .collect();
 
@@ -308,9 +311,15 @@ pub fn select_overview_layer(
             height: base.height,
         })
     } else {
-        let stride = ((max_base_dim as f64) / (target_box as f64)).ceil().max(1.0) as u32;
-        let out_width = ((base.width as f64) / (stride as f64)).ceil().min(target_box as f64) as u32;
-        let out_height = ((base.height as f64) / (stride as f64)).ceil().min(target_box as f64) as u32;
+        let stride = ((max_base_dim as f64) / (target_box as f64))
+            .ceil()
+            .max(1.0) as u32;
+        let out_width = ((base.width as f64) / (stride as f64))
+            .ceil()
+            .min(target_box as f64) as u32;
+        let out_height = ((base.height as f64) / (stride as f64))
+            .ceil()
+            .min(target_box as f64) as u32;
 
         Ok(SelectionDecision::SubsampleFallback {
             ifd_index: 0,
@@ -378,6 +387,10 @@ pub fn decode_raster<R: Read + Seek>(
 }
 
 /// Subsamples a high-resolution tiled or stripped raster into a ~1400px output buffer.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Raster sampling keeps validated source geometry and output bounds explicit"
+)]
 pub fn decode_subsampled_raster<R: Read + Seek>(
     decoder: &mut Decoder<R>,
     src_width: u32,
@@ -398,14 +411,14 @@ pub fn decode_subsampled_raster<R: Read + Seek>(
     match chunk_type {
         ChunkType::Strip => {
             let rows_per_strip = chunk_h.max(1);
-            let num_strips = (src_height + rows_per_strip - 1) / rows_per_strip;
+            let num_strips = src_height.div_ceil(rows_per_strip);
 
             for strip_idx in 0..num_strips {
                 let strip_y_start = strip_idx * rows_per_strip;
                 let strip_y_end = (strip_y_start + rows_per_strip).min(src_height);
 
                 // Find first sampled row intersecting this strip
-                let first_sample_row = ((strip_y_start + stride - 1) / stride) * stride;
+                let first_sample_row = strip_y_start.div_ceil(stride) * stride;
                 if first_sample_row >= strip_y_end {
                     continue; // Skip strip: no sampled rows intersect
                 }
@@ -437,7 +450,9 @@ pub fn decode_subsampled_raster<R: Read + Seek>(
                         let out_idx = (out_y * (out_width as usize) + out_x) * num_samples;
                         for b in 0..num_samples {
                             let src_idx = if is_planar {
-                                b * (cur_w as usize * cur_h as usize) + local_y * (cur_w as usize) + src_x
+                                b * (cur_w as usize * cur_h as usize)
+                                    + local_y * (cur_w as usize)
+                                    + src_x
                             } else {
                                 (local_y * (cur_w as usize) + src_x) * num_samples + b
                             };
@@ -452,14 +467,14 @@ pub fn decode_subsampled_raster<R: Read + Seek>(
         ChunkType::Tile => {
             let tile_w = chunk_w.max(1);
             let tile_h = chunk_h.max(1);
-            let tiles_across = (src_width + tile_w - 1) / tile_w;
-            let tiles_down = (src_height + tile_h - 1) / tile_h;
+            let tiles_across = src_width.div_ceil(tile_w);
+            let tiles_down = src_height.div_ceil(tile_h);
 
             for ty in 0..tiles_down {
                 let tile_y_start = ty * tile_h;
                 let tile_y_end = (tile_y_start + tile_h).min(src_height);
 
-                let first_sample_y = ((tile_y_start + stride - 1) / stride) * stride;
+                let first_sample_y = tile_y_start.div_ceil(stride) * stride;
                 if first_sample_y >= tile_y_end {
                     continue;
                 }
@@ -468,7 +483,7 @@ pub fn decode_subsampled_raster<R: Read + Seek>(
                     let tile_x_start = tx * tile_w;
                     let tile_x_end = (tile_x_start + tile_w).min(src_width);
 
-                    let first_sample_x = ((tile_x_start + stride - 1) / stride) * stride;
+                    let first_sample_x = tile_x_start.div_ceil(stride) * stride;
                     if first_sample_x >= tile_x_end {
                         continue;
                     }
@@ -504,7 +519,9 @@ pub fn decode_subsampled_raster<R: Read + Seek>(
                             let out_idx = (out_y * (out_width as usize) + out_x) * num_samples;
                             for b in 0..num_samples {
                                 let src_idx = if is_planar {
-                                    b * (cur_w as usize * cur_h as usize) + local_y * (cur_w as usize) + local_x
+                                    b * (cur_w as usize * cur_h as usize)
+                                        + local_y * (cur_w as usize)
+                                        + local_x
                                 } else {
                                     (local_y * (cur_w as usize) + local_x) * num_samples + b
                                 };
@@ -578,11 +595,11 @@ pub fn is_nodata(val: f32, nodata_tag: Option<f32>) -> bool {
     if val.is_nan() || val.is_infinite() {
         return true;
     }
-    if let Some(nd) = nodata_tag {
-        if nd.is_nan() {
+    if let Some(nodata) = nodata_tag {
+        if nodata.is_nan() {
             return val.is_nan();
         }
-        if (val - nd).abs() < 1e-3 {
+        if (val - nodata).abs() < 1e-3 {
             return true;
         }
     }
@@ -706,8 +723,7 @@ pub fn normalize_dem_buffer(
     let total_pixels = width * height;
     let mut rgba = vec![0u8; total_pixels * 4];
 
-    for i in 0..total_pixels.min(elevations.len()) {
-        let z = elevations[i];
+    for (i, &z) in elevations.iter().take(total_pixels).enumerate() {
         let offset = i * 4;
         if is_nodata(z, nodata_tag) {
             rgba[offset] = 0;
@@ -739,7 +755,10 @@ pub fn compute_channel_bounds(
 ) -> ChannelBounds {
     let total_pixels = samples.len() / stride;
     if total_pixels == 0 {
-        return ChannelBounds { p2: 0.0, p98: 255.0 };
+        return ChannelBounds {
+            p2: 0.0,
+            p98: 255.0,
+        };
     }
     let step = (total_pixels / sample_limit).max(1);
 
@@ -755,7 +774,10 @@ pub fn compute_channel_bounds(
     }
 
     if vals.is_empty() {
-        return ChannelBounds { p2: 0.0, p98: 255.0 };
+        return ChannelBounds {
+            p2: 0.0,
+            p98: 255.0,
+        };
     }
 
     vals.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -788,16 +810,29 @@ pub fn normalize_multiband_buffer(
 
     if is_planar {
         let p_size = total_pixels;
-        let plane_r = if samples.len() >= p_size { &samples[0..p_size] } else { samples };
-        let plane_g = if samples.len() >= 2 * p_size { &samples[p_size..2 * p_size] } else { plane_r };
-        let plane_b = if samples.len() >= 3 * p_size { &samples[2 * p_size..3 * p_size] } else { plane_g };
+        let plane_r = if samples.len() >= p_size {
+            &samples[0..p_size]
+        } else {
+            samples
+        };
+        let plane_g = if samples.len() >= 2 * p_size {
+            &samples[p_size..2 * p_size]
+        } else {
+            plane_r
+        };
+        let plane_b = if samples.len() >= 3 * p_size {
+            &samples[2 * p_size..3 * p_size]
+        } else {
+            plane_g
+        };
 
         let bounds_r = compute_channel_bounds(plane_r, 1, 0, 50_000);
         let bounds_g = compute_channel_bounds(plane_g, 1, 0, 50_000);
         let bounds_b = compute_channel_bounds(plane_b, 1, 0, 50_000);
 
         for i in 0..total_pixels.min(plane_r.len()) {
-            let r = ((plane_r[i] - bounds_r.p2) / (bounds_r.p98 - bounds_r.p2)).clamp(0.0, 1.0) * 255.0;
+            let r =
+                ((plane_r[i] - bounds_r.p2) / (bounds_r.p98 - bounds_r.p2)).clamp(0.0, 1.0) * 255.0;
             let g = if i < plane_g.len() {
                 ((plane_g[i] - bounds_g.p2) / (bounds_g.p98 - bounds_g.p2)).clamp(0.0, 1.0) * 255.0
             } else {
@@ -826,12 +861,23 @@ pub fn normalize_multiband_buffer(
                 break;
             }
             let sample_r = samples[base_idx];
-            let sample_g = if num_samples > 1 { samples[base_idx + 1] } else { sample_r };
-            let sample_b = if num_samples > 2 { samples[base_idx + 2] } else { sample_g };
+            let sample_g = if num_samples > 1 {
+                samples[base_idx + 1]
+            } else {
+                sample_r
+            };
+            let sample_b = if num_samples > 2 {
+                samples[base_idx + 2]
+            } else {
+                sample_g
+            };
 
-            let r = ((sample_r - bounds_r.p2) / (bounds_r.p98 - bounds_r.p2)).clamp(0.0, 1.0) * 255.0;
-            let g = ((sample_g - bounds_g.p2) / (bounds_g.p98 - bounds_g.p2)).clamp(0.0, 1.0) * 255.0;
-            let b = ((sample_b - bounds_b.p2) / (bounds_b.p98 - bounds_b.p2)).clamp(0.0, 1.0) * 255.0;
+            let r =
+                ((sample_r - bounds_r.p2) / (bounds_r.p98 - bounds_r.p2)).clamp(0.0, 1.0) * 255.0;
+            let g =
+                ((sample_g - bounds_g.p2) / (bounds_g.p98 - bounds_g.p2)).clamp(0.0, 1.0) * 255.0;
+            let b =
+                ((sample_b - bounds_b.p2) / (bounds_b.p98 - bounds_b.p2)).clamp(0.0, 1.0) * 255.0;
 
             let offset = i * 4;
             rgba[offset] = r.round() as u8;
@@ -935,10 +981,12 @@ pub fn parse_epsg_from_geokeys(geokeys: Option<&[u16]>) -> Option<u32> {
         let tag_loc = keys[offset + 1];
         let val_offset = keys[offset + 3];
 
-        if tag_loc == 0 && val_offset != 32767 && val_offset > 0 {
-            if key_id == 3072 || key_id == 2048 {
-                return Some(val_offset as u32);
-            }
+        if tag_loc == 0
+            && val_offset != 32767
+            && val_offset > 0
+            && (key_id == 3072 || key_id == 2048)
+        {
+            return Some(val_offset as u32);
         }
     }
     None
@@ -998,15 +1046,17 @@ pub fn scan_raw_ifd_for_epsg(path: &Path) -> Option<u32> {
             // Or read GeoKey directory at offset if valid in file
             if count >= 4 {
                 let mut geokey_data = vec![0u8; (count as usize) * 2];
-                if let Ok(_) = file.seek(SeekFrom::Start(val_offset as u64)) {
-                    if file.read_exact(&mut geokey_data).is_ok() {
-                        let u16_words: Vec<u16> = geokey_data
-                            .chunks_exact(2)
-                            .map(|chunk| read_u16(chunk))
-                            .collect();
-                        if let Some(epsg) = parse_epsg_from_geokeys(Some(&u16_words)) {
-                            return Some(epsg);
-                        }
+                if file.seek(SeekFrom::Start(val_offset as u64)).is_ok()
+                    && file.read_exact(&mut geokey_data).is_ok()
+                {
+                    let u16_words: Vec<u16> = geokey_data
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|word| read_u16(word))
+                        .collect();
+                    if let Some(epsg) = parse_epsg_from_geokeys(Some(&u16_words)) {
+                        return Some(epsg);
                     }
                 }
             }
@@ -1033,8 +1083,16 @@ pub fn extract_geotiff_metadata<R: Read + Seek>(
         .flatten()
         .and_then(|v| v.into_f64_vec().ok());
 
-    let res_x = scale.as_ref().and_then(|s| s.first().copied()).unwrap_or(1.0f64).abs();
-    let res_y = scale.as_ref().and_then(|s| s.get(1).copied()).unwrap_or(1.0f64).abs();
+    let res_x = scale
+        .as_ref()
+        .and_then(|s| s.first().copied())
+        .unwrap_or(1.0f64)
+        .abs();
+    let res_y = scale
+        .as_ref()
+        .and_then(|s| s.get(1).copied())
+        .unwrap_or(1.0f64)
+        .abs();
     let res_x = if res_x == 0.0 { 1.0 } else { res_x };
     let res_y = if res_y == 0.0 { 1.0 } else { res_y };
 
@@ -1064,7 +1122,12 @@ pub fn extract_geotiff_metadata<R: Read + Seek>(
         let y1 = y0 - (base_height as f64) * res_y;
         (x0.min(x1), x0.max(x1), y0.min(y1), y0.max(y1))
     } else {
-        (0.0, (base_width as f64) * res_x, 0.0, (base_height as f64) * res_y)
+        (
+            0.0,
+            (base_width as f64) * res_x,
+            0.0,
+            (base_height as f64) * res_y,
+        )
     };
 
     // 3. GeoKeyDirectoryTag (34735) / Raw IFD fallback
@@ -1099,202 +1162,5 @@ pub fn extract_geotiff_metadata<R: Read + Seek>(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_is_nodata_detection() {
-        assert!(is_nodata(f32::NAN, None));
-        assert!(is_nodata(f32::INFINITY, None));
-        assert!(is_nodata(-9999.0, None));
-        assert!(is_nodata(-32767.0, None));
-        assert!(is_nodata(-32768.0, None));
-        assert!(is_nodata(-99999.0, None));
-        assert!(is_nodata(1e35, None));
-
-        // Explicit tag
-        assert!(is_nodata(-500.0, Some(-500.0)));
-        assert!(!is_nodata(500.0, Some(-500.0)));
-
-        // Valid terrain elevations
-        assert!(!is_nodata(0.0, None));
-        assert!(!is_nodata(1420.5, None));
-        assert!(!is_nodata(8848.0, None));
-        assert!(!is_nodata(-430.0, None)); // Dead Sea shore
-    }
-
-    #[test]
-    fn test_percentile_computation_and_outliers() {
-        let mut data = vec![-9999.0; 2];
-        for i in 0..96 {
-            data.push(100.0 + (i as f32) * (100.0 / 95.0));
-        }
-        data.push(9000.0);
-        data.push(9000.0);
-
-        let stats = compute_elevation_stats(&data, None, 1000).expect("Must compute stats");
-        assert_eq!(stats.min_valid, 100.0);
-        assert_eq!(stats.max_valid, 9000.0);
-        assert!(stats.p2 >= 100.0 && stats.p2 <= 105.0);
-        assert!(stats.p98 <= 200.0 && stats.p98 >= 195.0);
-    }
-
-    #[test]
-    fn test_stretch_elevation_flat_terrain() {
-        let val = stretch_elevation(150.0, 150.0, 150.0);
-        assert_eq!(val, 0.5);
-    }
-
-    #[test]
-    fn test_hypsometric_tint_boundaries() {
-        let (r0, g0, b0) = hypsometric_tint(0.0);
-        assert_eq!((r0, g0, b0), (45, 106, 79)); // Lowland green
-
-        let (r1, g1, b1) = hypsometric_tint(0.35);
-        assert_eq!((r1, g1, b1), (212, 163, 115)); // Khaki
-
-        let (r2, g2, b2) = hypsometric_tint(0.70);
-        assert_eq!((r2, g2, b2), (108, 88, 76)); // Brown
-
-        let (r3, g3, b3) = hypsometric_tint(1.0);
-        assert_eq!((r3, g3, b3), (248, 249, 250)); // Snow
-    }
-
-    #[test]
-    fn test_dem_buffer_normalization_nodata_transparency() {
-        let elevations = vec![-9999.0, 100.0, 500.0, 1000.0];
-        let (rgba, stats) = normalize_dem_buffer(&elevations, 2, 2, None, DemColorMap::Hypsometric);
-
-        assert!(stats.is_some());
-        // Pixel 0 is NoData -> transparent [0, 0, 0, 0]
-        assert_eq!(&rgba[0..4], &[0, 0, 0, 0]);
-        // Pixels 1, 2, 3 must have Alpha = 255
-        assert_eq!(rgba[7], 255);
-        assert_eq!(rgba[11], 255);
-        assert_eq!(rgba[15], 255);
-    }
-
-    #[test]
-    fn test_multiband_optical_stretch_discards_nir() {
-        let samples = vec![
-            1000.0, 1500.0, 2000.0, 0.0,   // px 0
-            1200.0, 1700.0, 2200.0, 0.0,   // px 1
-            1400.0, 1900.0, 2400.0, 0.0,   // px 2
-            1600.0, 2100.0, 2600.0, 0.0,   // px 3
-        ];
-
-        let rgba = normalize_multiband_buffer(&samples, 2, 2, 4, false);
-        // All pixels must have Alpha = 255 despite NIR = 0
-        assert_eq!(rgba[3], 255);
-        assert_eq!(rgba[7], 255);
-        assert_eq!(rgba[11], 255);
-        assert_eq!(rgba[15], 255);
-
-        // Values must be dynamically stretched
-        assert!(rgba[0] <= 10);
-        assert!(rgba[12] >= 245);
-    }
-
-    #[test]
-    fn test_cairo_png_encoding_validity() {
-        let rgba = vec![
-            255, 0, 0, 255,   // red
-            0, 255, 0, 255,   // green
-            0, 0, 255, 255,   // blue
-            0, 0, 0, 0,       // transparent
-        ];
-
-        let png = encode_rgba_to_png(&rgba, 2, 2).expect("PNG encoding must succeed");
-        assert_eq!(&png[0..8], b"\x89PNG\r\n\x1a\n");
-    }
-
-    #[test]
-    fn test_overview_selection_decisions() {
-        // Ideal overview available [1200, 2048]
-        let summaries = vec![
-            IfdSummary { index: 0, width: 4096, height: 4096 },
-            IfdSummary { index: 1, width: 2048, height: 2048 },
-            IfdSummary { index: 2, width: 1024, height: 1024 },
-        ];
-        let decision = select_overview_layer(&summaries, 1400).unwrap();
-        assert_eq!(decision, SelectionDecision::DirectDecode { ifd_index: 1, width: 2048, height: 2048 });
-
-        // Overviews all < 1200: pick largest overview <= 2048
-        let summaries2 = vec![
-            IfdSummary { index: 0, width: 1024, height: 1024 },
-            IfdSummary { index: 1, width: 512, height: 512 },
-            IfdSummary { index: 2, width: 256, height: 256 },
-        ];
-        let decision2 = select_overview_layer(&summaries2, 1400).unwrap();
-        assert_eq!(decision2, SelectionDecision::DirectDecode { ifd_index: 1, width: 512, height: 512 });
-
-        // Flat small raster <= 2048
-        let summaries3 = vec![
-            IfdSummary { index: 0, width: 512, height: 512 },
-        ];
-        let decision3 = select_overview_layer(&summaries3, 1400).unwrap();
-        assert_eq!(decision3, SelectionDecision::DirectDecode { ifd_index: 0, width: 512, height: 512 });
-
-        // Flat gigapixel raster > 2048: triggers subsample fallback
-        let summaries4 = vec![
-            IfdSummary { index: 0, width: 10000, height: 10000 },
-        ];
-        let decision4 = select_overview_layer(&summaries4, 1400).unwrap();
-        match decision4 {
-            SelectionDecision::SubsampleFallback { ifd_index, src_width, src_height, stride, out_width, out_height } => {
-                assert_eq!(ifd_index, 0);
-                assert_eq!(src_width, 10000);
-                assert_eq!(src_height, 10000);
-                assert_eq!(stride, 8); // ceil(10000 / 1400) = 8
-                assert_eq!(out_width, 1250); // ceil(10000 / 8) = 1250 <= 1400
-                assert_eq!(out_height, 1250);
-            }
-            _ => panic!("Expected SubsampleFallback"),
-        }
-    }
-
-    #[test]
-    fn test_dem_buffer_normalization_grayscale() {
-        let elevations = vec![-9999.0, 100.0, 500.0, 1000.0];
-        let (rgba, stats) = normalize_dem_buffer(&elevations, 2, 2, None, DemColorMap::Grayscale);
-        assert!(stats.is_some());
-        assert_eq!(&rgba[0..4], &[0, 0, 0, 0]);
-        assert_eq!(rgba[7], 255);
-        // In grayscale, R == G == B
-        assert_eq!(rgba[4], rgba[5]);
-        assert_eq!(rgba[5], rgba[6]);
-    }
-
-    #[test]
-    fn test_epsg_to_crs_name_mapping() {
-        assert_eq!(epsg_to_crs_name(4326), "WGS 84");
-        assert_eq!(epsg_to_crs_name(3857), "WGS 84 / Pseudo-Mercator");
-        assert_eq!(epsg_to_crs_name(32632), "WGS 84 / UTM zone 32N");
-        assert_eq!(epsg_to_crs_name(32721), "WGS 84 / UTM zone 21S");
-        assert_eq!(epsg_to_crs_name(99999), "EPSG:99999");
-    }
-
-    #[test]
-    fn test_geotiff_metadata_serialization_schema() {
-        let meta = GeoTiffMetadata {
-            epsg: Some(32632),
-            crs_name: Some("WGS 84 / UTM zone 32N".to_string()),
-            dimensions: [1024, 1024],
-            resolution: [10.0, 10.0],
-            bounds: [500000.0, 5100000.0, 510240.0, 5110240.0],
-            band_count: 3,
-            data_type: "MultiBand".to_string(),
-            elevation_min: None,
-            elevation_max: None,
-        };
-
-        let json = serde_json::to_string(&meta).expect("Serialization must succeed");
-        assert!(json.contains("\"epsg\":32632"));
-        assert!(json.contains("\"crs_name\":\"WGS 84 / UTM zone 32N\""));
-        assert!(json.contains("\"band_count\":3"));
-        assert!(json.contains("\"data_type\":\"MultiBand\""));
-
-        let deserialized: GeoTiffMetadata = serde_json::from_str(&json).expect("Deserialization must succeed");
-        assert_eq!(deserialized, meta);
-    }
-}
+#[path = "geotiff/tests.rs"]
+mod tests;

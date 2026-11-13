@@ -1,0 +1,9 @@
+# Native libraries for the initial Apple Silicon Hermes Dev build.
+# The app links to Homebrew libraries and requires these on the test Mac too.
+brew "pkgconf"
+brew "gtk4"
+brew "gtksourceview5"
+brew "gstreamer"
+brew "libheif"
+brew "poppler"
+brew "fontconfig"

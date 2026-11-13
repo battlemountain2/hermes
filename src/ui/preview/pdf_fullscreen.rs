@@ -31,7 +31,7 @@ impl PdfFullscreen {
         hint.add_css_class("music-detail");
         controls.append(&hint);
         let expand = gtk::Button::builder()
-            .tooltip_text("Fullscreen PDF (F)")
+            .tooltip_text("Fullscreen document (F)")
             .build();
         expand.add_css_class("hermes-media-action");
         expand.set_child(Some(&assets::primary_icon(icons::MAXIMIZE, 16)));
@@ -58,7 +58,7 @@ impl PdfFullscreen {
                 return;
             };
             let window = gtk::Window::builder()
-                .title("Hermes — PDF reader")
+                .title("Hermes — Document reader")
                 .destroy_with_parent(true)
                 .build();
             if let Some(parent) = home.root().and_downcast::<gtk::Window>() {
@@ -79,10 +79,10 @@ impl PdfFullscreen {
                 let scroll = weak_scroll.upgrade();
                 let fraction = scroll.as_ref().map(scroll_fraction);
                 window.set_child(None::<&gtk::Widget>);
-                if let (Some(home), Some(viewer)) = (weak_home.upgrade(), weak_viewer.upgrade()) {
-                    if viewer.parent().is_none() {
-                        home.append(&viewer);
-                    }
+                if let (Some(home), Some(viewer)) = (weak_home.upgrade(), weak_viewer.upgrade())
+                    && viewer.parent().is_none()
+                {
+                    home.append(&viewer);
                 }
                 if let Some(button) = weak_button.upgrade() {
                     button.set_child(Some(&assets::primary_icon(icons::MAXIMIZE, 16)));

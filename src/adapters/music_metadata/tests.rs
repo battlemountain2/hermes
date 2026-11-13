@@ -17,7 +17,7 @@ fn cancelled_audio_preview_jobs_do_not_open_a_file_or_spawn_a_decoder() {
             &cancellation
         )
         .err()
-        .unwrap(),
+        .expect("expected test value from read_audio_metadata( std::path::Path::new(\"/nonexistent/track.flac\"), &cancellation ) .err()"),
         "Preview cancelled"
     );
 }

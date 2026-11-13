@@ -26,14 +26,21 @@ pub struct BrowserColumnSnapshot {
     pub entries: Vec<FileEntry>,
     pub selected_positions: Vec<usize>,
     pub loading: bool,
+    pub notice: Option<String>,
 }
 
 #[derive(Clone, Debug)]
 pub enum BrowserEvent {
     Reset,
-    TabStored { id: TrailId },
-    TabRestored { id: TrailId },
-    TabDiscarded { id: TrailId },
+    TabStored {
+        id: TrailId,
+    },
+    TabRestored {
+        id: TrailId,
+    },
+    TabDiscarded {
+        id: TrailId,
+    },
     ColumnsTruncated {
         len: usize,
     },
@@ -65,6 +72,10 @@ pub enum BrowserEvent {
     },
     LoadFinished {
         depth: usize,
+    },
+    LoadNotice {
+        depth: usize,
+        message: Option<String>,
     },
     LoadFailed {
         depth: usize,
@@ -122,6 +133,14 @@ pub enum BrowserEvent {
     TransferProgress {
         completed: usize,
         total: usize,
+        bytes_transferred: u64,
+        bytes_copied: u64,
+        total_bytes: Option<u64>,
+    },
+    TransferConflict {
+        source: FileEntry,
+        existing: FileEntry,
+        reply: crate::services::ConflictReply,
     },
     TransferItemCompleted {
         source: Location,
@@ -228,6 +247,8 @@ impl Browser {
             .unwrap_or_else(|| {
                 if input == "trash:///" {
                     Location::uri(input)
+                } else if input == "home:///" || input == "home" {
+                    Location::uri("home:///")
                 } else {
                     Location::local(PathBuf::from(input))
                 }
@@ -397,7 +418,7 @@ impl Browser {
             DirectoryRequest {
                 id: request_id,
                 location,
-                batch_size: 128,
+                batch_size: 256,
                 include_hidden: self.preferences.get().show_hidden,
             },
             emit,
@@ -485,8 +506,16 @@ impl Browser {
     }
 
     pub fn toggle_hidden(self: &Rc<Self>) {
+        self.set_show_hidden(!self.preferences.get().show_hidden);
+    }
+
+    pub fn set_show_hidden(self: &Rc<Self>, show_hidden: bool) {
+        if self.preferences.get().show_hidden == show_hidden {
+            return;
+        }
+        self.close_peek();
         let mut preferences = self.preferences.get();
-        preferences.show_hidden = !preferences.show_hidden;
+        preferences.show_hidden = show_hidden;
         self.preferences.set(preferences);
 
         let locations = {
@@ -532,7 +561,8 @@ impl Browser {
                 return;
             };
             if browser.monitor_epoch.get() != epoch
-                || browser.pending_sort.get() != Some((generation, depth)) {
+                || browser.pending_sort.get() != Some((generation, depth))
+            {
                 return;
             }
             let result = {
@@ -563,6 +593,17 @@ impl Browser {
 
     pub fn can_go_back(&self) -> bool {
         self.state.borrow().can_go_back()
+    }
+
+    pub fn back_locations(&self) -> Vec<Location> {
+        self.state.borrow().back_locations()
+    }
+
+    pub fn back_to(self: &Rc<Self>, steps: usize) {
+        let target = self.state.borrow_mut().go_back_to(steps);
+        if let Some(target) = target {
+            self.restore_path(target);
+        }
     }
 
     pub fn can_go_forward(&self) -> bool {
@@ -612,6 +653,14 @@ impl Browser {
         self.state.borrow().column_preferences(depth)
     }
 
+    pub fn column_location(&self, depth: usize) -> Option<Location> {
+        self.state
+            .borrow()
+            .columns
+            .get(depth)
+            .map(|c| c.location.clone())
+    }
+
     pub fn set_preferences(&self, preferences: ViewPreferences) {
         self.preferences.set(preferences);
         self.state.borrow_mut().set_preferences(preferences);
@@ -625,6 +674,7 @@ impl Browser {
             entries: column.entries.clone(),
             selected_positions: state.selected_positions(depth),
             loading: column.load_state == crate::app::navigation::LoadState::Loading,
+            notice: column.notice.clone(),
         })
     }
 
@@ -652,7 +702,16 @@ impl Browser {
     }
 
     pub fn column_entries(&self, depth: usize) -> Option<Vec<FileEntry>> {
-        self.state.borrow().columns.get(depth).map(|col| col.entries.clone())
+        self.state
+            .borrow()
+            .columns
+            .get(depth)
+            .map(|col| col.entries.clone())
+    }
+
+    #[cfg(test)]
+    pub fn selected_positions(&self, depth: usize) -> Vec<usize> {
+        self.state.borrow().selected_positions(depth)
     }
 
     pub fn set_selection(&self, depth: usize, positions: &[usize], focused: Option<usize>) {
@@ -664,6 +723,37 @@ impl Browser {
                 "selection changed"
             );
         }
+    }
+
+    pub(crate) fn select_locations(&self, depth: usize, locations: &[Location]) -> bool {
+        let mut state = self.state.borrow_mut();
+        let Some(column) = state.columns.get(depth) else {
+            return false;
+        };
+        let mut positions = Vec::new();
+        for location in locations {
+            if let Some(position) = column
+                .entries
+                .iter()
+                .position(|entry| &entry.location == location)
+                && !positions.contains(&position)
+            {
+                positions.push(position);
+            }
+        }
+        let Some(focused) = positions.first().copied() else {
+            return false;
+        };
+        if !state.set_selection(depth, &positions, Some(focused)) {
+            return false;
+        }
+        drop(state);
+        self.emit(BrowserEvent::SelectionSetChanged {
+            depth,
+            positions,
+            focused,
+        });
+        true
     }
 
     pub fn select_all(&self, depth: usize) {
@@ -683,6 +773,35 @@ impl Browser {
             .borrow_mut()
             .set_selection(depth, &positions, Some(focused))
         {
+            self.emit(BrowserEvent::SelectionSetChanged {
+                depth,
+                positions,
+                focused,
+            });
+        }
+    }
+
+    pub fn invert_selection(&self, depth: usize) {
+        let (count, current_selection) = {
+            let state = self.state.borrow();
+            let Some(column) = state.columns.get(depth) else {
+                return;
+            };
+            (column.entries.len(), state.selected_positions(depth))
+        };
+        if count == 0 {
+            return;
+        }
+        let positions: Vec<_> = (0..count)
+            .filter(|pos| !current_selection.contains(pos))
+            .collect();
+        let focused = positions.last().copied();
+        if self
+            .state
+            .borrow_mut()
+            .set_selection(depth, &positions, focused)
+        {
+            let focused = focused.unwrap_or(0);
             self.emit(BrowserEvent::SelectionSetChanged {
                 depth,
                 positions,
@@ -781,6 +900,7 @@ impl Browser {
         self: &Rc<Self>,
         destination: Location,
         sources: Vec<Location>,
+        target_names: Vec<Option<String>>,
         move_sources: bool,
         overwrite_existing: bool,
     ) {
@@ -810,6 +930,7 @@ impl Browser {
                 id: request_id,
                 destination,
                 sources,
+                target_names,
                 move_sources,
                 overwrite_existing,
             },
@@ -1005,6 +1126,7 @@ impl Browser {
                 | OperationEvent::Created { request_id }
                 | OperationEvent::Pasted { request_id }
                 | OperationEvent::TransferProgress { request_id, .. }
+                | OperationEvent::TransferConflict { request_id, .. }
                 | OperationEvent::TransferItemCompleted { request_id, .. }
                 | OperationEvent::TransferCompletedWithErrors { request_id, .. }
                 | OperationEvent::DeleteProgress { request_id, .. }
@@ -1018,9 +1140,34 @@ impl Browser {
                 | OperationEvent::Failed { request_id, .. } => *request_id,
             };
             if event_id != request_id || browser.current_operation.get() != Some(event_id) {
+                if let OperationEvent::TransferConflict { reply, .. } = &event {
+                    reply.respond(crate::services::ConflictResolution {
+                        action: crate::services::ConflictAction::Cancel,
+                        apply_to_remaining: false,
+                    });
+                }
                 return;
             }
-            if let OperationEvent::TransferItemCompleted { source, move_source, .. } = &event {
+            if let OperationEvent::TransferConflict {
+                source,
+                existing,
+                reply,
+                ..
+            } = &event
+            {
+                browser.emit(BrowserEvent::TransferConflict {
+                    source: source.clone(),
+                    existing: existing.clone(),
+                    reply: reply.clone(),
+                });
+                return;
+            }
+            if let OperationEvent::TransferItemCompleted {
+                source,
+                move_source,
+                ..
+            } = &event
+            {
                 if !browser.transfer_operation.get()
                     || *move_source != browser.transfer_move_sources.get()
                 {
@@ -1075,12 +1222,20 @@ impl Browser {
                 return;
             }
             if let OperationEvent::TransferProgress {
-                completed, total, ..
+                completed,
+                total,
+                bytes_transferred,
+                bytes_copied,
+                total_bytes,
+                ..
             } = &event
             {
                 browser.emit(BrowserEvent::TransferProgress {
                     completed: *completed,
                     total: *total,
+                    bytes_transferred: *bytes_transferred,
+                    bytes_copied: *bytes_copied,
+                    total_bytes: *total_bytes,
                 });
                 return;
             }
@@ -1136,6 +1291,7 @@ impl Browser {
                     browser.refresh_location(&refresh);
                 }
                 OperationEvent::DeleteProgress { .. }
+                | OperationEvent::TransferConflict { .. }
                 | OperationEvent::RestoreProgress { .. }
                 | OperationEvent::TransferItemCompleted { .. }
                 | OperationEvent::TransferProgress { .. } => {}
@@ -1190,6 +1346,14 @@ impl Browser {
         };
         if entry.is_directory() {
             self.navigate(entry.location.clone());
+        } else if is_archive_entry(&entry) {
+            if let Some(path) = entry.location.native_path() {
+                self.navigate(Location::uri(format!("archive://{}/", path.display())));
+                return;
+            }
+            self.emit(BrowserEvent::OpenRequested {
+                location: entry.location.clone(),
+            });
         } else {
             self.emit(BrowserEvent::OpenRequested {
                 location: entry.location.clone(),
@@ -1242,6 +1406,17 @@ impl Browser {
 
         if entry.is_directory() {
             self.descend(depth, entry.location.clone());
+        } else if is_archive_entry(&entry) {
+            if let Some(path) = entry.location.native_path() {
+                self.descend(
+                    depth,
+                    Location::uri(format!("archive://{}/", path.display())),
+                );
+                return;
+            }
+            self.emit(BrowserEvent::OpenRequested {
+                location: entry.location.clone(),
+            });
         } else {
             self.emit(BrowserEvent::OpenRequested {
                 location: entry.location.clone(),
@@ -1318,7 +1493,7 @@ impl Browser {
             DirectoryRequest {
                 id: request_id,
                 location,
-                batch_size: 128,
+                batch_size: 256,
                 include_hidden: self.preferences.get().show_hidden,
             },
             emit,
@@ -1440,7 +1615,9 @@ impl Browser {
                     self.emit(BrowserEvent::ColumnReloaded { depth });
                 } else if state.restart_peek(request_id) {
                     drop(state);
-                    self.emit(BrowserEvent::PeekEntriesReplaced { entries: Vec::new() });
+                    self.emit(BrowserEvent::PeekEntriesReplaced {
+                        entries: Vec::new(),
+                    });
                 }
             }
             DirectoryEvent::Snapshot {
@@ -1498,8 +1675,21 @@ impl Browser {
                     self.emit(BrowserEvent::PeekEntriesReplaced { entries });
                 }
             }
-            DirectoryEvent::MusicMetadata { request_id, entries } => {
+            DirectoryEvent::MusicMetadata {
+                request_id,
+                entries,
+            } => {
                 self.refresh_music_order(request_id, &entries);
+            }
+            DirectoryEvent::Notice {
+                request_id,
+                message,
+            } => {
+                let mut state = self.state.borrow_mut();
+                if let Some(depth) = state.set_notice(request_id, message.clone()) {
+                    drop(state);
+                    self.emit(BrowserEvent::LoadNotice { depth, message });
+                }
             }
             DirectoryEvent::Finished { request_id } => {
                 self.refresh_music_order(request_id, &[]);
@@ -1573,6 +1763,10 @@ fn deletion_parent_location(location: &Location) -> Option<Location> {
     } else {
         location.parent()
     }
+}
+
+fn is_archive_entry(entry: &FileEntry) -> bool {
+    crate::services::classify_by_name(&entry.native_name) == crate::services::FormatFamily::Archive
 }
 
 #[cfg(test)]

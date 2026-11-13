@@ -31,9 +31,7 @@ pub(super) fn path(root: &Path) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     root.hash(&mut hasher);
-    gio::glib::user_cache_dir()
-        .join("strata/music-library")
-        .join(format!("v1-{:016x}.json", hasher.finish()))
+    crate::paths::music_library_cache_dir().join(format!("v1-{:016x}.json", hasher.finish()))
 }
 
 pub(super) fn valid_tags(tags: &MusicTags) -> bool {

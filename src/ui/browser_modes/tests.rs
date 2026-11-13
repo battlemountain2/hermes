@@ -1,5 +1,232 @@
 use super::*;
 
+pub(in crate::ui) fn load_probe(
+    views: &ModeViews,
+) -> (gtk::Stack, gtk::Spinner, gtk::StringList, gtk::Label) {
+    let pane = match views.mode {
+        BrowserMode::Grid => views
+            .grid_panes
+            .last()
+            .expect("expected test value from views.grid_panes.last()"),
+        BrowserMode::Explorer => views
+            .explorer_pane
+            .as_ref()
+            .expect("expected test value from views.explorer_pane.as_ref()"),
+        BrowserMode::Columns => panic!("Columns use their own load presentation"),
+    };
+    (
+        pane.stack.clone(),
+        pane.spinner.clone(),
+        pane.model.clone(),
+        pane.status.clone(),
+    )
+}
+
+#[test]
+fn explorer_initial_layout_keeps_all_details_in_a_compact_name_column() {
+    assert_eq!(EXPLORER_COLUMN_WIDTHS[0], 320);
+    assert_eq!(explorer_preview_reservation(), 684);
+}
+
+#[test]
+#[ignore = "Requires an isolated GTK display; exercises explorer pane header layout"]
+fn explorer_pane_header_remains_outside_horizontal_scroll_to_keep_actions_visible() {
+    let _ = gtk::init();
+    let browser = Browser::new(Rc::new(crate::adapters::LocalFileSource));
+    let pane = build_explorer_pane(
+        browser,
+        Rc::new(Cell::new(false)),
+        Rc::new(RefCell::new(None)),
+        Rc::new(RefCell::new(Vec::new())),
+        Rc::new(RefCell::new(None)),
+        0,
+        "Very Long Folder Name That Might Otherwise Overflow",
+    );
+    let header = pane
+        .shell
+        .first_child()
+        .expect("expected test value from pane.shell.first_child()")
+        .downcast::<gtk::Box>()
+        .expect(
+            "expected test value from pane.shell.first_child().unwrap().downcast::<gtk::Box>()",
+        );
+    assert!(header.has_css_class("mode-pane-header"));
+
+    let heading = header
+        .first_child()
+        .expect("expected test value from header .first_child()")
+        .next_sibling()
+        .expect("expected test value from header .first_child() .unwrap() .next_sibling()")
+        .downcast::<gtk::Label>()
+        .expect("expected test value from header .first_child() .unwrap() .next_sibling() .unwrap() .downcast::<gtk::Label>()");
+    assert_eq!(heading.ellipsize(), gtk::pango::EllipsizeMode::End);
+
+    let actions = header
+        .last_child()
+        .expect("expected test value from header.last_child()")
+        .downcast::<gtk::Box>()
+        .expect("expected test value from header.last_child().unwrap().downcast::<gtk::Box>()");
+    assert!(actions.has_css_class("grid-header-actions"));
+
+    let scroller = pane.shell.last_child().expect("expected test value from pane.shell.last_child()").downcast::<gtk::ScrolledWindow>().expect("expected test value from pane.shell.last_child().unwrap().downcast::<gtk::ScrolledWindow>()");
+    assert_eq!(scroller.hscrollbar_policy(), gtk::PolicyType::Automatic);
+    let viewport = scroller
+        .child()
+        .expect("expected test value from scroller.child()")
+        .downcast::<gtk::Viewport>()
+        .expect("expected test value from scroller.child().unwrap().downcast::<gtk::Viewport>()");
+    assert_eq!(
+        viewport
+            .child()
+            .expect("expected test value from viewport.child()"),
+        pane.stack.upcast::<gtk::Widget>()
+    );
+}
+
+#[test]
+#[ignore = "Requires an isolated GTK display; real grid slider and Explorer layout fixture"]
+fn desktop_thumbnail_slider_updates_mounted_cards_and_explorer_details_fit() {
+    use std::time::{Duration, Instant};
+    fn pump_until(condition: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(6);
+        while !condition() && Instant::now() < deadline {
+            gtk::glib::MainContext::default().iteration(false);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(condition(), "GTK thumbnail/layout condition timed out");
+    }
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
+    let _theme = crate::ui::theme::ThemeManager::shared();
+    let styles = gtk::CssProvider::new();
+    styles.load_from_string(include_str!("../../style.css"));
+    gtk::style_context_add_provider_for_display(
+        &gtk::gdk::Display::default()
+            .expect("expected test value from gtk::gdk::Display::default()"),
+        &styles,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    let root = std::env::temp_dir().join(format!("hermes-grid-resize-{}", std::process::id()));
+    std::fs::create_dir_all(&root).expect("create generated fixture directory");
+    std::fs::write(
+        root.join("game.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Generated game\nIcon=folder\nExec=/bin/false\n",
+    )
+    .expect("write generated fixture");
+    let browser = Browser::new(Rc::new(crate::adapters::LocalFileSource));
+    let views = Rc::new(RefCell::new(ModeViews::new(
+        &gtk::ScrolledWindow::new(),
+        browser.clone(),
+    )));
+    views.borrow_mut().set_mode(BrowserMode::Grid);
+    let weak_views = Rc::downgrade(&views);
+    browser.observe(move |event| {
+        if let Some(views) = weak_views.upgrade() {
+            views.borrow_mut().handle(&event);
+        }
+    });
+    let window = gtk::Window::builder()
+        .default_width(800)
+        .default_height(500)
+        .child(&views.borrow().widget())
+        .build();
+    window.present();
+    browser.navigate(Location::local(&root));
+    pump_until(|| {
+        views
+            .borrow()
+            .grid_panes
+            .first()
+            .is_some_and(|pane| pane.model.n_items() == 1 && !pane.bound_items.borrow().is_empty())
+    });
+    let pane = views.borrow().grid_panes[0].clone();
+    let overlay = pane.bound_items.borrow()[0]
+        .widget
+        .upgrade()
+        .expect("expected test value from pane.bound_items.borrow()[0] .widget .upgrade()")
+        .downcast::<gtk::Overlay>()
+        .expect("expected test value from pane.bound_items.borrow()[0] .widget .upgrade() .unwrap() .downcast::<gtk::Overlay>()");
+    let card = overlay
+        .child()
+        .expect("expected test value from overlay.child()");
+    let center = card
+        .first_child()
+        .expect("expected test value from card .first_child()")
+        .downcast::<gtk::CenterBox>()
+        .expect(
+            "expected test value from card .first_child() .unwrap() .downcast::<gtk::CenterBox>()",
+        );
+    let icon = center
+        .center_widget()
+        .expect("expected test value from center .center_widget()")
+        .first_child()
+        .expect("expected test value from center .center_widget() .unwrap() .first_child()")
+        .downcast::<gtk::Image>()
+        .expect("expected test value from center .center_widget() .unwrap() .first_child() .unwrap() .downcast::<gtk::Image>()");
+    pump_until(|| icon.pixel_size() == 64);
+    let menu = pane
+        .shell
+        .first_child()
+        .expect("expected test value from pane .shell .first_child()")
+        .last_child()
+        .expect("expected test value from pane .shell .first_child() .unwrap() .last_child()")
+        .first_child()
+        .expect("expected test value from pane .shell .first_child() .unwrap() .last_child() .unwrap() .first_child()")
+        .downcast::<gtk::MenuButton>()
+        .expect("expected test value from pane .shell .first_child() .unwrap() .last_child() .unwrap() .first_child() .unwrap() .downcast::<gtk::MenuButton>()");
+    let content = menu
+        .popover()
+        .expect("expected test value from menu.popover()")
+        .child()
+        .expect("expected test value from menu.popover().unwrap().child()");
+    let scale = content
+        .last_child()
+        .expect("expected test value from content .last_child()")
+        .prev_sibling()
+        .expect("expected test value from content .last_child() .unwrap() .prev_sibling()")
+        .downcast::<gtk::Scale>()
+        .expect("expected test value from content .last_child() .unwrap() .prev_sibling() .unwrap() .downcast::<gtk::Scale>()");
+    scale.set_value(7.0);
+    pump_until(|| icon.pixel_size() == 256);
+    assert_eq!(views.borrow().grid_thumbnail_size.get(), 256);
+    scale.set_value(0.0);
+    pump_until(|| icon.pixel_size() == 48);
+    assert_eq!(views.borrow().grid_thumbnail_size.get(), 48);
+    views.borrow_mut().set_mode(BrowserMode::Explorer);
+    let explorer = views
+        .borrow()
+        .explorer_pane
+        .as_ref()
+        .expect("expected test value from views.borrow().explorer_pane.as_ref()")
+        .clone();
+    pump_until(|| explorer.view.width() > 0);
+    let content = explorer
+        .stack
+        .child_by_name("content")
+        .expect("expected test value from explorer.stack.child_by_name(\"content\")");
+    let headings = content
+        .first_child()
+        .expect("expected test value from content.first_child()")
+        .next_sibling()
+        .expect("expected test value from content.first_child().unwrap().next_sibling()");
+    let bounds = headings
+        .last_child()
+        .expect("expected test value from headings .last_child()")
+        .compute_bounds(&headings)
+        .expect(
+            "expected test value from headings .last_child() .unwrap() .compute_bounds(&headings)",
+        );
+    assert!(
+        bounds.x() + bounds.width() <= explorer_preview_reservation() as f32,
+        "Details edge {} exceeds reservation",
+        bounds.x() + bounds.width()
+    );
+    assert!(explorer.view.width() >= explorer_preview_reservation());
+    window.close();
+    browser.clear_observer();
+    std::fs::remove_dir_all(root).expect("remove generated fixture");
+}
+
 pub(in crate::ui) type LifecycleProbes = Vec<(String, glib::WeakRef<glib::Object>)>;
 
 pub(in crate::ui) fn append_widget_probes(

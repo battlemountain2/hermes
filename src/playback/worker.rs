@@ -11,7 +11,7 @@ use gstreamer::{self as gst, prelude::*};
 use gstreamer_app as app;
 use gstreamer_video as video;
 
-use super::wire::{Command, Event, write_event};
+use super::wire::{Command, Event, MAX_AUDIO, write_event};
 
 pub(crate) fn report_error(message: &str) {
     let message = message.chars().take(500).collect();
@@ -24,13 +24,13 @@ pub(crate) fn run() -> Result<(), String> {
     let epoch = Arc::new(AtomicU64::new(0));
     let preroll_epoch = Arc::new(AtomicU64::new(0));
     let video_bin = gst::parse::bin_from_description(
-        "videoflip video-direction=auto ! videoconvert ! videoscale ! videorate drop-only=true max-rate=30 ! video/x-raw,format=RGBA,width=[1,1280],height=[1,720],framerate=[0/1,30/1],pixel-aspect-ratio=1/1 ! appsink name=frames sync=true max-buffers=2 drop=true enable-last-sample=false", true)
+        "videorate drop-only=true max-rate=30 ! videoflip video-direction=auto ! videoscale ! videoconvert ! video/x-raw,format=RGBA,width=[1,1280],height=[1,720],framerate=[0/1,30/1],pixel-aspect-ratio=1/1 ! appsink name=frames sync=true max-buffers=2 drop=true enable-last-sample=false", true)
         .map_err(|error| error.to_string())?;
     let frames = video_bin
         .by_name("frames")
-        .unwrap()
+        .ok_or("Video frame sink missing")?
         .downcast::<app::AppSink>()
-        .unwrap();
+        .map_err(|_| "Video frame sink has an unexpected type")?;
     let video_output = output.clone();
     let video_epoch = epoch.clone();
     let video_preroll_epoch = preroll_epoch.clone();
@@ -66,9 +66,9 @@ pub(crate) fn run() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     let audio = audio_bin
         .by_name("pcm")
-        .unwrap()
+        .ok_or("Audio PCM sink missing")?
         .downcast::<app::AppSink>()
-        .unwrap();
+        .map_err(|_| "Audio PCM sink has an unexpected type")?;
     let audio_output = output.clone();
     let audio_epoch = epoch.clone();
     let audio_preroll_epoch = preroll_epoch.clone();
@@ -87,11 +87,19 @@ pub(crate) fn run() -> Result<(), String> {
                 let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
                 let buffer = sample.buffer().ok_or(gst::FlowError::Error)?;
                 let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
-                let event = Event::Audio {
-                    epoch: audio_epoch.load(Ordering::Acquire),
-                };
-                write_event(&mut *audio_output.lock().unwrap(), &event, map.as_slice())
-                    .map_err(|_| gst::FlowError::Error)?;
+                let mut writer = audio_output
+                    .lock()
+                    .expect("Playback transport output lock poisoned");
+                write_audio(
+                    &mut *writer,
+                    audio_epoch.load(Ordering::Acquire),
+                    map.as_slice(),
+                )
+                .map_err(|error| {
+                    let message = format!("Audio transport rejected {} bytes: {error}", map.len());
+                    let _sent = write_event(&mut *writer, &Event::Error { message }, &[]);
+                    gst::FlowError::Error
+                })?;
                 Ok(gst::FlowSuccess::Ok)
             })
             .build(),
@@ -191,7 +199,9 @@ pub(crate) fn run() -> Result<(), String> {
                             pending_seek = Some(next);
                         } else {
                             write_event(
-                                &mut *output.lock().unwrap(),
+                                &mut *output
+                                    .lock()
+                                    .expect("Playback transport output lock poisoned"),
                                 &Event::Seeked {
                                     epoch: next,
                                     success: false,
@@ -218,7 +228,9 @@ pub(crate) fn run() -> Result<(), String> {
                         playing = false;
                         if let Some(next) = pending_seek.take() {
                             write_event(
-                                &mut *output.lock().unwrap(),
+                                &mut *output
+                                    .lock()
+                                    .expect("Playback transport output lock poisoned"),
                                 &Event::Seeked {
                                     epoch: next,
                                     success: true,
@@ -228,7 +240,9 @@ pub(crate) fn run() -> Result<(), String> {
                             .map_err(|error| error.to_string())?;
                         }
                         write_event(
-                            &mut *output.lock().unwrap(),
+                            &mut *output
+                                .lock()
+                                .expect("Playback transport output lock poisoned"),
                             &Event::Ended {
                                 epoch: epoch.load(Ordering::Acquire),
                             },
@@ -244,7 +258,9 @@ pub(crate) fn run() -> Result<(), String> {
                             let mut seek = gst::query::Seeking::new(gst::Format::Time);
                             let seekable = player.query(&mut seek) && seek.result().0;
                             write_event(
-                                &mut *output.lock().unwrap(),
+                                &mut *output
+                                    .lock()
+                                    .expect("Playback transport output lock poisoned"),
                                 &Event::Prepared {
                                     duration,
                                     audio: player.property::<i32>("n-audio") > 0,
@@ -263,7 +279,9 @@ pub(crate) fn run() -> Result<(), String> {
                                     .map_err(|error| error.to_string())?;
                             }
                             write_event(
-                                &mut *output.lock().unwrap(),
+                                &mut *output
+                                    .lock()
+                                    .expect("Playback transport output lock poisoned"),
                                 &Event::Seeked {
                                     epoch,
                                     success: true,
@@ -273,7 +291,9 @@ pub(crate) fn run() -> Result<(), String> {
                             .map_err(|error| error.to_string())?;
                             if let Some(position) = player.query_position::<gst::ClockTime>() {
                                 write_event(
-                                    &mut *output.lock().unwrap(),
+                                    &mut *output
+                                        .lock()
+                                        .expect("Playback transport output lock poisoned"),
                                     &Event::Position {
                                         epoch,
                                         timestamp: position.useconds().min(i64::MAX as u64) as i64,
@@ -291,7 +311,9 @@ pub(crate) fn run() -> Result<(), String> {
                 && preroll_epoch.load(Ordering::Acquire) == next
             {
                 write_event(
-                    &mut *output.lock().unwrap(),
+                    &mut *output
+                        .lock()
+                        .expect("Playback transport output lock poisoned"),
                     &Event::Seeked {
                         epoch: next,
                         success: true,
@@ -301,7 +323,9 @@ pub(crate) fn run() -> Result<(), String> {
                 .map_err(|error| error.to_string())?;
                 if let Some(position) = player.query_position::<gst::ClockTime>() {
                     write_event(
-                        &mut *output.lock().unwrap(),
+                        &mut *output
+                            .lock()
+                            .expect("Playback transport output lock poisoned"),
                         &Event::Position {
                             epoch: next,
                             timestamp: position.useconds().min(i64::MAX as u64) as i64,
@@ -322,7 +346,9 @@ pub(crate) fn run() -> Result<(), String> {
                 && let Some(position) = player.query_position::<gst::ClockTime>()
             {
                 write_event(
-                    &mut *output.lock().unwrap(),
+                    &mut *output
+                        .lock()
+                        .expect("Playback transport output lock poisoned"),
                     &Event::Position {
                         epoch: epoch.load(Ordering::Acquire),
                         timestamp: position.useconds().min(i64::MAX as u64) as i64,
@@ -337,7 +363,9 @@ pub(crate) fn run() -> Result<(), String> {
     if let Err(message) = &result {
         let bounded: String = message.chars().take(500).collect();
         let _sent = write_event(
-            &mut *output.lock().unwrap(),
+            &mut *output
+                .lock()
+                .expect("Playback transport output lock poisoned"),
             &Event::Error { message: bounded },
             &[],
         );
@@ -369,7 +397,9 @@ fn send_frame(
         );
     }
     write_event(
-        &mut *output.lock().unwrap(),
+        &mut *output
+            .lock()
+            .expect("Playback transport output lock poisoned"),
         &Event::Frame {
             epoch: epoch.load(Ordering::Acquire),
             timestamp: buffer
@@ -383,3 +413,19 @@ fn send_frame(
     .map_err(|_| gst::FlowError::Error)?;
     Ok(gst::FlowSuccess::Ok)
 }
+
+fn write_audio(writer: &mut impl io::Write, epoch: u64, data: &[u8]) -> io::Result<()> {
+    if !data.len().is_multiple_of(8) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Unaligned stereo PCM",
+        ));
+    }
+    for chunk in data.chunks(MAX_AUDIO) {
+        write_event(writer, &Event::Audio { epoch }, chunk)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;

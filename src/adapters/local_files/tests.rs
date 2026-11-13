@@ -32,42 +32,63 @@ fn unsupported_trash_reports_the_missing_backend() {
 #[test]
 #[ignore = "Uses the exclusive default GLib context; generated native enumeration fixture"]
 fn streaming_enumeration_starts_small_and_keeps_all_entries() {
-    use std::{cell::{Cell, RefCell}, rc::Rc, time::{Duration, Instant}};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+        time::{Duration, Instant},
+    };
     let folder = std::env::temp_dir().join(format!("hermes-first-batch-{}", std::process::id()));
-    fs::create_dir(&folder).unwrap();
+    fs::create_dir(&folder).expect("create generated fixture directory");
     for index in 0..300 {
-        fs::write(folder.join(format!("entry-{index}")), b"fixture").unwrap();
+        fs::write(folder.join(format!("entry-{index}")), b"fixture")
+            .expect("write generated fixture");
     }
     let context = glib::MainContext::default();
-    let _owned = context.acquire().unwrap();
+    let _owned = context
+        .acquire()
+        .expect("expected test value from context.acquire()");
     let batches = Rc::new(RefCell::new(Vec::new()));
     let completed = Rc::new(Cell::new(false));
     let received = batches.clone();
     let finished = completed.clone();
-    let load = LocalFileSource.enumerate(DirectoryRequest {
-        id: crate::services::RequestId(1), location: Location::local(&folder), batch_size: 128, include_hidden: false,
-    }, Rc::new(move |event| match event {
-        DirectoryEvent::Batch { entries, .. } => received.borrow_mut().push(entries),
-        DirectoryEvent::Finished { .. } => finished.set(true),
-        DirectoryEvent::Failed { message, .. } => panic!("{message}"),
-        _ => {}
-    }));
+    let load = LocalFileSource.enumerate(
+        DirectoryRequest {
+            id: crate::services::RequestId(1),
+            location: Location::local(&folder),
+            batch_size: 128,
+            include_hidden: false,
+        },
+        Rc::new(move |event| match event {
+            DirectoryEvent::Batch { entries, .. } => received.borrow_mut().push(entries),
+            DirectoryEvent::Finished { .. } => finished.set(true),
+            DirectoryEvent::Failed { message, .. } => panic!("{message}"),
+            _ => {}
+        }),
+    );
     let deadline = Instant::now() + Duration::from_secs(5);
     while !completed.get() && Instant::now() < deadline {
         context.iteration(false);
         std::thread::sleep(Duration::from_millis(1));
     }
     assert!(completed.get());
-    assert_eq!(batches.borrow()[0].len(), 32);
-    assert!(batches.borrow().iter().skip(1).all(|entries| entries.len() <= 128));
-    let names = batches.borrow().iter().flat_map(|entries| entries.iter().map(|entry| entry.location.clone())).collect::<std::collections::HashSet<_>>();
+    assert_eq!(batches.borrow()[0].len(), 64);
+    assert!(
+        batches
+            .borrow()
+            .iter()
+            .skip(1)
+            .all(|entries| entries.len() <= 256)
+    );
+    let names = batches
+        .borrow()
+        .iter()
+        .flat_map(|entries| entries.iter().map(|entry| entry.location.clone()))
+        .collect::<std::collections::HashSet<_>>();
     assert_eq!(names.len(), 300);
     drop(load);
     while context.iteration(false) {}
-    fs::remove_dir_all(folder).unwrap();
+    fs::remove_dir_all(folder).expect("remove generated fixture");
 }
-
-
 
 #[test]
 fn invalid_utf8_names_keep_their_native_bytes() -> Result<(), Box<dyn Error>> {

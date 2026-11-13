@@ -37,6 +37,11 @@ pub enum PreviewContent {
         content: String,
         truncated: bool,
     },
+    OfficeText {
+        content: String,
+        truncated: bool,
+        reason: String,
+    },
     Image,
     Media,
     Rasterized {
@@ -90,6 +95,10 @@ pub struct Preview {
 }
 
 #[derive(Clone, Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Provider events carry one owned preview through the existing synchronous callback API"
+)]
 pub enum PreviewEvent {
     Ready(Preview),
     Failed {
@@ -101,6 +110,10 @@ pub enum PreviewEvent {
 
 pub trait PreviewProvider {
     fn load(&self, request: PreviewRequest, emit: Rc<dyn Fn(PreviewEvent)>) -> LoadHandle;
+
+    fn load_layout(&self, request: PreviewRequest, emit: Rc<dyn Fn(PreviewEvent)>) -> LoadHandle {
+        self.load(request, emit)
+    }
 }
 
 #[cfg(test)]

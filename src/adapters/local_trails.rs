@@ -37,7 +37,7 @@ pub struct LocalTrailStore {
 
 impl LocalTrailStore {
     pub fn xdg() -> Self {
-        let store = Self::at(gtk::glib::user_config_dir().join("strata/trails.toml"));
+        let store = Self::at(crate::paths::trails_file());
         if let Some(application) = gtk::gio::Application::default() {
             store.connect_shutdown(&application);
         }

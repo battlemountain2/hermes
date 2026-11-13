@@ -3,6 +3,34 @@
 use super::recolor_icon_source;
 
 #[test]
+#[ignore = "Requires an isolated GTK display; validates filled control icon colors"]
+fn desktop_filled_control_icons_keep_contrast_across_theme_and_playback_changes() {
+    use gtk::prelude::*;
+    gtk::init().expect("initialize the isolated GTK display");
+    super::prepare().expect("expected test value from super::prepare()");
+    super::set_on_accent_icon_color("#102030");
+    let image = super::on_accent_icon(super::icons::PLAY, 20);
+    let original = image
+        .paintable()
+        .expect("expected test value from image.paintable()");
+    super::set_primary_icon_color("#aabbcc");
+    assert_eq!(image.paintable().as_ref(), Some(&original));
+    super::set_on_accent_icon_color("#f0e0d0");
+    assert_ne!(image.paintable().as_ref(), Some(&original));
+    super::set_on_accent_icon(&image, super::icons::PAUSE);
+    let expected = super::primary_icon_texture(super::icons::PAUSE, "#f0e0d0").expect(
+        "expected test value from super::primary_icon_texture(super::icons::PAUSE, \"#f0e0d0\")",
+    );
+    assert_eq!(image.paintable(), Some(expected.upcast()));
+    super::set_primary_icon_color("#778899");
+    super::set_text_icon_color("#223344");
+    assert_eq!(
+        image.paintable(),
+        super::primary_icon_texture(super::icons::PAUSE, "#f0e0d0").map(|texture| texture.upcast())
+    );
+}
+
+#[test]
 fn themed_icons_replace_every_legacy_fallback_color() {
     for fallback in ["#8bc9eb", "#22d3ee", "#2e3436"] {
         let source = format!(r##"<svg stroke="{fallback}"/>"##);
@@ -27,8 +55,8 @@ fn desktop_icon_registration_rebinds_and_releases_dead_widgets() {
     use gtk::{glib::object::ObjectType, prelude::ObjectExt};
     use std::cell::RefCell;
 
-    gtk::init().unwrap();
-    super::prepare().unwrap();
+    gtk::init().expect("initialize the isolated GTK display");
+    super::prepare().expect("expected test value from super::prepare()");
     let registry = RefCell::new(super::IconRegistry::default());
     let image = gtk::Image::new();
     let key = image.as_ptr() as usize;

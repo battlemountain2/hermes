@@ -3,7 +3,12 @@
 #[cfg(test)]
 mod tests;
 
-use std::rc::Rc;
+use std::{
+    cell::RefCell,
+    future::poll_fn,
+    rc::Rc,
+    task::{Poll, Waker},
+};
 
 use crate::model::{FileEntry, Location};
 
@@ -52,8 +57,63 @@ pub struct PasteRequest {
     pub id: OperationRequestId,
     pub destination: Location,
     pub sources: Vec<Location>,
+    pub target_names: Vec<Option<String>>,
     pub move_sources: bool,
     pub overwrite_existing: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConflictAction {
+    Cancel,
+    Skip,
+    KeepBoth,
+    Replace,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ConflictResolution {
+    pub action: ConflictAction,
+    pub apply_to_remaining: bool,
+}
+
+#[derive(Debug, Default)]
+struct ConflictResponse {
+    resolution: Option<ConflictResolution>,
+    waker: Option<Waker>,
+    answered: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ConflictReply(Rc<RefCell<ConflictResponse>>);
+
+impl ConflictReply {
+    pub fn respond(&self, resolution: ConflictResolution) {
+        let waker = {
+            let mut response = self.0.borrow_mut();
+            if response.answered {
+                return;
+            }
+            response.answered = true;
+            response.resolution = Some(resolution);
+            response.waker.take()
+        };
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+    }
+
+    pub(crate) async fn wait(&self) -> ConflictResolution {
+        poll_fn(|context| {
+            let mut response = self.0.borrow_mut();
+            if let Some(resolution) = response.resolution.take() {
+                Poll::Ready(resolution)
+            } else {
+                response.waker = Some(context.waker().clone());
+                Poll::Pending
+            }
+        })
+        .await
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -98,6 +158,17 @@ pub enum OperationEvent {
         request_id: OperationRequestId,
         completed: usize,
         total: usize,
+        /// Logical bytes processed, including an unpublished staging attempt.
+        bytes_transferred: u64,
+        /// Copy bytes reported by the backend, excluding rename-only completion.
+        bytes_copied: u64,
+        total_bytes: Option<u64>,
+    },
+    TransferConflict {
+        request_id: OperationRequestId,
+        source: FileEntry,
+        existing: FileEntry,
+        reply: ConflictReply,
     },
     TransferItemCompleted {
         request_id: OperationRequestId,

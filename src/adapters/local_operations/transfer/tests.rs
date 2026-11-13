@@ -15,14 +15,18 @@ use std::{
 use gtk::{gio, glib, prelude::*};
 
 use super::{
-    failure, native_transfer_with_copy, replacement_supported, run_native, stage_and_commit,
-    staged_native_transfer, transfer_item,
+    failure, native_transfer_with_copy, replacement_supported, run_native_with_progress,
+    stage_and_commit, staged_native_transfer, transfer_item,
 };
 use crate::{
     adapters::local_operations::LocalOperationProvider,
     model::Location,
     services::{OperationEvent, OperationProvider, OperationRequestId, PasteRequest},
 };
+
+#[cfg(target_os = "linux")]
+#[path = "cross_filesystem_tests.rs"]
+mod cross_filesystem;
 
 struct Fixture(PathBuf);
 
@@ -109,6 +113,33 @@ fn missing_source_never_removes_the_existing_destination() -> Result<(), Box<dyn
         assert_eq!(fs::read(fixture.target())?, b"old contents");
         fixture.assert_clean()?;
     }
+    Ok(())
+}
+
+#[test]
+fn destination_changed_during_copy_requires_a_new_conflict_decision() -> Result<(), Box<dyn Error>>
+{
+    let fixture = Fixture::new()?;
+    let result = stage_and_commit(
+        &fixture.source(),
+        &fixture.target(),
+        false,
+        true,
+        &gio::Cancellable::new(),
+        |stage| {
+            fs::copy(fixture.source(), stage).map_err(super::io_error)?;
+            fs::write(fixture.target(), b"a newer destination version").map_err(super::io_error)?;
+            Ok(())
+        },
+    );
+    assert!(
+        result
+            .expect_err("invalid or cancelled fixture must fail")
+            .matches(gio::IOErrorEnum::Exists)
+    );
+    assert_eq!(fs::read(fixture.target())?, b"a newer destination version");
+    assert_eq!(fs::read(fixture.source())?, b"new contents");
+    fixture.assert_clean()?;
     Ok(())
 }
 
@@ -204,7 +235,8 @@ fn precancelled_transfer_never_creates_staging() -> Result<(), Box<dyn Error>> {
             &fixture.target(),
             true,
             true,
-            &cancellable
+            &cancellable,
+            None,
         )
         .is_err()
     );
@@ -224,6 +256,7 @@ fn cancellation_after_commit_does_not_roll_back_a_completed_move() -> Result<(),
         true,
         true,
         &cancellable,
+        None,
     )?;
     cancellable.cancel();
     assert!(!fixture.source().exists());
@@ -275,22 +308,29 @@ fn aborting_and_dropping_the_future_cancels_worker_and_cleans_after_writer_stops
     let cancellable = gio::Cancellable::new();
     let monitor = cancellable.clone();
     context.with_thread_default(|| {
-        let task = context.spawn_local(run_native(cancellable, move |cancellable| {
-            let result = stage_and_commit(&source, &target, true, true, &cancellable, |stage| {
-                fs::write(stage, b"partial data").expect("write staged fixture");
-                started_send
-                    .send(stage.to_path_buf())
-                    .expect("report writer startup");
-                release_recv
-                    .recv_timeout(Duration::from_secs(5))
-                    .expect("release writer");
-                assert!(cancellable.is_cancelled());
-                fs::write(stage, b"last writer bytes").expect("stage survives until writer stops");
-                Err(failure("cancelled fixture writer"))
-            });
-            finished_send.send(()).expect("report cleanup completion");
-            result
-        }));
+        let task = context.spawn_local(run_native_with_progress(
+            cancellable,
+            Rc::new(|_, _| panic!("no callback may outlive the aborted future")),
+            move |cancellable, sample| {
+                let result =
+                    stage_and_commit(&source, &target, true, true, &cancellable, |stage| {
+                        fs::write(stage, b"partial data").expect("write staged fixture");
+                        started_send
+                            .send(stage.to_path_buf())
+                            .expect("report writer startup");
+                        release_recv
+                            .recv_timeout(Duration::from_secs(5))
+                            .expect("release writer");
+                        assert!(cancellable.is_cancelled());
+                        *sample.lock().expect("generated progress sample") = (18, 100);
+                        fs::write(stage, b"last writer bytes")
+                            .expect("stage survives until writer stops");
+                        Err(failure("cancelled fixture writer"))
+                    });
+                finished_send.send(()).expect("report cleanup completion");
+                result
+            },
+        ));
         let deadline = Instant::now() + Duration::from_secs(5);
         let stage = loop {
             context.iteration(false);
@@ -498,10 +538,64 @@ fn new_folder_copy_and_move_preserve_nested_files_and_links() -> Result<(), Box<
 }
 
 #[test]
-fn folder_replacement_and_type_conflicts_fail_closed_without_merging() -> Result<(), Box<dyn Error>>
-{
+fn folder_merging_combines_contents_and_preserves_unrelated_files() -> Result<(), Box<dyn Error>> {
     for move_source in [false, true] {
-        for (source_folder, target_folder) in [(true, true), (true, false), (false, true)] {
+        let fixture = Fixture::new()?;
+        fs::remove_file(fixture.source())?;
+        fs::create_dir(fixture.source())?;
+        fs::write(fixture.source().join("new"), b"new contents")?;
+
+        fs::remove_file(fixture.target())?;
+        fs::create_dir(fixture.target())?;
+        fs::write(fixture.target().join("old"), b"old contents")?;
+
+        let result = transfer(&fixture.source(), &fixture.target(), move_source, true);
+        assert!(result.is_ok(), "folder merge failed: {:?}", result.err());
+
+        assert_eq!(fs::read(fixture.target().join("old"))?, b"old contents");
+        assert_eq!(fs::read(fixture.target().join("new"))?, b"new contents");
+
+        if move_source {
+            assert!(!fixture.source().exists());
+        } else {
+            assert_eq!(fs::read(fixture.source().join("new"))?, b"new contents");
+        }
+        fixture.assert_clean()?;
+    }
+    Ok(())
+}
+
+#[test]
+fn folder_approval_does_not_authorize_nested_file_replacement() -> Result<(), Box<dyn Error>> {
+    for move_source in [false, true] {
+        let fixture = Fixture::new()?;
+        fs::remove_file(fixture.source())?;
+        fs::remove_file(fixture.target())?;
+        fs::create_dir_all(fixture.source().join("nested"))?;
+        fs::create_dir_all(fixture.target().join("nested"))?;
+        fs::write(fixture.source().join("nested/conflict"), b"incoming")?;
+        fs::write(fixture.target().join("nested/conflict"), b"existing")?;
+        fs::write(fixture.target().join("unrelated"), b"keep")?;
+        let result = transfer(&fixture.source(), &fixture.target(), move_source, true);
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read(fixture.source().join("nested/conflict"))?,
+            b"incoming"
+        );
+        assert_eq!(
+            fs::read(fixture.target().join("nested/conflict"))?,
+            b"existing"
+        );
+        assert_eq!(fs::read(fixture.target().join("unrelated"))?, b"keep");
+        fixture.assert_clean()?;
+    }
+    Ok(())
+}
+
+#[test]
+fn type_conflicts_fail_closed_without_destroying_either_side() -> Result<(), Box<dyn Error>> {
+    for move_source in [false, true] {
+        for (source_folder, target_folder) in [(true, false), (false, true)] {
             let fixture = Fixture::new()?;
             if source_folder {
                 fs::remove_file(fixture.source())?;
@@ -514,9 +608,11 @@ fn folder_replacement_and_type_conflicts_fail_closed_without_merging() -> Result
                 fs::write(fixture.target().join("old"), b"old contents")?;
             }
             let result = transfer(&fixture.source(), &fixture.target(), move_source, true);
-            assert!(
-                result.is_err_and(|error| error.to_string().contains("Folders are not merged"))
-            );
+            assert!(result.is_err_and(|error| {
+                error
+                    .to_string()
+                    .contains("Cannot replace a file with a folder or a folder with a file")
+            }));
             assert_eq!(
                 fs::read(if source_folder {
                     fixture.source().join("new")
@@ -631,8 +727,7 @@ fn paste_continues_after_failures_and_reports_only_successful_roots() -> Result<
     let folder = fixture.0.join("source/folder");
     fs::create_dir(&folder)?;
     fs::write(folder.join("child"), b"folder contents")?;
-    fs::create_dir(fixture.0.join("destination/folder"))?;
-    fs::write(fixture.0.join("destination/folder/old"), b"folder original")?;
+    fs::write(fixture.0.join("destination/folder"), b"destination file")?;
     let last = fixture.0.join("source/last");
     fs::write(&last, b"last contents")?;
     let success_locations = [Location::local(fixture.source()), Location::local(&last)];
@@ -650,6 +745,7 @@ fn paste_continues_after_failures_and_reports_only_successful_roots() -> Result<
                 Location::local(&folder),
                 success_locations[1].clone(),
             ],
+            target_names: Vec::new(),
             move_sources: true,
             overwrite_existing: true,
         },
@@ -705,12 +801,308 @@ fn paste_continues_after_failures_and_reports_only_successful_roots() -> Result<
         b"missing original"
     );
     assert_eq!(
-        fs::read(fixture.0.join("destination/folder/old"))?,
-        b"folder original"
+        fs::read(fixture.0.join("destination/folder"))?,
+        b"destination file"
     );
     assert!(folder.join("child").exists());
     assert!(!fixture.source().exists());
     assert!(!last.exists());
     fixture.assert_clean()?;
+    Ok(())
+}
+
+#[test]
+fn live_native_samples_arrive_before_publication_on_the_owning_context()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let context = glib::MainContext::new();
+    let source = fixture.source();
+    let target = fixture.target();
+    let observed_target = target.clone();
+    let (release_send, release_recv) = mpsc::channel();
+    let samples = Rc::new(RefCell::new(Vec::new()));
+    let output = samples.clone();
+    context.with_thread_default(|| {
+        context.block_on(run_native_with_progress(
+            gio::Cancellable::new(),
+            Rc::new(move |bytes, total| {
+                assert!(glib::MainContext::ref_thread_default().is_owner());
+                assert_eq!(
+                    fs::read(&observed_target).expect("read original during staging"),
+                    b"old contents"
+                );
+                output.borrow_mut().push((bytes, total));
+                release_send
+                    .send(())
+                    .expect("release generated copy after live sample");
+            }),
+            move |cancellable, sample| {
+                stage_and_commit(&source, &target, false, true, &cancellable, |stage| {
+                    fs::write(stage, b"new").expect("write partial private stage");
+                    *sample.lock().expect("generated progress sample") = (3, 12);
+                    release_recv
+                        .recv_timeout(Duration::from_secs(5))
+                        .expect("wait for UI sample");
+                    fs::copy(&source, stage).expect("finish generated stage");
+                    Ok(())
+                })
+            },
+        ))
+    })??;
+    assert_eq!(*samples.borrow(), vec![(3, 12)]);
+    assert_eq!(fs::read(fixture.target())?, b"new contents");
+    fixture.assert_clean()?;
+    Ok(())
+}
+
+#[test]
+fn fast_worker_flushes_latest_sample_and_stops_polling() -> Result<(), Box<dyn Error>> {
+    let context = glib::MainContext::new();
+    let samples = Rc::new(RefCell::new(Vec::new()));
+    let output = samples.clone();
+    context.with_thread_default(|| {
+        context.block_on(run_native_with_progress(
+            gio::Cancellable::new(),
+            Rc::new(move |bytes, total| output.borrow_mut().push((bytes, total))),
+            |_, sample| {
+                for bytes in 0..=10_000 {
+                    *sample.lock().expect("generated progress sample") = (bytes, 10_000);
+                }
+                Ok(())
+            },
+        ))
+    })??;
+    assert_eq!(samples.borrow().last(), Some(&(10_000, 10_000)));
+    let count = samples.borrow().len();
+    std::thread::sleep(Duration::from_millis(150));
+    while context.pending() {
+        context.iteration(false);
+    }
+    assert_eq!(samples.borrow().len(), count);
+    Ok(())
+}
+
+#[test]
+fn actual_gio_progress_can_cancel_staging_before_publication() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let source = fs::OpenOptions::new().write(true).open(fixture.source())?;
+    source.set_len(32 * 1024 * 1024)?;
+    let cancellable = gio::Cancellable::new();
+    let observed = std::cell::Cell::new(false);
+    let mut update = |current, _| {
+        if current > 0 {
+            observed.set(true);
+            assert_eq!(
+                fs::read(fixture.target()).expect("destination intact during GIO callback"),
+                b"old contents"
+            );
+            cancellable.cancel();
+        }
+    };
+    let result = staged_native_transfer(
+        &fixture.source(),
+        &fixture.target(),
+        false,
+        true,
+        &cancellable,
+        Some(&mut update),
+    );
+    assert!(observed.get(), "GIO must expose copy progress");
+    assert!(result.is_err_and(|error| error.matches(gio::IOErrorEnum::Cancelled)));
+    assert_eq!(fs::metadata(fixture.source())?.len(), 32 * 1024 * 1024);
+    assert_eq!(fs::read(fixture.target())?, b"old contents");
+    fixture.assert_clean()?;
+    Ok(())
+}
+
+#[test]
+fn no_overwrite_publication_race_preserves_the_conflict_and_requests_a_retry()
+-> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    fs::remove_file(fixture.target())?;
+    let result = stage_and_commit(
+        &fixture.source(),
+        &fixture.target(),
+        true,
+        false,
+        &gio::Cancellable::new(),
+        |stage| {
+            fs::copy(fixture.source(), stage).expect("complete generated stage");
+            fs::write(fixture.target(), b"new competing destination")
+                .expect("race a new destination into place");
+            Ok(())
+        },
+    );
+    assert!(result.is_err_and(|error| error.matches(gio::IOErrorEnum::Exists)));
+    assert_eq!(fs::read(fixture.source())?, b"new contents");
+    assert_eq!(fs::read(fixture.target())?, b"new competing destination");
+    fixture.assert_clean()?;
+    Ok(())
+}
+
+#[test]
+fn provider_reports_known_unknown_skipped_and_changed_source_totals() -> Result<(), Box<dyn Error>>
+{
+    for mode in [
+        "known",
+        "folder",
+        "skip",
+        "changed",
+        "move",
+        "symlink",
+        "type",
+        "conflict-changed",
+    ] {
+        let fixture = Fixture::new()?;
+        let source = match mode {
+            "folder" => {
+                let folder = fixture.0.join("source/folder");
+                fs::create_dir(&folder)?;
+                fs::write(folder.join("child"), b"new contents")?;
+                folder
+            }
+            "symlink" => {
+                let link = fixture.0.join("source/link");
+                symlink(fixture.source(), &link)?;
+                link
+            }
+            _ => fixture.source(),
+        };
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let output = events.clone();
+        let changed_source = source.clone();
+        let changed_in_dialog = std::cell::Cell::new(false);
+        let context = glib::MainContext::default();
+        let _owner = context.acquire()?;
+        let handle = LocalOperationProvider.paste(
+            PasteRequest {
+                id: OperationRequestId(702),
+                destination: Location::local(fixture.0.join("destination")),
+                sources: vec![Location::local(&source)],
+                target_names: Vec::new(),
+                move_sources: matches!(mode, "move" | "conflict-changed"),
+                overwrite_existing: !matches!(mode, "skip" | "conflict-changed"),
+            },
+            Rc::new(move |event| {
+                if let OperationEvent::TransferConflict { reply, .. } = &event {
+                    if mode == "conflict-changed" && !changed_in_dialog.replace(true) {
+                        fs::write(&changed_source, b"changed source size")
+                            .expect("change source during conflict decision");
+                    }
+                    reply.respond(crate::services::ConflictResolution {
+                        action: if mode == "conflict-changed" {
+                            crate::services::ConflictAction::Replace
+                        } else {
+                            crate::services::ConflictAction::Skip
+                        },
+                        apply_to_remaining: false,
+                    });
+                }
+                if mode == "changed"
+                    && matches!(
+                        event,
+                        OperationEvent::TransferProgress {
+                            completed: 0,
+                            bytes_transferred: 0,
+                            ..
+                        }
+                    )
+                {
+                    fs::write(&changed_source, b"changed source size")
+                        .expect("change source after preflight");
+                }
+                if mode == "type"
+                    && matches!(
+                        event,
+                        OperationEvent::TransferProgress {
+                            completed: 0,
+                            bytes_transferred: 0,
+                            ..
+                        }
+                    )
+                {
+                    fs::remove_file(&changed_source).expect("replace preflight regular file");
+                    symlink("missing-file", &changed_source)
+                        .expect("create same-size changed source link");
+                }
+                output.borrow_mut().push(event);
+            }),
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !events.borrow().iter().any(|event| {
+            matches!(
+                event,
+                OperationEvent::Pasted { .. } | OperationEvent::TransferCompletedWithErrors { .. }
+            )
+        }) {
+            context.iteration(false);
+            assert!(
+                Instant::now() < deadline,
+                "generated provider transfer timed out"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        drop(handle);
+        let samples = events
+            .borrow()
+            .iter()
+            .filter_map(|event| match event {
+                OperationEvent::TransferProgress {
+                    completed,
+                    bytes_transferred,
+                    total_bytes,
+                    ..
+                } => Some((*completed, *bytes_transferred, *total_bytes)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let expected = match mode {
+            "known" | "move" => (1, 12, Some(12)),
+            "folder" => (1, 12, None),
+            "changed" | "conflict-changed" => (1, 19, None),
+            _ => (1, 0, None),
+        };
+        assert_eq!(samples.last(), Some(&expected), "mode {mode}");
+        assert!(
+            samples.windows(2).all(|pair| pair[0].1 <= pair[1].1),
+            "monotonic bytes for {mode}"
+        );
+        let copied = events
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                OperationEvent::TransferProgress { bytes_copied, .. } => Some(*bytes_copied),
+                _ => None,
+            })
+            .expect("final reported copy count");
+        assert_eq!(
+            copied,
+            match mode {
+                "known" | "folder" => 12,
+                "changed" => 19,
+                _ => 0,
+            },
+            "measured copy work for {mode}"
+        );
+        if matches!(mode, "move" | "conflict-changed") {
+            assert!(!source.exists());
+        }
+        if mode == "conflict-changed" {
+            assert_eq!(
+                events
+                    .borrow()
+                    .iter()
+                    .filter(|event| matches!(event, OperationEvent::TransferConflict { .. }))
+                    .count(),
+                2,
+                "changed source needs a fresh conflict decision"
+            );
+        }
+        if mode == "skip" {
+            assert_eq!(fs::read(fixture.target())?, b"old contents");
+        }
+        fixture.assert_clean()?;
+    }
     Ok(())
 }

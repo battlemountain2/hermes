@@ -35,7 +35,9 @@ pub(crate) fn compare_names(a: &str, b: &str) -> std::cmp::Ordering {
             let mut a_num = 0u64;
             while let Some(&c) = a_chars.peek() {
                 if c.is_ascii_digit() {
-                    a_num = a_num.saturating_mul(10).saturating_add((c as u8 - b'0') as u64);
+                    a_num = a_num
+                        .saturating_mul(10)
+                        .saturating_add((c as u8 - b'0') as u64);
                     a_chars.next();
                 } else {
                     break;
@@ -44,7 +46,9 @@ pub(crate) fn compare_names(a: &str, b: &str) -> std::cmp::Ordering {
             let mut b_num = 0u64;
             while let Some(&c) = b_chars.peek() {
                 if c.is_ascii_digit() {
-                    b_num = b_num.saturating_mul(10).saturating_add((c as u8 - b'0') as u64);
+                    b_num = b_num
+                        .saturating_mul(10)
+                        .saturating_add((c as u8 - b'0') as u64);
                     b_chars.next();
                 } else {
                     break;
@@ -116,7 +120,10 @@ fn extract_cbz_cover(input: &Path) -> Result<Vec<u8>, String> {
 
     for i in 0..entry_count {
         if let Ok(entry) = archive.by_index(i) {
-            let name = entry.name().to_string();
+            let name = entry
+                .name()
+                .map_err(|error| error.to_string())?
+                .into_owned();
             if !entry.is_dir()
                 && !name.contains("__MACOSX")
                 && !name.starts_with('.')
@@ -174,7 +181,10 @@ fn extract_epub_cover(input: &Path) -> Result<Vec<u8>, String> {
     let mut opf_path = None;
 
     loop {
-        match reader.read_event().map_err(|_| "Invalid container.xml".to_string())? {
+        match reader
+            .read_event()
+            .map_err(|_| "Invalid container.xml".to_string())?
+        {
             Event::Start(tag) | Event::Empty(tag) if tag.local_name().as_ref() == b"rootfile" => {
                 if let Some(path) = attribute(&tag, b"full-path")? {
                     opf_path = Some(path);
@@ -208,7 +218,10 @@ fn extract_epub_cover(input: &Path) -> Result<Vec<u8>, String> {
     let mut manifest_items: Vec<(String, String, String)> = Vec::new(); // (id, href, properties)
 
     loop {
-        match opf_reader.read_event().map_err(|_| "Invalid OPF XML".to_string())? {
+        match opf_reader
+            .read_event()
+            .map_err(|_| "Invalid OPF XML".to_string())?
+        {
             Event::Start(tag) | Event::Empty(tag) => match tag.local_name().as_ref() {
                 b"meta" => {
                     let name = attribute(&tag, b"name")?.unwrap_or_default();
@@ -257,10 +270,11 @@ fn extract_epub_cover(input: &Path) -> Result<Vec<u8>, String> {
     // Fall back to item id="cover" or href containing "cover"
     if cover_href.is_none() {
         for (id, href, _properties) in &manifest_items {
-            if id.eq_ignore_ascii_case("cover")
-                || href.to_ascii_lowercase().contains("cover")
-            {
-                let ext = Path::new(href).extension().and_then(|e| e.to_str()).unwrap_or("");
+            if id.eq_ignore_ascii_case("cover") || href.to_ascii_lowercase().contains("cover") {
+                let ext = Path::new(href)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("");
                 if is_image_extension(ext) {
                     cover_href = Some(href.clone());
                     break;
@@ -292,7 +306,10 @@ fn extract_epub_cover(input: &Path) -> Result<Vec<u8>, String> {
 fn extract_cbr_cover(input: &Path) -> Result<Vec<u8>, String> {
     let output = Command::new("bsdtar")
         .arg("-tf")
-        .arg(input)
+        .arg("-")
+        .stdin(std::process::Stdio::from(fs::File::open(input).map_err(
+            |error| format!("Unable to open CBR input: {error}"),
+        )?))
         .output()
         .map_err(|e| format!("Unable to invoke bsdtar for CBR listing: {e}"))?;
 
@@ -326,8 +343,12 @@ fn extract_cbr_cover(input: &Path) -> Result<Vec<u8>, String> {
 
     let extract_output = Command::new("bsdtar")
         .args(["-xOf"])
-        .arg(input)
+        .arg("-")
+        .arg("--")
         .arg(chosen_entry)
+        .stdin(std::process::Stdio::from(fs::File::open(input).map_err(
+            |error| format!("Unable to open CBR input: {error}"),
+        )?))
         .output()
         .map_err(|e| format!("Unable to invoke bsdtar for CBR extraction: {e}"))?;
 
@@ -342,19 +363,100 @@ fn extract_cbr_cover(input: &Path) -> Result<Vec<u8>, String> {
     Ok(extract_output.stdout)
 }
 
-pub(crate) fn render_cover(input: &Path, target_size: i32) -> Result<Vec<u8>, String> {
-    let size = target_size.clamp(16, 1400);
-    let ext = input
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|s| s.to_ascii_lowercase())
-        .unwrap_or_default();
+fn extract_pptx_cover(input: &Path) -> Result<Vec<u8>, String> {
+    let file = fs::File::open(input).map_err(|e| format!("Unable to open presentation: {e}"))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("Invalid presentation package: {e}"))?;
+    for name in [
+        "docProps/thumbnail.jpeg",
+        "docProps/thumbnail.jpg",
+        "docProps/thumbnail.png",
+    ] {
+        if let Ok(mut entry) = archive.by_name(name) {
+            let mut bytes = Vec::new();
+            entry
+                .read_to_end(&mut bytes)
+                .map_err(|e| format!("Failed to read presentation thumbnail: {e}"))?;
+            if !bytes.is_empty() && bytes.len() <= MAX_IMAGE_BYTES {
+                return Ok(bytes);
+            }
+        }
+    }
+    Err("Presentation contains no embedded slide thumbnail".to_string())
+}
 
-    let raw_bytes = match ext.as_str() {
-        "epub" => extract_epub_cover(input)?,
-        "cbz" => extract_cbz_cover(input)?,
-        "cbr" => extract_cbr_cover(input)?,
-        _ => return Err("Unsupported archive cover format".to_string()),
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CoverFormat {
+    Epub,
+    Cbz,
+    Cbr,
+    Pptx,
+}
+
+impl CoverFormat {
+    pub(crate) fn for_path(input: &Path) -> Option<Self> {
+        if let Some(ext) = input.extension().and_then(|e| e.to_str()) {
+            match ext.to_ascii_lowercase().as_str() {
+                "epub" => return Some(Self::Epub),
+                "cbz" => return Some(Self::Cbz),
+                "cbr" => return Some(Self::Cbr),
+                "pptx" | "ppsx" | "potx" => return Some(Self::Pptx),
+                _ => {}
+            }
+        }
+        Self::sniff(input)
+    }
+
+    pub(crate) fn sniff(input: &Path) -> Option<Self> {
+        let mut file = fs::File::open(input).ok()?;
+        let mut magic = [0u8; 8];
+        let bytes_read = file.read(&mut magic).ok()?;
+        if bytes_read >= 7 && magic.starts_with(b"Rar!\x1a\x07") {
+            return Some(Self::Cbr);
+        }
+        if bytes_read >= 4
+            && magic.starts_with(b"PK\x03\x04")
+            && let Ok(mut archive) = zip::ZipArchive::new(file)
+        {
+            if archive.by_name("META-INF/container.xml").is_ok() {
+                return Some(Self::Epub);
+            }
+            if let Ok(mut mimetype_entry) = archive.by_name("mimetype") {
+                let mut buf = [0u8; 32];
+                if let Ok(n) = mimetype_entry.read(&mut buf)
+                    && buf[..n].starts_with(b"application/epub+zip")
+                {
+                    return Some(Self::Epub);
+                }
+            }
+            if archive.by_name("ppt/presentation.xml").is_ok()
+                || archive.by_name("docProps/thumbnail.jpeg").is_ok()
+                || archive.by_name("docProps/thumbnail.png").is_ok()
+            {
+                return Some(Self::Pptx);
+            }
+            return Some(Self::Cbz);
+        }
+        None
+    }
+}
+
+pub(crate) fn render_cover(input: &Path, target_size: i32) -> Result<Vec<u8>, String> {
+    let format = CoverFormat::for_path(input).ok_or("Unsupported archive cover format")?;
+    render_cover_with_format(input, target_size, format)
+}
+
+pub(crate) fn render_cover_with_format(
+    input: &Path,
+    target_size: i32,
+    format: CoverFormat,
+) -> Result<Vec<u8>, String> {
+    let size = target_size.clamp(16, 1400);
+    let raw_bytes = match format {
+        CoverFormat::Epub => extract_epub_cover(input)?,
+        CoverFormat::Cbz => extract_cbz_cover(input)?,
+        CoverFormat::Cbr => extract_cbr_cover(input)?,
+        CoverFormat::Pptx => extract_pptx_cover(input)?,
     };
 
     let loader = gdk_pixbuf::PixbufLoader::new();
@@ -393,15 +495,30 @@ pub(crate) fn render_cover(input: &Path, target_size: i32) -> Result<Vec<u8>, St
 }
 
 #[cfg(test)]
+mod format_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_compare_names_natural_sort() {
-        assert_eq!(compare_names("page1.png", "page2.png"), std::cmp::Ordering::Less);
-        assert_eq!(compare_names("page2.png", "page10.png"), std::cmp::Ordering::Less);
-        assert_eq!(compare_names("page09.png", "page10.png"), std::cmp::Ordering::Less);
-        assert_eq!(compare_names("cover.jpg", "page1.png"), std::cmp::Ordering::Less);
+        assert_eq!(
+            compare_names("page1.png", "page2.png"),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_names("page2.png", "page10.png"),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_names("page09.png", "page10.png"),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_names("cover.jpg", "page1.png"),
+            std::cmp::Ordering::Less
+        );
     }
 
     #[test]

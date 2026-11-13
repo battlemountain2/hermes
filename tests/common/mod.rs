@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#![allow(dead_code)]
+#![expect(
+    dead_code,
+    reason = "Each integration executable uses a different subset of shared test fixtures and oracles"
+)]
 
 pub mod sniffer;
 pub mod status_bar;
@@ -57,7 +60,6 @@ impl Drop for TestEnv {
     }
 }
 
-#[allow(dead_code)]
 pub struct HelperOutput {
     pub status: ExitStatus,
     pub stdout: String,
@@ -71,7 +73,7 @@ pub fn run_preview_helper(
     output: &Path,
     value: i32,
 ) -> HelperOutput {
-    let binary = env!("CARGO_BIN_EXE_strata");
+    let binary = env!("CARGO_BIN_EXE_hermes");
     let cmd_output = Command::new(binary)
         .arg("--preview-helper")
         .arg(operation)
@@ -79,7 +81,7 @@ pub fn run_preview_helper(
         .arg(output)
         .arg(value.to_string())
         .output()
-        .expect("failed to execute strata binary");
+        .expect("failed to execute Hermes binary");
 
     HelperOutput {
         status: cmd_output.status,

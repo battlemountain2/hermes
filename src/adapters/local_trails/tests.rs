@@ -464,7 +464,7 @@ fn load_waits_for_the_last_save_even_from_another_store() {
 #[test]
 fn xdg_instances_coalesce_in_order_and_load_the_last_submitted_save() {
     const CHILD_CONFIG: &str = "HERMES_TRAIL_XDG_TEST_CONFIG";
-    let Some(directory) = std::env::var_os(CHILD_CONFIG) else {
+    let Some(_directory) = std::env::var_os(CHILD_CONFIG) else {
         let fixture = Fixture::new("xdg-shared");
         let output = Command::new(std::env::current_exe().expect("test executable"))
             .args(["--exact", "adapters::local_trails::tests::xdg_instances_coalesce_in_order_and_load_the_last_submitted_save", "--nocapture"])
@@ -481,7 +481,7 @@ fn xdg_instances_coalesce_in_order_and_load_the_last_submitted_save() {
         );
         return;
     };
-    let path = PathBuf::from(directory).join("strata/trails.toml");
+    let path = crate::paths::trails_file();
     let (entered, started) = mpsc::channel();
     let (release, blocked) = mpsc::channel();
     let calls = Arc::new(Mutex::new(Vec::new()));

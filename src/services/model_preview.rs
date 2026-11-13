@@ -18,7 +18,6 @@ pub(crate) const MAX_MODEL_COMPONENT_REFERENCES: usize = 100_000;
 pub(crate) const MAX_MODEL_COMPONENT_EXPANSIONS: usize = 100_000;
 pub(crate) const MAX_MODEL_RASTER_WORK: u64 = 100_000_000;
 
-#[expect(dead_code, reason = "Model format definitions for multi-format geometry parsing")]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ModelFormat {
     Stl,

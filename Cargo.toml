@@ -1,5 +1,5 @@
 [package]
-name = "strata"
+name = "hermes"
 version = "0.2.0"
 edition = "2024"
 description = "A fast, polished, personal file manager for Linux"
@@ -9,9 +9,14 @@ repository = "https://github.com/battlemountain2/hermes"
 keywords = ["file-manager", "gtk4", "linux", "wayland"]
 categories = ["filesystem", "gui"]
 
+[features]
+# Finder-launched development bundles cannot rely on shell environment variables.
+# This feature selects the development identity only on macOS.
+macos-dev = []
+
 [dependencies]
 cairo-rs = { version = "0.21.5", features = ["pdf", "png"] }
-calamine = "0.36.1"
+calamine = "0.38.0"
 csv = "1.4.0"
 fontconfig-sys = { package = "yeslogic-fontconfig-sys", version = "6.0.1" }
 gdk-pixbuf = "0.21.5"
@@ -25,6 +30,7 @@ ignore = "0.4.23"
 libheif-rs = { version = "2.7.0", default-features = false, features = ["v1_17"] }
 poppler = { package = "poppler-rs", version = "0.25.0" }
 quick-xml = "0.41.0"
+rusqlite = { version = "0.41.1", default-features = false, features = ["bundled", "hooks", "limits"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sourceview5 = { version = "0.10.0", features = ["gtk_v4_12"] }
@@ -32,7 +38,11 @@ tiff = "0.11"
 toml = "0.9"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.20"
-zip = "8.6.0"
+zip = "9.0.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gdk4-wayland = "0.10.3"
+rustix = { version = "1.1.6", features = ["fs"] }
 
 [build-dependencies]
 glib-build-tools = "0.21.0"

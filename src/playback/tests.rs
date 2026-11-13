@@ -1,6 +1,390 @@
 use super::*;
 
 #[test]
+fn repeated_pause_resume_retains_negotiated_audio_without_resetting_output() {
+    gst::init().expect("expected test value from gst::init()");
+    let pipeline = gst::parse::launch(
+        "appsrc name=pcm is-live=true format=time do-timestamp=true caps=audio/x-raw,format=F32LE,rate=48000,channels=2,layout=interleaved ! fakesink name=capture sync=false async=false signal-handoffs=true",
+    ).expect("expected test value from gst::parse::launch( \"appsrc name=pcm is-live=true format=time do-timestamp=true caps=audio/x-raw,format=F32LE,rate=48000,channe...").downcast::<gst::Pipeline>().expect("expected test value from gst::parse::launch( \"appsrc name=pcm is-live=true format=time do-timestamp=true caps=audio/x-raw,format=F32LE,rate=48000,channe...");
+    let source = pipeline
+        .by_name("pcm")
+        .expect("expected test value from pipeline.by_name(\"pcm\")")
+        .downcast::<app::AppSrc>()
+        .expect(
+            "expected test value from pipeline.by_name(\"pcm\").unwrap().downcast::<app::AppSrc>()",
+        );
+    let sink = pipeline
+        .by_name("capture")
+        .expect("expected test value from pipeline.by_name(\"capture\")");
+    let (sender, receiver) = mpsc::channel();
+    sink.connect("handoff", false, move |values| {
+        let buffer = values[1].get::<gst::Buffer>().expect("expected test value from values[1].get::<gst::Buffer>()");
+        sender.send(buffer.map_readable().expect("expected test value from buffer.map_readable()").as_slice().to_vec()).expect("expected test value from sender.send(buffer.map_readable().unwrap().as_slice().to_vec())");
+        None
+    });
+    let bus = pipeline
+        .bus()
+        .expect("expected test value from pipeline.bus()");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pipeline
+            .set_state(output_state(&Command::Play))
+            .expect("expected test value from pipeline.set_state(output_state(&Command::Play))");
+        let (_, state, _) = pipeline.state(gst::ClockTime::from_seconds(2));
+        assert_eq!(state, gst::State::Playing);
+        let push_resilient = |source: &app::AppSrc, data: Vec<u8>| {
+            let started = Instant::now();
+            let mut pushed = source.push_buffer(pcm_buffer(data.clone()));
+            while matches!(pushed, Err(gst::FlowError::Flushing))
+                && started.elapsed() < Duration::from_secs(2)
+            {
+                std::thread::sleep(Duration::from_millis(5));
+                pushed = source.push_buffer(pcm_buffer(data.clone()));
+            }
+            pushed.expect("expected test value from pushed");
+        };
+        for cycle in 0..12 {
+            let before_pause = (cycle as f32 / 32.0).to_le_bytes().repeat(480 * 2);
+            push_resilient(&source, before_pause.clone());
+            assert_eq!(
+                receiver.recv_timeout(Duration::from_secs(2)).expect(
+                    "expected test value from receiver.recv_timeout(Duration::from_secs(2))"
+                ),
+                before_pause
+            );
+            pipeline.set_state(output_state(&Command::Pause)).expect(
+                "expected test value from pipeline.set_state(output_state(&Command::Pause))",
+            );
+            let (_, state, _) = pipeline.state(gst::ClockTime::from_seconds(2));
+            assert_eq!(state, gst::State::Paused);
+            assert!(
+                source
+                    .static_pad("src")
+                    .expect("expected test value from source.static_pad(\"src\")")
+                    .current_caps()
+                    .is_some()
+            );
+            assert!(receiver.recv_timeout(Duration::from_millis(5)).is_err());
+            pipeline.set_state(output_state(&Command::Play)).expect(
+                "expected test value from pipeline.set_state(output_state(&Command::Play))",
+            );
+            let (_, state, _) = pipeline.state(gst::ClockTime::from_seconds(2));
+            assert_eq!(state, gst::State::Playing);
+            let resumed = ((cycle + 16) as f32 / 32.0).to_le_bytes().repeat(480 * 2);
+            push_resilient(&source, resumed.clone());
+            assert_eq!(
+                receiver.recv_timeout(Duration::from_secs(2)).expect(
+                    "expected test value from receiver.recv_timeout(Duration::from_secs(2))"
+                ),
+                resumed
+            );
+        }
+        for message in bus.iter() {
+            if let gst::MessageView::StateChanged(change) = message.view() {
+                assert_ne!(
+                    (change.old(), change.current()),
+                    (gst::State::Paused, gst::State::Ready)
+                );
+            }
+        }
+        assert_eq!(
+            output_state(&Command::Seek {
+                epoch: 1,
+                timestamp: 0
+            }),
+            gst::State::Ready
+        );
+        assert_eq!(output_state(&Command::Stop), gst::State::Null);
+    }));
+    pipeline
+        .set_state(gst::State::Null)
+        .expect("expected test value from pipeline.set_state(gst::State::Null)");
+    result.expect("expected test value from result");
+}
+
+#[test]
+fn pcm_packets_have_sample_accurate_durations_including_split_tails() {
+    gst::init().expect("expected test value from gst::init()");
+    for frames in [1, 480, 8192, 37] {
+        let buffer = pcm_buffer(0.5_f32.to_le_bytes().repeat(frames * 2));
+        assert_eq!(buffer.size(), frames * 8);
+        assert_eq!(
+            buffer.duration(),
+            Some(gst::ClockTime::from_nseconds(
+                frames as u64 * 1_000_000_000 / 48_000
+            ))
+        );
+        assert_eq!(buffer.pts(), None);
+        assert!(!buffer.flags().contains(gst::BufferFlags::GAP));
+    }
+}
+
+#[test]
+#[ignore = "Explicit short video fixture and built sandbox worker; paused/muted output"]
+fn isolated_short_video_plays_to_end_and_replays_with_audio() {
+    let path = std::env::var_os("HERMES_STREAM_TEST_FILE").expect("Explicit short video path");
+    let session = Session::start(Path::new(&path))
+        .expect("expected test value from Session::start(Path::new(&path))");
+    session.set_volume(true, 0.0);
+    let start = Instant::now();
+    let mut duration = 0;
+    let mut frame_seen = false;
+    while duration == 0 || !frame_seen {
+        let updates = session.take_updates();
+        assert!(updates.error.is_none(), "{:?}", updates.error);
+        if let Some((length, audio, video, seekable)) = updates.prepared {
+            assert!(audio && video && seekable);
+            assert!(length > 0 && length < 15_000_000, "Use a short fixture");
+            duration = length;
+        }
+        frame_seen |= updates.frame.is_some();
+        assert!(start.elapsed() < Duration::from_secs(12));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for replay in [false, true] {
+        if replay {
+            assert!(session.seek(0));
+            let start = Instant::now();
+            loop {
+                let updates = session.take_updates();
+                assert!(updates.error.is_none(), "{:?}", updates.error);
+                if let Some(success) = updates.seeked {
+                    assert!(success);
+                    break;
+                }
+                assert!(start.elapsed() < Duration::from_secs(12));
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        assert!(session.play());
+        let start = Instant::now();
+        let mut advanced = false;
+        loop {
+            let updates = session.take_updates();
+            assert!(updates.error.is_none(), "{:?}", updates.error);
+            advanced |= updates
+                .position
+                .is_some_and(|position| position > duration / 2);
+            if updates.ended {
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_micros(duration as u64) + Duration::from_secs(8)
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(advanced);
+    }
+    session.stop();
+}
+
+#[test]
+#[ignore = "Private GStreamer registry/plugins; generated 4K color bars only"]
+fn generated_early_video_scaling_preserves_preview_colors() {
+    let root = std::path::PathBuf::from(
+        std::env::var_os("HERMES_PREVIEW_PROBE")
+            .expect("expected test value from std::env::var_os(\"HERMES_PREVIEW_PROBE\")"),
+    );
+    assert!(
+        std::path::PathBuf::from(
+            std::env::var_os("XDG_CACHE_HOME")
+                .expect("expected test value from std::env::var_os(\"XDG_CACHE_HOME\")")
+        )
+        .starts_with(root)
+    );
+    gst::init().expect("expected test value from gst::init()");
+    let sample = |transforms: &str| {
+        let description = format!(
+            "videotestsrc num-buffers=1 pattern=smpte ! video/x-raw,format=I420,width=3840,height=2160,framerate=60/1,colorimetry=bt709 ! {transforms} ! video/x-raw,format=RGBA,width=1280,height=720,framerate=30/1,pixel-aspect-ratio=1/1 ! appsink name=frames"
+        );
+        let pipeline = gst::parse::launch(&description)
+            .expect("expected test value from gst::parse::launch(&description)")
+            .downcast::<gst::Pipeline>()
+            .expect("expected test value from gst::parse::launch(&description) .unwrap() .downcast::<gst::Pipeline>()");
+        let sink = pipeline
+            .by_name("frames")
+            .expect("expected test value from pipeline .by_name(\"frames\")")
+            .downcast::<app::AppSink>()
+            .expect("expected test value from pipeline .by_name(\"frames\") .unwrap() .downcast::<app::AppSink>()");
+        pipeline
+            .set_state(gst::State::Paused)
+            .expect("expected test value from pipeline.set_state(gst::State::Paused)");
+        let sample = sink
+            .try_pull_preroll(gst::ClockTime::from_seconds(5))
+            .expect(
+                "expected test value from sink .try_pull_preroll(gst::ClockTime::from_seconds(5))",
+            );
+        let info = gstreamer_video::VideoInfo::from_caps(sample.caps().expect("expected test value from sample.caps()")).expect("expected test value from gstreamer_video::VideoInfo::from_caps(sample.caps().unwrap())");
+        assert_eq!((info.width(), info.height()), (1280, 720));
+        let bytes = sample
+            .buffer()
+            .expect("expected test value from sample .buffer()")
+            .map_readable()
+            .expect("expected test value from sample .buffer() .unwrap() .map_readable()")
+            .as_slice()
+            .to_vec();
+        pipeline
+            .set_state(gst::State::Null)
+            .expect("expected test value from pipeline.set_state(gst::State::Null)");
+        bytes
+    };
+    let before = sample(
+        "videoflip video-direction=auto ! videoconvert ! videoscale ! videorate drop-only=true max-rate=30",
+    );
+    let after = sample(
+        "videorate drop-only=true max-rate=30 ! videoflip video-direction=auto ! videoscale ! videoconvert",
+    );
+    assert_eq!(before.len(), after.len());
+    let difference = before
+        .iter()
+        .zip(&after)
+        .map(|(before, after)| u64::from(before.abs_diff(*after)))
+        .sum::<u64>() as f64
+        / before.len() as f64;
+    eprintln!("4K scaling representative RGBA mean difference: {difference}");
+    assert!(difference < 4.0);
+    assert!(after.as_chunks::<4>().0.iter().all(|pixel| pixel[3] == 255));
+}
+
+#[test]
+#[ignore = "Explicit private generated heavy-video corpus, codecs and built helper"]
+fn generated_heavy_video_preroll_rotation_vfr_and_seek_remain_bounded() {
+    let root = std::path::PathBuf::from(
+        std::env::var_os("HERMES_PREVIEW_PROBE")
+            .expect("expected test value from std::env::var_os(\"HERMES_PREVIEW_PROBE\")"),
+    );
+    assert!(root.starts_with("/tmp"));
+    assert!(
+        std::path::PathBuf::from(
+            std::env::var_os("XDG_CACHE_HOME")
+                .expect("expected test value from std::env::var_os(\"XDG_CACHE_HOME\")")
+        )
+        .starts_with(&root)
+    );
+    if let Some(warmup) = warmup() {
+        warmup
+            .join()
+            .expect("expected test value from warmup.join()")
+            .expect("expected test value from warmup.join().unwrap()");
+    }
+    for name in ["h264-4k60.mov", "h264-portrait.mov", "hevc.mov", "vfr.mp4"] {
+        let started = Instant::now();
+        let session = Session::start(&root.join("fixtures").join(name))
+            .expect("expected test value from Session::start(&root.join(\"fixtures\").join(name))");
+        session.set_volume(true, 0.0);
+        let mut duration = 0;
+        let mut frame = None;
+        while duration == 0 || frame.is_none() {
+            let updates = session.take_updates();
+            assert!(updates.error.is_none(), "{name}: {:?}", updates.error);
+            if let Some((length, _, video, seekable)) = updates.prepared {
+                assert!(video && seekable);
+                duration = length;
+            }
+            if let Some((_, width, height, pixels)) = updates.frame {
+                assert!(width > 0 && width <= 1280 && height > 0 && height <= 720);
+                assert_eq!(pixels.len(), width as usize * height as usize * 4);
+                assert!(
+                    pixels
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .all(|pixel| pixel[3] == 255)
+                );
+                if name == "h264-portrait.mov" {
+                    assert!(height > width);
+                } else {
+                    assert!(width > height);
+                }
+                frame = Some((width, height));
+            }
+            assert!(started.elapsed() < Duration::from_secs(12));
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        eprintln!(
+            "Heavy video {name} first real frame {:?} in {:?}",
+            frame.expect("expected test value from frame"),
+            started.elapsed()
+        );
+        let target = duration / 2;
+        assert!(session.seek(target));
+        let started = Instant::now();
+        let mut seeked = false;
+        while !seeked {
+            let updates = session.take_updates();
+            assert!(updates.error.is_none(), "{name}: {:?}", updates.error);
+            if let Some(success) = updates.seeked {
+                assert!(success);
+                seeked = true;
+            }
+            assert!(started.elapsed() < Duration::from_secs(12));
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(session.play());
+        let started = Instant::now();
+        let mut ended = false;
+        while !ended {
+            let updates = session.take_updates();
+            assert!(updates.error.is_none(), "{name}: {:?}", updates.error);
+            ended = updates.ended;
+            assert!(started.elapsed() < Duration::from_secs(12));
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        session.stop();
+    }
+}
+
+#[test]
+#[ignore = "Requires an explicit private generated preview audit and a built helper"]
+fn generated_idle_warmup_leaves_playback_paused_and_reuses_the_registry() {
+    let root = std::path::PathBuf::from(
+        std::env::var_os("HERMES_PREVIEW_PROBE")
+            .expect("expected test value from std::env::var_os(\"HERMES_PREVIEW_PROBE\")"),
+    );
+    assert!(root.starts_with("/tmp"));
+    assert!(
+        root.file_name()
+            .expect("expected test value from root.file_name()")
+            .to_string_lossy()
+            .starts_with("hermes-preview-audit.")
+    );
+    assert!(
+        std::path::PathBuf::from(
+            std::env::var_os("XDG_CACHE_HOME")
+                .expect("expected test value from std::env::var_os(\"XDG_CACHE_HOME\")")
+        )
+        .starts_with(&root)
+    );
+    let start = Instant::now();
+    warmup()
+        .expect("expected test value from warmup()")
+        .join()
+        .expect("expected test value from warmup().unwrap().join()")
+        .expect("expected test value from warmup().unwrap().join().unwrap()");
+    let warm_time = start.elapsed();
+    assert!(warmup().is_none());
+    let start = Instant::now();
+    let session = Session::start(&root.join("fixtures/hevc.mov"))
+        .expect("expected test value from Session::start(&root.join(\"fixtures/hevc.mov\"))");
+    session.set_volume(true, 0.0);
+    let mut prepared = false;
+    let mut frame = false;
+    while !prepared || !frame {
+        let updates = session.take_updates();
+        assert!(updates.error.is_none(), "{:?}", updates.error);
+        prepared |= updates.prepared.is_some();
+        frame |= updates.frame.is_some();
+        assert!(start.elapsed() < Duration::from_secs(12));
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(!session.playing.load(Ordering::Acquire));
+    eprintln!(
+        "Idle registry warmup={warm_time:?}, first HEVC frame after warmup={:?}",
+        start.elapsed()
+    );
+    session.stop();
+}
+
+#[test]
 #[ignore = "Requires HERMES_AUDIO_TEST_FILE and a built sandbox worker"]
 fn isolated_audio_survives_startup_thread_exit() {
     let path = std::env::var_os("HERMES_AUDIO_TEST_FILE").expect("Audio fixture path");
@@ -20,7 +404,7 @@ fn isolated_audio_survives_startup_thread_exit() {
         session
     })
     .join()
-    .unwrap();
+    .expect("expected test value from std::thread::spawn(move || { let session = Session::start(Path::new(&path)); session.set_volume(true, 0.0); let deadline = Inst...");
     assert!(session.play());
     let deadline = Instant::now() + Duration::from_secs(12);
     let mut advanced = false;
@@ -35,7 +419,7 @@ fn isolated_audio_survives_startup_thread_exit() {
 }
 
 #[test]
-#[ignore = "Requires HERMES_AUDIO_TEST_FILE and a built target/debug/strata sandbox worker"]
+#[ignore = "Requires HERMES_AUDIO_TEST_FILE and a built target/debug/hermes sandbox worker"]
 fn isolated_audio_start_middle_seek_and_end() {
     let path = std::env::var_os("HERMES_AUDIO_TEST_FILE").expect("Audio fixture path");
     let session = Session::start(Path::new(&path)).expect("Session starts");
@@ -90,8 +474,10 @@ fn raw_audio_is_finite_and_clipped() {
         .collect();
     sanitize_pcm(&mut data);
     let values: Vec<f32> = data
-        .chunks_exact(4)
-        .map(|sample| f32::from_le_bytes(sample.try_into().unwrap()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|sample| f32::from_le_bytes(*sample))
         .collect();
     assert_eq!(values, [0.0, 0.0, -1.0, 0.4, 1.0]);
 }
@@ -102,7 +488,7 @@ fn unexpected_worker_exit_reports_status_without_hiding_decoder_reason() {
         let mut child = std::process::Command::new("sh")
             .args(["-c", "exit 7"])
             .spawn()
-            .unwrap();
+            .expect("expected test value from std::process::Command::new(\"sh\") .args([\"-c\", \"exit 7\"]) .spawn()");
         let updates = Mutex::new(Updates {
             error: reason.clone(),
             ..Updates::default()
@@ -117,7 +503,12 @@ fn unexpected_worker_exit_reports_status_without_hiding_decoder_reason() {
             Instant::now(),
             &updates,
         );
-        let error = updates.lock().unwrap().error.clone().unwrap();
+        let error = updates
+            .lock()
+            .expect("expected test value from updates.lock()")
+            .error
+            .clone()
+            .expect("expected test value from updates.lock().unwrap().error.clone()");
         if let Some(reason) = reason {
             assert_eq!(error, reason);
         } else {
@@ -128,7 +519,8 @@ fn unexpected_worker_exit_reports_status_without_hiding_decoder_reason() {
 
 #[test]
 fn streaming_sandbox_keeps_original_private_without_duration_cpu_cutoff() {
-    let command = sandbox_command(Path::new("/fixture.mp4")).unwrap();
+    let command = sandbox_command(Path::new("/fixture.mp4"))
+        .expect("expected test value from sandbox_command(Path::new(\"/fixture.mp4\"))");
     let arguments: Vec<_> = command
         .get_args()
         .map(|value| value.to_string_lossy().into_owned())
@@ -146,7 +538,9 @@ fn stalled_seek_is_killed_even_with_other_heartbeats() {
     let mut child = std::process::Command::new("sleep")
         .arg("60")
         .spawn()
-        .unwrap();
+        .expect(
+            "expected test value from std::process::Command::new(\"sleep\") .arg(\"60\") .spawn()",
+        );
     let started = Instant::now() - Duration::from_secs(13);
     let updates = Mutex::new(Updates::default());
     monitor(
@@ -159,8 +553,19 @@ fn stalled_seek_is_killed_even_with_other_heartbeats() {
         started,
         &updates,
     );
-    assert!(updates.lock().unwrap().error.is_some());
-    assert!(child.try_wait().unwrap().is_some());
+    assert!(
+        updates
+            .lock()
+            .expect("expected test value from updates.lock()")
+            .error
+            .is_some()
+    );
+    assert!(
+        child
+            .try_wait()
+            .expect("expected test value from child.try_wait()")
+            .is_some()
+    );
 }
 
 #[test]
@@ -168,7 +573,9 @@ fn cancellation_reaps_the_decoder() {
     let mut child = std::process::Command::new("sleep")
         .arg("60")
         .spawn()
-        .unwrap();
+        .expect(
+            "expected test value from std::process::Command::new(\"sleep\") .arg(\"60\") .spawn()",
+        );
     let updates = Mutex::new(Updates::default());
     monitor(
         &mut child,
@@ -180,8 +587,19 @@ fn cancellation_reaps_the_decoder() {
         Instant::now(),
         &updates,
     );
-    assert!(updates.lock().unwrap().error.is_none());
-    assert!(child.try_wait().unwrap().is_some());
+    assert!(
+        updates
+            .lock()
+            .expect("expected test value from updates.lock()")
+            .error
+            .is_none()
+    );
+    assert!(
+        child
+            .try_wait()
+            .expect("expected test value from child.try_wait()")
+            .is_some()
+    );
 }
 
 #[test]
@@ -189,7 +607,9 @@ fn paused_session_does_not_use_the_active_playback_deadline() {
     let mut child = std::process::Command::new("sleep")
         .arg("60")
         .spawn()
-        .unwrap();
+        .expect(
+            "expected test value from std::process::Command::new(\"sleep\") .arg(\"60\") .spawn()",
+        );
     let stopped = Arc::new(AtomicBool::new(false));
     let cancel = stopped.clone();
     let thread = std::thread::spawn(move || {
@@ -207,16 +627,29 @@ fn paused_session_does_not_use_the_active_playback_deadline() {
         Instant::now() - Duration::from_secs(30),
         &updates,
     );
-    thread.join().unwrap();
-    assert!(updates.lock().unwrap().error.is_none());
-    assert!(child.try_wait().unwrap().is_some());
+    thread
+        .join()
+        .expect("expected test value from thread.join()");
+    assert!(
+        updates
+            .lock()
+            .expect("expected test value from updates.lock()")
+            .error
+            .is_none()
+    );
+    assert!(
+        child
+            .try_wait()
+            .expect("expected test value from child.try_wait()")
+            .is_some()
+    );
 }
 
 #[test]
-#[ignore = "Requires codecs and a built target/debug/strata sandbox worker"]
+#[ignore = "Requires codecs and a built target/debug/hermes sandbox worker"]
 fn malformed_media_fails_closed_with_decoder_reason() {
     let path = std::env::temp_dir().join(format!("hermes-bad-media-{}.mp4", std::process::id()));
-    std::fs::write(&path, b"not a media container").unwrap();
+    std::fs::write(&path, b"not a media container").expect("write generated fixture");
     let session = Session::start(&path).expect("Session process starts");
     let started = Instant::now();
     let mut reason = None;
@@ -227,14 +660,14 @@ fn malformed_media_fails_closed_with_decoder_reason() {
         std::thread::sleep(Duration::from_millis(10));
     }
     session.stop();
-    std::fs::remove_file(path).unwrap();
+    std::fs::remove_file(path).expect("remove generated fixture");
     let reason = reason.expect("Bad input returns a bounded decoder error");
     assert!(reason.len() <= 2048);
     assert!(!reason.contains("disconnected"), "{reason}");
 }
 
 #[test]
-#[ignore = "Requires HERMES_STREAM_TEST_FILE, codecs and a built target/debug/strata"]
+#[ignore = "Requires HERMES_STREAM_TEST_FILE, codecs and a built target/debug/hermes"]
 fn isolated_local_file_start_seek_and_stop() {
     let path = std::env::var_os("HERMES_STREAM_TEST_FILE").expect("Test video path provided");
     let started = Instant::now();

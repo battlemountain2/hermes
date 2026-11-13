@@ -1,6 +1,146 @@
 use super::format_time;
 
 #[test]
+#[ignore = "Requires isolated GTK display; fake animation stream, no decoder, audio or source files"]
+fn desktop_fake_media_focus_ignores_animation_playback() {
+    use super::super::tests::coordination_stream::Stream;
+    use gtk::{glib, prelude::*};
+    use std::{cell::Cell, rc::Rc};
+
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
+    let stream: Stream = glib::Object::new();
+    stream.stream_prepared(false, true, true, 60_000_000);
+    let preview = super::MediaPreview::build(stream.upcast_ref(), false, true, false);
+    let claims = Rc::new(Cell::new(0));
+    let observed = claims.clone();
+    preview.set_play_handler(Rc::new(move || observed.set(observed.get() + 1)));
+    assert!(preview.play_handler.borrow().is_none());
+    stream.play();
+    assert!(stream.is_playing());
+    preview.pause_for_music();
+    assert!(stream.is_playing());
+    assert_eq!(claims.get(), 0);
+    preview.stop();
+    assert!(!stream.is_playing());
+    assert_eq!(claims.get(), 0);
+}
+
+#[test]
+#[ignore = "Requires isolated GTK display; default PlaybackStream only, no decoder or source files"]
+fn desktop_default_media_focus_disconnects_on_stop_and_drop() {
+    use gtk::{glib, prelude::*};
+    use std::{cell::Cell, rc::Rc};
+
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
+    for stop_first in [false, true] {
+        let stream: super::super::stream::PlaybackStream = glib::Object::new();
+        let weak_stream = stream.downgrade();
+        let preview = super::MediaPreview::new_full(&stream);
+        let weak_widget = preview.widget.downgrade();
+        let payload = Rc::new(Cell::new(0));
+        let weak_payload = Rc::downgrade(&payload);
+        preview.set_play_handler(Rc::new(move || payload.set(payload.get() + 1)));
+        assert!(weak_payload.upgrade().is_some());
+        if stop_first {
+            preview.stop();
+            preview.stop();
+            assert!(preview.play_handler.borrow().is_none());
+            assert!(weak_payload.upgrade().is_none());
+            let late_payload = Rc::new(Cell::new(0));
+            let weak_late_payload = Rc::downgrade(&late_payload);
+            preview.set_play_handler(Rc::new(move || {
+                late_payload.set(late_payload.get() + 1);
+            }));
+            assert!(weak_late_payload.upgrade().is_none());
+        }
+        drop(preview);
+        assert!(weak_widget.upgrade().is_none());
+        assert!(weak_payload.upgrade().is_none());
+        stream.notify("playing");
+        drop(stream);
+        assert!(weak_stream.upgrade().is_none());
+    }
+}
+
+#[test]
+#[ignore = "Requires isolated GTK display; fake fullscreen stream, no decoder, audio or source files"]
+fn desktop_fake_media_fullscreen_shares_stream_and_playback_focus() {
+    use super::super::tests::coordination_stream::Stream;
+    use gtk::{glib, prelude::*};
+    use std::{cell::Cell, rc::Rc};
+
+    fn play_button(controls: &gtk::Widget) -> gtk::Button {
+        controls
+            .last_child()
+            .expect("expected test value from controls .last_child()")
+            .first_child()
+            .and_downcast::<gtk::Button>()
+            .expect("expected test value from controls .last_child() .unwrap() .first_child() .and_downcast::<gtk::Button>()")
+    }
+
+    gtk::init().expect("initialize the isolated GTK display");
+    crate::assets::prepare().expect("register embedded test assets");
+    let stream: Stream = glib::Object::new();
+    stream.stream_prepared(true, true, true, 60_000_000);
+    stream.set_muted(true);
+    let preview = super::MediaPreview::new_full(&stream);
+    let claims = Rc::new(Cell::new(0));
+    let observed = claims.clone();
+    preview.set_play_handler(Rc::new(move || observed.set(observed.get() + 1)));
+    assert!(preview.open_fullscreen());
+    assert_eq!(claims.get(), 0);
+    let fullscreen = preview
+        .fullscreen
+        .borrow()
+        .as_ref()
+        .expect("expected test value from preview.fullscreen.borrow().as_ref()")
+        .clone();
+    let overlay = fullscreen
+        .child()
+        .and_downcast::<gtk::Overlay>()
+        .expect("expected test value from fullscreen.child().and_downcast::<gtk::Overlay>()");
+    let picture = overlay
+        .child()
+        .and_downcast::<gtk::Picture>()
+        .expect("expected test value from overlay.child().and_downcast::<gtk::Picture>()");
+    assert_eq!(
+        picture.paintable(),
+        Some(stream.clone().upcast::<gtk::gdk::Paintable>())
+    );
+    let controls = overlay
+        .last_child()
+        .and_downcast::<gtk::Revealer>()
+        .expect("expected test value from overlay .last_child() .and_downcast::<gtk::Revealer>()")
+        .child()
+        .expect("expected test value from overlay .last_child() .and_downcast::<gtk::Revealer>() .unwrap() .child()");
+    let fullscreen_play = play_button(&controls);
+    let drawer_controls = preview
+        .widget
+        .first_child()
+        .expect("expected test value from preview .widget .first_child()")
+        .next_sibling()
+        .expect(
+            "expected test value from preview .widget .first_child() .unwrap() .next_sibling()",
+        );
+    let drawer_play = play_button(&drawer_controls);
+    fullscreen_play.emit_clicked();
+    assert!(stream.is_playing());
+    assert_eq!(claims.get(), 1);
+    drawer_play.emit_clicked();
+    assert!(!stream.is_playing());
+    assert_eq!(claims.get(), 1);
+    fullscreen_play.emit_clicked();
+    assert!(stream.is_playing());
+    assert_eq!(claims.get(), 2);
+    preview.stop();
+    assert!(preview.fullscreen.borrow().is_none());
+    assert!(!stream.is_playing());
+    assert_eq!(claims.get(), 2);
+}
+
+#[test]
 #[ignore = "Requires a desktop display and FFmpeg; run explicitly"]
 fn desktop_animation_loops_and_stops_cleanly() {
     use gtk::{glib, prelude::*};
@@ -10,7 +150,7 @@ fn desktop_animation_loops_and_stops_cleanly() {
     crate::assets::prepare().expect("Icons load");
     let directory =
         std::env::temp_dir().join(format!("hermes-animation-smoke-{}", std::process::id()));
-    std::fs::create_dir(&directory).unwrap();
+    std::fs::create_dir(&directory).expect("create generated fixture directory");
     let gif = directory.join("input.gif");
     let output = directory.join("result.webm");
     let status = std::process::Command::new("ffmpeg")
@@ -37,7 +177,7 @@ fn desktop_animation_loops_and_stops_cleanly() {
         "0".into(),
     ])
     .expect("Animation conversion succeeds");
-    let bytes = glib::Bytes::from_owned(std::fs::read(&output).unwrap());
+    let bytes = glib::Bytes::from_owned(std::fs::read(&output).expect("read generated fixture"));
     let input = gtk::gio::MemoryInputStream::from_bytes(&bytes);
     let stream = gtk::MediaFile::for_input_stream(&input);
     let preview = super::MediaPreview::new_animation(&stream);
@@ -93,17 +233,27 @@ fn desktop_animation_loops_and_stops_cleanly() {
     let controls = preview
         .widget
         .first_child()
-        .unwrap()
+        .expect("expected test value from preview .widget .first_child()")
         .next_sibling()
-        .unwrap();
-    let row = controls.last_child().unwrap();
+        .expect(
+            "expected test value from preview .widget .first_child() .unwrap() .next_sibling()",
+        );
+    let row = controls
+        .last_child()
+        .expect("expected test value from controls.last_child()");
     let play = row
         .first_child()
-        .unwrap()
+        .expect("expected test value from row .first_child()")
         .downcast::<gtk::Button>()
-        .unwrap();
-    let mute = play.next_sibling().unwrap().next_sibling().unwrap();
-    let volume = mute.next_sibling().unwrap();
+        .expect("expected test value from row .first_child() .unwrap() .downcast::<gtk::Button>()");
+    let mute = play
+        .next_sibling()
+        .expect("expected test value from play.next_sibling()")
+        .next_sibling()
+        .expect("expected test value from play.next_sibling().unwrap().next_sibling()");
+    let volume = mute
+        .next_sibling()
+        .expect("expected test value from mute.next_sibling()");
     assert!(!mute.is_visible());
     assert!(!volume.is_visible());
     play.emit_clicked();
@@ -123,7 +273,7 @@ fn desktop_animation_loops_and_stops_cleanly() {
     assert!(!stream.is_playing());
     window.close();
     while glib::MainContext::default().iteration(false) {}
-    std::fs::remove_dir_all(directory).unwrap();
+    std::fs::remove_dir_all(directory).expect("remove generated fixture");
 }
 
 #[test]

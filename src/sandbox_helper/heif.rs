@@ -5,6 +5,106 @@ use libheif_rs::{ColorSpace, HeifContext, ImageHandle, LibHeif, RgbChroma};
 
 const MAX_THUMBNAIL_IDS: usize = 32;
 
+#[expect(
+    deprecated,
+    reason = "Inspect at most two image IDs without an unbounded allocation"
+)]
+fn single_image(context: &HeifContext) -> bool {
+    context.top_level_image_ids(&mut [0; 2]) == 1
+}
+
+pub(super) fn external_preview_safe(path: &Path, size: i32) -> bool {
+    let eligible = || -> Option<bool> {
+        let file = File::open(path).ok()?;
+        let length = file.metadata().ok()?.len();
+        if length > 128 * 1024 * 1024 {
+            return None;
+        }
+        let context =
+            HeifContext::read_from_reader(Box::new(libheif_rs::StreamReader::new(file, length)))
+                .ok()?;
+        if !single_image(&context) {
+            return None;
+        }
+        let primary = context.primary_image_handle().ok()?;
+        if primary.luma_bits_per_pixel() != 8
+            || primary.width() == 0
+            || primary.height() == 0
+            || u64::from(primary.width()) * u64::from(primary.height())
+                > super::sniff::MAX_PIXELS_CEILING
+            || primary
+                .color_profile_nclx()
+                .as_ref()
+                .is_some_and(|profile| {
+                    !native_color_profile(
+                        profile.color_primaries(),
+                        profile.transfer_characteristics(),
+                    )
+                })
+            || primary.number_of_thumbnails() > MAX_THUMBNAIL_IDS
+        {
+            return None;
+        }
+        let mut identifiers = [0; MAX_THUMBNAIL_IDS];
+        let count = primary.thumbnail_ids(&mut identifiers);
+        for identifier in identifiers.iter().take(count) {
+            let thumbnail = primary.thumbnail(*identifier).ok()?;
+            if thumbnail.width().max(thumbnail.height()) >= size.max(1) as u32 {
+                return None;
+            }
+        }
+        Some(true)
+    };
+    eligible() == Some(true)
+}
+
+pub(super) fn preview(path: &Path, size: i32) -> Result<Vec<u8>, String> {
+    let decoder = LibHeif::new_checked().map_err(|error| error.to_string())?;
+    let file = File::open(path).map_err(|error| error.to_string())?;
+    let length = file.metadata().map_err(|error| error.to_string())?.len();
+    if length > 128 * 1024 * 1024 {
+        return Err("HEIF input exceeds the native preview budget".into());
+    }
+    let reader = libheif_rs::StreamReader::new(file, length);
+    let mut context =
+        HeifContext::read_from_reader(Box::new(reader)).map_err(|error| error.to_string())?;
+    context.set_max_decoding_threads(2);
+    let primary = context
+        .primary_image_handle()
+        .map_err(|error| error.to_string())?;
+    if primary.luma_bits_per_pixel() != 8 {
+        return Err("Use the existing renderer for high-bit-depth HEIF".into());
+    }
+    if primary
+        .color_profile_nclx()
+        .as_ref()
+        .is_some_and(|profile| {
+            !native_color_profile(
+                profile.color_primaries(),
+                profile.transfer_characteristics(),
+            )
+        })
+    {
+        return Err("Use the existing renderer for wide-gamut or HDR HEIF".into());
+    }
+    decode(&decoder, &primary, size)
+}
+
+fn native_color_profile(
+    primaries: libheif_rs::ColorPrimaries,
+    transfer: libheif_rs::TransferCharacteristics,
+) -> bool {
+    matches!(
+        primaries,
+        libheif_rs::ColorPrimaries::Unspecified | libheif_rs::ColorPrimaries::ITU_R_BT_709_5
+    ) && matches!(
+        transfer,
+        libheif_rs::TransferCharacteristics::Unspecified
+            | libheif_rs::TransferCharacteristics::ITU_R_BT_709_5
+            | libheif_rs::TransferCharacteristics::IEC_61966_2_1
+    )
+}
+
 pub(super) fn thumbnail(path: &Path, size: i32) -> Result<Vec<u8>, String> {
     let decoder = LibHeif::new_checked().map_err(|error| error.to_string())?;
     let file = File::open(path).map_err(|error| error.to_string())?;

@@ -26,8 +26,15 @@ fn manager() -> (Rc<Trails>, Rc<MemoryStore>) {
     let store = Rc::new(MemoryStore::default());
     let trails = Trails::load(store.clone()).expect("load Trails");
     trails
-        .ensure_default(Location::local("/home/example"))
-        .expect("create default");
+        .create(
+            "example",
+            Location::local("/home/example"),
+            TrailViewState {
+                sidebar_open: true,
+                ..TrailViewState::default()
+            },
+        )
+        .expect("create initial tab");
     (trails, store)
 }
 
@@ -35,17 +42,66 @@ fn manager() -> (Rc<Trails>, Rc<MemoryStore>) {
 fn reordering_tabs_preserves_the_active_tab_and_saved_order() {
     let (trails, store) = manager();
     let first = trails.all()[0].id.clone();
-    let second = trails.create("Music", Location::local("/home/example/Music"), TrailViewState::default()).expect("Create music tab");
-    let third = trails.create("Videos", Location::local("/home/example/Videos"), TrailViewState::default()).expect("Create video tab");
-    assert!(trails.move_relative(&third, &first, true).expect("Move before"));
-    assert_eq!(trails.all().iter().map(|trail| &trail.id).collect::<Vec<_>>(), vec![&third, &first, &second]);
+    let second = trails
+        .create(
+            "Music",
+            Location::local("/home/example/Music"),
+            TrailViewState::default(),
+        )
+        .expect("Create music tab");
+    let third = trails
+        .create(
+            "Videos",
+            Location::local("/home/example/Videos"),
+            TrailViewState::default(),
+        )
+        .expect("Create video tab");
+    assert!(
+        trails
+            .move_relative(&third, &first, true)
+            .expect("Move before")
+    );
+    assert_eq!(
+        trails
+            .all()
+            .iter()
+            .map(|trail| &trail.id)
+            .collect::<Vec<_>>(),
+        vec![&third, &first, &second]
+    );
     assert_eq!(trails.active_id(), Some(third.clone()));
-    assert!(trails.move_relative(&third, &second, false).expect("Move after"));
-    assert_eq!(store.value.borrow().collection.trails.iter().map(|trail| &trail.id).collect::<Vec<_>>(), vec![&first, &second, &third]);
-    assert!(!trails.move_relative(&second, &second, true).expect("Self drop"));
-    assert!(!trails.move_relative(&third, &second, false).expect("Unchanged order"));
+    assert!(
+        trails
+            .move_relative(&third, &second, false)
+            .expect("Move after")
+    );
+    assert_eq!(
+        store
+            .value
+            .borrow()
+            .collection
+            .trails
+            .iter()
+            .map(|trail| &trail.id)
+            .collect::<Vec<_>>(),
+        vec![&first, &second, &third]
+    );
+    assert!(
+        !trails
+            .move_relative(&second, &second, true)
+            .expect("Self drop")
+    );
+    assert!(
+        !trails
+            .move_relative(&third, &second, false)
+            .expect("Unchanged order")
+    );
     let missing = TrailId::new("missing").expect("Valid id");
-    assert!(!trails.move_relative(&missing, &second, true).expect("Missing source"));
+    assert!(
+        !trails
+            .move_relative(&missing, &second, true)
+            .expect("Missing source")
+    );
 }
 
 #[test]
@@ -125,13 +181,28 @@ fn the_last_trail_cannot_be_closed() {
 
 #[test]
 fn view_state_is_saved_for_only_the_active_trail() {
-    let (trails, _) = manager();
-    let mut view = trails.active_view().expect("active view");
+    let (trails, store) = manager();
+    let original = trails.all()[0].clone();
+    trails
+        .create(
+            "Other",
+            Location::local("/other"),
+            TrailViewState::default(),
+        )
+        .expect("create other tab");
+    let other = trails.all()[1].clone();
+    trails
+        .activate(&original.id)
+        .expect("activate original tab");
+    let mut view = original.view.clone();
     view.preview_open = true;
 
     trails.update_active_view(view.clone()).expect("save view");
 
-    assert_eq!(trails.active_view(), Some(view));
+    let saved = trails.all();
+    assert_eq!(saved[0].view, view);
+    assert_eq!(saved[1], other);
+    assert_eq!(store.value.borrow().collection.trails, saved);
 }
 
 #[test]

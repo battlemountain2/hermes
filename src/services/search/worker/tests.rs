@@ -9,17 +9,21 @@ impl Fixture {
     fn new() -> Self {
         let nonce = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
+            .expect("expected test value from SystemTime::now() .duration_since(SystemTime::UNIX_EPOCH)")
             .as_nanos();
         let root = std::env::temp_dir().join(format!("hermes-song-search-{nonce}"));
-        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&root).expect("create generated fixture directory");
         Self(root)
     }
 
     fn file(&self, name: &str) {
         let path = self.0.join(name);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, b"metadata fixture").unwrap();
+        fs::create_dir_all(
+            path.parent()
+                .expect("expected test value from path.parent()"),
+        )
+        .expect("create generated fixture directory");
+        fs::write(path, b"metadata fixture").expect("write generated fixture");
     }
 }
 
@@ -37,14 +41,39 @@ fn finish(receiver: &SearchReceiver, expected: &str) -> (Vec<SearchItem>, Option
             items,
             indexing: false,
             notice,
+            ..
         }) = receiver.recv_timeout(TICK)
+            && query == expected
         {
-            if query == expected {
-                return (items, notice);
-            }
+            return (items, notice);
         }
     }
     panic!("Search did not finish: {expected}");
+}
+
+#[test]
+fn streamed_search_keeps_literal_titles_and_explicit_filters() {
+    let fixture = Fixture::new();
+    for name in ["Video Games.flac", "Games.mp4", "Lost in the Dream.flac"] {
+        fixture.file(name);
+    }
+    let (handle, events) = start(
+        fixture.0.clone(),
+        Arc::new(UnavailableTextExtraction),
+        Arc::new(|_, _| Some(MusicTags::default())),
+    );
+    for (query, expected) in [
+        ("Video Games", vec!["Video Games.flac", "Games.mp4"]),
+        ("Video Games ext:flac", vec!["Video Games.flac"]),
+        ("Video Games type:video", vec!["Games.mp4"]),
+        ("Lost in the Dream", vec!["Lost in the Dream.flac"]),
+    ] {
+        handle.query(query);
+        let (items, notice) = finish(&events, query);
+        assert!(notice.is_none(), "{notice:?}");
+        let names: Vec<_> = items.iter().map(|item| item.name.as_str()).collect();
+        assert_eq!(names, expected, "{query}");
+    }
 }
 
 fn reader() -> Arc<TagReader> {
@@ -80,6 +109,38 @@ fn shared_scope_routes_only_visible_music_subtrees() {
     ));
     assert!(!shared_scope(Path::new("/home/me/Music/.private"), music));
     assert!(!shared_scope(Path::new("/home/me/MusicBackup"), music));
+}
+
+#[test]
+fn repeated_query_generations_reach_worker_results_without_reusing_old_tokens() {
+    let fixture = Fixture::new();
+    fixture.file("needle.txt");
+    let (handle, receiver) = start(
+        fixture.0.clone(),
+        Arc::new(UnavailableTextExtraction),
+        reader(),
+    );
+    let initial = handle.query("needle");
+    finish(&receiver, "needle");
+    let interim = handle.query("missing");
+    let current = handle.query("needle");
+    assert!(initial < interim && interim < current);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        if let Ok(SearchEvent::Results {
+            generation,
+            items,
+            indexing: false,
+            ..
+        }) = receiver.recv_timeout(TICK)
+            && generation == current
+        {
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].name, "needle.txt");
+            return;
+        }
+    }
+    panic!("Current repeated query did not finish");
 }
 
 #[test]
@@ -174,7 +235,7 @@ fn shared_folder_scope_keeps_other_albums_out_and_removes_deleted_hits() {
     let items = finish(&events, "lantern").0;
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].path, root.join("01.flac"));
-    fs::remove_file(root.join("01.flac")).unwrap();
+    fs::remove_file(root.join("01.flac")).expect("remove generated fixture");
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         if let Ok(SearchEvent::Results {
@@ -217,7 +278,7 @@ fn shared_updates_preserve_content_results_without_repeating_bounded_extractions
             fixture.root.join(format!("{number:02}.pdf")),
             b"Generated document fixture",
         )
-        .unwrap();
+        .expect("write generated fixture");
     }
     let mut subscription = fixture.subscribe();
     ready(&mut subscription, |snapshot| snapshot.entries.len() == 35);
@@ -264,7 +325,7 @@ fn await_cache(index_cache: &Mutex<VecDeque<CachedIndex>>, root: &Path) {
     let deadline = Instant::now() + Duration::from_secs(2);
     while !index_cache
         .lock()
-        .unwrap()
+        .expect("expected test value from index_cache .lock()")
         .iter()
         .any(|cached| cached.root == root)
     {
@@ -274,9 +335,11 @@ fn await_cache(index_cache: &Mutex<VecDeque<CachedIndex>>, root: &Path) {
 }
 
 #[test]
-#[ignore = "Reads the desktop user's real Music library through the metadata sandbox; run explicitly"]
-fn real_library_search_cold_and_warm_refresh() {
-    let root = super::super::SearchScope::MusicLibrary.root(&gio::glib::home_dir());
+#[ignore = "Generated tagged Music corpus, FFmpeg and a built helper; run with scripts/check-test-suite.py"]
+fn generated_library_search_cold_and_warm_refresh() {
+    let root = PathBuf::from(
+        std::env::var_os("HERMES_GENERATED_MUSIC_ROOT").expect("runner-generated Music corpus"),
+    );
     let samples = [
         ("Nikes Frank Ocean", "Frank Ocean - Blonde/1. Nikes.flac"),
         (
@@ -291,7 +354,9 @@ fn real_library_search_cold_and_warm_refresh() {
     let index_cache = Arc::new(Mutex::new(VecDeque::new()));
     let calls = Arc::new(AtomicUsize::new(0));
     let counted = calls.clone();
-    let executable = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/debug/strata");
+    let executable = PathBuf::from(
+        std::env::var_os("HERMES_TEST_WORKER").expect("Cargo-discovered built worker"),
+    );
     assert!(
         executable.is_file(),
         "Build the production binary before this fixture"
@@ -338,7 +403,7 @@ fn real_library_search_cold_and_warm_refresh() {
     let deadline = Instant::now() + Duration::from_secs(180);
     while !index_cache
         .lock()
-        .unwrap()
+        .expect("expected test value from index_cache .lock()")
         .iter()
         .any(|cached| cached.root == root)
     {
@@ -393,14 +458,20 @@ fn reopened_cache_rescans_additions_removals_and_changed_tags() {
     let fixture = Fixture::new();
     fixture.file("unchanged.flac");
     fixture.file("removed.flac");
-    fs::write(fixture.0.join("changed.flac"), "old title").unwrap();
+    fs::write(fixture.0.join("changed.flac"), "old title").expect("write generated fixture");
     let index_cache = Arc::new(Mutex::new(VecDeque::new()));
     let calls = Arc::new(Mutex::new(Vec::new()));
     let captured = calls.clone();
     let tags: Arc<TagReader> = Arc::new(move |path, _| {
-        captured.lock().unwrap().push(path.to_owned());
+        captured
+            .lock()
+            .expect("expected test value from captured.lock()")
+            .push(path.to_owned());
         Some(MusicTags {
-            title: Some(fs::read_to_string(path).unwrap()),
+            title: Some(
+                fs::read_to_string(path)
+                    .expect("expected test value from fs::read_to_string(path)"),
+            ),
             ..MusicTags::default()
         })
     });
@@ -415,14 +486,17 @@ fn reopened_cache_rescans_additions_removals_and_changed_tags() {
     assert_eq!(finish(&events, "old title").0.len(), 1);
     await_cache(&index_cache, &fixture.0);
     drop(handle);
-    calls.lock().unwrap().clear();
-    fs::remove_file(fixture.0.join("removed.flac")).unwrap();
+    calls
+        .lock()
+        .expect("expected test value from calls.lock()")
+        .clear();
+    fs::remove_file(fixture.0.join("removed.flac")).expect("remove generated fixture");
     fs::rename(
         fixture.0.join("changed.flac"),
         fixture.0.join("changed-old.tmp"),
     )
-    .unwrap();
-    fs::write(fixture.0.join("changed.flac"), "new title").unwrap();
+    .expect("expected test value from fs::rename( fixture.0.join(\"changed.flac\"), fixture.0.join(\"changed-old.tmp\"), )");
+    fs::write(fixture.0.join("changed.flac"), "new title").expect("write generated fixture");
     fixture.file("added.flac");
     let (handle, events) = start_with_cache(
         fixture.0.clone(),
@@ -436,11 +510,17 @@ fn reopened_cache_rescans_additions_removals_and_changed_tags() {
     assert_eq!(items.len(), 1);
     assert!(notice.is_none(), "{notice:?}");
     assert_eq!(items[0].path, fixture.0.join("changed.flac"));
-    assert_eq!(calls.lock().unwrap().len(), 2);
+    assert_eq!(
+        calls
+            .lock()
+            .expect("expected test value from calls.lock()")
+            .len(),
+        2
+    );
     assert!(
         !calls
             .lock()
-            .unwrap()
+            .expect("expected test value from calls .lock()")
             .contains(&fixture.0.join("unchanged.flac"))
     );
     handle.query("removed.flac");
@@ -482,11 +562,14 @@ fn failed_metadata_is_retried_when_reopening_cached_scope() {
 fn same_size_in_place_tag_edit_invalidates_warm_metadata() {
     let fixture = Fixture::new();
     let path = fixture.0.join("needle.flac");
-    fs::write(&path, "old title").unwrap();
+    fs::write(&path, "old title").expect("write generated fixture");
     let index_cache = Arc::new(Mutex::new(VecDeque::new()));
     let tags: Arc<TagReader> = Arc::new(|path, _| {
         Some(MusicTags {
-            title: Some(fs::read_to_string(path).unwrap()),
+            title: Some(
+                fs::read_to_string(path)
+                    .expect("expected test value from fs::read_to_string(path)"),
+            ),
             ..MusicTags::default()
         })
     });
@@ -501,10 +584,10 @@ fn same_size_in_place_tag_edit_invalidates_warm_metadata() {
     assert_eq!(finish(&events, "old title").0.len(), 1);
     await_cache(&index_cache, &fixture.0);
     drop(handle);
-    let before = fs::metadata(&path).unwrap();
+    let before = fs::metadata(&path).expect("expected test value from fs::metadata(&path)");
     std::thread::sleep(Duration::from_millis(2));
-    fs::write(&path, "new title").unwrap();
-    let after = fs::metadata(&path).unwrap();
+    fs::write(&path, "new title").expect("write generated fixture");
+    let after = fs::metadata(&path).expect("expected test value from fs::metadata(&path)");
     assert_eq!(before.ino(), after.ino());
     assert_eq!(before.len(), after.len());
     assert_ne!(
@@ -532,7 +615,7 @@ fn source_changed_during_tag_read_does_not_publish_stale_metadata() {
         fixture.0.clone(),
         Arc::new(UnavailableTextExtraction),
         Arc::new(|path, _| {
-            fs::write(path, "changed while parsing").unwrap();
+            fs::write(path, "changed while parsing").expect("write generated fixture");
             Some(MusicTags {
                 title: Some("stale secret".into()),
                 ..MusicTags::default()
@@ -542,7 +625,11 @@ fn source_changed_during_tag_read_does_not_publish_stale_metadata() {
     handle.query("stale secret");
     let (items, notice) = finish(&events, "stale secret");
     assert!(items.is_empty());
-    assert!(notice.unwrap().contains("changed during indexing"));
+    assert!(
+        notice
+            .expect("expected test value from notice")
+            .contains("changed during indexing")
+    );
     handle.query("needle");
     let items = finish(&events, "needle").0;
     assert_eq!(items.len(), 1);
@@ -626,7 +713,7 @@ fn inaccessible_root_reports_error_instead_of_silent_empty_results() {
     assert!(items.is_empty());
     assert!(
         notice
-            .unwrap()
+            .expect("expected test value from notice")
             .contains(&missing.to_string_lossy().to_string())
     );
 }
@@ -643,7 +730,11 @@ fn metadata_failure_keeps_filename_matches_and_reports_partial_search() {
     handle.query("broken-song");
     let (items, notice) = finish(&events, "broken-song");
     assert_eq!(items.len(), 1);
-    assert!(notice.unwrap().contains("tags could not be read"));
+    assert!(
+        notice
+            .expect("expected test value from notice")
+            .contains("tags could not be read")
+    );
 }
 
 #[test]
@@ -678,12 +769,12 @@ fn updates_continue_while_metadata_is_blocked_and_drop_cancels_scan() {
             indexing,
             ..
         }) = events.recv_timeout(TICK)
+            && query == "needle"
+            && indexing
+            && items.iter().any(|item| item.name == "needle.flac")
         {
-            if query == "needle" && indexing && items.iter().any(|item| item.name == "needle.flac")
-            {
-                found = true;
-                break;
-            }
+            found = true;
+            break;
         }
     }
     assert!(found, "Filename results must not wait for song tags");
@@ -696,11 +787,12 @@ fn updates_continue_while_metadata_is_blocked_and_drop_cancels_scan() {
             indexing,
             ..
         }) = events.recv_timeout(TICK)
+            && query == "later"
+            && indexing
+            && items.iter().any(|item| item.name == "later.mp3")
         {
-            if query == "later" && indexing && items.iter().any(|item| item.name == "later.mp3") {
-                updated = true;
-                break;
-            }
+            updated = true;
+            break;
         }
     }
     assert!(updated);
@@ -728,6 +820,7 @@ fn mailboxes_keep_only_latest_and_cancel_superseded_query_tokens() {
         ready: Condvar::new(),
     });
     let handle = SearchHandle {
+        next_generation: AtomicU64::new(1),
         commands: commands.clone(),
         events: events.clone(),
         startup_error: None,
@@ -736,20 +829,36 @@ fn mailboxes_keep_only_latest_and_cancel_superseded_query_tokens() {
         query_cancelled: Mutex::new(Arc::new(AtomicBool::new(false))),
     };
     handle.query("obsolete");
-    let old = commands.take().unwrap();
+    let Command::Query(old) = commands
+        .take()
+        .expect("expected test value from commands.take()")
+    else {
+        panic!("Expected query")
+    };
     for position in 0..10_000 {
         handle.query(&format!("query-{position}"));
         events.put(SearchEvent::Results {
+            generation: position + 2,
             query: position.to_string(),
             items: Vec::new(),
             indexing: true,
             notice: None,
+            page: None,
+            groups: None,
         });
     }
     assert!(old.cancelled.load(Ordering::Acquire));
-    assert_eq!(commands.take().unwrap().text, "query-9999");
+    let Command::Query(latest) = commands
+        .take()
+        .expect("expected test value from commands.take()")
+    else {
+        panic!("Expected query")
+    };
+    assert_eq!(latest.text, "query-9999");
     assert!(commands.take().is_none());
-    let SearchEvent::Results { query, .. } = events.take().unwrap();
+    let SearchEvent::Results { query, .. } = events
+        .take()
+        .expect("expected test value from events.take()");
     assert_eq!(query, "9999");
     assert!(events.take().is_none());
 }
@@ -819,7 +928,11 @@ fn returned_results_are_bounded_and_ties_have_stable_path_order() {
     let (items, notice) = finish(&events, "needle");
     assert_eq!(items.len(), RESULT_LIMIT);
     assert!(items.windows(2).all(|pair| pair[0].path < pair[1].path));
-    assert!(notice.unwrap().contains("best 100"));
+    assert!(
+        notice
+            .expect("expected test value from notice")
+            .contains("best 100")
+    );
 }
 
 #[test]
@@ -865,7 +978,11 @@ fn entry_byte_and_metadata_caps_report_partial_indexes() {
         if limits.metadata == 1 {
             assert_eq!(calls.load(Ordering::Relaxed), 1);
         }
-        assert!(notice.unwrap().contains("limited to"));
+        assert!(
+            notice
+                .expect("expected test value from notice")
+                .contains("limited to")
+        );
     }
 }
 
@@ -889,7 +1006,11 @@ fn home_indexes_music_first_even_when_other_folders_exhaust_the_cap() {
     handle.query("cross album artist");
     let (items, notice) = finish(&events, "cross album artist");
     assert_eq!(items.len(), 2);
-    assert!(notice.unwrap().contains("limited to"));
+    assert!(
+        notice
+            .expect("expected test value from notice")
+            .contains("limited to")
+    );
 }
 
 #[test]
@@ -897,8 +1018,10 @@ fn hidden_folders_and_symlink_cycles_are_not_traversed_but_ignores_do_not_hide_s
     let fixture = Fixture::new();
     fixture.file(".private/secret-song.flac");
     fixture.file("Visible/needle.flac");
-    fs::write(fixture.0.join(".ignore"), "Visible/\n").unwrap();
-    std::os::unix::fs::symlink(&fixture.0, fixture.0.join("loop")).unwrap();
+    fs::write(fixture.0.join(".ignore"), "Visible/\n").expect("write generated fixture");
+    std::os::unix::fs::symlink(&fixture.0, fixture.0.join("loop")).expect(
+        "expected test value from std::os::unix::fs::symlink(&fixture.0, fixture.0.join(\"loop\"))",
+    );
     let (handle, events) = start(
         fixture.0.clone(),
         Arc::new(UnavailableTextExtraction),
@@ -908,6 +1031,34 @@ fn hidden_folders_and_symlink_cycles_are_not_traversed_but_ignores_do_not_hide_s
     assert_eq!(finish(&events, "needle").0.len(), 1);
     handle.query("secret-song");
     assert!(finish(&events, "secret-song").0.is_empty());
+}
+
+#[test]
+fn development_directories_are_excluded_from_search() {
+    let fixture = Fixture::new();
+    fixture.file("node_modules/pkg/package.json");
+    fixture.file("target/debug/build_artifact.txt");
+    fixture.file("__pycache__/module.cpython-312.pyc");
+    fixture.file(".cache/app/data.bin");
+    fixture.file("src/main.rs");
+    fixture.file("docs/readme.md");
+
+    let (handle, events) = start(
+        fixture.0.clone(),
+        Arc::new(UnavailableTextExtraction),
+        reader(),
+    );
+    handle.query("main");
+    assert_eq!(finish(&events, "main").0.len(), 1);
+
+    handle.query("package");
+    assert!(finish(&events, "package").0.is_empty());
+
+    handle.query("build_artifact");
+    assert!(finish(&events, "build_artifact").0.is_empty());
+
+    handle.query("cpython");
+    assert!(finish(&events, "cpython").0.is_empty());
 }
 
 #[test]
@@ -928,7 +1079,7 @@ fn cached_index_reopens_without_reading_song_tags_again_and_checks_missing_roots
     loop {
         if index_cache
             .lock()
-            .unwrap()
+            .expect("expected test value from index_cache .lock()")
             .iter()
             .any(|cached| cached.root == fixture.0)
         {
@@ -954,7 +1105,7 @@ fn cached_index_reopens_without_reading_song_tags_again_and_checks_missing_roots
     assert_eq!(finish(&events, "cross album artist").0.len(), 1);
     assert_eq!(calls.load(Ordering::Relaxed), 0);
     drop(handle);
-    fs::remove_dir_all(&fixture.0).unwrap();
+    fs::remove_dir_all(&fixture.0).expect("remove generated fixture");
     let (handle, events) = start_with_cache(
         fixture.0.clone(),
         Arc::new(UnavailableTextExtraction),
@@ -965,5 +1116,9 @@ fn cached_index_reopens_without_reading_song_tags_again_and_checks_missing_roots
     handle.query("needle");
     let (items, notice) = finish(&events, "needle");
     assert!(items.is_empty());
-    assert!(notice.unwrap().contains("Cannot search"));
+    assert!(
+        notice
+            .expect("expected test value from notice")
+            .contains("Cannot search")
+    );
 }

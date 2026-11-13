@@ -13,8 +13,9 @@ fn frame_round_trip() {
         },
         &[40; 8],
     )
-    .unwrap();
-    let (event, data) = read_event(&mut packet.as_slice()).unwrap();
+    .expect("expected test value from write_event( &mut packet, &Event::Frame { epoch: 3, timestamp: 9_000_000, width: 2, height: 1, }, &[40; 8], )");
+    let (event, data) = read_event(&mut packet.as_slice())
+        .expect("expected test value from read_event(&mut packet.as_slice())");
     assert!(matches!(
         event,
         Event::Frame {
@@ -96,7 +97,7 @@ fn rejects_truncated_packet_and_unexpected_payload() {
         },
         &[],
     )
-    .unwrap();
+    .expect("expected test value from write_event( &mut packet, &Event::Position { epoch: 0, timestamp: 1, }, &[], )");
     packet.pop();
     assert!(read_event(&mut packet.as_slice()).is_err());
     assert!(write_event(&mut Vec::new(), &Event::Ended { epoch: 0 }, &[0]).is_err());

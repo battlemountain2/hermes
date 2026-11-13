@@ -14,12 +14,15 @@ use super::{FormatFamily, classify_by_name};
 use crate::{model::MusicTags, sandbox::Cancellation};
 
 mod cache;
+mod catalog_disk;
+#[cfg(target_os = "linux")]
+pub(crate) use catalog_disk::query_storage;
 mod monitoring;
 
-const MAX_ENTRIES: usize = 40_000;
-const MAX_TRACKS: usize = 20_000;
-const MAX_INDEX_BYTES: usize = 32 * 1024 * 1024;
-const MAX_WALK_ENTRIES: usize = 100_000;
+const MAX_ENTRIES: usize = 100_000;
+const MAX_TRACKS: usize = 50_000;
+const MAX_INDEX_BYTES: usize = 512 * 1024 * 1024;
+const MAX_WALK_ENTRIES: usize = 200_000;
 const PUBLISH_INTERVAL: Duration = Duration::from_millis(500);
 const TICK: Duration = Duration::from_millis(20);
 
@@ -33,6 +36,18 @@ pub(crate) struct FileIdentity {
 }
 
 impl FileIdentity {
+    pub(crate) fn directory(path: &Path) -> Option<Self> {
+        fs::symlink_metadata(path)
+            .ok()
+            .filter(|metadata| metadata.is_dir())
+            .as_ref()
+            .map(Self::from_metadata)
+    }
+
+    pub(crate) fn same_object(&self, other: &Self) -> bool {
+        self.device == other.device && self.inode == other.inode
+    }
+
     pub(crate) fn size(&self) -> u64 {
         self.size
     }
@@ -79,9 +94,13 @@ pub(crate) struct Snapshot {
 
 type TagReader = dyn Fn(&Path, &Cancellation) -> Option<MusicTags> + Send + Sync;
 
+#[derive(Clone)]
 struct Configuration {
     root: PathBuf,
+    root_identity: Option<FileIdentity>,
     cache_path: PathBuf,
+    catalog_path: Option<PathBuf>,
+    music_source: Option<PathBuf>,
     tags: Arc<TagReader>,
     monitor_limit: usize,
     refresh_interval: Duration,
@@ -94,7 +113,10 @@ struct Configuration {
 impl Configuration {
     fn new(root: PathBuf) -> Self {
         Self {
+            root_identity: FileIdentity::directory(&root),
             cache_path: cache::path(&root),
+            catalog_path: None,
+            music_source: None,
             root,
             tags: Arc::new(crate::adapters::music_metadata::read_tags),
             monitor_limit: 4096,
@@ -109,6 +131,7 @@ impl Configuration {
 
 struct Shared {
     snapshot: Arc<Snapshot>,
+    root_bindings: Vec<RootBinding>,
     revision: u64,
     subscribers: usize,
     requested: Option<Instant>,
@@ -120,14 +143,58 @@ struct Library {
     shared: Mutex<Shared>,
     ready: Condvar,
     cancellation: Cancellation,
+    music_snapshot: Mutex<Option<Arc<Snapshot>>>,
+    music_root_identity: Mutex<Option<FileIdentity>>,
+    saved_catalog: Mutex<Option<Arc<Snapshot>>>,
 }
 
 pub(crate) struct Subscription {
     library: Arc<Library>,
     seen: Option<u64>,
+    root_bindings: Vec<RootBinding>,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct RootBinding {
+    pub(crate) path: PathBuf,
+    pub(crate) identity: FileIdentity,
 }
 
 impl Subscription {
+    pub(crate) fn root_bindings(&self) -> Vec<RootBinding> {
+        self.root_bindings.clone()
+    }
+    pub(crate) fn root_is_current(&self) -> bool {
+        same_root_binding(
+            &self.library.configuration.root_identity,
+            &FileIdentity::directory(&self.library.configuration.root),
+        )
+    }
+
+    pub(crate) fn scope_is_current(&self, snapshot: &Snapshot, root: &Path) -> bool {
+        if !self.root_is_current() {
+            return false;
+        }
+        let expected = if root == self.library.configuration.root {
+            self.library.configuration.root_identity.as_ref()
+        } else {
+            snapshot
+                .entries
+                .iter()
+                .find(|entry| entry.path == root && entry.is_directory)
+                .and_then(|entry| entry.identity.as_ref())
+        };
+        expected
+            .zip(FileIdentity::directory(root).as_ref())
+            .is_some_and(|(expected, current)| expected.same_object(current))
+    }
+
+    pub(crate) fn restart(&self) -> Self {
+        let mut configuration = self.library.configuration.clone();
+        configuration.root_identity = FileIdentity::directory(&configuration.root);
+        subscribe_with(configuration)
+    }
+
     pub(crate) fn poll(&mut self) -> Option<Arc<Snapshot>> {
         let shared = self
             .library
@@ -138,6 +205,7 @@ impl Subscription {
             return None;
         }
         self.seen = Some(shared.revision);
+        self.root_bindings.clone_from(&shared.root_bindings);
         Some(shared.snapshot.clone())
     }
 
@@ -163,6 +231,27 @@ impl Drop for Subscription {
 
 pub(crate) fn subscribe(root: PathBuf) -> Subscription {
     subscribe_with(Configuration::new(root))
+}
+
+pub(crate) fn subscribe_catalog(root: PathBuf) -> Subscription {
+    let mut configuration = Configuration::new(root.clone());
+    // Saved catalogs require Linux descriptor-backed storage. Other targets
+    // keep browsing from live snapshots while native persistence is pending.
+    #[cfg(target_os = "linux")]
+    {
+        configuration.catalog_path = Some(catalog_disk::path(&root));
+    }
+    let music = super::search::SearchScope::MusicLibrary.root(&gio::glib::home_dir());
+    let visible_music = music.strip_prefix(&root).is_ok_and(|relative| {
+        relative.components().all(|component| {
+            matches!(component,
+            std::path::Component::Normal(name) if !name.to_string_lossy().starts_with('.'))
+        })
+    });
+    if root == gio::glib::home_dir() && music != root && visible_music {
+        configuration.music_source = Some(music);
+    }
+    subscribe_with(configuration)
 }
 
 fn registry() -> &'static Mutex<Vec<Weak<Library>>> {
@@ -198,12 +287,20 @@ pub(crate) fn cached_tags(path: &Path) -> Option<MusicTags> {
     None
 }
 
+fn same_root_binding(left: &Option<FileIdentity>, right: &Option<FileIdentity>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left.same_object(right),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
 fn subscribe_with(configuration: Configuration) -> Subscription {
     let mut registry = registry().lock().unwrap_or_else(|error| error.into_inner());
     registry.retain(|weak| weak.strong_count() > 0);
     for weak in registry.iter() {
         if let Some(library) = weak.upgrade()
-            && library.configuration.root == configuration.root
+            && library.configuration.catalog_path.is_some() == configuration.catalog_path.is_some()
         {
             let mut shared = library
                 .shared
@@ -212,22 +309,60 @@ fn subscribe_with(configuration: Configuration) -> Subscription {
             if library.cancellation.is_cancelled() {
                 continue;
             }
+            if !same_root_binding(
+                &library.configuration.root_identity,
+                &FileIdentity::directory(&library.configuration.root),
+            ) {
+                continue;
+            }
+            let exact = library.configuration.root == configuration.root
+                && same_root_binding(
+                    &library.configuration.root_identity,
+                    &configuration.root_identity,
+                );
+            let covered_folder = configuration.catalog_path.is_some()
+                && !shared.snapshot.indexing
+                && shared.snapshot.notice.is_none()
+                && configuration.root.starts_with(&library.configuration.root)
+                && shared.snapshot.entries.iter().any(|entry| {
+                    entry.is_directory
+                        && entry.path == configuration.root
+                        && same_root_binding(&entry.identity, &configuration.root_identity)
+                });
+            if !exact && !covered_folder {
+                continue;
+            }
             shared.subscribers += 1;
-            if !shared.snapshot.indexing {
+            if !shared.snapshot.indexing && configuration.catalog_path.is_none() {
                 shared.requested = Some(Instant::now());
                 shared.immediate = true;
+                let mut snapshot = (*shared.snapshot).clone();
+                snapshot.indexing = true;
+                shared.snapshot = Arc::new(snapshot);
+                shared.revision = shared.revision.wrapping_add(1);
                 library.ready.notify_one();
             }
             drop(shared);
             return Subscription {
                 library,
                 seen: None,
+                root_bindings: Vec::new(),
             };
         }
     }
+    let root_bindings = configuration
+        .root_identity
+        .as_ref()
+        .map(|identity| RootBinding {
+            path: configuration.root.clone(),
+            identity: identity.clone(),
+        })
+        .into_iter()
+        .collect();
     let library = Arc::new(Library {
         configuration,
         shared: Mutex::new(Shared {
+            root_bindings,
             snapshot: Arc::new(Snapshot {
                 indexing: true,
                 ..Snapshot::default()
@@ -239,6 +374,9 @@ fn subscribe_with(configuration: Configuration) -> Subscription {
         }),
         ready: Condvar::new(),
         cancellation: Cancellation::default(),
+        music_snapshot: Mutex::new(None),
+        music_root_identity: Mutex::new(None),
+        saved_catalog: Mutex::new(None),
     });
     registry.push(Arc::downgrade(&library));
     drop(registry);
@@ -263,7 +401,71 @@ fn subscribe_with(configuration: Configuration) -> Subscription {
     Subscription {
         library,
         seen: None,
+        root_bindings: Vec::new(),
     }
+}
+
+/// Publish one bounded cached prefix while the remaining saved rows are
+/// validated. Every cached publication stays provisional until the live scan.
+fn read_saved_catalog(
+    configuration: &Configuration,
+    cancellation: &Cancellation,
+    mut publish: impl FnMut(Snapshot),
+) -> Result<Snapshot, String> {
+    let path = configuration
+        .catalog_path
+        .as_deref()
+        .ok_or("Saved search catalog is unavailable")?;
+    let mut reader = catalog_disk::PagedReader::open(
+        path,
+        &configuration.root,
+        configuration.entries,
+        configuration.bytes,
+        cancellation,
+    )?;
+    let mut entries = Vec::with_capacity(reader.entry_count());
+    let mut published = false;
+    loop {
+        let page = match reader.next_page(cancellation) {
+            Ok(Some(page)) => page,
+            Ok(None) => break,
+            Err(error) => {
+                if published && !cancellation.is_cancelled() {
+                    publish(Snapshot {
+                        indexing: true,
+                        notice: Some("Saved search index unavailable, rebuilding…".into()),
+                        ..Snapshot::default()
+                    });
+                }
+                return Err(error);
+            }
+        };
+        entries.extend(page.into_iter().filter(|entry| {
+            !configuration
+                .music_source
+                .as_ref()
+                .is_some_and(|music| entry.path.starts_with(music))
+        }));
+        if !published && !entries.is_empty() {
+            let mut notice = reader.notice().map(str::to_owned);
+            append_notice(&mut notice, "Verifying saved search index");
+            publish(Snapshot {
+                entries: Arc::new(entries.clone()),
+                indexing: true,
+                notice,
+            });
+            published = true;
+        }
+    }
+    let mut notice = reader.notice().map(str::to_owned);
+    if !entries.is_empty() {
+        append_notice(&mut notice, "Verifying saved search index");
+    }
+    Ok(Snapshot {
+        entries: Arc::new(entries),
+        indexing: true,
+        notice,
+    })
 }
 
 impl Library {
@@ -274,6 +476,12 @@ impl Library {
             .unwrap_or_else(|error| error.into_inner());
         shared.requested.get_or_insert_with(Instant::now);
         shared.immediate |= immediate;
+        if !shared.snapshot.indexing {
+            let mut snapshot = (*shared.snapshot).clone();
+            snapshot.indexing = true;
+            shared.snapshot = Arc::new(snapshot);
+            shared.revision = shared.revision.wrapping_add(1);
+        }
         self.ready.notify_one();
     }
 
@@ -286,25 +494,111 @@ impl Library {
     }
 
     fn publish(&self, snapshot: Snapshot) {
+        let snapshot = self.compose(snapshot);
+        let mut root_bindings: Vec<_> = self
+            .configuration
+            .root_identity
+            .as_ref()
+            .map(|identity| RootBinding {
+                path: self.configuration.root.clone(),
+                identity: identity.clone(),
+            })
+            .into_iter()
+            .collect();
+        if let Some(root) = &self.configuration.music_source
+            && let Some(identity) = self
+                .music_root_identity
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone()
+        {
+            root_bindings.push(RootBinding {
+                path: root.clone(),
+                identity,
+            });
+        }
         let mut shared = self
             .shared
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        if *shared.snapshot == snapshot {
+        if *shared.snapshot == snapshot && shared.root_bindings == root_bindings {
             return;
         }
         shared.snapshot = Arc::new(snapshot);
+        shared.root_bindings = root_bindings;
         shared.revision = shared.revision.wrapping_add(1);
         self.ready.notify_all();
     }
 
     fn run(self: &Arc<Self>, context: &gio::glib::MainContext) {
         let mut monitors = monitoring::Monitors::new(self);
+        let mut music = self
+            .configuration
+            .music_source
+            .as_ref()
+            .map(|root| subscribe(root.clone()));
         let mut previous = Arc::new(Vec::new());
-        let mut cached = cache::read(&self.configuration.cache_path, &self.configuration.root);
+        let mut cached = if self.configuration.catalog_path.is_none() {
+            cache::read(&self.configuration.cache_path, &self.configuration.root)
+        } else {
+            HashMap::new()
+        };
+        if self.configuration.catalog_path.is_some() {
+            match read_saved_catalog(&self.configuration, &self.cancellation, |snapshot| {
+                self.publish(snapshot)
+            }) {
+                Ok(snapshot) => {
+                    previous = snapshot.entries.clone();
+                    self.publish(snapshot);
+                }
+                Err(error) => tracing::debug!(%error, "Saved search index unavailable; scanning"),
+            }
+        }
+        let mut base_notice = None;
         let mut completed = Instant::now();
         while !self.cancellation.is_cancelled() {
             pump(context, &self.cancellation);
+            if music
+                .as_ref()
+                .is_some_and(|subscription| !subscription.root_is_current())
+            {
+                self.music_snapshot
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .take();
+                self.music_root_identity
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .take();
+                music = music.as_ref().map(Subscription::restart);
+                self.publish(Snapshot {
+                    entries: previous.clone(),
+                    indexing: true,
+                    notice: base_notice.clone(),
+                });
+            }
+            if let Some(snapshot) = music.as_mut().and_then(Subscription::poll) {
+                let binding = music.as_ref().and_then(|subscription| {
+                    subscription.library.configuration.root_identity.clone()
+                });
+                self.music_root_identity
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .clone_from(&binding);
+                self.music_snapshot
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .replace(snapshot);
+                let snapshot = Snapshot {
+                    entries: previous.clone(),
+                    indexing: self.requested(),
+                    notice: base_notice.clone(),
+                };
+                self.publish(snapshot.clone());
+                if !self.requested() {
+                    self.save_catalog(snapshot);
+                }
+            }
             let scan = {
                 let mut shared = self
                     .shared
@@ -325,6 +619,7 @@ impl Library {
                 let pending = self.requested();
                 let mut notice = notice;
                 if !pending
+                    && self.configuration.catalog_path.is_none()
                     && let Err(error) = cache::write(&self.configuration.cache_path, &previous)
                 {
                     append_notice(
@@ -335,11 +630,16 @@ impl Library {
                 if self.cancellation.is_cancelled() {
                     break;
                 }
-                self.publish(Snapshot {
+                base_notice = notice.clone();
+                let snapshot = Snapshot {
                     entries: previous.clone(),
                     indexing: pending,
                     notice,
-                });
+                };
+                self.publish(snapshot.clone());
+                if !pending {
+                    self.save_catalog(snapshot);
+                }
                 completed = Instant::now();
             }
             let shared = self
@@ -347,6 +647,131 @@ impl Library {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
             let _wait = self.ready.wait_timeout(shared, TICK);
+        }
+    }
+
+    fn compose(&self, mut snapshot: Snapshot) -> Snapshot {
+        let music = self
+            .music_snapshot
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        let Some(music) = music else {
+            if self.configuration.music_source.is_some() {
+                snapshot.indexing = true;
+            }
+            return snapshot;
+        };
+        let binding = self
+            .music_root_identity
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        let current = self
+            .configuration
+            .music_source
+            .as_ref()
+            .and_then(|root| FileIdentity::directory(root));
+        if !same_root_binding(&binding, &current)
+            || (binding.is_none() && !music.entries.is_empty())
+        {
+            append_notice(
+                &mut snapshot.notice,
+                "Music folder changed; waiting for its verified index",
+            );
+            snapshot.indexing = true;
+            return snapshot;
+        }
+        let mut entries = Vec::new();
+        let mut bytes = 0;
+        if let Some(root) = &self.configuration.music_source
+            && let Some(identity) = current
+        {
+            let entry = Entry {
+                path: root.clone(),
+                is_directory: true,
+                modified_unix_seconds: Some(identity.modified.0),
+                identity: Some(identity),
+                music_tags: None,
+            };
+            if self.configuration.entries > 0 && entry_bytes(&entry) <= self.configuration.bytes {
+                entries.reserve_exact(1);
+                entries.push(entry);
+                bytes = entry_bytes(&entries[0]);
+            }
+        }
+        for entry in music.entries.iter().chain(snapshot.entries.iter()) {
+            let cost = entry_bytes(entry) - size_of::<Entry>();
+            let capacity = if entries.len() == entries.capacity() {
+                (entries.capacity() + 256).min(self.configuration.entries)
+            } else {
+                entries.capacity()
+            };
+            let allocation = (capacity - entries.capacity()) * size_of::<Entry>();
+            if entries.len() >= self.configuration.entries
+                || bytes + cost + allocation > self.configuration.bytes
+            {
+                append_notice(
+                    &mut snapshot.notice,
+                    "Search catalog limit reached; some files were not indexed",
+                );
+                break;
+            }
+            if allocation > 0 {
+                entries.reserve_exact(capacity - entries.len());
+            }
+            bytes += cost + allocation;
+            entries.push(entry.clone());
+        }
+        if let Some(notice) = &music.notice {
+            append_notice(&mut snapshot.notice, notice);
+        }
+        snapshot.entries = Arc::new(entries);
+        snapshot.indexing |= music.indexing;
+        snapshot
+    }
+
+    fn save_catalog(&self, snapshot: Snapshot) {
+        let Some(path) = &self.configuration.catalog_path else {
+            return;
+        };
+        let snapshot = self.compose(snapshot);
+        if snapshot.indexing || self.cancellation.is_cancelled() {
+            return;
+        }
+        if self
+            .saved_catalog
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .as_deref()
+            == Some(&snapshot)
+        {
+            return;
+        }
+        if let Err(error) = catalog_disk::write(
+            path,
+            &self.configuration.root,
+            &snapshot.entries,
+            snapshot.notice.as_deref(),
+            &self.cancellation,
+        ) {
+            let mut snapshot = snapshot;
+            append_notice(
+                &mut snapshot.notice,
+                &format!("Search index could not be saved: {error}"),
+            );
+            let mut shared = self
+                .shared
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            shared.snapshot = Arc::new(snapshot);
+            shared.revision = shared.revision.wrapping_add(1);
+            self.ready.notify_all();
+        } else {
+            self.saved_catalog
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .replace(Arc::new(snapshot));
         }
     }
 
@@ -365,10 +790,7 @@ impl Library {
             monitors.finish(&mut notice);
             return (
                 Vec::new(),
-                Some(format!(
-                    "Music folder unavailable: {}: {error}",
-                    root.display()
-                )),
+                Some(format!("Folder unavailable: {}: {error}", root.display())),
             );
         }
         monitors.add(root);
@@ -379,17 +801,33 @@ impl Library {
             .collect();
         let mut entries = Vec::new();
         let mut bytes = 0;
-        let mut tracks = 0;
+        let excluded_music = self.configuration.music_source.clone();
+        let mut track_slots = 0;
         let walker = ignore::WalkBuilder::new(root)
+            .filter_entry(move |entry| {
+                entry.depth() == 0
+                    || !excluded_music
+                        .as_ref()
+                        .is_some_and(|music| entry.path().starts_with(music))
+            })
             .follow_links(false)
             .standard_filters(false)
             .hidden(true)
             .max_depth(Some(128))
             .build();
+        let mut last_names_publish = Instant::now();
+        let names_interval = if self.configuration.catalog_path.is_some() {
+            Duration::from_millis(50)
+        } else {
+            PUBLISH_INTERVAL
+        };
         for (count, entry) in walker.enumerate() {
             pump(context, &self.cancellation);
             if self.cancellation.is_cancelled() {
                 break;
+            }
+            if count.is_multiple_of(256) {
+                std::thread::sleep(Duration::from_millis(1));
             }
             if count >= MAX_WALK_ENTRIES {
                 append_notice(&mut notice, "Library walk limited to 100,000 entries");
@@ -430,15 +868,8 @@ impl Library {
                 identity,
                 music_tags: None,
             };
-            if record.is_audio() {
-                if tracks >= self.configuration.tracks {
-                    append_notice(
-                        &mut notice,
-                        "Library track limit reached; some songs were skipped",
-                    );
-                    continue;
-                }
-                tracks += 1;
+            if record.is_audio() && track_slots < self.configuration.tracks {
+                track_slots += 1;
                 record.music_tags = remembered
                     .get(record.path.as_path())
                     .filter(|entry| entry.identity.is_some() && entry.identity == record.identity)
@@ -449,6 +880,11 @@ impl Library {
                             .filter(|entry| Some(&entry.identity.file) == record.identity.as_ref())
                             .map(|entry| entry.tags)
                     });
+            } else if record.is_audio() {
+                append_notice(
+                    &mut notice,
+                    "Song metadata limit reached; other tracks remain searchable by filename",
+                );
             }
             let cost = entry_bytes(&record) - size_of::<Entry>();
             let capacity = if entries.len() == entries.capacity() {
@@ -462,7 +898,7 @@ impl Library {
             {
                 append_notice(
                     &mut notice,
-                    "Library index limited to 40,000 entries / 32 MiB",
+                    "Library index limited to 100,000 entries / 512 MiB",
                 );
                 break;
             }
@@ -471,6 +907,14 @@ impl Library {
             }
             bytes += cost + allocation;
             entries.push(record);
+            if last_names_publish.elapsed() >= names_interval {
+                self.publish(Snapshot {
+                    entries: Arc::new(entries.clone()),
+                    indexing: true,
+                    notice: notice.clone(),
+                });
+                last_names_publish = Instant::now();
+            }
         }
         monitors.finish(&mut notice);
         cached.clear();
@@ -481,12 +925,24 @@ impl Library {
         });
         let mut last_publish = Instant::now();
         let mut failures = 0;
+        let mut metadata_reads = 0;
         for index in 0..entries.len() {
             pump(context, &self.cancellation);
             if self.cancellation.is_cancelled() || self.requested() {
                 break;
             }
-            if !entries[index].is_audio() || entries[index].music_tags.is_some() {
+            if !entries[index].is_audio() {
+                continue;
+            }
+            if metadata_reads >= self.configuration.tracks {
+                append_notice(
+                    &mut notice,
+                    "Song metadata limit reached; other tracks remain searchable by filename",
+                );
+                break;
+            }
+            metadata_reads += 1;
+            if entries[index].music_tags.is_some() {
                 continue;
             }
             let old_cost = entry_bytes(&entries[index]);
@@ -567,3 +1023,6 @@ fn append_notice(notice: &mut Option<String>, message: &str) {
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(test)]
+mod catalog_tests;

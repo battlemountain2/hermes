@@ -3,6 +3,8 @@
 #[cfg(test)]
 mod tests;
 
+mod merge;
+mod progress;
 mod transfer;
 
 use std::{
@@ -59,9 +61,11 @@ fn copy_recursively(
             )
             .await?;
         if info.file_type() == gio::FileType::Directory {
-            target
-                .make_directory_future(glib::Priority::DEFAULT)
-                .await?;
+            if !target.query_exists(None::<&gio::Cancellable>) {
+                target
+                    .make_directory_future(glib::Priority::DEFAULT)
+                    .await?;
+            }
             let enumerator = source
                 .enumerate_children_future(
                     "standard::name",
@@ -171,9 +175,21 @@ impl OperationProvider for LocalOperationProvider {
                 .set_display_name_future(&request.new_name, glib::Priority::DEFAULT)
                 .await
             {
-                Ok(_) => emit(OperationEvent::Renamed {
-                    request_id: request.id,
-                }),
+                Ok(new_file) => {
+                    if let (Some(from), Some(to)) =
+                        (request.entry.location.native_path(), new_file.path())
+                    {
+                        let _ = crate::services::music_collections::Store::shared()
+                            .relocate(from.to_path_buf(), to.clone());
+                        let _ = crate::services::ratings::Store::shared()
+                            .relocate(from.to_path_buf(), to.clone());
+                        crate::services::FolderViewStore::shared()
+                            .relocate(&from.to_string_lossy(), &to.to_string_lossy());
+                    }
+                    emit(OperationEvent::Renamed {
+                        request_id: request.id,
+                    });
+                }
                 Err(error) => emit(OperationEvent::Failed {
                     request_id: request.id,
                     message: error.to_string(),
@@ -254,57 +270,109 @@ impl OperationProvider for LocalOperationProvider {
         let task = glib::MainContext::default().spawn_local(async move {
             let destination = gio_file(&request.destination);
             let total = request.sources.len();
+            let mut source_sizes = Vec::with_capacity(total);
+            let mut total_bytes = Some(0u64);
+            for loc in &request.sources {
+                match gio_file(loc).query_info_future(
+                    "standard::size,standard::type",
+                    gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS,
+                    glib::Priority::DEFAULT,
+                ).await {
+                    Ok(info) if info.file_type() == gio::FileType::Regular && info.has_attribute("standard::size") && info.size() >= 0 => {
+                        let size = info.size() as u64;
+                        source_sizes.push(Some(size));
+                        total_bytes = total_bytes.and_then(|total| total.checked_add(size));
+                    },
+                    _ => {
+                        source_sizes.push(None);
+                        total_bytes = None;
+                    },
+                }
+            }
+            let progress = Rc::new(progress::Progress::new(
+                request.id,
+                emit.clone(),
+                total,
+                total_bytes,
+            ));
+            progress.report();
+            let mut tree = merge::TransferTree::new(
+                request.id,
+                emit.clone(),
+                worker_cancellable.clone(),
+                request.move_sources,
+                progress.clone(),
+            );
             let mut errors = Vec::new();
             for (completed, location) in request.sources.iter().enumerate() {
                 let source = gio_file(location);
-                let Some(name) = source.basename() else {
+                let custom_name = request
+                    .target_names
+                    .get(completed)
+                    .and_then(|n| n.as_ref())
+                    .cloned();
+                if let Some(name) = &custom_name
+                    && let Err(message) = validate_basename(name)
+                {
+                    errors.push(message.to_owned());
+                    progress.invalidate_total();
+                    progress.finish_root(completed + 1);
+                    continue;
+                }
+                let name = custom_name.map(std::ffi::OsString::from)
+                    .or_else(|| source.basename().map(PathBuf::into_os_string));
+                let Some(name) = name else {
                     errors.push("A clipboard item has no file name".to_owned());
-                    emit(OperationEvent::TransferProgress {
-                        request_id: request.id,
-                        completed: completed + 1,
-                        total,
-                    });
+                    progress.invalidate_total();
+                    progress.finish_root(completed + 1);
                     continue;
                 };
                 let target = destination.child(&name);
                 if transfer_is_noop(&source, &destination, &target) {
-                    emit(OperationEvent::TransferProgress {
-                        request_id: request.id,
-                        completed: completed + 1,
-                        total,
-                    });
+                    progress.invalidate_total();
+                    progress.finish_root(completed + 1);
                     continue;
                 }
-                match transfer::transfer_item(
+                match tree.transfer(
                     source,
-                    target,
-                    request.move_sources,
+                    target.clone(),
                     request.overwrite_existing,
-                    worker_cancellable.clone(),
+                    0,
+                    source_sizes[completed],
                 )
                 .await
                 {
-                    Ok(()) => emit(OperationEvent::TransferItemCompleted {
-                        request_id: request.id,
-                        source: location.clone(),
-                        move_source: request.move_sources,
-                    }),
-                    Err(error) => errors.push(format!("{}: {error}", name.to_string_lossy())),
+                    Ok(outcome) if outcome.complete => {
+                        emit(OperationEvent::TransferItemCompleted {
+                            request_id: request.id,
+                            source: location.clone(),
+                            move_source: request.move_sources,
+                        });
+                    }
+                    Ok(_) => {},
+                    Err(error) if error.matches(gio::IOErrorEnum::Cancelled) => {
+                        errors.push("Transfer cancelled; completed items were kept and remaining sources were retained".to_owned());
+                        break;
+                    },
+                    Err(error) => {
+                        progress.invalidate_total();
+                        errors.push(format!("{}: {error}", name.to_string_lossy()));
+                    },
                 }
-                emit(OperationEvent::TransferProgress {
-                    request_id: request.id,
-                    completed: completed + 1,
-                    total,
-                });
+                progress.finish_root(completed + 1);
             }
-            if errors.is_empty() {
+            if errors.is_empty() && tree.skipped == 0 {
                 emit(OperationEvent::Pasted {
                     request_id: request.id,
                 });
             } else {
                 emit(OperationEvent::TransferCompletedWithErrors {
                     request_id: request.id,
-                    message: operation_error_summary(&errors, "transferred"),
+                    message: if errors.is_empty() {
+                        format!("{} conflicts skipped; their sources and existing destinations were kept", tree.skipped)
+                    } else {
+                        operation_error_summary(&errors, "transferred")
+                    },
                 });
             }
         });

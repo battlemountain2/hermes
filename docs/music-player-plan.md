@@ -1,5 +1,99 @@
 # Hermes music player and desktop integration plan
 
+## Artwork, metadata and mini-player polish — 2026-10-20
+
+The current track fills missing title/artist/album fields from bounded, off-thread embedded-tag
+reads instead of retaining an incomplete queued entry. Existing nonblank tags win; tagged album
+artist can replace a blank artist. Filenames/folder names remain display fallbacks, never invented
+tags for online lyrics queries. Queue duplicates, session state and MPRIS receive the same update
+without replacing the stream, seeking, changing order or autoplaying. Failed/untagged reads are
+attempted once per current playback identity rather than polled repeatedly.
+
+Immersive artwork now uses a selected-preview route: up to1400px for adjacent covers and1024px
+for embedded art, rather than the thumbnail worker's fixed256px output. Artwork is contained,
+not cropped. The background takes its hue from the cover while retaining the theme's background
+luminance; a cached64px softened texture adds detail. Two native GTK snapshot nodes replace the
+full-screen Cairo aura. There is no live blur, new animation loop or forced GPU backend. Visualizer
+colors follow the cover with a light/dark legibility adjustment; controls retain semantic theme
+colors and on-accent Lucide icons. Low-resolution originals cannot gain missing detail.
+
+Playback and seek controls fade into their reserved space when the artwork deck is hovered or
+keyboard focus enters it; the visualizer dock follows the same pattern. Reduced motion removes
+the fade. Metadata-only refreshes retain loaded artwork and local lyrics; unchanged online query
+metadata retains pending results, while changed title/artist cancels and rearms lookup.
+
+The mini-player has a native draggable title area, readable filled Play/Pause states, and capture-
+phase Escape handling. Escape and window close hide the player without stopping music or losing
+its position; the existing mini-player action shows it again. Wayland compositor dragging and
+real-device audio remain separate user checks; no live user window or audio was exercised.
+
+## Lyrics and immersive modes — 2026-10-19
+
+Lyrics and Visualizer are now explicit, mutually exclusive modes; toggling either off leaves
+the artwork view. Returning from a visualizer restores retained lyrics instead of an empty stage.
+Missing/loading/not-found/instrumental/error states stay visible without repeatedly rebuilding
+widgets. Active-line highlighting changes color, not font size/weight, avoiding text reflow.
+
+Settings → Audio → Look up missing lyrics online is **off by default**. Once enabled, opening
+Lyrics automatically checks a matching local `.lrc`, then an explicitly named `.lyrics.txt`,
+before using a cached LRCLIB match or requesting the current track. Only tagged title, artist
+and duration are sent; never filenames, paths, album metadata, audio or the full library.
+Leaving Lyrics, changing tracks, opting out, hiding or disposing the view cancels pending work.
+Stale responses cannot replace a newer track or update a closed panel. No file tags are modified.
+
+LRCLIB lookup uses the optional `/usr/bin/curl` program with verified HTTPS, encoded metadata,
+timeouts, cancellation and bounded output. Synced lyrics get highlighting/click-to-seek; plain
+lyrics remain selectable text without invented timestamps. Exact title/artist and close-duration
+matching deliberately reject alternate versions/remixes. Positive matches use a private bounded
+cache; offline/network failures and no match are distinct states. Availability is not guaranteed.
+Transient provider500/502/503/504 responses get at most two retries, with cancellable500ms/1500ms
+backoff inside a20-second total transport budget.404 misses and429 rate limits are not retried;
+outages are explained as service failures rather than missing song lyrics, and never negative-cached.
+Provider contract: [LRCLIB metadata endpoint](https://github.com/tranxuanthang/lrclib/blob/main/server/src/routes/get_lyrics_by_metadata.rs).
+
+Ordinary pause preserves the audio output's prepared pipeline, negotiated format and running time.
+Only seeking resets the output for a flush; stopping still releases it. Generated silent-output
+tests cover repeated pause/resume; audible device-specific click/stutter feedback still needs a
+user listening check rather than an assertion that synthetic tests prove the sound is fixed.
+
+Prism replaces Tunnel's expanding rings with sparse rectangular depth frames; Orbit replaces
+Cosmic's audio-positioned particles with stable orbital stars/trails and a compact spectrum.
+Ribbons remains available. Time-based attack/release smoothing and deadline-based frame pacing
+avoid abrupt band jumps and the old approximately48fps cadence on144Hz displays. Native GTK scene
+nodes retain software fallback, reduced-motion behavior and no idle animation loop. Synthetic
+offscreen results are in performance-baseline.md; they are not an onscreen smoothness guarantee.
+
+## Implemented collections and playlist editor — 2026-10-11
+
+Albums, Artists, Songs, Favorites and Playlists are now dedicated Music sections. Heart buttons
+and track/album menus manage local favorites and playlist membership. The user chose a separate
+playlist editor: create/rename/delete, find and add songs from the library, remove membership,
+and reorder by drag handle or keyboard/up/down controls. Playback respects playlist order and
+starts at the activated song; unavailable paths remain visible/saved and are skipped for playback.
+Editing and browsing never autoplay or change the current queue, nor rewrite audio tags.
+
+Recently added records when Hermes first indexes each path; it cannot infer historical arrival
+dates. Most played counts meaningful main-player listening once per playback instance (30 seconds
+or half of a shorter track), excluding previews, pause time and seeking. Collections use bounded
+off-thread local persistence with private atomic writes, retry/backoff and graceful-shutdown flush.
+Other instances cannot overwrite the active writer; external file changes are preserved and
+reported. Missing/renamed paths are retained, not automatically relinked. Unchanged playlist/group
+models are not rebuilt on unrelated collection updates; queued index observations retry.
+
+These features supersede the historical approved plans below. Gapless and column sizing remain
+later work. Do not add Save queue as playlist or bump to 1.0 without user approval.
+
+Priority clarification, 2026-10-11: settings/search/layout work is followed by the user's requested
+MOV/JPG loading, artwork and context-menu pass. Pooled media thumbnails, separate selected-preview
+workers and lossless JPEG output improvements are implemented; native cold-start decoding still
+needs profiling. Audio thumbnails now support all recognized formats, trying embedded art then
+an adjacent album cover. Clipboard Copy/Cut/Paste and core Copy location are available alongside
+relevant music actions. Settings controls optional file-menu actions without requiring tab reloads;
+Terminal is omitted from new custom-command templates, not removed from existing configurations.
+Favorites, cleaner navigation, manual playlists and smart collections are implemented in the
+follow-up above. No Save queue as playlist, no gapless in this pass, and no 1.0 release until
+explicit user approval. See NEXT_AGENT.md and performance-baseline.md for validation and limits.
+
 ## Approved next library features — 2026-10-10
 
 After retained-tab performance work, simplify library navigation into Albums, Artists, Songs,
@@ -8,7 +102,7 @@ and album context-menu actions. Include automatic Most played and Recently added
 Do not add Save queue as playlist; queue restart persistence remains a separate existing feature.
 Gapless playback is explicitly a later feature, not part of this pass.
 
-These library features are approved plans, not implemented controls. Store favorites, playlist
+Historical implementation guidance (now implemented above): store favorites, playlist
 membership and listening history locally without editing audio files. Recently added should use
 when Hermes first indexed a track, not the file's modification time; the first import cannot know
 historical arrival dates. Most played should count meaningful main-player listening, not preview

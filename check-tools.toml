@@ -1,0 +1,5 @@
+# Versions are shared by local checks and CI. Updates are reviewed source changes.
+rust = "1.99.0"
+cargo-deny = "0.20.2"
+typos-cli = "1.52.0"
+actionlint = "1.7.11"

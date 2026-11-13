@@ -33,6 +33,7 @@ pub enum ThumbnailHandler {
     Media,
     Model,
     Cover,
+    Office,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -170,8 +171,11 @@ pub fn capabilities_by_name(name: &OsStr) -> FormatCapabilities {
 }
 
 pub fn is_gif_image(name: &OsStr, content_type: &str) -> bool {
-    content_type == "image/gif" || Path::new(name).extension()
-        .and_then(OsStr::to_str).is_some_and(|extension| extension.eq_ignore_ascii_case("gif"))
+    content_type == "image/gif"
+        || Path::new(name)
+            .extension()
+            .and_then(OsStr::to_str)
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("gif"))
 }
 
 // ---------------------------------------------------------------------------
@@ -189,6 +193,9 @@ pub fn classify_by_mime(content_type: &str) -> FormatFamily {
     if matches!(
         content_type,
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            | "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            | "application/vnd.openxmlformats-officedocument.presentationml.slideshow"
+            | "application/vnd.openxmlformats-officedocument.presentationml.template"
             | "application/vnd.oasis.opendocument.text"
     ) {
         return FormatFamily::OfficeDocument;
@@ -203,9 +210,7 @@ pub fn classify_by_mime(content_type: &str) -> FormatFamily {
     }
     if matches!(
         content_type,
-        "application/epub+zip"
-            | "application/vnd.comicbook+zip"
-            | "application/vnd.comicbook-rar"
+        "application/epub+zip" | "application/vnd.comicbook+zip" | "application/vnd.comicbook-rar"
     ) {
         return FormatFamily::Comic;
     }
@@ -300,7 +305,7 @@ pub fn classify_by_name(name: &OsStr) -> FormatFamily {
         "svg" => FormatFamily::Svg,
 
         // Standard raster images
-        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "avif" => {
+        "png" | "jpg" | "jpeg" | "jpe" | "jfif" | "webp" | "gif" | "bmp" | "avif" => {
             FormatFamily::Image
         }
 
@@ -319,7 +324,7 @@ pub fn classify_by_name(name: &OsStr) -> FormatFamily {
         "pdf" => FormatFamily::Pdf,
 
         // Office documents with XML content stored in a ZIP container
-        "docx" | "odt" => FormatFamily::OfficeDocument,
+        "docx" | "odt" | "pptx" | "ppsx" | "potx" => FormatFamily::OfficeDocument,
 
         // Spreadsheets
         "xlsx" | "xls" | "ods" => FormatFamily::Spreadsheet,
@@ -359,24 +364,24 @@ pub fn classify_by_name(name: &OsStr) -> FormatFamily {
 ///
 /// This is intentionally a standalone function rather than a method on
 /// [`FormatFamily`] because the set of thumbnailable extensions is smaller than
-/// the set of extensions in each family (e.g. AVIF is [`FormatFamily::Image`]
-/// but is not currently thumbnailed by the sandbox).
+/// the set of extensions in each family.
 pub fn thumbnail_handler_for_name(name: &OsStr) -> Option<ThumbnailHandler> {
     let extension = Path::new(name).extension()?.to_str()?.to_ascii_lowercase();
     match extension.as_str() {
-        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tif" | "tiff" => {
-            Some(ThumbnailHandler::Image)
-        }
+        "png" | "jpg" | "jpeg" | "jpe" | "jfif" | "webp" | "gif" | "bmp" | "tif" | "tiff"
+        | "avif" | "svg" => Some(ThumbnailHandler::Image),
         "heic" | "heif" => Some(ThumbnailHandler::Heif),
         "3fr" | "arw" | "cr2" | "cr3" | "dcr" | "dng" | "erf" | "kdc" | "mef" | "mos" | "mrw"
         | "nef" | "nrw" | "orf" | "pef" | "raf" | "raw" | "rw2" | "rwl" | "sr2" | "srf" | "srw"
         | "x3f" => Some(ThumbnailHandler::RawImage),
         "pdf" => Some(ThumbnailHandler::Pdf),
+        "docx" | "odt" | "pptx" | "ppsx" | "potx" | "xlsx" | "ods" => {
+            Some(ThumbnailHandler::Office)
+        }
         "stl" | "3mf" => Some(ThumbnailHandler::Model),
         "epub" | "cbz" | "cbr" => Some(ThumbnailHandler::Cover),
-        "flac" | "mp4" | "mkv" | "webm" | "mov" | "avi" | "m4v" | "mpeg" | "mpg" | "ogv" => {
-            Some(ThumbnailHandler::Media)
-        }
+        "flac" | "mp3" | "ogg" | "opus" | "m4a" | "aac" | "wav" | "wma" | "mp4" | "mkv"
+        | "webm" | "mov" | "avi" | "m4v" | "mpeg" | "mpg" | "ogv" => Some(ThumbnailHandler::Media),
         _ => None,
     }
 }

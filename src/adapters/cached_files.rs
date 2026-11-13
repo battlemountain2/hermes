@@ -26,9 +26,9 @@ struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            directories: 12,
-            bytes: 32 * 1024 * 1024,
-            ttl: Duration::from_secs(30),
+            directories: 32,
+            bytes: 64 * 1024 * 1024,
+            ttl: Duration::from_secs(300),
         }
     }
 }
@@ -166,6 +166,7 @@ impl Cache {
             | DirectoryEvent::MusicMetadata { request_id, .. }
             | DirectoryEvent::Restarted { request_id }
             | DirectoryEvent::Finished { request_id }
+            | DirectoryEvent::Notice { request_id, .. }
             | DirectoryEvent::Failed { request_id, .. } => *request_id,
         };
         if id != request_id {
@@ -303,9 +304,9 @@ impl CachedFileSource {
                 let mut offset = 0;
                 loop {
                     let count = if offset == 0 {
-                        request.batch_size.clamp(1, 32)
+                        request.batch_size.clamp(1, 64)
                     } else {
-                        request.batch_size.clamp(1, 128)
+                        request.batch_size.clamp(1, 256)
                     };
                     let Some(entries) = replay_chunk(&cache, token, offset, count) else {
                         emit(DirectoryEvent::Restarted {
@@ -527,10 +528,10 @@ impl FileSource for CachedFileSource {
             active.set(false);
             if let Some(cache) = weak.upgrade() {
                 let mut cache = cache.borrow_mut();
-                if let Some(position) = cache.position(token) {
-                    if !cache.listings[position].finished {
-                        cache.remove(position);
-                    }
+                if let Some(position) = cache.position(token)
+                    && !cache.listings[position].finished
+                {
+                    cache.remove(position);
                 }
             }
             drop(load);
