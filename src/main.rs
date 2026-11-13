@@ -172,6 +172,10 @@ fn print_diagnostics() {
     println!("=== {} Diagnostics ===", identity::NAME);
     println!("Version: {} ({})", build_info::VERSION, build_info::COMMIT);
     println!(
+        "Application ID: {}",
+        identity::application_id(paths::is_development())
+    );
+    println!(
         "Build Profile: {}",
         if cfg!(debug_assertions) {
             "debug"

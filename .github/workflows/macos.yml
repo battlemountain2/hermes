@@ -64,6 +64,40 @@ jobs:
           ./target/debug/hermes --version | tee macos-evidence/version.txt
           ./target/debug/hermes --diagnostics > macos-evidence/diagnostics.txt
 
+      - name: Validate and assemble Dev app
+        run: |
+          python3 -B scripts/test_macos_bundle.py
+          python3 scripts/build-macos-dev.py --binary target/debug/hermes --output macos-candidate --source-commit "$(git rev-parse HEAD)"
+          codesign --force --sign - "macos-candidate/Hermes Dev.app"
+          codesign --verify --strict --verbose=2 "macos-candidate/Hermes Dev.app"
+          otool -L "macos-candidate/Hermes Dev.app/Contents/MacOS/hermes" > macos-evidence/linked-libraries.txt
+          python3 - <<'PY'
+          import hashlib, json, pathlib, subprocess
+          candidate = pathlib.Path('macos-candidate')
+          source = json.loads((candidate / 'SOURCE-INFO.json').read_text())
+          binary = candidate / 'Hermes Dev.app/Contents/MacOS/hermes'
+          source['binary_sha256'] = hashlib.file_digest(binary.open('rb'), 'sha256').hexdigest()
+          source['signing'] = 'ad-hoc, not notarized'
+          (candidate / 'SOURCE-INFO.json').write_text(json.dumps(source, indent=2) + '\n')
+          info = json.loads((candidate / 'BUILD-INFO.json').read_text())
+          for key, command in {'dependency_versions': ['brew', 'list', '--versions'], 'sdk': ['xcrun', '--show-sdk-version'], 'toolchain': ['rustc', '-Vv']}.items():
+              info[key] = subprocess.check_output(command, text=True).strip()
+          (candidate / 'BUILD-INFO.json').write_text(json.dumps(info, indent=2) + '\n')
+          PY
+          cp macos-evidence/environment.txt macos-evidence/linked-libraries.txt macos-candidate/
+          ditto -c -k --sequesterRsrc --keepParent macos-candidate Hermes-Dev-arm64.zip
+          shasum -a 256 Hermes-Dev-arm64.zip > Hermes-Dev-arm64.zip.sha256
+
+      - name: Publish first-launch candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hermes-macos-arm64-dev
+          path: |
+            Hermes-Dev-arm64.zip
+            Hermes-Dev-arm64.zip.sha256
+          retention-days: 14
+          if-no-files-found: error
+
       - name: Preserve native build evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

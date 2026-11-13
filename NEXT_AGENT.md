@@ -1,5 +1,15 @@
 # Next agent: Hermes performance, file features and media polish
 
+## Current user priority — first native Mac Dev app
+
+The user is ready to test Hermes on the 2021 M1 Pro. PR #21 prepares an ARM64
+native build and first-launch bundle. Read `docs/macos-foundation.md` and the
+native CI evidence. Deliver the candidate and collect first-window feedback.
+Keep native compilation, physical browsing acceptance and Mac stable status
+separate. Preview decoding/playback remain unavailable pending the isolated Mac
+service. The Dev feature selects independent profile roots when launched from
+Finder. Linux preview delivery and its physical qualification retain their gates.
+
 ## Next delivery — tested Linux preview
 
 The user is concerned about the prolonged release work. Prioritize delivery of

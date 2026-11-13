@@ -35,12 +35,16 @@ the compiled feature selection or resolve its dynamic dependencies.
 This packaging step performs no signing or notarization. Consult the native CI
 signing and validation results before testing a downloaded candidate.
 
-Use a disposable macOS test account and an empty test folder. From this output
-directory, first collect diagnostics and verify the Dev identity and profile
+Start with an empty test folder. From this output directory, first collect
+diagnostics and verify the Dev identity and profile
 paths before opening the app. Record the actual OS and dependency versions.
 
     ./"Hermes Dev.app"/Contents/MacOS/hermes --diagnostics
     open "Hermes Dev.app"
+
+This is a browse-first Dev candidate. Media and document decoding and playback
+are unavailable until the isolated Mac preview service is implemented. Native
+file-operation and macOS integration qualification are still pending.
 
 Check that the first window opens, the identity is
 io.github.battlemountain2.Hermes.Dev, and profile writes use only the Dev roots.

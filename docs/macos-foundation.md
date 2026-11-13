@@ -34,17 +34,20 @@ Bubblewrap, permitted namespaces and the appropriate decoder dependencies.
 The private platform module exposes it within the crate for `print_diagnostics`,
 which reports the selected backend, implementation availability and pending runtime
 readiness checks. Production enum variants are target-specific, with all variants
-available to the adjacent capability tests. Existing sandbox launchers invoke
-Bubblewrap. Routing through a platform-specific launcher remains pending. A future Mac adapter
-must reject decoder requests until its isolated service passes acceptance. Every startup, decode,
+available to the adjacent capability tests. Linux sandbox launchers invoke Bubblewrap. The Mac Dev candidate rejects preview,
+thumbnail and playback admission before decoder dispatch. Its browser-worker module
+is a pending-platform stub, so Linux pipe and socket ABIs are excluded from the Mac
+binary. Office availability and automatic media warmup honor this boundary. A future
+Mac adapter must retain these guards until its isolated service passes acceptance. Every startup, decode,
 timeout or protocol failure must fail closed. An in-process or unrestricted
 child-process decoder fallback is forbidden.
 
 ## Pending physical gates
 
-Native Mac compilation, GTK startup, dependency resolution, bundle assembly,
-signing, native application discovery, platform integration and all XPC decoder
-work remain pending. Stable/Dev profile resolution and Mac migration also need
+PR #21 adds an Apple Silicon GitHub Actions build and a Dev bundle builder.
+Native build results and physical GTK startup remain separate acceptance records.
+Native application discovery, platform integration, distribution signing and all XPC
+decoder work remain pending. Stable/Dev profile resolution and Mac migration also need
 physical qualification. Mac storage has its own acceptance gate.
 Linux-only test fixtures elsewhere in the repository still need a Mac
 audit, including the existing thumbnail desktop-icon expectation.
@@ -55,11 +58,41 @@ desktop-file permission/parsing/icon behavior, target capability selection and
 the unsupported-platform contract. Tests discover generated applications without
 launching them or changing file associations.
 
+## First Apple Silicon Dev candidate
+
+`.github/workflows/macos.yml` builds the exact PR head on an ARM64 `macos-15`
+runner with Rust 1.99.0. `packaging/macos/Brewfile` declares the native libraries.
+The `macos-dev` Cargo feature selects the Dev identity and profile on macOS,
+including a Finder launch. Linux retains its environment-selected profile.
+
+`scripts/build-macos-dev.py` creates a new output directory atomically, rejects
+non-ARM64 executables and packages the existing winged-H icon. CI signs the app
+ad hoc, checks its signature, records linked libraries, refreshes the post-signing
+binary checksum and creates `Hermes-Dev-arm64.zip`. This candidate dynamically
+links to Homebrew libraries. It is an early development build with pending Mac
+file-operation qualification and isolated preview support.
+
+After downloading the `hermes-macos-arm64-dev` artifact from PR #21, extract its
+inner ZIP. In the resulting `macos-candidate` directory, run the following.
+
+```sh
+brew bundle --file ./Brewfile
+./"Hermes Dev.app"/Contents/MacOS/hermes --diagnostics
+open "Hermes Dev.app"
+```
+
+Verify that diagnostics report `macos-aarch64`, the Dev application ID and four
+`hermes-dev` profile roots. Start with generated test folders. Report whether the
+first window opens, folder navigation works, text is readable and the window
+behaves correctly on the M1 Pro display. Keep startup messages if launch fails.
+macOS Gatekeeper acceptance and physical UX remain to be checked on that Mac.
+The artifact has ad-hoc signing and has no Apple notarization.
+
 ## Physical M1 Dev bootstrap
 
 Use the planned 2021 14-inch M1 Pro with 16 GB and record its actual macOS
-version. Perform the following in a disposable macOS login account with an
-isolated checkout and no imported profiles. GLib's macOS paths must be observed
+version. Use the separate Hermes Dev profile without importing legacy data. An optional
+disposable macOS login account can also be used for qualification. GLib's macOS paths must be observed
 on-device. Setting XDG variables alone is insufficient evidence of isolation.
 
 1. Record source, architecture, toolchain, SDK and dependency versions. Work from
