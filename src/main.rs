@@ -46,8 +46,9 @@ fn main() -> gtk::glib::ExitCode {
         .get(1)
         .is_some_and(|value| value == "--desktop-integration-info")
     {
+        let linux = cfg!(target_os = "linux");
         println!(
-            r#"{{"capability":"HERMES_FILE_MANAGER1_V1","picker_capability":"HERMES_FILE_CHOOSER_V1","folders":true,"picker":true}}"#
+            r#"{{"capability":"HERMES_FILE_MANAGER1_V1","picker_capability":"HERMES_FILE_CHOOSER_V1","folders":{linux},"picker":{linux}}}"#
         );
         return gtk::glib::ExitCode::SUCCESS;
     }
@@ -55,6 +56,10 @@ fn main() -> gtk::glib::ExitCode {
         .get(1)
         .is_some_and(|value| value == "--portal-file-chooser")
     {
+        if !cfg!(target_os = "linux") {
+            eprintln!("The XDG file picker integration is available on Linux");
+            return gtk::glib::ExitCode::FAILURE;
+        }
         return portal::run();
     }
     if arguments
