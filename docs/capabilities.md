@@ -1,6 +1,6 @@
 # Capability and qualification matrix
 
-November 6 source checkpoint. **Implemented** describes routing/code, **verified**
+November 13 source checkpoint. **Implemented** describes routing/code, **verified**
 names specific evidence, **experimental** needs integration or physical acceptance,
 and **deferred** is outside the 1.0 scope. No format-extension list guarantees every
 codec, camera profile or malformed document works.
@@ -19,7 +19,7 @@ codec, camera profile or malformed document works.
 | Default manager and XDG picker | Separate reversible Linux opt-ins | Private setup/GTK fixtures; real browser/Wayland/Flatpak acceptance remains experimental |
 | Native x86_64 pacman package | Source-bound recipe, declared runtime/optional helpers | Host-built artifact inspected; clean-machine install/upgrade/uninstall and RC qualification remain open |
 | Linux aarch64 / Asahi | Native recipe target | Experimental until built/installed/tested on the actual reference device |
-| Apple Silicon macOS | Platform adapter and isolated-helper proof still required | Not qualified or distributed by this batch; XPC proof, Homebrew beta and physical tests precede stable |
+| Apple Silicon macOS | Experimental native Dev build/bundle in PR #21, Homebrew runtime dependencies, separate Dev profile | First-window physical testing pending; decoder previews/playback and Linux descriptor-backed caches are unavailable until Mac adapters pass qualification; XPC proof and broader integration precede stable |
 
 The live routing source is `src/services/formats.rs`; earlier measurements and
 format descriptions in [the preview audit](preview-format-audit.md) are dated
