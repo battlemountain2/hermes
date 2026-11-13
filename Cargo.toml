@@ -9,6 +9,11 @@ repository = "https://github.com/battlemountain2/hermes"
 keywords = ["file-manager", "gtk4", "linux", "wayland"]
 categories = ["filesystem", "gui"]
 
+[features]
+# Finder-launched development bundles cannot rely on shell environment variables.
+# This feature selects the development identity only on macOS.
+macos-dev = []
+
 [dependencies]
 cairo-rs = { version = "0.21.5", features = ["pdf", "png"] }
 calamine = "0.38.0"

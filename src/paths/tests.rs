@@ -1,6 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
+
+#[cfg(all(target_os = "macos", feature = "macos-dev"))]
+#[test]
+fn finder_launched_development_bundle_uses_its_own_profile() {
+    assert!(is_development());
+    assert_eq!(app_dir_name(), "hermes-dev");
+    assert_eq!(
+        crate::identity::application_id(is_development()),
+        "io.github.battlemountain2.Hermes.Dev"
+    );
+}
+
 #[test]
 fn test_app_dir_name_is_non_empty() {
     let name = app_dir_name();

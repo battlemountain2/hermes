@@ -89,9 +89,7 @@ fn main() -> gtk::glib::ExitCode {
     }
 
     gtk::glib::set_application_name(identity::NAME);
-    let application_id = identity::application_id(
-        std::env::var_os("HERMES_DEV").is_some() || std::env::var_os("STRATA_DEV").is_some(),
-    );
+    let application_id = identity::application_id(paths::is_development());
     let application = gtk::Application::builder()
         .application_id(application_id)
         .flags(gio::ApplicationFlags::HANDLES_OPEN)

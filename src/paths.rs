@@ -8,7 +8,9 @@ pub(crate) mod legacy_import;
 mod tests;
 
 pub(crate) fn is_development() -> bool {
-    std::env::var_os("HERMES_DEV").is_some() || std::env::var_os("STRATA_DEV").is_some()
+    cfg!(all(target_os = "macos", feature = "macos-dev"))
+        || std::env::var_os("HERMES_DEV").is_some()
+        || std::env::var_os("STRATA_DEV").is_some()
 }
 
 pub(crate) fn app_dir_name() -> &'static str {
