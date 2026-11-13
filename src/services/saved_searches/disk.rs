@@ -7,9 +7,7 @@ use std::{
 };
 
 use super::{Document, MAX_FILE_BYTES};
-
-const NO_FOLLOW: i32 = 0o400000;
-const NON_BLOCKING: i32 = 0o4000;
+use crate::platform::filesystem::{NO_FOLLOW, NON_BLOCK};
 
 pub(super) struct Storage {
     path: PathBuf,
@@ -36,7 +34,7 @@ impl Storage {
         }
         let directory = OpenOptions::new()
             .read(true)
-            .custom_flags(NO_FOLLOW | NON_BLOCKING)
+            .custom_flags(NO_FOLLOW | NON_BLOCK)
             .open(parent)
             .map_err(|error| error.to_string())?;
         same_file(&directory, parent)?;
@@ -67,7 +65,7 @@ impl Storage {
             .create(true)
             .truncate(false)
             .mode(0o600)
-            .custom_flags(NO_FOLLOW | NON_BLOCKING)
+            .custom_flags(NO_FOLLOW | NON_BLOCK)
             .open(&lock_path)
             .map_err(|error| error.to_string())?;
         same_file(&ownership, &lock_path)?;
@@ -221,7 +219,7 @@ fn read_bytes(path: &Path) -> Result<Option<Vec<u8>>, String> {
     reject_special(path)?;
     let file = match OpenOptions::new()
         .read(true)
-        .custom_flags(NO_FOLLOW | NON_BLOCKING)
+        .custom_flags(NO_FOLLOW | NON_BLOCK)
         .open(path)
     {
         Ok(file) => file,

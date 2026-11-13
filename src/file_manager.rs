@@ -3,14 +3,13 @@ use std::{cell::RefCell, fs, io::Read, os::unix::fs::OpenOptionsExt, path::Path,
 use gtk::{gio, glib, prelude::*};
 
 use crate::model::Location;
+use crate::platform::filesystem::{NO_FOLLOW, NON_BLOCK};
 
 const BUS: &str = "org.freedesktop.FileManager1";
 const PATH: &str = "/org/freedesktop/FileManager1";
 const XML: &str = include_str!("file_manager/interface.xml");
 const MAX_URIS: usize = 64;
 const MAX_WINDOWS: usize = 16;
-const NO_FOLLOW: i32 = 0x20000;
-const NON_BLOCK: i32 = 0x800;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Request {

@@ -235,7 +235,12 @@ pub(crate) fn subscribe(root: PathBuf) -> Subscription {
 
 pub(crate) fn subscribe_catalog(root: PathBuf) -> Subscription {
     let mut configuration = Configuration::new(root.clone());
-    configuration.catalog_path = Some(catalog_disk::path(&root));
+    // Saved catalogs require Linux descriptor-backed storage. Other targets
+    // keep browsing from live snapshots while native persistence is pending.
+    #[cfg(target_os = "linux")]
+    {
+        configuration.catalog_path = Some(catalog_disk::path(&root));
+    }
     let music = super::search::SearchScope::MusicLibrary.root(&gio::glib::home_dir());
     let visible_music = music.strip_prefix(&root).is_ok_and(|relative| {
         relative.components().all(|component| {

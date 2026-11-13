@@ -1,4 +1,5 @@
 use super::{SourceIdentity, ThumbnailKey};
+use crate::platform::filesystem::{DIRECTORY, NO_FOLLOW, NON_BLOCK, descriptor_storage_supported};
 use gtk::{gdk, gio, glib, prelude::*};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -25,9 +26,6 @@ const MAX_PIXELS: usize = 256 * 256 * 4;
 const MAX_FILE: usize = MAGIC.len() + 4 + MAX_HEADER + MAX_PIXELS;
 const MAX_FILES: usize = 512;
 const MAX_BYTES: u64 = 128 * 1024 * 1024;
-const NO_FOLLOW: i32 = 0x20000;
-const DIRECTORY: i32 = 0x10000;
-const NON_BLOCK: i32 = 0x800;
 
 #[derive(Serialize, Deserialize, PartialEq)]
 struct Key {
@@ -75,6 +73,9 @@ struct DirectoryHandle(File);
 
 impl DirectoryHandle {
     fn open(path: &Path, create: bool) -> Option<Self> {
+        if !descriptor_storage_supported() {
+            return None;
+        }
         if create {
             fs::DirBuilder::new()
                 .recursive(true)
@@ -137,6 +138,9 @@ fn clear_at(root: &Path) -> Result<usize, String> {
 }
 
 pub(super) fn clear() -> Result<usize, String> {
+    if !descriptor_storage_supported() {
+        return Err("Thumbnail disk persistence is pending on this platform".into());
+    }
     let (sender, receiver) = mpsc::channel();
     writer()
         .send(Command::Clear(sender))
@@ -228,6 +232,9 @@ fn encode(header: Header, pixels: Vec<u8>) -> Option<Vec<u8>> {
 }
 
 pub(super) fn load(key: &ThumbnailKey) -> Option<Vec<u8>> {
+    if !descriptor_storage_supported() {
+        return None;
+    }
     load_at(&root(), key)
 }
 
@@ -245,6 +252,9 @@ fn load_at(root: &Path, key: &ThumbnailKey) -> Option<Vec<u8>> {
 }
 
 pub(super) fn preview(path: &Path) -> Option<Vec<u8>> {
+    if !descriptor_storage_supported() {
+        return None;
+    }
     let (header, pixels) = read(&root(), path)?;
     if header.key.path != header.key.source_path {
         return None;
@@ -253,6 +263,9 @@ pub(super) fn preview(path: &Path) -> Option<Vec<u8>> {
 }
 
 pub(super) fn audio_candidate(path: &Path, size: i32) -> Option<ThumbnailKey> {
+    if !descriptor_storage_supported() {
+        return None;
+    }
     audio_candidate_at(&root(), path, size)
 }
 
@@ -414,6 +427,9 @@ fn run_writer(root: &Path, receiver: mpsc::Receiver<Command>) {
 }
 
 pub(super) fn persist(key: ThumbnailKey, texture: &gdk::Texture) {
+    if !descriptor_storage_supported() {
+        return;
+    }
     if dimensions(texture.width(), texture.height()).is_none() {
         return;
     }
