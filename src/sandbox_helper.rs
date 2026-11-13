@@ -24,6 +24,7 @@ pub(crate) mod table;
 pub(crate) mod waveform;
 
 pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
+    crate::platform::preview_isolation().require_implemented()?;
     if arguments
         .first()
         .is_some_and(|op| op == "browser-worker" || op == "--browser-worker")

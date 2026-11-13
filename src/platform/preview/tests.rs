@@ -7,6 +7,17 @@ fn pending_and_unsupported_backends_never_advertise_isolation() {
     assert!(PreviewIsolation::LinuxBubblewrap.is_implemented());
     assert!(!PreviewIsolation::MacXpcPending.is_implemented());
     assert!(!PreviewIsolation::Unsupported.is_implemented());
+    assert!(
+        PreviewIsolation::LinuxBubblewrap
+            .require_implemented()
+            .is_ok()
+    );
+    assert!(
+        PreviewIsolation::MacXpcPending
+            .require_implemented()
+            .is_err()
+    );
+    assert!(PreviewIsolation::Unsupported.require_implemented().is_err());
 }
 
 #[test]

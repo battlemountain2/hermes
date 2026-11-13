@@ -55,6 +55,9 @@ impl PreviewPolicy {
     }
 
     pub(crate) fn check(self, family: FormatFamily, size: Option<u64>) -> Result<(), String> {
+        if family != FormatFamily::PlainText {
+            crate::platform::preview_isolation().require_implemented()?;
+        }
         let enabled = match family {
             FormatFamily::Audio => self.audio,
             FormatFamily::Image
@@ -303,6 +306,9 @@ enum ThumbnailKind {
 }
 
 pub(super) async fn cached_preview_bytes(path: &Path) -> Option<glib::Bytes> {
+    crate::platform::preview_isolation()
+        .require_implemented()
+        .ok()?;
     cached_preview_bytes_with_policy(path, PreviewPolicy::current).await
 }
 
@@ -364,7 +370,7 @@ pub(super) fn set_thumbnail_or_icon(
         fallback_icon
     };
     let (image_id, request, cancellation) = set_fallback_icon(image, fallback_icon, icon_size);
-    if CLEARING_CACHE.with(Cell::get) {
+    if CLEARING_CACHE.with(Cell::get) || !crate::platform::preview_isolation().is_implemented() {
         return;
     }
 

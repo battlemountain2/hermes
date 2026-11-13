@@ -15,6 +15,14 @@ pub(crate) enum PreviewIsolation {
 }
 
 impl PreviewIsolation {
+    pub(crate) fn require_implemented(self) -> Result<(), String> {
+        if self.is_implemented() {
+            Ok(())
+        } else {
+            Err("Media previews and playback require the macOS isolated decoder, which is not available in this Dev build".to_owned())
+        }
+    }
+
     /// Whether this target has an implemented isolation backend.
     /// Callers must still handle sandbox startup failures without decoding in-process.
     pub(crate) const fn is_implemented(self) -> bool {

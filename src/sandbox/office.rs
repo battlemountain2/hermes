@@ -117,10 +117,12 @@ impl Cache {
 }
 
 pub(crate) fn available() -> bool {
-    crate::sandbox_helper::office::render::renderer().is_some()
+    crate::platform::preview_isolation().is_implemented()
+        && crate::sandbox_helper::office::render::renderer().is_some()
 }
 
 pub(crate) fn poster(input: &Path, cancellation: &Cancellation) -> Result<Vec<u8>, String> {
+    crate::platform::preview_isolation().require_implemented()?;
     let identity = Identity::read_source(input)?;
     let output = super::parse(
         &identity.path,
@@ -205,6 +207,7 @@ pub(crate) fn render(
     page: i32,
     cancellation: &Cancellation,
 ) -> Result<ParseOutput, String> {
+    crate::platform::preview_isolation().require_implemented()?;
     static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
     if cancellation.is_cancelled() {
         return Err("Preview cancelled".into());

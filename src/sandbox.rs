@@ -13,6 +13,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(target_os = "linux")]
+pub(crate) mod browser;
+#[cfg(not(target_os = "linux"))]
+#[path = "sandbox/browser_pending.rs"]
 pub(crate) mod browser;
 mod helper_binary;
 pub(crate) mod office;
@@ -162,6 +166,7 @@ pub(crate) fn parse(
     value: i32,
     cancellation: &Cancellation,
 ) -> Result<ParseOutput, String> {
+    crate::platform::preview_isolation().require_implemented()?;
     if cancellation.is_cancelled() {
         return Err("Preview cancelled".to_owned());
     }
@@ -231,6 +236,7 @@ pub(crate) fn parse_one_shot_with_executable(
     cancellation: &Cancellation,
     executable: &Path,
 ) -> Result<ParseOutput, String> {
+    crate::platform::preview_isolation().require_implemented()?;
     let output = PrivateOutput::create().map_err(|error| error.to_string())?;
     let command = sandbox_command(executable, input, output.path(), operation, value)
         .map_err(|error| format!("Unable to prepare the preview helper: {error}"))?;

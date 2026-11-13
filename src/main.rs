@@ -61,6 +61,10 @@ fn main() -> gtk::glib::ExitCode {
         .get(1)
         .is_some_and(|value| value == "--playback-worker")
     {
+        if let Err(error) = platform::preview_isolation().require_implemented() {
+            eprintln!("{error}");
+            return gtk::glib::ExitCode::FAILURE;
+        }
         if let Err(error) = playback::worker::run() {
             playback::worker::report_error(&error);
             eprintln!("Playback worker failed: {error}");

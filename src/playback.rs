@@ -23,6 +23,9 @@ pub use spectrum::SPECTRUM_BANDS;
 use wire::{Command, Event};
 
 pub(crate) fn warmup() -> Option<std::thread::JoinHandle<Result<(), String>>> {
+    if !crate::platform::preview_isolation().is_implemented() {
+        return None;
+    }
     static STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     STARTED.set(()).ok()?;
     std::thread::Builder::new()
@@ -64,6 +67,7 @@ pub(crate) struct Session {
 
 impl Session {
     pub fn start(path: &Path) -> Result<Self, String> {
+        crate::platform::preview_isolation().require_implemented()?;
         let path = path.canonicalize().map_err(|error| error.to_string())?;
         if !path.is_file() {
             return Err("Playback input is not a regular file".into());
